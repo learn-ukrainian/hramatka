@@ -1,0 +1,291 @@
+"""Grounding-IN (slice-1 §4 + §R B1/C1): reuse repo assets read-only.
+
+Pipeline:
+  anchor text -> lemmatize (VESUM reverse-lookup, deterministic) ->
+  atlas {lemma -> payload} dict (ONE scan for the needed lemmas) +
+  numeral inventory -> a compact, VERIFIED grounding pack for the prompt.
+
+VESUM reverse-lookup is used for lemmatization (not pymorphy3): it is the
+same source of truth the gates use and is fully deterministic, avoiding a
+second morphology engine that could disagree with VESUM (§6c note). pymorphy3
+remains permissible for lemmatization elsewhere but is unnecessary here.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import unicodedata
+
+from . import paths
+from .gates import _bootstrap_sys_path
+
+_bootstrap_sys_path()
+
+from scripts.verification.vesum import verify_words
+
+# Cyrillic word token (keeps apostrophe + soft signs; excludes digits).
+_WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
+_CONTENT_POS = {"noun", "adj", "verb", "adv"}
+
+# Numeral surface forms worth flagging in the inventory (digits are matched
+# separately). Kept small + deterministic — the moat gate does the real work.
+_NUMERAL_WORD_RE = re.compile(
+    r"\b("
+    r"нуль|один|одна|одне|два|дві|обидва|обидві|три|чотири|п'ять|шість|сім|"
+    r"вісім|дев'ять|десять|одинадцять|дванадцять|тринадцять|чотирнадцять|"
+    r"п'ятнадцять|шістнадцять|сімнадцять|вісімнадцять|дев'ятнадцять|двадцять|"
+    r"тридцять|сорок|п'ятдесят|шістдесят|сімдесят|вісімдесят|дев'яносто|сто|"
+    r"двоє|троє|четверо|п'ятеро|обоє|півтора|півтори|тисяч[аіуео]?|мільйон\w*"
+    r")\b",
+    re.UNICODE | re.IGNORECASE,
+)
+_DIGIT_NUM_RE = re.compile(r"\b\d+(?:[.,]\d+)?\b")
+
+# Mixed-fraction continuation right after a cardinal: "<numeral> з половиною|
+# чвертю|третиною <noun>" (spelled-out decimal, e.g. «два з половиною рази»).
+# Captured so the raw_span reaches the real governed noun instead of stopping
+# at the preposition «з» (which otherwise made the gate report no-noun-found).
+_FRACTION_TAIL_RE = re.compile(
+    r"\s+(?:з|із|зі)\s+(?:половиною|чвертю|третиною)\s+"
+    r"(?P<noun>[А-ЯҐЄІЇа-яґєіїʼ'’-]+)",
+    re.UNICODE | re.IGNORECASE,
+)
+
+# DATE construction after a number: "<number> [<ordinal-day-word>] <genitive-
+# month>" (23 квітня, двадцять третє квітня). Captured so the raw_span reaches
+# the genitive month instead of mis-slicing the date into a bogus cardinal
+# span. The optional intervening word must END in е/є (a neuter ordinal like
+# «третє»/«двадцяте»/«перше») so real cardinals («двадцять хвилин лютого»)
+# are NOT mis-captured as dates.
+_MONTHS_GEN = (
+    "січня|лютого|березня|квітня|травня|червня|"
+    "липня|серпня|вересня|жовтня|листопада|грудня"
+)
+_DATE_TAIL_RE = re.compile(
+    r"\s+(?:[А-ЯҐЄІЇа-яґєіїʼ'’-]+[еє]\s+)?(?P<month>" + _MONTHS_GEN + r")\b",
+    re.UNICODE | re.IGNORECASE,
+)
+
+
+def nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+# ---------------------------------------------------------------------------
+# Lemmatization (VESUM reverse-lookup)
+# ---------------------------------------------------------------------------
+def tokenize(text: str) -> list[str]:
+    return [t for t in _WORD_RE.findall(nfc(text)) if len(t) > 1]
+
+
+def lemmatize(text: str) -> dict[str, set[str]]:
+    """Return {surface_lower -> {lemma, ...}} for every content-word token,
+    via a single batched VESUM reverse-lookup. Non-content POS and unknown
+    tokens are dropped.
+    """
+    surfaces = sorted({t.lower() for t in tokenize(text)})
+    if not surfaces:
+        return {}
+    matches = verify_words(surfaces, db_path=paths.VESUM_DB)
+    out: dict[str, set[str]] = {}
+    for surface, rows in matches.items():
+        lemmas = {r["lemma"] for r in rows if r["pos"] in _CONTENT_POS}
+        if lemmas:
+            out[surface] = lemmas
+    return out
+
+
+def anchor_lemmas(text: str) -> set[str]:
+    """Flat set of all content lemmas occurring in the anchor."""
+    lemmas: set[str] = set()
+    for lset in lemmatize(text).values():
+        lemmas |= lset
+    return lemmas
+
+
+# ---------------------------------------------------------------------------
+# atlas {lemma -> payload}: ONE scan, filtered to the needed lemmas (§R C1 —
+# no full-table-scan per lemma)
+# ---------------------------------------------------------------------------
+def _cefr_level(payload: dict) -> str | None:
+    enr = payload.get("enrichment", {})
+    if isinstance(enr, dict):
+        cefr = enr.get("cefr")
+        if isinstance(cefr, dict) and cefr.get("level"):
+            return cefr["level"]
+        if isinstance(cefr, str):
+            m = re.search(r"\b([ABC][12])\b", cefr)
+            if m:
+                return m.group(1)
+    top = payload.get("cefr")
+    if isinstance(top, str):
+        m = re.search(r"\b([ABC][12])\b", top)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _synonyms(payload: dict) -> list[str]:
+    secs = payload.get("sections", {})
+    if isinstance(secs, dict):
+        syn = secs.get("synonyms")
+        if isinstance(syn, dict) and isinstance(syn.get("items"), list):
+            return [s for s in syn["items"] if isinstance(s, str)]
+    return []
+
+
+def _heritage(payload: dict) -> str | None:
+    enr = payload.get("enrichment", {})
+    if isinstance(enr, dict):
+        h = enr.get("heritage")
+        if isinstance(h, dict):
+            return h.get("classification") or h.get("status")
+    h = payload.get("heritage_status")
+    if isinstance(h, dict):
+        return h.get("classification") or h.get("status")
+    if isinstance(h, str):
+        return h
+    return None
+
+
+def build_atlas_lookup(needed_lemmas: set[str], db_path=None) -> dict[str, dict]:
+    """{lemma_lower -> compact atlas record} built in ONE table scan, keeping
+    only rows whose lemma is in `needed_lemmas`. Never scans per-lemma.
+    """
+    db = str(db_path or paths.ATLAS_DB)
+    needed_lower = {lemma.lower() for lemma in needed_lemmas}
+    if not needed_lower:
+        return {}
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT payload_json FROM article_payloads WHERE is_public_route=1"
+        )
+        lookup: dict[str, dict] = {}
+        import json
+
+        for (payload_json,) in rows:
+            try:
+                payload = json.loads(payload_json)
+            except (ValueError, TypeError):
+                continue
+            lemma = payload.get("lemma")
+            if not isinstance(lemma, str):
+                continue
+            key = lemma.lower()
+            if key in needed_lower and key not in lookup:
+                lookup[key] = {
+                    "lemma": lemma,
+                    "pos": payload.get("pos"),
+                    "cefr": _cefr_level(payload),
+                    "synonyms": _synonyms(payload),
+                    "heritage": _heritage(payload),
+                }
+        return lookup
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Numeral inventory
+# ---------------------------------------------------------------------------
+def extract_numeral_inventory(text: str) -> list[dict]:
+    """Every numeral (digit or spelled-out) + its following noun candidate.
+
+    Returns [{raw_span, char_offset, numeral, following_noun}] — feeds both
+    the grounding pack and the numeral gate (which does the verification).
+    """
+    body = nfc(text)
+    inventory: list[dict] = []
+    seen: set[tuple[int, str]] = set()
+    for rx in (_DIGIT_NUM_RE, _NUMERAL_WORD_RE):
+        for m in rx.finditer(body):
+            start = m.start()
+            numeral = m.group(0)
+            tail = body[m.end():]
+            frac_match = _FRACTION_TAIL_RE.match(tail)
+            date_match = _DATE_TAIL_RE.match(tail)
+            if date_match:
+                # Extend across "[<ordinal-day>] <genitive-month>" so the gate
+                # sees the whole date and recognizes it (date-not-cardinal),
+                # instead of "двадцять третє" -> a spurious cardinal span.
+                following = date_match.group("month")
+                raw_span = numeral + tail[: date_match.end()]
+            elif frac_match:
+                # Extend the span across "з половиною/чвертю/третиною <noun>"
+                # so the gate sees the whole mixed fraction, not just "два з".
+                following = frac_match.group("noun")
+                raw_span = numeral + tail[: frac_match.end()]
+            else:
+                noun_match = _WORD_RE.search(tail)
+                following = noun_match.group(0) if noun_match else None
+                raw_span = numeral + (f" {following}" if following else "")
+            key = (start, numeral)
+            if key in seen:
+                continue
+            seen.add(key)
+            inventory.append(
+                {
+                    "raw_span": raw_span,
+                    "char_offset": start,
+                    "numeral": numeral,
+                    "following_noun": following,
+                }
+            )
+    inventory.sort(key=lambda d: d["char_offset"])
+    return inventory
+
+
+# ---------------------------------------------------------------------------
+# Grounding pack
+# ---------------------------------------------------------------------------
+def build_grounding_pack(
+    anchor_body: str,
+    level: str = "B1",
+    *,
+    atlas_db=None,
+    max_lemmas: int = 40,
+) -> dict:
+    """Assemble the compact grounding pack (verified lexicon + numeral
+    inventory). Returns {text, lemmas, atlas_lookup, numeral_inventory}. Only
+    lemmas actually occurring in this anchor are included (never the whole
+    atlas); the rendered text stays well under ~1500 tokens.
+    """
+    lemmas = anchor_lemmas(anchor_body)
+    lookup = build_atlas_lookup(lemmas, db_path=atlas_db)
+    inventory = extract_numeral_inventory(anchor_body)
+
+    lex_lines: list[str] = []
+    for lemma in sorted(lookup)[:max_lemmas]:
+        rec = lookup[lemma]
+        parts = [rec["lemma"]]
+        if rec.get("cefr"):
+            parts.append(rec["cefr"])
+        syns = rec.get("synonyms") or []
+        if syns:
+            parts.append("синоніми: " + ", ".join(syns[:4]))
+        lex_lines.append(" — ".join(parts))
+
+    num_lines = [
+        f"{d['numeral']} → {d['following_noun']}" if d["following_noun"] else d["numeral"]
+        for d in inventory
+    ]
+
+    text_blocks = [f"Рівень: {level}."]
+    if lex_lines:
+        text_blocks.append(
+            "Перевірена лексика опори (лема — рівень CEFR — синоніми):\n"
+            + "\n".join(lex_lines)
+        )
+    if num_lines:
+        text_blocks.append(
+            "Числа в опорі (для звірки керування числівника):\n" + "\n".join(num_lines)
+        )
+
+    return {
+        "text": "\n\n".join(text_blocks),
+        "lemmas": lemmas,
+        "atlas_lookup": lookup,
+        "numeral_inventory": inventory,
+    }
