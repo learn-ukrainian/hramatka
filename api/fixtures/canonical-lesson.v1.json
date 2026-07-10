@@ -1,0 +1,261 @@
+{
+  "schema": "lu.lesson.v1",
+  "id": "fixture-placeholder",
+  "title": "Відкриймо український текст",
+  "level": "B1",
+  "method": "ttt",
+  "focus": null,
+  "anchor": {
+    "text": "Відкриймо український текст для вправ.",
+    "source": "teacher-paste",
+    "chars": 37
+  },
+  "duration": 45,
+  "version": 1,
+  "status": "ready",
+  "last_error": null,
+  "accepted": false,
+  "blocks": [
+    {
+      "id": "block-1",
+      "phase": 1,
+      "type": "true-false",
+      "mode": "усно",
+      "activity": {
+        "id": "activity-tf-1",
+        "type": "true-false",
+        "title": "Перевірмо розуміння",
+        "level": "b1",
+        "payload": {
+          "type": "true-false",
+          "instruction": "Позначте правильні твердження.",
+          "items": [
+            { "statement": "Учні читають текст.", "correct": true },
+            { "statement": "Урок має вправи.", "correct": true },
+            { "statement": "Текст не український.", "correct": false },
+            { "statement": "Учитель працює з групою.", "correct": true },
+            { "statement": "Вправа потребує відповіді.", "correct": true },
+            { "statement": "Завдання вже завершено.", "correct": false }
+          ]
+        },
+        "answer_key": {
+          "items": [
+            { "index": 0, "correct": true },
+            { "index": 1, "correct": true },
+            { "index": 2, "correct": false },
+            { "index": 3, "correct": true },
+            { "index": 4, "correct": true },
+            { "index": 5, "correct": false }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Ключ містить правильні позначки для всіх тверджень.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    },
+    {
+      "id": "block-2",
+      "phase": 1,
+      "type": "cloze",
+      "mode": "письмово",
+      "activity": {
+        "id": "activity-cloze-1",
+        "type": "cloze",
+        "title": "Доберіть слова",
+        "level": "b1",
+        "payload": {
+          "type": "cloze",
+          "instruction": "Заповніть пропуски.",
+          "text": "Учні {gap} текст, {gap} вправи, {gap} учителя, {gap} питання, {gap} відповідь і {gap}.",
+          "blanks": [
+            { "id": 1, "answer": "читають", "options": ["читають", "пишуть"] },
+            { "id": 2, "answer": "виконують", "options": ["виконують", "слухають"] },
+            { "id": 3, "answer": "учитель", "options": ["учитель", "словник"] },
+            { "id": 4, "answer": "питання", "options": ["питання", "речення"] },
+            { "id": 5, "answer": "відповідь", "options": ["відповідь", "приклад"] },
+            { "id": 6, "answer": "група", "options": ["група", "книга"] }
+          ]
+        },
+        "answer_key": {
+          "blanks": [
+            { "id": 1, "answer": "читають" },
+            { "id": 2, "answer": "виконують" },
+            { "id": 3, "answer": "учитель" },
+            { "id": 4, "answer": "питання" },
+            { "id": 5, "answer": "відповідь" },
+            { "id": 6, "answer": "група" }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Запропонуйте учневі пояснити вибір кожного слова.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    },
+    {
+      "id": "block-3",
+      "phase": 2,
+      "type": "match-up",
+      "mode": "усно",
+      "activity": {
+        "id": "activity-match-1",
+        "type": "match-up",
+        "title": "Знайдіть пару",
+        "level": "b1",
+        "payload": {
+          "type": "match-up",
+          "instruction": "З'єднайте слово з поясненням.",
+          "pairs": [
+            { "left": "текст", "right": "написаний матеріал" },
+            { "left": "вправа", "right": "навчальне завдання" },
+            { "left": "учитель", "right": "людина, що навчає" },
+            { "left": "питання", "right": "звернення по відповідь" },
+            { "left": "відповідь", "right": "реакція на питання" }
+          ]
+        },
+        "answer_key": {
+          "pairs": [
+            { "left_index": 0, "right_index": 0 },
+            { "left_index": 1, "right_index": 1 },
+            { "left_index": 2, "right_index": 2 },
+            { "left_index": 3, "right_index": 3 },
+            { "left_index": 4, "right_index": 4 }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Значення слід підтвердити разом з учителем.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    },
+    {
+      "id": "block-4",
+      "phase": 2,
+      "type": "true-false",
+      "mode": "усно",
+      "activity": {
+        "id": "activity-tf-2",
+        "type": "true-false",
+        "title": "Перевірмо деталі",
+        "level": "b1",
+        "payload": {
+          "type": "true-false",
+          "instruction": "Виберіть так або ні.",
+          "items": [
+            { "statement": "Учитель ставить питання.", "correct": true },
+            { "statement": "Учні дають відповідь.", "correct": true },
+            { "statement": "Вправи не мають мети.", "correct": false },
+            { "statement": "Текст можна обговорити.", "correct": true },
+            { "statement": "Група працює разом.", "correct": true },
+            { "statement": "Урок не потребує мови.", "correct": false }
+          ]
+        },
+        "answer_key": {
+          "items": [
+            { "index": 0, "correct": true },
+            { "index": 1, "correct": true },
+            { "index": 2, "correct": false },
+            { "index": 3, "correct": true },
+            { "index": 4, "correct": true },
+            { "index": 5, "correct": false }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Обговоріть кожну відповідь українською.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    },
+    {
+      "id": "block-5",
+      "phase": 2,
+      "type": "cloze",
+      "mode": "письмово",
+      "activity": {
+        "id": "activity-cloze-2",
+        "type": "cloze",
+        "title": "Побудуйте речення",
+        "level": "b1",
+        "payload": {
+          "type": "cloze",
+          "instruction": "Доберіть потрібні форми.",
+          "text": "На уроці {gap} працюють з {gap}, виконують {gap}, дають {gap}, хочуть {gap} і {gap}.",
+          "blanks": [
+            { "id": 1, "answer": "учні", "options": ["учні", "учитель"] },
+            { "id": 2, "answer": "текстом", "options": ["текстом", "групою"] },
+            { "id": 3, "answer": "вправу", "options": ["вправу", "питання"] },
+            { "id": 4, "answer": "відповідь", "options": ["відповідь", "приклад"] },
+            { "id": 5, "answer": "читати", "options": ["читати", "писати"] },
+            { "id": 6, "answer": "говорити", "options": ["говорити", "слухати"] }
+          ]
+        },
+        "answer_key": {
+          "blanks": [
+            { "id": 1, "answer": "учні" },
+            { "id": 2, "answer": "текстом" },
+            { "id": 3, "answer": "вправу" },
+            { "id": 4, "answer": "відповідь" },
+            { "id": 5, "answer": "читати" },
+            { "id": 6, "answer": "говорити" }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Перевірте форму іменника після прийменника.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    },
+    {
+      "id": "block-6",
+      "phase": 3,
+      "type": "match-up",
+      "mode": "вдома",
+      "activity": {
+        "id": "activity-match-2",
+        "type": "match-up",
+        "title": "Повторіть слова",
+        "level": "b1",
+        "payload": {
+          "type": "match-up",
+          "instruction": "Повторіть пари вдома.",
+          "pairs": [
+            { "left": "читати", "right": "працювати з текстом" },
+            { "left": "писати", "right": "створювати речення" },
+            { "left": "слухати", "right": "сприймати мовлення" },
+            { "left": "говорити", "right": "висловлювати думку" },
+            { "left": "пояснювати", "right": "робити зміст зрозумілим" }
+          ]
+        },
+        "answer_key": {
+          "pairs": [
+            { "left_index": 0, "right_index": 0 },
+            { "left_index": 1, "right_index": 1 },
+            { "left_index": 2, "right_index": 2 },
+            { "left_index": 3, "right_index": 3 },
+            { "left_index": 4, "right_index": 4 }
+          ]
+        },
+        "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"] }
+      },
+      "answer_key": "Учитель переглядає усні пояснення на наступній зустрічі.",
+      "mark": "warn",
+      "note": "Макетний вміст не виведено з опорного тексту; підтвердьте його перед прийняттям.",
+      "edited": false,
+      "provenance": { "source": "generated", "generator": "mock", "gates": ["fixture"], "external_options": true }
+    }
+  ],
+  "rejected": [],
+  "created_at": "2026-07-10T00:00:00Z",
+  "updated_at": "2026-07-10T00:00:00Z"
+}
