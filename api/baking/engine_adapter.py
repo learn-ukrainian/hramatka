@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from hramatka.engine import data, pipeline, schema
+from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 
 from .port import BakeError
@@ -88,7 +89,7 @@ class EngineLessonBaker:
         self._bundle = bundle
         self._cache_dir = cache_dir
 
-    def bake(self, anchor: str, duration: int, focus: str | None) -> dict[str, Any]:
+    def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
         """Run the engine and return a lu.lesson.v1 block template.
 
         The durable layer (`api.lesson.materialize_lesson`) binds id/anchor/
@@ -132,7 +133,17 @@ class EngineLessonBaker:
             self._block(shipped[slot % len(shipped)], slot, phase)
             for slot, phase in enumerate(plan)
         ]
-        return {"blocks": blocks, "rejected": rejected_entries(result.activities)}
+        # Pipeline carries these diagnostics in IR.  The fallback keeps direct
+        # adapter callers honest while older cached results are still readable.
+        anchor_body = result.anchor["body_uk"]
+        anchor_diagnostics = result.anchor.get("diagnostics")
+        if anchor_diagnostics is None:
+            anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
+        return {
+            "blocks": blocks,
+            "rejected": rejected_entries(result.activities),
+            "anchor_diagnostics": anchor_diagnostics,
+        }
 
     def _block(self, ir, slot: int, phase: int) -> dict:
         activity = ir.activity
@@ -151,7 +162,7 @@ class EngineLessonBaker:
             "provenance": {"source": "generated", "generator": GEMMA_MODEL, "gates": gates},
         }
         note = (
-            "Згенеровано з опори; є попередження гейтів — підтвердьте перед прийняттям."
+            _teacher_note(ir)
             if review
             else "Згенеровано з опори; гейти чисті — звірте перед уроком."
         )
@@ -174,12 +185,47 @@ class EngineLessonBaker:
         }
 
 
+_NOTE_REASONS = {
+    "evidence_span": "опору не вдалося повністю підтвердити",
+    "false_statement": "хибне твердження потребує підтвердження",
+    "vesum_token": "є неперевірена або позначена словоформа",
+    "numeral": "є попередження щодо числівника",
+    "matchup_semantics": "зв’язок у парі потребує звірки",
+    "cloze_answer": "відповідь у пропуску потребує звірки",
+    "cloze_gap": "у вправі бракує коректного пропуску",
+    "partition": "частину вправи вилучено після перевірки",
+    "schema": "структура вправи потребує звірки",
+}
+
+
+def _reason_phrase(gate: str) -> str:
+    """Short Ukrainian teacher-facing wording for a machine gate reason."""
+    return _NOTE_REASONS.get(gate, "є попередження автоматичної перевірки")
+
+
+def _teacher_note(ir) -> str:
+    """Surface every warn/flag cause in the block the teacher actually sees."""
+    reason_gates: list[str] = []
+    for check in ir.gate_result.checks:
+        if check.status == "warn" and check.gate not in reason_gates:
+            reason_gates.append(check.gate)
+    for flag in ir.flagged:
+        for reason in flag.get("reasons", []):
+            gate = reason.get("gate")
+            if isinstance(gate, str) and gate not in reason_gates:
+                reason_gates.append(gate)
+    phrases = "; ".join(_reason_phrase(gate) for gate in reason_gates)
+    if not phrases:
+        phrases = _reason_phrase("partition")
+    return f"Згенеровано з опори; перевірте: {phrases} — підтвердьте перед прийняттям."
+
+
 def _failed_gate(ir) -> str:
-    """The gate name of the first FAIL check on a dropped activity."""
-    for c in ir.gate_result.checks:
-        if c.status == "fail":
-            return c.gate
-    return "gated"
+    """Return only a concrete failed gate name; never fabricate a vague cause."""
+    for check in ir.gate_result.checks:
+        if check.status == "fail" and check.gate:
+            return check.gate
+    return "unknown"
 
 
 def rejected_entries(activities: list) -> list[dict]:
@@ -199,12 +245,20 @@ def rejected_entries(activities: list) -> list[dict]:
             )
             continue
         for flag in ir.flagged:
-            reasons = flag.get("reasons") or [{}]
+            reasons = flag.get("reasons") or []
+            gate = next(
+                (
+                    reason["gate"]
+                    for reason in reasons
+                    if isinstance(reason.get("gate"), str) and reason["gate"]
+                ),
+                "unknown",
+            )
             out.append(
                 {
                     "type": "gate-failed",
                     "activity": flag["item"],
-                    "reason": f"gate-failed:{reasons[0].get('gate', 'gated')}",
+                    "reason": f"gate-failed:{gate}",
                 }
             )
     return out

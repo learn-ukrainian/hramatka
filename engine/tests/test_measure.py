@@ -40,7 +40,54 @@ def test_numeral_bank_recall_separates_good_and_bad(tmp_path):
     # every positive probe accepted; every negative-bank string rejected
     assert bank["positive_pass"] == bank["positive_total"]
     assert bank["negative_reject"] == bank["negative_total"]
-    assert bank["negative_total"] >= 5
+    assert bank["positive_clean"] + bank["positive_warn"] == bank["positive_total"]
+    assert bank["negative_total"] >= 8
+
+
+def test_default_numeral_corpus_covers_step7_classes_and_keeps_warns_honest(tmp_path):
+    # The hard metric is 100% accepted / 100% rejected. Legal but
+    # context-dependent forms remain visible as review-required instead of
+    # being mislabeled clean passes.
+    positive, negative = measure.default_numeral_bank()
+    classes = {row["class"] for row in [*positive, *negative]}
+    assert {
+        "date",
+        "range",
+        "mixed-fraction",
+        "decimal",
+        "percentage",
+        "ordinal",
+        "ambiguous-preposition",
+        "collective",
+        "gender-agreement",
+    } <= classes
+    assert {
+        "23 квітня",
+        "1939–1940 роки",
+        "два з половиною рази",
+        "два з чвертю метри",
+        "три з третиною роки",
+        "2,5 рази",
+        "на сім відсотків",
+        "сімнадцятий поверх",
+        "з двома студентами",
+        "двоє студентів",
+        "дві столи",
+    } <= {row["phrase"] for row in [*positive, *negative]}
+
+    rep = measure.measure(
+        [fixtures.load_anchor()],
+        generator=fixtures.mock_generator,
+        out_dir=tmp_path / "m",
+        cache_dir=tmp_path / "c",
+    )
+    bank = rep["numeral_bank"]
+    assert bank["positive_pass"] == bank["positive_total"]
+    assert bank["negative_reject"] == bank["negative_total"]
+    assert bank["positive_warn"] > 0
+    assert "review-required" in (tmp_path / "m" / "measure-report.html").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_measure_html_surfaces_flagged_items(tmp_path):

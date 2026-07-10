@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from typing import Any
 
 from .store import JobRecord, now_iso
@@ -11,6 +12,7 @@ from .store import JobRecord, now_iso
 def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, Any]:
     """Bind an engine template to its durable job without changing block content."""
     lesson = copy.deepcopy(template)
+    anchor_diagnostics = lesson.pop("anchor_diagnostics", [])
     timestamp = now_iso()
     lesson.update(
         {
@@ -24,6 +26,11 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
                 "text": job.anchor_text,
                 "source": job.anchor_source,
                 "chars": len(job.anchor_text),
+                "fingerprint": anchor_fingerprint(job.anchor_text),
+                # Never call a pasted/linked quotation linguistically clean by
+                # default.  The real engine supplies baseline diagnostics; the
+                # mock keeps this empty rather than fabricating verification.
+                "diagnostics": anchor_diagnostics,
             },
             "duration": job.duration,
             "version": 1,
@@ -45,6 +52,11 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
             },
         ]
     return lesson
+
+
+def anchor_fingerprint(anchor: str) -> str:
+    """A content-only, stable anchor identity safe to emit in the private lesson."""
+    return hashlib.sha256(anchor.encode("utf-8")).hexdigest()
 
 
 def title_from_anchor(anchor: str) -> str:

@@ -130,6 +130,12 @@ ORDINAL = "ordinal"
 DECIMAL = "decimal"
 HYPHENATED = "hyphenated"
 
+# A range may use an ASCII hyphen or Ukrainian typography's en dash.  Both
+# spellings are intentionally sent to teacher review rather than treated as a
+# single cardinal.  (The latter was absent from the original regression bank,
+# so ``1939–1940`` could fall through as "no numeral found".)
+_RANGE_SEPARATORS = "-–"
+
 # Lemma → class, for cardinal numeral WORDS (VESUM pos == "numr"). Digits are
 # classified arithmetically in `_classify_token` instead (VESUM has no
 # entries for bare digit strings like "17").
@@ -258,7 +264,9 @@ def _classify_token(token: str) -> _TokenInfo | None:
     core = _strip(token)
     if not core:
         return None
-    if "-" in core and _looks_numeral(core.split("-", 1)[0]):
+    if any(separator in core for separator in _RANGE_SEPARATORS) and _looks_numeral(
+        re.split(f"[{_RANGE_SEPARATORS}]", core, maxsplit=1)[0]
+    ):
         return _TokenInfo(token=token, class_=HYPHENATED, lemma=core)
     if _DIGIT_RE.match(core):
         return _classify_digit(token)

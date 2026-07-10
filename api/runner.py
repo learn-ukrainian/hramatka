@@ -73,7 +73,18 @@ class BakeRunner:
 
     def _run_job(self, job) -> None:
         try:
-            template = self._baker.bake(job.anchor_text, job.duration, job.focus)
+            # Preserve anchor provenance across the durable-job / engine seam.
+            # Mock bakers still receive a compatible value and intentionally
+            # ignore it; the real baker forwards it to the engine snapshot.
+            template = self._baker.bake(
+                {
+                    "anchor_id": job.id,
+                    "body_uk": job.anchor_text,
+                    "source": job.anchor_source,
+                },
+                job.duration,
+                job.focus,
+            )
             if not self._store.set_step(job.id, "перевірка"):
                 return
             lesson = materialize_lesson(template, job)

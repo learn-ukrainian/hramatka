@@ -562,3 +562,12 @@ def test_hyphen_digit_range_warns():
     result = check_numeral_government("2-3 рази")
     assert result["status"] == "warn"
     assert _rule(result) == "hyphenated-token"
+
+
+def test_en_dash_year_range_warns_instead_of_false_failing():
+    # The real adversarial anchor class uses Ukrainian typography, not ASCII:
+    # 1939–1940. This is a range, not a malformed single cardinal, so it must
+    # reach the conservative range warning rather than no-numeral-found.
+    result = check_numeral_government("1939–1940 роки")
+    assert result["status"] == "warn"
+    assert _rule(result) == "hyphenated-token"

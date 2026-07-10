@@ -23,7 +23,7 @@ from importlib import metadata
 from pathlib import Path
 
 from . import ENGINE_VERSION, data, paths, retrieval, schema, vendoring
-from .gates import evidence_span, numeral
+from .gates import evidence_span, matchup_semantics, numeral
 from .gates import vesum as vesum_gate
 from .generate import (
     GEMMA_MODEL,
@@ -59,14 +59,21 @@ def snapshot_anchor(anchor: str | dict) -> dict:
     if isinstance(anchor, dict):
         body = anchor.get("body_uk") or anchor.get("body") or ""
         anchor_id = anchor.get("anchor_id") or _sha(body)[:12]
+        source = anchor.get("source", "teacher-paste")
     else:
         body = anchor
         anchor_id = _sha(body)[:12]
+        source = "teacher-paste"
     body = retrieval.nfc(body)
+    if source not in {"teacher-paste", "teacher-url"}:
+        raise ValueError("anchor source must be teacher-paste or teacher-url")
     return {
         "anchor_id": anchor_id,
         "body_uk": body,
         "hash": _sha(body),
+        "source": source,
+        # This is content identity only — no external URL or teacher identity.
+        "content_fingerprint": _sha(body),
         "char_len": len(body),
     }
 
@@ -287,6 +294,16 @@ def _gate_match_up(
         if worst != "pass":
             bad = [v for v in token_verdicts if v["status"] == worst]
             gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
+        semantic_verdict = matchup_semantics.check_pair(
+            left, right, atlas_lookup=atlas_lookup
+        )
+        if semantic_verdict["status"] != "pass":
+            gr.add(
+                "matchup_semantics",
+                semantic_verdict["status"],
+                semantic_verdict["detail"],
+                locator=loc,
+            )
 
 
 _GATE_CHAINS: dict[str, Callable] = {
@@ -512,6 +529,8 @@ def run(
     provenance = {
         "anchor_id": snap["anchor_id"],
         "anchor_hash": snap["hash"],
+        "anchor_source": snap["source"],
+        "anchor_content_fingerprint": snap["content_fingerprint"],
         "level": level,
         "pedagogy": pedagogy,
         "phase": phase,
@@ -548,6 +567,12 @@ def run(
     # is caught too, not only one quoted from the anchor.
     atlas_lookup = retrieval.augmented_atlas_lookup(
         snap["body_uk"], raw_activities, grounding["atlas_lookup"], atlas_db=atlas_db
+    )
+    # Treat the source as a quotation rather than a clean linguistic baseline.
+    # These diagnostics belong in IR + the emitted private document, but do not
+    # become task-language gate failures (Sol defect 7/8).
+    snap["diagnostics"] = vesum_gate.anchor_baseline_diagnostics(
+        snap["body_uk"], atlas_lookup=atlas_lookup
     )
     for raw in raw_activities:
         ir = gate_activity(raw, snap["body_uk"], provenance, atlas_lookup=atlas_lookup)

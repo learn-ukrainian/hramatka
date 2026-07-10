@@ -272,37 +272,78 @@ class JobStore:
         return cursor.rowcount
 
     def acknowledge_warning(self, lesson_id: str, block_id: str) -> JobRecord:
-        job = self._require_ready_job(lesson_id)
-        lesson = self._require_lesson(job)
-        visible_warning_ids = {
-            block["id"] for block in self._visible_blocks(lesson) if block.get("mark") == "warn"
-        }
-        if block_id not in visible_warning_ids:
-            raise ValueError("That block is not a visible warning requiring acknowledgement.")
-        acknowledgements = set(job.warning_acknowledgements)
-        acknowledgements.add(block_id)
-        self._write_acknowledgements(lesson_id, acknowledgements)
-        updated = self.get(lesson_id)
-        if updated is None:  # pragma: no cover - job cannot disappear
-            raise RuntimeError("Durable lesson job disappeared while acknowledging a warning.")
+        # Read-modify-write must be a single write transaction.  Without the
+        # lock, concurrent acknowledgement requests can each read the same
+        # JSON array and lose one another's additions (TOCTOU / last writer
+        # wins).  BEGIN IMMEDIATE serializes the visible-block check, merge and
+        # durable write against accept_lesson as well.
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                job = self._require_ready_job_in_transaction(connection, lesson_id)
+                lesson = self._require_lesson(job)
+                visible_warning_ids = {
+                    block["id"]
+                    for block in self._visible_blocks(lesson)
+                    if block.get("mark") == "warn"
+                }
+                if block_id not in visible_warning_ids:
+                    raise ValueError(
+                        "That block is not a visible warning requiring acknowledgement."
+                    )
+                acknowledgements = set(job.warning_acknowledgements)
+                acknowledgements.add(block_id)
+                connection.execute(
+                    """
+                    UPDATE lesson_jobs
+                    SET warning_acknowledgements_json = ?, updated_at = ?
+                    WHERE id = ? AND status = 'ready'
+                    """,
+                    (json.dumps(sorted(acknowledgements)), now_iso(), lesson_id),
+                )
+                updated = self._require_ready_job_in_transaction(connection, lesson_id)
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+            connection.execute("COMMIT")
         return updated
 
     def accept_lesson(self, lesson_id: str) -> JobRecord:
-        job = self._require_ready_job(lesson_id)
-        lesson = self._require_lesson(job)
-        required = {
-            block["id"] for block in self._visible_blocks(lesson) if block.get("mark") == "warn"
-        }
-        missing = sorted(required - set(job.warning_acknowledgements))
-        if missing:
-            raise WarningBlocksUnacknowledged(missing)
+        # Keep warning acknowledgement validation and acceptance in the same
+        # transaction.  A warning cannot be added/acknowledged between the
+        # validation read and the accepted document write.
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                job = self._require_ready_job_in_transaction(connection, lesson_id)
+                lesson = self._require_lesson(job)
+                required = {
+                    block["id"]
+                    for block in self._visible_blocks(lesson)
+                    if block.get("mark") == "warn"
+                }
+                missing = sorted(required - set(job.warning_acknowledgements))
+                if missing:
+                    raise WarningBlocksUnacknowledged(missing)
 
-        lesson["accepted"] = True
-        lesson["updated_at"] = now_iso()
-        self._write_lesson(lesson_id, lesson)
-        updated = self.get(lesson_id)
-        if updated is None:  # pragma: no cover - job cannot disappear
-            raise RuntimeError("Durable lesson job disappeared while accepting.")
+                lesson["accepted"] = True
+                lesson["updated_at"] = now_iso()
+                connection.execute(
+                    """
+                    UPDATE lesson_jobs SET lesson_json = ?, updated_at = ?
+                    WHERE id = ? AND status = 'ready'
+                    """,
+                    (
+                        json.dumps(lesson, ensure_ascii=False, separators=(",", ":")),
+                        now_iso(),
+                        lesson_id,
+                    ),
+                )
+                updated = self._require_ready_job_in_transaction(connection, lesson_id)
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+            connection.execute("COMMIT")
         return updated
 
     def return_to_draft(self, lesson_id: str) -> JobRecord:
@@ -315,17 +356,6 @@ class JobStore:
         if updated is None:  # pragma: no cover - job cannot disappear
             raise RuntimeError("Durable lesson job disappeared while returning to draft.")
         return updated
-
-    def _write_acknowledgements(self, lesson_id: str, acknowledgements: set[str]) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE lesson_jobs
-                SET warning_acknowledgements_json = ?, updated_at = ?
-                WHERE id = ? AND status = 'ready'
-                """,
-                (json.dumps(sorted(acknowledgements)), now_iso(), lesson_id),
-            )
 
     def _write_lesson(self, lesson_id: str, lesson: dict[str, Any]) -> None:
         with self._connect() as connection:
@@ -362,6 +392,18 @@ class JobStore:
         job = self.get(lesson_id)
         if job is None:
             raise KeyError(lesson_id)
+        if job.status != "ready":
+            raise RuntimeError("Lesson is not ready.")
+        return job
+
+    def _require_ready_job_in_transaction(
+        self, connection: sqlite3.Connection, lesson_id: str
+    ) -> JobRecord:
+        """Read a ready job using the caller's already-held transaction lock."""
+        row = connection.execute("SELECT * FROM lesson_jobs WHERE id = ?", (lesson_id,)).fetchone()
+        if row is None:
+            raise KeyError(lesson_id)
+        job = self._record(row)
         if job.status != "ready":
             raise RuntimeError("Lesson is not ready.")
         return job

@@ -79,13 +79,21 @@ def test_e2e_bake_emits_schema_valid_lesson(tmp_path):
     assert '"evidence":' not in _json.dumps(lesson, ensure_ascii=False)
     # 5) block mark carries the tri-state gate verdict end-to-end (Sol defect 1):
     #    the true-false ships review_required (a FALSE-statement warn) -> warn,
-    #    the clean cloze/match-up -> ok. mark and external_options stay consistent
-    #    with the vendored schema's "external_options => warn" rule.
+    #    cloze remains clean; MatchUp has no Atlas-proven synonym evidence in
+    #    the compact fixture and therefore honestly warns (Sol defect 6).
+    #    Mark and external_options stay consistent with the vendored schema's
+    #    "external_options => warn" rule.
     marks = {b["type"]: b["mark"] for b in lesson["blocks"]}
     assert marks["true-false"] == "warn"
-    assert marks["cloze"] == "ok" and marks["match-up"] == "ok"
+    assert marks["cloze"] == "ok" and marks["match-up"] == "warn"
     for b in lesson["blocks"]:
         assert b["provenance"]["external_options"] is (b["mark"] == "warn")
+    # grok p47 nit 2: teacher-visible notes name the actual warning reason,
+    # not a generic "gate warning" hidden behind the IR.
+    true_false = next(b for b in lesson["blocks"] if b["type"] == "true-false")
+    match_up = next(b for b in lesson["blocks"] if b["type"] == "match-up")
+    assert "хибне твердження" in true_false["note"]
+    assert "зв’язок у парі" in match_up["note"]
 
 
 def test_e2e_bake_raises_bakeerror_when_generator_unavailable(tmp_path):

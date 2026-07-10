@@ -128,6 +128,62 @@ def check_tokens(
     return verdicts
 
 
+def anchor_baseline_diagnostics(
+    anchor_body: str,
+    *,
+    atlas_lookup: dict | None = None,
+) -> list[dict]:
+    """Return source-baseline warnings without treating the anchor as task text.
+
+    Teacher-pasted and teacher-linked anchors are quotations, not an assertion
+    that every form in them is normative Ukrainian.  The task-language gate
+    deliberately leaves verbatim source text intact; this companion diagnostic
+    makes any form that VESUM cannot verify (or that Atlas marks as heritage /
+    russianism) visible as ``flagged-not-verified`` in the private document.
+
+    This is intentionally *not* a GateResult check.  A questionable source
+    quote must be visible to the teacher but must not make otherwise B1 task
+    wording fail merely because its anchor is C1, dialectal, or contains an
+    original-source error.
+    """
+    tokens = content_tokens(anchor_body)
+    lowered = sorted({token.lower() for token in tokens})
+    matches_by_token = verify_words(lowered, db_path=paths.vesum_db()) if lowered else {}
+    diagnostics: list[dict] = []
+    seen: set[str] = set()
+
+    for token in tokens:
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        matches = matches_by_token.get(key, [])
+        heritage = _heritage_flag(matches, atlas_lookup)
+        if not matches:
+            diagnostics.append(
+                {
+                    "form": token,
+                    "status": "flagged-not-verified",
+                    "reason": (
+                        "Форму в опорному тексті не підтверджено VESUM; це цитата, "
+                        "а не перевірена нормативна форма."
+                    ),
+                }
+            )
+        elif heritage:
+            diagnostics.append(
+                {
+                    "form": token,
+                    "status": "flagged-not-verified",
+                    "reason": (
+                        "Форму в опорному тексті позначено як "
+                        f"{heritage}; це цитата, а не перевірена нормативна форма."
+                    ),
+                }
+            )
+    return diagnostics
+
+
 def worst_status(verdicts: list[dict]) -> str:
     """fail > warn > pass across a verdict list."""
     statuses = {v["status"] for v in verdicts}

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 class LessonBaker(Protocol):
     """Future engines must return a ``lu.lesson.v1`` document template."""
 
-    def bake(self, anchor: str, duration: int, focus: str | None) -> dict[str, Any]: ...
+    def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]: ...
 
 
 class BakeError(RuntimeError):

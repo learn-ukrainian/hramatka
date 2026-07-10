@@ -14,7 +14,8 @@ those references dangles. This step makes the private engine self-contained.
    ONLY from the vendor dir and verifies digests before use.
 2. **Data manifests**: resolve `vesum.db`/`atlas.db`/`sources.db` from
    `HRAMATKA_DATA_DIR` through a digest-pinned `data-manifest.json`; refuse on
-   mismatch unless `HRAMATKA_ALLOW_DATA_DRIFT=1`. Kill `PROJECT_ROOT/data`,
+   mismatch unless `HRAMATKA_ALLOW_DATA_DRIFT=1`. The manifest pins one copied
+   **release**, never a mutable live `data/` directory. Kill `PROJECT_ROOT/data`,
    `../`-escapes and dev-home paths.
 3. **Full-input fingerprint** (Sol defect #4/item 4): anchor + level + pedagogy
    + phase + requested types + prompt digest + package versions + engine version
@@ -53,6 +54,32 @@ SQLite bundle in a tmp dir from committed JSON fixtures (`vesum_forms.json`,
 suite touches, plus a synthetic B1 `anchor01.txt` (no teacher text). The engine
 runs identically against the fixture bundle and the production bundle — the only
 difference is which digests the manifest pins.
+
+## Corpus release procedure
+`data-manifest.json` is a pin for an immutable release snapshot — it must never
+be a description of an operator's mutable `data/` directory. Build that snapshot
+outside the repository with:
+
+```bash
+python -m hramatka.engine.tools.make_data_release /private/corpus-inputs
+```
+
+The source directory must contain `vesum.db`, `atlas.db`, and `sources.db`. The
+tool copies them into
+`~/hramatka-data-releases/<YYYY-MM-DD>-<short-content-digest>/`, calculates
+fresh SHA-256 values from the copied files, writes that release's
+`data-manifest.json`, and prints the exact command to select it:
+
+```bash
+export HRAMATKA_DATA_DIR=/home/operator/hramatka-data-releases/<YYYY-MM-DD>-<short-content-digest>
+```
+
+The release-local manifest is the promotion candidate. After its content has
+been reviewed, promote its digest records to the engine's pinned manifest (or
+use it explicitly via `HRAMATKA_DATA_MANIFEST` for a local staging run). Normal
+runtime configuration needs only the printed `HRAMATKA_DATA_DIR` line when the
+committed manifest already pins that approved release. Neither the source DBs
+nor a generated release directory belong in git.
 
 ## Out of scope (step 4 / later)
 - Sol engine-integration defects other than fingerprint identity (warning

@@ -12,8 +12,8 @@
   "adaptation": "Hand-derived offline JSON Schema from the pinned Markdown contract (not a shipped public schema). Provenance markdown kept at docs/vendor/lesson-document-v1.md.",
   "files": {
     "lu.lesson.v1.schema.json": {
-      "sha256": "590ce9afd74f332e947f60d9664a237e4d1dd50c7f99122d199f8f205cddca37",
-      "size": 5540
+      "sha256": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c",
+      "size": 6119
     }
   }
 }

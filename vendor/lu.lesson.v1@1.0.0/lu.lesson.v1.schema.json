@@ -33,11 +33,28 @@
     "anchor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["text", "source", "chars"],
+      "required": ["text", "source", "chars", "fingerprint", "diagnostics"],
       "properties": {
         "text": { "type": "string", "minLength": 1 },
         "source": { "enum": ["teacher-paste", "teacher-url"] },
-        "chars": { "type": "integer", "minimum": 1 }
+        "chars": { "type": "integer", "minimum": 1 },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["form", "status", "reason"],
+            "properties": {
+              "form": { "type": "string", "minLength": 1 },
+              "status": { "const": "flagged-not-verified" },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "duration": { "enum": [45, 60, 90] },

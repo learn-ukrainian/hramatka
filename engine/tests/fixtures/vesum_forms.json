@@ -138,6 +138,30 @@
   "pos": "prep"
  },
  {
+  "word_form": "відсотки",
+  "lemma": "відсоток",
+  "tags": "noun:inanim:p:v_kly",
+  "pos": "noun"
+ },
+ {
+  "word_form": "відсотки",
+  "lemma": "відсоток",
+  "tags": "noun:inanim:p:v_naz",
+  "pos": "noun"
+ },
+ {
+  "word_form": "відсотки",
+  "lemma": "відсоток",
+  "tags": "noun:inanim:p:v_zna",
+  "pos": "noun"
+ },
+ {
+  "word_form": "відсотків",
+  "lemma": "відсоток",
+  "tags": "noun:inanim:p:v_rod",
+  "pos": "noun"
+ },
+ {
   "word_form": "головного",
   "lemma": "головний",
   "tags": "adj:m:v_rod:compb",
@@ -1840,6 +1864,36 @@
   "lemma": "січень",
   "tags": "noun:inanim:m:v_rod",
   "pos": "noun"
+ },
+ {
+  "word_form": "сім",
+  "lemma": "сей",
+  "tags": "adj:m:v_mis:pron:dem:arch",
+  "pos": "adj"
+ },
+ {
+  "word_form": "сім",
+  "lemma": "сей",
+  "tags": "adj:n:v_mis:pron:dem:arch",
+  "pos": "adj"
+ },
+ {
+  "word_form": "сім",
+  "lemma": "се",
+  "tags": "noun:inanim:n:v_mis:pron:dem:arch",
+  "pos": "noun"
+ },
+ {
+  "word_form": "сім",
+  "lemma": "сім",
+  "tags": "numr:p:v_naz",
+  "pos": "numr"
+ },
+ {
+  "word_form": "сім",
+  "lemma": "сім",
+  "tags": "numr:p:v_zna",
+  "pos": "numr"
  },
  {
   "word_form": "тексті",

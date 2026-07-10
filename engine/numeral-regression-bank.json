@@ -1,0 +1,155 @@
+{
+  "format": "hramatka.numeral-regression.v1",
+  "description": "Synthetic offline regression corpus. It contains only short, VESUM-verified linguistic forms; no teacher text or corpus excerpts.",
+  "positive": [
+    {
+      "id": "date-digit-month",
+      "class": "date",
+      "phrase": "23 квітня",
+      "context_case": null,
+      "accepted_statuses": ["pass"]
+    },
+    {
+      "id": "range-en-dash",
+      "class": "range",
+      "phrase": "1939–1940 роки",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "fraction-half",
+      "class": "mixed-fraction",
+      "phrase": "два з половиною рази",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "fraction-quarter",
+      "class": "mixed-fraction",
+      "phrase": "два з чвертю метри",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "fraction-third",
+      "class": "mixed-fraction",
+      "phrase": "три з третиною роки",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "decimal",
+      "class": "decimal",
+      "phrase": "2,5 рази",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "percentage",
+      "class": "percentage",
+      "phrase": "на сім відсотків",
+      "context_case": "acc",
+      "accepted_statuses": ["pass"]
+    },
+    {
+      "id": "ordinal",
+      "class": "ordinal",
+      "phrase": "сімнадцятий поверх",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "ambiguous-z",
+      "class": "ambiguous-preposition",
+      "phrase": "з двома студентами",
+      "context_case": null,
+      "accepted_statuses": ["warn"]
+    },
+    {
+      "id": "collective",
+      "class": "collective",
+      "phrase": "двоє студентів",
+      "context_case": null,
+      "accepted_statuses": ["pass"]
+    },
+    {
+      "id": "gender-masculine",
+      "class": "gender-agreement",
+      "phrase": "два столи",
+      "context_case": null,
+      "accepted_statuses": ["pass"]
+    },
+    {
+      "id": "gender-feminine",
+      "class": "gender-agreement",
+      "phrase": "дві книги",
+      "context_case": null,
+      "accepted_statuses": ["pass"]
+    },
+    {
+      "id": "half-cardinal",
+      "class": "half-cardinal",
+      "phrase": "півтора року",
+      "context_case": null,
+      "accepted_statuses": ["pass"]
+    }
+  ],
+  "negative": [
+    {
+      "id": "date-nominative-month",
+      "class": "date",
+      "phrase": "23 квітень",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "fraction-missing-noun",
+      "class": "mixed-fraction",
+      "phrase": "два з половиною",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "percentage-nominative-complement",
+      "class": "percentage",
+      "phrase": "на сім відсотки",
+      "context_case": "acc",
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "ambiguous-z-resolved-wrong-case",
+      "class": "ambiguous-preposition",
+      "phrase": "з двома студенти",
+      "context_case": "instr",
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "collective-nominative-complement",
+      "class": "collective",
+      "phrase": "двоє студенти",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "gender-feminine-with-masculine",
+      "class": "gender-agreement",
+      "phrase": "дві столи",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "gender-masculine-with-feminine",
+      "class": "gender-agreement",
+      "phrase": "два книги",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    },
+    {
+      "id": "cardinal-nominative-complement",
+      "class": "cardinal-government",
+      "phrase": "п'ять студенти",
+      "context_case": null,
+      "accepted_statuses": ["fail"]
+    }
+  ]
+}
