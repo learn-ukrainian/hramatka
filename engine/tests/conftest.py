@@ -32,8 +32,19 @@ def _sha_size(path: Path) -> tuple[str, int]:
     return hashlib.sha256(b).hexdigest(), len(b)
 
 
+def _seed() -> dict:
+    """Extra rows NOT extracted from the real corpus (e.g. the seeded
+    russianism for the defect-5 e2e), kept in their own file so a
+    `_build_fixtures` regeneration of the extracted JSON never clobbers them."""
+    path = FIXTURES / "seeded_russianism.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _build_vesum_db(path: Path) -> None:
     rows = json.loads((FIXTURES / "vesum_forms.json").read_text(encoding="utf-8"))
+    rows = [*rows, *_seed().get("vesum_forms", [])]
     conn = sqlite3.connect(path)
     try:
         conn.execute(
@@ -51,6 +62,7 @@ def _build_vesum_db(path: Path) -> None:
 
 def _build_atlas_db(path: Path) -> None:
     payloads = json.loads((FIXTURES / "atlas_rows.json").read_text(encoding="utf-8"))
+    payloads = [*payloads, *_seed().get("atlas_rows", [])]
     conn = sqlite3.connect(path)
     try:
         conn.execute(

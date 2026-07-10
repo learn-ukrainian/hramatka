@@ -15,6 +15,18 @@ class IdempotencyConflict(ValueError):
     """A caller reused a lesson id for different bake inputs."""
 
 
+class WarningBlocksUnacknowledged(ValueError):
+    """Accept refused: visible `warn` blocks still need explicit teacher
+    acknowledgement (Sol defect 1). Carries the offending block ids so the API
+    can return a machine-readable 409 body, not just a prose string."""
+
+    def __init__(self, block_ids: list[str]) -> None:
+        self.block_ids = list(block_ids)
+        super().__init__(
+            "Visible warning blocks still need acknowledgement: " + ", ".join(block_ids)
+        )
+
+
 @dataclass(frozen=True)
 class JobRecord:
     id: str
@@ -283,9 +295,7 @@ class JobStore:
         }
         missing = sorted(required - set(job.warning_acknowledgements))
         if missing:
-            raise ValueError(
-                "Visible warning blocks still need acknowledgement: " + ", ".join(missing)
-            )
+            raise WarningBlocksUnacknowledged(missing)
 
         lesson["accepted"] = True
         lesson["updated_at"] = now_iso()

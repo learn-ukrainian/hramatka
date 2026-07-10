@@ -1,0 +1,28 @@
+{
+  "note": "Seeded lexical russianism for the Sol defect-5 russianism-gate e2e tests. NOT extracted from the real corpus (kept out of the _build_fixtures overwrite, in its own file that conftest merges into the offline bundle): the fixture bundle needs a KNOWN heritage=russianism lemma to prove the gate wiring offline. 'получка' is a lexical russianism/surzhyk for питомий 'зарплата/платня' — VESUM-attested as a form (so an INTRODUCED occurrence warns rather than fails) yet atlas-flagged heritage=russianism.",
+  "vesum_forms": [
+    {"word_form": "получка", "lemma": "получка", "tags": "noun:inanim:f:v_naz", "pos": "noun"},
+    {"word_form": "получку", "lemma": "получка", "tags": "noun:inanim:f:v_zna", "pos": "noun"},
+    {"word_form": "получки", "lemma": "получка", "tags": "noun:inanim:f:v_rod", "pos": "noun"}
+  ],
+  "atlas_rows": [
+    {
+      "lemma": "получка",
+      "pos": "noun",
+      "enrichment": {
+        "cefr": {"level": "B1", "source": "seeded-russianism-fixture", "text": "получка (B1, іменник)"}
+      },
+      "heritage_status": {
+        "classification": "russianism",
+        "attestations": [
+          {"source": "VESUM", "ref": "получка", "detail": "attested form; lexical russianism"}
+        ],
+        "is_russianism": true,
+        "russian_shadow": true,
+        "vesum_attested": true,
+        "calque_warning": "російськомовна калька; питомий відповідник: зарплата / платня",
+        "warning_severity": "warning"
+      }
+    }
+  ]
+}

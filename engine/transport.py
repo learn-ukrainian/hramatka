@@ -60,21 +60,23 @@ class AISGeneratorPort:
         self,
         *,
         api_key: str | None = None,
+        api_key_env: str = AIS_API_KEY_ENV,
         model: str = GEMMA_MODEL,
         timeout_s: int = GEMMA_TIMEOUT_S,
         transport: Transport | None = None,
     ) -> None:
         self._api_key = api_key
+        self._api_key_env = api_key_env
         self._model = model
         self._timeout_s = timeout_s
         self._transport: Transport = transport or _unwired_transport
 
     def _resolve_key(self) -> str:
-        key = self._api_key if self._api_key is not None else os.environ.get(AIS_API_KEY_ENV)
+        key = self._api_key if self._api_key is not None else os.environ.get(self._api_key_env)
         if not key:
             raise GeneratorUnavailable(
-                f"{AIS_API_KEY_ENV} is not set — the locked route "
-                f"({self._model}, toolless) requires the AIS key."
+                f"{self._api_key_env} is not set — the locked route "
+                f"({self._model}, toolless) requires the key."
             )
         return key
 

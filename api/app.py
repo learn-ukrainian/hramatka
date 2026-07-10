@@ -14,7 +14,7 @@ from .baking.port import LessonBaker
 from .config import Settings
 from .models import LessonCreate, StatusResponse
 from .runner import BakeRunner
-from .store import IdempotencyConflict, JobRecord, JobStore
+from .store import IdempotencyConflict, JobRecord, JobStore, WarningBlocksUnacknowledged
 
 
 def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = None) -> FastAPI:
@@ -119,6 +119,17 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Lesson not found",
+            ) from error
+        except WarningBlocksUnacknowledged as error:
+            # Machine-readable 409 (Sol defect 1): the client can drive the
+            # teacher straight to the offending blocks, not parse a prose string.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "warning_blocks_unacknowledged",
+                    "blocks": error.block_ids,
+                    "message": str(error),
+                },
             ) from error
         except RuntimeError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error

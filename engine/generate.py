@@ -1,10 +1,11 @@
 """Generation (slice-1 §5) — Gemma 4, toolless, $0 AIS. Generator INJECTABLE.
 
 The real generator is `call_gemma`, an `AISGeneratorPort` over the locked route
-(`google-ais/gemma-4-31b-it`, toolless) whose AIS key comes from the
-`HRAMATKA_AIS_API_KEY` env var — no `scripts.*` import and no dev-home key path.
-`generate()` takes any `generator: Callable[[str], str]`, so unit tests inject a
-MOCK returning fixture JSON — NO real Gemma in pytest.
+(`google-ais/gemma-4-31b-it`, toolless) wired to the real HTTP client (step-4a
+swap) whose AIS key comes from the `HRAMATKA_AIS_API_KEY` env var — no
+`scripts.*` import and no dev-home key path. `generate()` takes any
+`generator: Callable[[str], str]`, so unit tests inject a MOCK returning fixture
+JSON — NO real Gemma in pytest.
 
 Robustness: a `SystemExit` from a transport guard becomes a typed
 `GeneratorUnavailable` (never crashes the pipeline); unparseable output is
@@ -16,9 +17,9 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
+from .providers import make_generator
 from .transport import (
     GEMMA_MODEL,
-    AISGeneratorPort,
     GenerationUnparseable,
     GeneratorUnavailable,
 )
@@ -30,10 +31,13 @@ __all__ = [
     "call_gemma",
     "extract_json",
     "generate",
+    "make_generator",
 ]
 
-# The default real generator: the private AIS transport (env key, toolless).
-call_gemma = AISGeneratorPort()
+# The default real generator: the locked Gemma AIS route over the real HTTP
+# transport (env key, toolless). Constructing it performs no network I/O and
+# needs no key — only an actual generation resolves the key and calls out.
+call_gemma = make_generator("gemma-ais")
 
 
 def extract_json(text: str) -> dict | None:

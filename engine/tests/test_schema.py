@@ -84,11 +84,22 @@ def test_validate_b1_rejects_unknown_type():
         S.validate_b1({"type": "totally-not-a-type", "instruction": "І"})
 
 
-def test_gate_result_passed_flips_on_fail():
+def test_gate_result_status_tracks_worst_check():
+    # Tri-state (Sol defect 1): clean -> review_required -> failed, monotonic,
+    # with `passed` preserved as "ships" (clean OR review_required).
     gr = S.GateResult()
+    assert gr.status == S.GATE_CLEAN and gr.passed is True
     gr.add("evidence_span", "pass", "ok")
-    assert gr.passed is True
+    assert gr.status == S.GATE_CLEAN and gr.passed is True
     gr.add("evidence_span", "warn", "meh")
-    assert gr.passed is True  # warn does not fail
+    assert gr.status == S.GATE_REVIEW and gr.passed is True  # warn -> ships, must review
     gr.add("evidence_span", "fail", "bad")
-    assert gr.passed is False
+    assert gr.status == S.GATE_FAILED and gr.passed is False
+
+
+def test_gate_result_as_dict_carries_tristate_status():
+    gr = S.GateResult()
+    gr.add("evidence_span", "warn", "teacher-confirm")
+    d = gr.as_dict()
+    assert d["status"] == S.GATE_REVIEW
+    assert d["passed"] is True

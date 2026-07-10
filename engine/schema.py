@@ -54,6 +54,19 @@ class Evidence:
     kind: str = "literal"  # literal | inference | absent
 
 
+# Tri-state activity gate verdict (Sol separation review §Item 2, defect 1).
+# Replaces a single `passed` boolean so a consumer can tell "linguistically
+# clean, auto-acceptable" apart from "ships but a warning must block automatic
+# acceptance" apart from "dropped". A bare boolean conflated the first two,
+# which is exactly how a FALSE-statement WARN used to ship as if verified.
+GATE_CLEAN = "clean"  # ships; no gate warning — auto-acceptable
+GATE_REVIEW = "review_required"  # ships; a warn/salvage must block auto-accept
+GATE_FAILED = "failed"  # does NOT ship (dropped or too few items survived)
+
+_GATE_RANK = {GATE_CLEAN: 0, GATE_REVIEW: 1, GATE_FAILED: 2}
+_CHECK_TO_STATUS = {"pass": GATE_CLEAN, "warn": GATE_REVIEW, "fail": GATE_FAILED}
+
+
 @dataclass
 class GateCheck:
     gate: str
@@ -64,16 +77,26 @@ class GateCheck:
 
 @dataclass
 class GateResult:
-    passed: bool = True
+    # The authoritative tri-state verdict. `add()` escalates it monotonically as
+    # a sensible default; the pipeline OVERRIDES it after per-item salvage (a
+    # salvaged item's FAIL must not fail an activity that still ships).
+    status: str = GATE_CLEAN
     checks: list[GateCheck] = field(default_factory=list)
 
     def add(self, gate: str, status: str, detail: str, locator: str | None = None) -> None:
         self.checks.append(GateCheck(gate=gate, status=status, detail=detail, locator=locator))
-        if status == "fail":
-            self.passed = False
+        mapped = _CHECK_TO_STATUS.get(status, GATE_CLEAN)
+        if _GATE_RANK[mapped] > _GATE_RANK[self.status]:
+            self.status = mapped
+
+    @property
+    def passed(self) -> bool:
+        """Back-compat convenience: "this (possibly-filtered) activity ships"."""
+        return self.status != GATE_FAILED
 
     def as_dict(self) -> dict:
         return {
+            "status": self.status,
             "passed": self.passed,
             "checks": [
                 {"gate": c.gate, "status": c.status, "detail": c.detail, "locator": c.locator}

@@ -87,6 +87,23 @@ def _package_versions() -> dict:
     return versions
 
 
+def _gate_impl_digest() -> str:
+    """Content digest of the gate implementations + retrieval (review-p46 nit 2).
+
+    A change to gate LOGIC must reshuffle the bake fingerprint even when every
+    declared input is identical — otherwise cached raw generation would be
+    silently reused under different gating code. Hashes `gates/*.py` plus
+    `retrieval.py` by content, keyed by their relative path for stability.
+    """
+    gate_files = [*(paths.ENGINE_DIR / "gates").glob("*.py"), paths.ENGINE_DIR / "retrieval.py"]
+    h = hashlib.sha256()
+    for fp in sorted(gate_files, key=lambda p: p.relative_to(paths.ENGINE_DIR).as_posix()):
+        h.update(fp.relative_to(paths.ENGINE_DIR).as_posix().encode("utf-8"))
+        h.update(b"\0")
+        h.update(hashlib.sha256(fp.read_bytes()).digest())
+    return h.hexdigest()
+
+
 def fingerprint_inputs(
     *,
     anchor_hash: str,
@@ -100,10 +117,11 @@ def fingerprint_inputs(
     """The FULL bake-identity input set (Sol defect #4 / review item 4).
 
     Covers anchor + level + pedagogy + phase + requested types + prompt digest +
-    package versions + engine version + model + vendored-artifact digests +
-    data-bundle content digests. DBs are identified by CONTENT (sha256 from the
-    pinned data manifest), never size/mtime — so a re-run on the same inputs is
-    genuinely idempotent and any input change reshuffles the fingerprint.
+    package versions + engine version + model + gate-implementation digest +
+    vendored-artifact digests + data-bundle content digests. DBs are identified
+    by CONTENT (sha256 from the pinned data manifest), never size/mtime — so a
+    re-run on the same inputs is genuinely idempotent and any input change (data,
+    prompt, package, OR gate code) reshuffles the fingerprint.
     """
     return {
         "engine_version": ENGINE_VERSION,
@@ -115,6 +133,7 @@ def fingerprint_inputs(
         "types": sorted(types),
         "grounding_digest": _sha(grounding_text),
         "prompt_digest": _sha(prompt_template),
+        "gate_impl_digest": _gate_impl_digest(),
         "packages": _package_versions(),
         "vendor": vendoring.artifact_versions(),
         "data_bundle": data.active_bundle().digests(),
@@ -154,7 +173,11 @@ def _run_numeral_gate(text: str, gr: schema.GateResult, locator: str) -> None:
 
 
 def _gate_true_false(
-    activity: dict, evidence: list[schema.Evidence], anchor_body: str, gr: schema.GateResult
+    activity: dict,
+    evidence: list[schema.Evidence],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
 ) -> None:
     ev_by_loc = {e.locator: e for e in evidence}
     for i, item in enumerate(activity.get("items", [])):
@@ -167,9 +190,9 @@ def _gate_true_false(
             ev.char_start = verdict["char_start"]
             ev.char_end = verdict["char_end"]
             ev.kind = verdict["kind"]
-        # introduced-token validity on the statement
+        # introduced-token validity + heritage on the statement
         token_verdicts = vesum_gate.check_tokens(
-            vesum_gate.content_tokens(statement), anchor_body
+            vesum_gate.content_tokens(statement), anchor_body, atlas_lookup=atlas_lookup
         )
         worst = vesum_gate.worst_status(token_verdicts)
         if worst != "pass":
@@ -188,7 +211,11 @@ def _gate_true_false(
 
 
 def _gate_cloze(
-    activity: dict, evidence: list[schema.Evidence], anchor_body: str, gr: schema.GateResult
+    activity: dict,
+    evidence: list[schema.Evidence],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
 ) -> None:
     text = activity.get("text", "")
     ev = next((e for e in evidence if e.locator == "text"), None)
@@ -219,9 +246,11 @@ def _gate_cloze(
                 f"Cloze answer '{answer}' is not among its own options.",
                 locator="text",
             )
-        # distractors (introduced tokens) VESUM-valid
+        # distractors (introduced tokens) VESUM-valid + heritage-checked
         distractors = [o for o in options if o != answer]
-        token_verdicts = vesum_gate.check_tokens(distractors, anchor_body)
+        token_verdicts = vesum_gate.check_tokens(
+            distractors, anchor_body, atlas_lookup=atlas_lookup
+        )
         worst = vesum_gate.worst_status(token_verdicts)
         if worst != "pass":
             bad = [v for v in token_verdicts if v["status"] == worst]
@@ -229,7 +258,11 @@ def _gate_cloze(
 
 
 def _gate_match_up(
-    activity: dict, evidence: list[schema.Evidence], anchor_body: str, gr: schema.GateResult
+    activity: dict,
+    evidence: list[schema.Evidence],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
 ) -> None:
     ev_by_loc = {e.locator: e for e in evidence}
     for i, pair in enumerate(activity.get("pairs", [])):
@@ -245,14 +278,15 @@ def _gate_match_up(
             ev.char_start = verdict["char_start"]
             ev.char_end = verdict["char_end"]
             ev.kind = verdict["kind"]
-        # right side (gloss) VESUM-valid; non-anchor right-sides are teacher-confirm warn
+        # right side (gloss) VESUM-valid + heritage-checked; a fabricated gloss
+        # FAILs (drops the pair), a russianism gloss WARNs (teacher-confirm).
         token_verdicts = vesum_gate.check_tokens(
-            vesum_gate.content_tokens(right), anchor_body
+            vesum_gate.content_tokens(right), anchor_body, atlas_lookup=atlas_lookup
         )
         worst = vesum_gate.worst_status(token_verdicts)
-        if worst == "fail":
-            bad = [v for v in token_verdicts if v["status"] == "fail"]
-            gr.add("vesum_token", "fail", "; ".join(v["detail"] for v in bad), locator=loc)
+        if worst != "pass":
+            bad = [v for v in token_verdicts if v["status"] == worst]
+            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
 
 
 _GATE_CHAINS: dict[str, Callable] = {
@@ -300,6 +334,31 @@ def _fail_reasons(gr: schema.GateResult, locator: str) -> list[dict]:
     ]
 
 
+def _ship_status(
+    gr: schema.GateResult, kept_locators: set[str] | None, flagged_present: bool
+) -> str:
+    """Tri-state verdict for an activity that SHIPS (Sol defect 1).
+
+    `clean` iff no surviving check warns and nothing was salvaged; otherwise
+    `review_required` (a warn or a dropped item must block automatic accept).
+    Only SURVIVING checks count — activity-level checks always, item-level
+    checks only for kept items (a flagged item's own warn is irrelevant once it
+    is dropped; the salvage itself already forces review).
+    """
+    if flagged_present:
+        return schema.GATE_REVIEW
+    for c in gr.checks:
+        if c.status != "warn":
+            continue
+        loc = c.locator or ""
+        if _ITEM_LOCATOR_RE.match(loc):
+            if kept_locators is None or loc in kept_locators:
+                return schema.GATE_REVIEW
+        else:
+            return schema.GATE_REVIEW
+    return schema.GATE_CLEAN
+
+
 def _project_and_validate(activity: dict, gr: schema.GateResult) -> dict | None:
     """Project + jsonschema-validate a (possibly filtered) activity. Returns
     the clean b1 item, or None (recording a 'schema' fail) on drift."""
@@ -313,7 +372,10 @@ def _project_and_validate(activity: dict, gr: schema.GateResult) -> dict | None:
 
 
 def gate_activity(
-    raw_activity: dict, anchor_body: str, provenance: dict
+    raw_activity: dict,
+    anchor_body: str,
+    provenance: dict,
+    atlas_lookup: dict | None = None,
 ) -> schema.HramatkaActivity:
     """Run the per-type gate chain, then PER-ITEM granularity (approved
     design): a per-statement/per-pair gate FAIL drops only that item/pair
@@ -321,8 +383,9 @@ def gate_activity(
     WARN items still ship (teacher-confirm). Activity-level gates (schema
     validity, cloze gap/answer structure) stay all-or-nothing; the whole
     activity is dropped only when an activity-level gate fails or too few
-    items survive (match-up needs >=2). `gate_result.passed` == "this
-    (possibly-filtered) activity ships".
+    items survive (match-up needs >=2). `gate_result.status` is the tri-state
+    verdict: `failed` == dropped, `clean`/`review_required` == this
+    (possibly-filtered) activity ships.
     """
     clean, evidence = schema.parse_raw_activity(raw_activity)
     ir = schema.HramatkaActivity(
@@ -333,15 +396,15 @@ def gate_activity(
     chain = _GATE_CHAINS.get(a_type)
     if chain is None:
         gr.add("type", "fail", f"Unsupported activity type {a_type!r} for slice 1.")
-        gr.passed = False
+        gr.status = schema.GATE_FAILED
         return ir
 
-    chain(clean, evidence, anchor_body, gr)
+    chain(clean, evidence, anchor_body, gr, atlas_lookup)
     per_item, activity_status = _locator_statuses(gr)
 
     # Activity-level FAIL (cloze text gates, etc.) -> drop the whole activity.
     if activity_status == "fail":
-        gr.passed = False
+        gr.status = schema.GATE_FAILED
         return ir
 
     coll_key = _COLL_KEY.get(a_type)
@@ -349,9 +412,11 @@ def gate_activity(
         # Non-partitionable (cloze): all-or-nothing. No activity-level fail
         # above, so it ships; still project+validate for schema safety.
         projected = _project_and_validate(clean, gr)
-        gr.passed = projected is not None
-        if projected is not None:
-            ir.activity = projected
+        if projected is None:
+            gr.status = schema.GATE_FAILED
+            return ir
+        ir.activity = projected
+        gr.status = _ship_status(gr, None, False)
         return ir
 
     # Partition the collection: keep non-failing items, flag the failing ones.
@@ -372,15 +437,22 @@ def gate_activity(
             f"Only {len(kept)} item(s) survived per-item gating; {a_type} "
             f"requires >= {min_items} — dropping the whole activity.",
         )
-        gr.passed = False
+        gr.status = schema.GATE_FAILED
         return ir
 
     filtered = dict(clean)
     filtered[coll_key] = kept
     projected = _project_and_validate(filtered, gr)
-    gr.passed = projected is not None
-    if projected is not None:
-        ir.activity = projected
+    if projected is None:
+        gr.status = schema.GATE_FAILED
+        return ir
+    ir.activity = projected
+    kept_locators = {
+        f"{coll_key}[{i}]"
+        for i, _ in enumerate(clean.get(coll_key, []))
+        if per_item.get(f"{coll_key}[{i}]") != "fail"
+    }
+    gr.status = _ship_status(gr, kept_locators, bool(flagged))
     return ir
 
 
@@ -471,8 +543,14 @@ def run(
             result.generation_error = f"{type(exc).__name__}: {exc}"
 
     # ---- gate + project ----------------------------------------------
+    # Wire the grounding atlas lookup into every lexical gate (Sol defect 5),
+    # extended to cover the model's INTRODUCED lexicon so a generated russianism
+    # is caught too, not only one quoted from the anchor.
+    atlas_lookup = retrieval.augmented_atlas_lookup(
+        snap["body_uk"], raw_activities, grounding["atlas_lookup"], atlas_db=atlas_db
+    )
     for raw in raw_activities:
-        ir = gate_activity(raw, snap["body_uk"], provenance)
+        ir = gate_activity(raw, snap["body_uk"], provenance, atlas_lookup=atlas_lookup)
         result.activities.append(ir)
 
     result.lesson_b1 = [

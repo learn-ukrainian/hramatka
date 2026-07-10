@@ -183,6 +183,57 @@ def build_atlas_lookup(needed_lemmas: set[str], db_path=None) -> dict[str, dict]
         conn.close()
 
 
+def _activity_content_strings(act: dict) -> list[str]:
+    """The learner-visible text fields a lexical gate inspects, per type — the
+    same surfaces `pipeline._gate_*` tokenize (statements, cloze text + options,
+    match-up left/right)."""
+    out: list[str] = []
+    for it in act.get("items", []) or []:
+        if isinstance(it, dict) and isinstance(it.get("statement"), str):
+            out.append(it["statement"])
+    if isinstance(act.get("text"), str):
+        out.append(act["text"])
+    for b in act.get("blanks", []) or []:
+        if isinstance(b, dict):
+            out.extend(o for o in (b.get("options") or []) if isinstance(o, str))
+    for p in act.get("pairs", []) or []:
+        if isinstance(p, dict):
+            out.extend(p[s] for s in ("left", "right") if isinstance(p.get(s), str))
+    return out
+
+
+def augmented_atlas_lookup(
+    anchor_body: str,
+    raw_activities: list[dict],
+    base_lookup: dict[str, dict],
+    *,
+    atlas_db=None,
+) -> dict[str, dict]:
+    """Extend the anchor's atlas lookup to also cover the content lemmas the
+    model INTRODUCED (tokens not present verbatim in the anchor), so a
+    russianism the generator invents — not only one quoted from the anchor — is
+    also checked against atlas heritage (Sol defect 5: the lexical gate must see
+    the grounding lookup for generated language too, not just anchor language).
+
+    One extra atlas scan for the union of introduced lemmas; anchor entries win
+    on a key collision.
+    """
+    anchor_lower = nfc(anchor_body).lower()
+    introduced: set[str] = set()
+    for act in raw_activities:
+        for text in _activity_content_strings(act):
+            for tok in tokenize(text):
+                low = tok.lower()
+                if low not in anchor_lower:
+                    introduced.add(low)
+    if not introduced:
+        return dict(base_lookup)
+    matches = verify_words(sorted(introduced), db_path=paths.vesum_db())
+    lemmas = {r["lemma"].lower() for rows in matches.values() for r in rows}
+    extra = build_atlas_lookup(lemmas, db_path=atlas_db) if lemmas else {}
+    return {**extra, **base_lookup}  # anchor entries win
+
+
 # ---------------------------------------------------------------------------
 # Numeral inventory
 # ---------------------------------------------------------------------------

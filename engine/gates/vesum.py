@@ -1,11 +1,15 @@
-"""§6b VESUM token gate — validity of model-INTRODUCED tokens.
+"""§6b VESUM token gate — validity of model-INTRODUCED tokens + heritage.
 
 Every content token the model introduces that is NOT a verbatim anchor
 substring (a cloze distractor, a match-up gloss, a restated word) is checked
-against VESUM. Not found -> FAIL (fabricated / misspelled form). Anchor-
-verbatim tokens are trusted (published text). Russianism -> WARN (never a hard
-block in the MVP), sourced from the atlas heritage field when a lookup is
-provided.
+against VESUM. Not found -> FAIL (fabricated / misspelled form). Russianism ->
+WARN (never a hard block in the MVP), sourced from the atlas heritage field
+when a lookup is provided.
+
+Anchor-verbatim tokens are trusted published text and are NOT re-validated
+against VESUM — BUT a verbatim token whose atlas record flags a heritage/
+russianism still earns a WARN diagnostic (Sol defect 5 / defect 7): the source
+error stays quoted, yet the engine must not badge it as verified-standard.
 
 This module is `engine.gates.vesum` — distinct from `scripts.verification.
 vesum` (the DB layer), which it consumes via `verify_words`.
@@ -35,37 +39,68 @@ def _is_anchor_verbatim(token: str, anchor_body_lower: str) -> bool:
     return token.lower() in anchor_body_lower
 
 
+# Heritage classifications that are NOT a russianism/calque flag.
+_OK_HERITAGE = ("", "standard", "native", "ok")
+
+
+def _heritage_flag(matches: list[dict], atlas_lookup: dict | None) -> str | None:
+    """The atlas heritage/russianism classification for a token's lemma(s), or
+    None when unflagged/unknown. Keyed by VESUM lemma (lowercased)."""
+    if not atlas_lookup:
+        return None
+    for m in matches:
+        rec = atlas_lookup.get(m["lemma"].lower())
+        heritage = rec.get("heritage") if rec else None
+        if heritage and str(heritage).lower() not in _OK_HERITAGE:
+            return heritage
+    return None
+
+
 def check_tokens(
     tokens: list[str],
     anchor_body: str,
     *,
     atlas_lookup: dict | None = None,
 ) -> list[dict]:
-    """Verify each INTRODUCED token. Returns a per-token verdict list:
+    """Verify each token. Returns a per-token verdict list:
       {token, status: 'pass'|'warn'|'fail', detail}
 
-    - anchor-verbatim token  -> pass (trusted published text), no VESUM call
-    - not in VESUM           -> fail (fabricated/misspelled form)
-    - russianism (atlas)     -> warn
-    - otherwise              -> pass
+    - anchor-verbatim, unflagged -> pass (trusted published text)
+    - anchor-verbatim, russianism -> warn (quoted source error; NOT verified)
+    - introduced, not in VESUM    -> fail (fabricated/misspelled form)
+    - introduced, russianism      -> warn (teacher-confirm)
+    - introduced, valid           -> pass
+
+    VESUM is consulted for ALL tokens (one batched query) so a verbatim token's
+    lemma is available for the heritage lookup; the verbatim verdict still never
+    depends on VESUM membership, only on the atlas heritage flag.
     """
     anchor_lower = _nfc(anchor_body).lower()
-    introduced = [t for t in tokens if not _is_anchor_verbatim(t, anchor_lower)]
+    lowered = sorted({t.lower() for t in tokens})
+    vesum_results = verify_words(lowered, db_path=paths.vesum_db()) if lowered else {}
     verdicts: list[dict] = []
 
-    vesum_results = (
-        verify_words([t.lower() for t in introduced], db_path=paths.vesum_db())
-        if introduced
-        else {}
-    )
-
     for token in tokens:
-        if _is_anchor_verbatim(token, anchor_lower):
-            verdicts.append(
-                {"token": token, "status": "pass", "detail": "anchor-verbatim (trusted)"}
-            )
-            continue
         matches = vesum_results.get(token.lower(), [])
+        heritage = _heritage_flag(matches, atlas_lookup)
+        if _is_anchor_verbatim(token, anchor_lower):
+            if heritage:
+                verdicts.append(
+                    {
+                        "token": token,
+                        "status": "warn",
+                        "detail": (
+                            f"'{token}' is quoted verbatim from the anchor but atlas flags "
+                            f"heritage/russianism='{heritage}' — kept as a source quote, NOT "
+                            "engine-verified as standard. Teacher-confirm."
+                        ),
+                    }
+                )
+            else:
+                verdicts.append(
+                    {"token": token, "status": "pass", "detail": "anchor-verbatim (trusted)"}
+                )
+            continue
         if not matches:
             verdicts.append(
                 {
@@ -75,14 +110,7 @@ def check_tokens(
                 }
             )
             continue
-        heritage = None
-        if atlas_lookup:
-            for m in matches:
-                rec = atlas_lookup.get(m["lemma"].lower())
-                if rec and rec.get("heritage"):
-                    heritage = rec["heritage"]
-                    break
-        if heritage and str(heritage).lower() not in ("", "standard", "native", "ok"):
+        if heritage:
             verdicts.append(
                 {
                     "token": token,

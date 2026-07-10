@@ -234,6 +234,26 @@ def test_cloze_answer_must_be_in_source_and_options(tmp_path):
     assert any(c.gate == "cloze_answer" and c.status == "fail" for c in cloze_ir.gate_result.checks)
 
 
+def test_fingerprint_includes_gate_impl_digest(monkeypatch):
+    # review-p46 nit 2: gate LOGIC is part of bake identity, so a gate-code
+    # change reshuffles the fingerprint even with identical declared inputs.
+    kw = dict(
+        anchor_hash="h",
+        level="B1",
+        pedagogy="ttt",
+        phase="1",
+        types=["true-false"],
+        grounding_text="g",
+        prompt_template="p",
+    )
+    inputs = pipeline.fingerprint_inputs(**kw)
+    assert isinstance(inputs["gate_impl_digest"], str) and len(inputs["gate_impl_digest"]) == 64
+
+    base = pipeline.make_fingerprint(**kw)
+    monkeypatch.setattr(pipeline, "_gate_impl_digest", lambda: "0" * 64)
+    assert pipeline.make_fingerprint(**kw) != base
+
+
 def test_fingerprint_idempotency_generator_called_once(tmp_path):
     calls = {"n": 0}
 
