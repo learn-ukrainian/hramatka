@@ -17,11 +17,7 @@ import re
 import unicodedata
 
 from .. import paths
-from . import _bootstrap_sys_path
-
-_bootstrap_sys_path()
-
-from scripts.verification.vesum import verify_words
+from ..linguistics import verify_words
 
 _WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", re.UNICODE)
 
@@ -58,7 +54,7 @@ def check_tokens(
     verdicts: list[dict] = []
 
     vesum_results = (
-        verify_words([t.lower() for t in introduced], db_path=paths.VESUM_DB)
+        verify_words([t.lower() for t in introduced], db_path=paths.vesum_db())
         if introduced
         else {}
     )
@@ -91,7 +87,10 @@ def check_tokens(
                 {
                     "token": token,
                     "status": "warn",
-                    "detail": f"'{token}' flagged heritage/russianism='{heritage}' (teacher-confirm).",
+                    "detail": (
+                        f"'{token}' flagged heritage/russianism='{heritage}' "
+                        "(teacher-confirm)."
+                    ),
                 }
             )
         else:

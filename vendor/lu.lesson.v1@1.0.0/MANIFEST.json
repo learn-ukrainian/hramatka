@@ -1,0 +1,19 @@
+{
+  "artifact": "lu.lesson.v1",
+  "version": "1.0.0",
+  "kind": "json-schema (interim, contract-derived)",
+  "description": "Interim private validator derived from the public lesson-document-v1.md contract; validates the emitted lu.lesson.v1 document envelope.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "docs/contracts/lesson-document-v1.md",
+    "commit": "f77ccf76fd"
+  },
+  "adapted": true,
+  "adaptation": "Hand-derived offline JSON Schema from the pinned Markdown contract (not a shipped public schema). Provenance markdown kept at docs/vendor/lesson-document-v1.md.",
+  "files": {
+    "lu.lesson.v1.schema.json": {
+      "sha256": "590ce9afd74f332e947f60d9664a237e4d1dd50c7f99122d199f8f205cddca37",
+      "size": 5540
+    }
+  }
+}

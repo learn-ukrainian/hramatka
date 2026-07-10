@@ -4,8 +4,8 @@ built once, numeral inventory, grounding pack size. Read-only DB access.
 
 from __future__ import annotations
 
-from engine import retrieval as R
-from engine.fixtures import load_anchor
+from hramatka.engine import retrieval as R
+from hramatka.engine.fixtures import load_anchor
 
 ANCHOR = (
     "Третина українців за рік не прочитує жодної книжки, зате дві третини "

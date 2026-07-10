@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 
-from engine import fixtures, pipeline, schema
-from engine.generate import GeneratorUnavailable
+from hramatka.engine import fixtures, pipeline, schema
+from hramatka.engine.generate import GeneratorUnavailable
 
 
 def _anchor():

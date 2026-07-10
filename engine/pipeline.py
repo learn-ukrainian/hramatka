@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 
-from . import paths, retrieval, schema
+from . import ENGINE_VERSION, data, paths, retrieval, schema, vendoring
 from .gates import evidence_span, numeral
 from .gates import vesum as vesum_gate
 from .generate import (
@@ -39,6 +41,7 @@ EXTRACTIVE_TYPES = ("true-false", "cloze", "match-up")
 class PipelineResult:
     anchor: dict
     fingerprint: str
+    fingerprint_inputs: dict = field(default_factory=dict)
     activities: list[schema.HramatkaActivity] = field(default_factory=list)
     lesson_b1: list[dict] = field(default_factory=list)
     out_files: dict = field(default_factory=dict)
@@ -68,26 +71,63 @@ def snapshot_anchor(anchor: str | dict) -> dict:
     }
 
 
-def _db_fingerprint() -> str:
-    parts = []
-    for p in (paths.ATLAS_DB, paths.VESUM_DB):
+# Packages whose version can change bake output (parsers/validators). Vendored
+# artifacts (schema + linguistics) are covered separately via their manifest
+# digests, so they are not duplicated here.
+_FINGERPRINT_PACKAGES = ("jsonschema",)
+
+
+def _package_versions() -> dict:
+    versions: dict[str, str | None] = {"python": platform.python_version()}
+    for pkg in _FINGERPRINT_PACKAGES:
         try:
-            st = p.stat()
-            parts.append(f"{p.name}:{st.st_size}:{int(st.st_mtime)}")
-        except OSError:
-            parts.append(f"{p.name}:missing")
-    return ";".join(parts)
+            versions[pkg] = metadata.version(pkg)
+        except metadata.PackageNotFoundError:  # pragma: no cover - dep always present
+            versions[pkg] = None
+    return versions
 
 
-def make_fingerprint(anchor_hash: str, grounding_text: str, prompt_template: str) -> str:
-    blob = "|".join(
-        [
-            anchor_hash,
-            _sha(grounding_text),
-            _sha(prompt_template),
-            GEMMA_MODEL,
-            _db_fingerprint(),
-        ]
+def fingerprint_inputs(
+    *,
+    anchor_hash: str,
+    level: str,
+    pedagogy: str | None,
+    phase: str | None,
+    types: list[str],
+    grounding_text: str,
+    prompt_template: str,
+) -> dict:
+    """The FULL bake-identity input set (Sol defect #4 / review item 4).
+
+    Covers anchor + level + pedagogy + phase + requested types + prompt digest +
+    package versions + engine version + model + vendored-artifact digests +
+    data-bundle content digests. DBs are identified by CONTENT (sha256 from the
+    pinned data manifest), never size/mtime — so a re-run on the same inputs is
+    genuinely idempotent and any input change reshuffles the fingerprint.
+    """
+    return {
+        "engine_version": ENGINE_VERSION,
+        "model": GEMMA_MODEL,
+        "anchor_hash": anchor_hash,
+        "level": level,
+        "pedagogy": pedagogy,
+        "phase": phase,
+        "types": sorted(types),
+        "grounding_digest": _sha(grounding_text),
+        "prompt_digest": _sha(prompt_template),
+        "packages": _package_versions(),
+        "vendor": vendoring.artifact_versions(),
+        "data_bundle": data.active_bundle().digests(),
+    }
+
+
+def make_fingerprint(**inputs) -> str:
+    """Stable sha256 over the canonical (sorted-key) JSON of `fingerprint_inputs`."""
+    blob = json.dumps(
+        fingerprint_inputs(**inputs),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return _sha(blob)
 
@@ -352,6 +392,8 @@ def run(
     level: str = "B1",
     types: list[str] | None = None,
     *,
+    pedagogy: str | None = None,
+    phase: str | None = None,
     generator: Callable[[str], str] = call_gemma,
     out_dir: str | Path | None = None,
     atlas_db=None,
@@ -359,22 +401,37 @@ def run(
     cache_dir: str | Path | None = None,
 ) -> PipelineResult:
     """Run the slice-1 pipeline end-to-end. `generator` is injectable (tests
-    pass a mock; the real run uses `call_gemma`). Runs correctly from repo
-    root or the engine dir (all paths are absolute via `engine.paths`).
+    pass a mock; the real run uses `call_gemma`). All inputs resolve through the
+    pinned vendor + data indirections, so the run is cwd- and checkout-independent.
+
+    `pedagogy`/`phase` are carried into the bake fingerprint even though slice-1
+    generation does not yet branch on them, so the identity is correct the moment
+    a pedagogy/phase layer lands (Sol defect #4).
 
     `cache_dir` isolates the raw-generation cache. Mock/offline callers MUST
     pass their own tmp `cache_dir` so fixture output never lands in the
     default `engine/.cache/` that the real-Gemma run reads (the fingerprint
-    is generator-agnostic by design, §R, so a shared cache would otherwise
+    is generator-agnostic by design, so a shared cache would otherwise
     let a mock run poison a real one).
     """
     types = list(types or EXTRACTIVE_TYPES)
     snap = snapshot_anchor(anchor)
     grounding = retrieval.build_grounding_pack(snap["body_uk"], level, atlas_db=atlas_db)
     template = load_extractive_template()
-    fingerprint = make_fingerprint(snap["hash"], grounding["text"], template)
+    fp_inputs = fingerprint_inputs(
+        anchor_hash=snap["hash"],
+        level=level,
+        pedagogy=pedagogy,
+        phase=phase,
+        types=types,
+        grounding_text=grounding["text"],
+        prompt_template=template,
+    )
+    fingerprint = _sha(
+        json.dumps(fp_inputs, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    )
 
-    out_dir = Path(out_dir) if out_dir else (paths.ENGINE_DIR / ".out" / snap["anchor_id"])
+    out_dir = Path(out_dir) if out_dir else (paths.DEFAULT_OUT_DIR / snap["anchor_id"])
     out_dir.mkdir(parents=True, exist_ok=True)
     cache_path = Path(cache_dir) if cache_dir else paths.CACHE_DIR
     cache_path.mkdir(parents=True, exist_ok=True)
@@ -384,11 +441,15 @@ def run(
         "anchor_id": snap["anchor_id"],
         "anchor_hash": snap["hash"],
         "level": level,
+        "pedagogy": pedagogy,
+        "phase": phase,
         "generator": GEMMA_MODEL,
         "fingerprint": fingerprint,
     }
 
-    result = PipelineResult(anchor=snap, fingerprint=fingerprint)
+    result = PipelineResult(
+        anchor=snap, fingerprint=fingerprint, fingerprint_inputs=fp_inputs
+    )
 
     # ---- generate (cache-first) --------------------------------------
     raw_activities: list[dict] = []
@@ -429,6 +490,7 @@ def run(
             {
                 "anchor": snap,
                 "fingerprint": fingerprint,
+                "fingerprint_inputs": fp_inputs,
                 "generation_error": result.generation_error,
                 "activities": [ir.as_dict() for ir in result.activities],
             },

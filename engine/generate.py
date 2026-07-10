@@ -1,11 +1,12 @@
 """Generation (slice-1 §5) — Gemma 4, toolless, $0 AIS. Generator INJECTABLE.
 
-The real transport is `call_gemma` (wraps `_invoke_opencode(agent="chat",
-model=GEMMA_MODEL, output_format="json", 900s)`), but `generate()` takes any
-`generator: Callable[[str], str]`, so unit tests inject a MOCK returning
-fixture JSON — NO real Gemma in pytest.
+The real generator is `call_gemma`, an `AISGeneratorPort` over the locked route
+(`google-ais/gemma-4-31b-it`, toolless) whose AIS key comes from the
+`HRAMATKA_AIS_API_KEY` env var — no `scripts.*` import and no dev-home key path.
+`generate()` takes any `generator: Callable[[str], str]`, so unit tests inject a
+MOCK returning fixture JSON — NO real Gemma in pytest.
 
-Robustness (§R P1/C2): a `SystemExit` from the routing guard becomes a typed
+Robustness: a `SystemExit` from a transport guard becomes a typed
 `GeneratorUnavailable` (never crashes the pipeline); unparseable output is
 retried once, then raised as `GenerationUnparseable`.
 """
@@ -15,40 +16,24 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from .gates import _bootstrap_sys_path
+from .transport import (
+    GEMMA_MODEL,
+    AISGeneratorPort,
+    GenerationUnparseable,
+    GeneratorUnavailable,
+)
 
-_bootstrap_sys_path()
+__all__ = [
+    "GEMMA_MODEL",
+    "GenerationUnparseable",
+    "GeneratorUnavailable",
+    "call_gemma",
+    "extract_json",
+    "generate",
+]
 
-GEMMA_MODEL = "google-ais/gemma-4-31b-it"
-GEMMA_TIMEOUT_S = 900
-
-
-class GeneratorUnavailable(RuntimeError):
-    """Transport/routing failure (opencode/key/guard) — pipeline gate-fails
-    'generator-unavailable' rather than crashing."""
-
-
-class GenerationUnparseable(RuntimeError):
-    """Model output could not be parsed as JSON after one retry — pipeline
-    gate-fails 'unparseable'."""
-
-
-def call_gemma(prompt: str, *, timeout_s: int = GEMMA_TIMEOUT_S) -> str:
-    """Real generator: toolless Gemma via opencode. Wraps SystemExit."""
-    from scripts.ai_agent_bridge._opencode import _invoke_opencode
-
-    try:
-        return _invoke_opencode(
-            prompt,
-            model=GEMMA_MODEL,
-            agent="chat",
-            output_format="json",
-            default_timeout_s=timeout_s,
-        )
-    except SystemExit as exc:  # routing_guard fail-closed / missing key / opencode
-        raise GeneratorUnavailable(
-            f"Gemma generation unavailable via opencode: {exc}"
-        ) from exc
+# The default real generator: the private AIS transport (env key, toolless).
+call_gemma = AISGeneratorPort()
 
 
 def extract_json(text: str) -> dict | None:

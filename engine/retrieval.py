@@ -18,11 +18,7 @@ import sqlite3
 import unicodedata
 
 from . import paths
-from .gates import _bootstrap_sys_path
-
-_bootstrap_sys_path()
-
-from scripts.verification.vesum import verify_words
+from .linguistics import verify_words
 
 # Cyrillic word token (keeps apostrophe + soft signs; excludes digits).
 _WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
@@ -87,7 +83,7 @@ def lemmatize(text: str) -> dict[str, set[str]]:
     surfaces = sorted({t.lower() for t in tokenize(text)})
     if not surfaces:
         return {}
-    matches = verify_words(surfaces, db_path=paths.VESUM_DB)
+    matches = verify_words(surfaces, db_path=paths.vesum_db())
     out: dict[str, set[str]] = {}
     for surface, rows in matches.items():
         lemmas = {r["lemma"] for r in rows if r["pos"] in _CONTENT_POS}
@@ -153,7 +149,7 @@ def build_atlas_lookup(needed_lemmas: set[str], db_path=None) -> dict[str, dict]
     """{lemma_lower -> compact atlas record} built in ONE table scan, keeping
     only rows whose lemma is in `needed_lemmas`. Never scans per-lemma.
     """
-    db = str(db_path or paths.ATLAS_DB)
+    db = str(db_path or paths.atlas_db())
     needed_lower = {lemma.lower() for lemma in needed_lemmas}
     if not needed_lower:
         return {}

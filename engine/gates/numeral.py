@@ -1,6 +1,6 @@
 """The numeral case-government gate — THE MOAT.
 
-Implements `.agent/tmp/hramatka/slice-1-build-plan.md` §6c exactly. Pure,
+Implements `hramatka/slice-1-build-plan.md` §6c exactly. Pure,
 deterministic, no network, no LLM judge. Verification uses VESUM tags
 DIRECTLY (source of truth); pymorphy3 is never used here.
 

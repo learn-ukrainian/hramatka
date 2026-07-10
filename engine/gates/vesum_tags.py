@@ -6,20 +6,13 @@ lemmatizing raw anchor prose elsewhere in the pipeline (out of scope for
 this module), never for final case/number/animacy verification, because it
 can disagree with VESUM (fleet finding A2).
 
-Every lookup takes/uses an explicit `db_path` (`engine.paths.VESUM_DB`) —
-never a cwd-relative default — so this module works whether the process is
-launched from the repo root or from `.agent/tmp/hramatka/engine/` itself.
+Every lookup takes/uses an explicit `db_path` from the digest-pinned data
+bundle (`engine.data`) — never a cwd-relative or checkout default.
 """
 
 from __future__ import annotations
 
-import sys
-
-from . import _bootstrap_sys_path
-
-_bootstrap_sys_path()
-
-from scripts.verification.vesum import verify_lemma, verify_word  # noqa: E402
+from ..linguistics import verify_lemma, verify_word
 
 # ---------------------------------------------------------------------------
 # VESUM tag reference (confirmed live 2026-07-08 — see engine-integration-recon.md)

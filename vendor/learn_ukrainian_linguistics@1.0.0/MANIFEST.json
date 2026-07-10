@@ -1,0 +1,19 @@
+{
+  "artifact": "learn_ukrainian_linguistics",
+  "version": "1.0.0",
+  "kind": "python-module",
+  "description": "VESUM morphological-dictionary query layer (verify_word/verify_words/verify_lemma) consumed by retrieval + the VESUM gates.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "scripts/verification/vesum.py",
+    "commit": "28c257d82bc2dbb7adea8b30264e3f6dfabab323"
+  },
+  "adapted": true,
+  "adaptation": "Removed sys.path bootstrap + `from scripts.rag.config import VESUM_DB_PATH`; db_path is now required (no checkout-relative default); dropped the argparse CLI. Query API and row shapes unchanged.",
+  "files": {
+    "vesum.py": {
+      "sha256": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49",
+      "size": 3999
+    }
+  }
+}

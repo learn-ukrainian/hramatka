@@ -8,10 +8,11 @@ import json
 
 import pytest
 
-from engine import generate as G
+from hramatka.engine import generate as G
+from hramatka.engine.transport import AISGeneratorPort
 
 
-def _pb(a, l, t, g):
+def _pb(anchor, level, types, grounding):
     return "PROMPT"
 
 
@@ -72,20 +73,29 @@ def test_generate_accepts_single_activity_object():
     assert acts == [{"type": "cloze", "instruction": "x", "text": "{gap}"}]
 
 
-# --- call_gemma SystemExit -> GeneratorUnavailable -------------------------
-def test_call_gemma_wraps_systemexit(monkeypatch):
-    import scripts.ai_agent_bridge._opencode as oc
-
-    def boom(*_a, **_k):
+# --- AISGeneratorPort (the private transport) ------------------------------
+def test_ais_port_wraps_transport_systemexit():
+    # A fail-closed transport guard must degrade to GeneratorUnavailable, never
+    # crash the worker. Key supplied directly so no env is needed.
+    def boom(prompt, *, api_key, model, timeout_s):
         raise SystemExit(2)
 
-    monkeypatch.setattr(oc, "_invoke_opencode", boom)
     with pytest.raises(G.GeneratorUnavailable):
-        G.call_gemma("prompt")
+        AISGeneratorPort(api_key="test-key", transport=boom)("prompt")
 
 
-def test_call_gemma_passes_through_text(monkeypatch):
-    import scripts.ai_agent_bridge._opencode as oc
+def test_ais_port_passes_through_text():
+    port = AISGeneratorPort(
+        api_key="test-key",
+        transport=lambda prompt, *, api_key, model, timeout_s: '{"activities": []}',
+    )
+    assert port("prompt") == '{"activities": []}'
 
-    monkeypatch.setattr(oc, "_invoke_opencode", lambda *a, **k: '{"activities": []}')
-    assert G.call_gemma("prompt") == '{"activities": []}'
+
+def test_ais_port_missing_key_is_unavailable(monkeypatch):
+    # No hardcoded path and no dev-home key: without HRAMATKA_AIS_API_KEY the
+    # locked route is simply unavailable (never a crash, never a leaked value).
+    monkeypatch.delenv("HRAMATKA_AIS_API_KEY", raising=False)
+    with pytest.raises(G.GeneratorUnavailable) as exc:
+        AISGeneratorPort()("prompt")
+    assert "HRAMATKA_AIS_API_KEY" in str(exc.value)

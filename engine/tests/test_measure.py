@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from engine import fixtures, measure
+from hramatka.engine import fixtures, measure
 
 
 def test_measure_produces_report_and_html(tmp_path):

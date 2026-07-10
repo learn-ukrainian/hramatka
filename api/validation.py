@@ -1,20 +1,22 @@
-"""Offline validation against the private, contract-derived interim schema."""
+"""Offline validation against the private, contract-derived interim schema.
+
+The schema is loaded through the digest-verifying vendor loader (review-p46
+nit 1): the API must never trust vendored bytes the engine would refuse.
+"""
 
 from __future__ import annotations
 
-import json
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "vendor" / "lu.lesson.v1.schema.json"
+from hramatka.engine import vendoring
 
 
 @lru_cache(maxsize=1)
 def lesson_validator() -> Draft202012Validator:
-    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = vendoring.read_json(vendoring.LU_LESSON, "lu.lesson.v1.schema.json")
     return Draft202012Validator(schema, format_checker=FormatChecker())
 
 

@@ -6,7 +6,7 @@ quote is present (repaired), and quote genuinely absent (fail for extractive).
 
 from __future__ import annotations
 
-from engine.gates import evidence_span as ES
+from hramatka.engine.gates import evidence_span as ES
 
 ANCHOR = "Під час читання активізуються одразу 17 ділянок головного мозку."
 

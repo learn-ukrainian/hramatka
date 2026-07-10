@@ -1,0 +1,1103 @@
+[
+ {
+  "lemma": "багато",
+  "pos": "adverb",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "прислівник",
+    "text": "багато (A1, прислівник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "чимало",
+     "безліч",
+     "сила-силенна"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%B1%D0%B0%D0%B3%D0%B0%D1%82%D0%BE"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "багато",
+     "detail": "lemma match (9 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "втратити",
+  "pos": "verb",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "дієслово (док.)",
+    "text": "втратити (B1, дієслово (док.))"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "втратити",
+     "detail": "lemma match (17 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "вчений",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "estimated (GRAC frequency)",
+    "text": "A2 (орієнтовно / estimated; GRAC 7.90/million, rank 888/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "вчений",
+     "detail": "lemma match (48 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "головний",
+  "pos": "adjective",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "прикметник",
+    "text": "головний (A1, прикметник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "найголовніший",
+     "найважливіший",
+     "основний",
+     "чільний",
+     "провідний",
+     "перший",
+     "найперший",
+     "щонайперший",
+     "першорядний",
+     "центральний",
+     "фундаментальний",
+     "генеральний",
+     "магістральний",
+     "стрижневий",
+     "кардинальний",
+     "ключовий",
+     "становий (рідше)",
+     "передній (рідше)",
+     "визначальний",
+     "вирішальний",
+     "вирішний (рідше)",
+     "конститутивний",
+     "основоположний"
+    ],
+    "source": "slovnyk.me: Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms/%D0%B3%D0%BE%D0%BB%D0%BE%D0%B2%D0%BD%D0%B8%D0%B9"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "головний",
+     "detail": "lemma match (32 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "думка",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "думка (A2, іменник): власна думка"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "дума",
+     "гадка",
+     "судження",
+     "мисль",
+     "міркування",
+     "ідея",
+     "помисел",
+     "думонька",
+     "оцінка",
+     "враження",
+     "погляд",
+     "розуміння",
+     "поняття",
+     "переконання",
+     "твердження",
+     "опінія",
+     "здання",
+     "характер",
+     "чогось"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%B4%D1%83%D0%BC%D0%BA%D0%B0",
+     "https://slovnyk.me/dict/synonyms/%D0%B4%D1%83%D0%BC%D0%BA%D0%B0"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "думка",
+     "detail": "lemma match (14 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "ділянка",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "estimated (GRAC frequency)",
+    "text": "A1 (орієнтовно / estimated; GRAC 9.77/million, rank 789/4310)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "клапоть",
+     "шматок",
+     "клин",
+     "плянтація",
+     "відрізок",
+     "відтинок",
+     "інтервал",
+     "урізок (рідше)",
+     "проміжок"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%B4%D1%96%D0%BB%D1%8F%D0%BD%D0%BA%D0%B0",
+     "https://slovnyk.me/dict/synonyms/%D0%B4%D1%96%D0%BB%D1%8F%D0%BD%D0%BA%D0%B0"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "ділянка",
+     "detail": "lemma match (14 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "жодний",
+  "pos": "adj",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "займенник",
+    "text": "жодний (B1, займенник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "жодний",
+     "detail": "lemma match (30 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "за",
+  "pos": "preposition",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "прийменник",
+    "text": "за (A1, прийменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "за",
+     "detail": "lemma match (3 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "завдання",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "завдання (A1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "накреслення",
+     "плян",
+     "мета",
+     "задача"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%B7%D0%B0%D0%B2%D0%B4%D0%B0%D0%BD%D0%BD%D1%8F",
+     "https://slovnyk.me/dict/synonyms/%D0%B7%D0%B0%D0%B2%D0%B4%D0%B0%D0%BD%D0%BD%D1%8F"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "завдання",
+     "detail": "lemma match (15 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "знаходити",
+  "pos": "verb",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "дієслово (недок.)",
+    "text": "знаходити (A2, дієслово (недок.))"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "віднаходити",
+     "відшукувати",
+     "виявляти",
+     "відкривати",
+     "надибувати",
+     "помічати",
+     "установлювати",
+     "підмічати"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%B7%D0%BD%D0%B0%D1%85%D0%BE%D0%B4%D0%B8%D1%82%D0%B8",
+     "https://slovnyk.me/dict/synonyms/%D0%B7%D0%BD%D0%B0%D1%85%D0%BE%D0%B4%D0%B8%D1%82%D0%B8"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "знаходити",
+     "detail": "lemma match (24 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "знижувати",
+  "pos": "verb",
+  "enrichment": {
+   "cefr": {
+    "level": "B2",
+    "source": "PULS CEFR",
+    "pos": "дієслово (недок.)",
+    "text": "знижувати (B2, дієслово (недок.))"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "знижувати",
+     "detail": "lemma match (24 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "книжка",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "книжка (A1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "книга"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%BA%D0%BD%D0%B8%D0%B6%D0%BA%D0%B0",
+     "https://slovnyk.me/dict/synonyms/%D0%BA%D0%BD%D0%B8%D0%B6%D0%BA%D0%B0"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "книжка",
+     "detail": "lemma match (14 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "людина",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "людина (A1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "душа"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D0%BB%D1%8E%D0%B4%D0%B8%D0%BD%D0%B0"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "людина",
+     "detail": "lemma match (25 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "мозок",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "мозок (B1, іменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "мозок",
+     "detail": "lemma match (16 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "одразу",
+  "pos": "adv",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "прислівник",
+    "text": "одразу (B1, прислівник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "одразу",
+     "detail": "lemma match (1 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "простіше",
+  "pos": "adv",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "estimated (GRAC frequency)",
+    "text": "A1 (орієнтовно / estimated; GRAC 11.01/million, rank 734/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "простіше",
+     "detail": "lemma match (2 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "прочитувати",
+  "pos": "verb",
+  "enrichment": {
+   "cefr": {
+    "level": "C1",
+    "source": "estimated (GRAC frequency)",
+    "text": "C1 (орієнтовно / estimated; GRAC 0.09/million, rank 3806/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "прочитувати",
+     "detail": "lemma match (24 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "під",
+  "pos": "preposition",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "прийменник",
+    "text": "під (A2, прийменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "під",
+     "detail": "lemma match (11 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "раз",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "раз (A1, іменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "раз",
+     "detail": "lemma match (21 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "регулярний",
+  "pos": "adj",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "прикметник",
+    "text": "регулярний (B1, прикметник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "регулярний",
+     "detail": "lemma match (32 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "ризик",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "ризик (B1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "непевність",
+     "непередбаченість"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D1%80%D0%B8%D0%B7%D0%B8%D0%BA"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "ризик",
+     "detail": "lemma match (16 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "розвиток",
+  "pos": "noun:m",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "розвиток (B1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "розвій",
+     "розмах",
+     "розквіт",
+     "процвітання",
+     "хід",
+     "поступ",
+     "піднесення",
+     "розріст (розм.)"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D1%80%D0%BE%D0%B7%D0%B2%D0%B8%D1%82%D0%BE%D0%BA",
+     "https://slovnyk.me/dict/synonyms/%D1%80%D0%BE%D0%B7%D0%B2%D0%B8%D1%82%D0%BE%D0%BA"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "розвиток",
+     "detail": "lemma match (16 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "рік",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "estimated (GRAC frequency)",
+    "text": "A1 (орієнтовно / estimated; GRAC 340.49/million, rank 32/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "рік",
+     "detail": "lemma match (17 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "ріка",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "ріка (B1, іменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "ріка",
+     "detail": "lemma match (14 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "телевізор",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "телевізор (A1, іменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "телевізор",
+     "detail": "lemma match (18 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "третина",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "estimated (GRAC frequency)",
+    "text": "A2 (орієнтовно / estimated; GRAC 6.79/million, rank 979/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "третина",
+     "detail": "lemma match (14 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "увімкнути",
+  "pos": "verb",
+  "enrichment": {
+   "cefr": {
+    "level": "B1",
+    "source": "estimated (GRAC frequency)",
+    "text": "B1 (орієнтовно / estimated; GRAC 1.62/million, rank 2043/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "увімкнути",
+     "detail": "lemma match (19 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "українець",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "estimated (GRAC frequency)",
+    "text": "A1 (орієнтовно / estimated; GRAC 17.76/million, rank 519/4310)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "українець",
+     "detail": "lemma match (18 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "хвороба",
+  "pos": "noun:f",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "хвороба (A2, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "неміч",
+     "недуга",
+     "болість",
+     "захворювання",
+     "хорість",
+     "слабість",
+     "нездоров'я",
+     "нездужання",
+     "епілепсія",
+     "цукриця",
+     "жилка",
+     "пристрасть",
+     "закохання",
+     "хворість",
+     "немощі (розм.)",
+     "болещі (заст.)",
+     "хороба (діал.)"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D1%85%D0%B2%D0%BE%D1%80%D0%BE%D0%B1%D0%B0",
+     "https://slovnyk.me/dict/synonyms/%D1%85%D0%B2%D0%BE%D1%80%D0%BE%D0%B1%D0%B0"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "хвороба",
+     "detail": "lemma match (15 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "час",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A1",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "час (A1, іменник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "пора",
+     "година",
+     "момент",
+     "майбутнє",
+     "епоха",
+     "доба",
+     "давнина",
+     "вік",
+     "ера"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського + Словник синонімів української мови",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D1%87%D0%B0%D1%81",
+     "https://slovnyk.me/dict/synonyms/%D1%87%D0%B0%D1%81"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "час",
+     "detail": "lemma match (17 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "читання",
+  "pos": "noun",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "іменник",
+    "text": "читання (A2, іменник)"
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "читання",
+     "detail": "lemma match (15 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ },
+ {
+  "lemma": "щодня",
+  "pos": "adverb",
+  "enrichment": {
+   "cefr": {
+    "level": "A2",
+    "source": "PULS CEFR",
+    "pos": "прислівник",
+    "text": "щодня (A2, прислівник)"
+   }
+  },
+  "sections": {
+   "synonyms": {
+    "items": [
+     "щоденно",
+     "щоднини",
+     "щодень"
+    ],
+    "source": "slovnyk.me: Словник синонімів Караванського",
+    "source_urls": [
+     "https://slovnyk.me/dict/synonyms_karavansky/%D1%89%D0%BE%D0%B4%D0%BD%D1%8F"
+    ]
+   }
+  },
+  "heritage_status": {
+   "classification": "standard",
+   "attestations": [
+    {
+     "source": "VESUM",
+     "ref": "щодня",
+     "detail": "lemma match (1 forms)"
+    }
+   ],
+   "is_russianism": false,
+   "russian_shadow": false,
+   "vesum_attested": true,
+   "calque_warning": null,
+   "warning_severity": "treasured"
+  }
+ }
+]

@@ -1,8 +1,9 @@
 """Deterministic OFFLINE fixtures — shared by unit tests and measure.py.
 
 NO network / NO real Gemma. Every Ukrainian form here is a VESUM-verified
-real form (#M-4), and every `evidence` quote is a verbatim substring of
-`anchors/anchor01.txt`. Contains:
+real form (#M-4), and every `evidence` quote is a verbatim substring of the
+SYNTHETIC `tests/fixtures/anchor01.txt` (a fabricated B1 text — no real teacher
+material is committed, per the teacher-privacy rule). Contains:
   - GOOD_ACTIVITIES: a well-formed extractive lesson incl. one numeral
     positive-probe true-false item (must PASS the moat).
   - a `mock_generator` that returns the GOOD_ACTIVITIES JSON regardless of
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_ANCHORS_DIR = Path(__file__).resolve().parent / "anchors"
+_ANCHORS_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
 
 
 def load_anchor(name: str = "anchor01") -> str:

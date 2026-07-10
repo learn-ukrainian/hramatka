@@ -6,7 +6,7 @@ fabricated forms fail; the gate never calls the network.
 
 from __future__ import annotations
 
-from engine.gates import vesum as VG
+from hramatka.engine.gates import vesum as VG
 
 ANCHOR = "Під час читання активізуються одразу 17 ділянок головного мозку."
 

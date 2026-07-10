@@ -13,7 +13,7 @@ context-undetermined) and a few structural edge cases.
 
 from __future__ import annotations
 
-from engine.gates.numeral import check_numeral_government
+from hramatka.engine.gates.numeral import check_numeral_government
 
 
 def _rule(result: dict) -> str:

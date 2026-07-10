@@ -1,0 +1,154 @@
+"""Real engine adapter for the durable-job seam (`baking/port.LessonBaker`).
+
+Runs the private slice-1 engine pipeline and composes a `lu.lesson.v1` block
+template from its gate-passing activities. This lands WIRED to the seam but is
+NOT yet the `create_app` default — the full mock→real swap (durable-job
+plumbing, real generator, pedagogy validation) is a separate step. The
+generator is injectable, so the pipeline runs offline in tests with a fake
+generator and never touches the network here.
+
+Every composed block is marked `warn` with generated provenance and
+`external_options: true`: slice-1 has no pedagogy/phase validation yet, so the
+acceptance gate must still require an explicit teacher acknowledgement — the
+same honesty posture as the mock, but over REAL engine output.
+"""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any
+
+from hramatka.engine import data, pipeline
+from hramatka.engine.generate import GEMMA_MODEL, call_gemma
+
+from .port import BakeError
+
+# TTT phase plan per duration → the phase of each composed block. Mirrors the
+# visible-block budget the store enforces ({45:{1:2,2:3,3:1}}, ...).
+_PHASE_PLAN: dict[int, list[int]] = {
+    45: [1, 1, 2, 2, 2, 3],
+    60: [1, 1, 1, 2, 2, 2, 2, 3, 3],
+    90: [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3],
+}
+
+
+def _answer_key(activity: dict) -> dict:
+    a_type = activity.get("type")
+    if a_type == "true-false":
+        return {
+            "items": [
+                {"index": i, "correct": bool(it.get("correct"))}
+                for i, it in enumerate(activity.get("items", []))
+            ]
+        }
+    if a_type == "cloze":
+        return {
+            "blanks": [
+                {"id": b.get("id"), "answer": b.get("answer")}
+                for b in activity.get("blanks", [])
+            ]
+        }
+    if a_type == "match-up":
+        return {
+            "pairs": [
+                {"left_index": i, "right_index": i}
+                for i in range(len(activity.get("pairs", [])))
+            ]
+        }
+    return {"note": "answer key unavailable"}
+
+
+_TITLES = {
+    "true-false": "Перевірмо розуміння",
+    "cloze": "Заповніть пропуски",
+    "match-up": "Знайдіть пару",
+}
+
+
+def _mode(phase: int, a_type: str) -> str:
+    if phase == 3:
+        return "вдома"
+    return "письмово" if a_type == "cloze" else "усно"
+
+
+class EngineLessonBaker:
+    """`LessonBaker` backed by the real engine pipeline (generator injectable)."""
+
+    def __init__(
+        self,
+        *,
+        generator=call_gemma,
+        bundle: data.DataBundle | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> None:
+        self._generator = generator
+        self._bundle = bundle
+        self._cache_dir = cache_dir
+
+    def bake(self, anchor: str, duration: int, focus: str | None) -> dict[str, Any]:
+        """Run the engine and return a lu.lesson.v1 block template.
+
+        The durable layer (`api.lesson.materialize_lesson`) binds id/anchor/
+        timestamps/status; here we only produce `blocks` (+ `rejected`).
+        """
+        del focus  # slice-1 generation does not branch on focus yet
+        plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
+        ctx = data.use_bundle(self._bundle) if self._bundle is not None else nullcontext()
+        with ctx:
+            result = pipeline.run(
+                anchor,
+                level="B1",
+                pedagogy="ttt",
+                generator=self._generator,
+                use_cache=False,
+                cache_dir=self._cache_dir,
+            )
+
+        # pipeline.run degrades transport/parse failures to generation_error
+        # rather than raising, so surface a safe, teacher-visible failure here.
+        if result.generation_error:
+            raise BakeError("Bake failed: the lesson generator is unavailable.")
+
+        passing = [ir for ir in result.activities if ir.gate_result.passed]
+        if not passing:
+            raise BakeError(
+                "Bake produced no gate-passing activities from this anchor."
+            )
+
+        blocks = [
+            self._block(passing[slot % len(passing)], slot, phase)
+            for slot, phase in enumerate(plan)
+        ]
+        return {"blocks": blocks, "rejected": []}
+
+    def _block(self, ir, slot: int, phase: int) -> dict:
+        activity = ir.activity
+        a_type = activity["type"]
+        gates = sorted({c.gate for c in ir.gate_result.checks}) or ["gated"]
+        envelope = {
+            "id": f"activity-{a_type}-{slot + 1}",
+            "type": a_type,
+            "title": _TITLES.get(a_type, "Завдання"),
+            "level": "b1",
+            "payload": activity,
+            "answer_key": _answer_key(activity),
+            "provenance": {"source": "generated", "generator": GEMMA_MODEL, "gates": gates},
+        }
+        return {
+            "id": f"block-{slot + 1}",
+            "phase": phase,
+            "type": a_type,
+            "mode": _mode(phase, a_type),
+            "activity": envelope,
+            "answer_key": "Підтвердьте ключ разом з учителем.",
+            "mark": "warn",
+            "note": "Згенеровано з опори; підтвердьте перед прийняттям.",
+            "edited": False,
+            "provenance": {
+                "source": "generated",
+                "generator": GEMMA_MODEL,
+                "gates": gates,
+                "external_options": True,
+            },
+        }

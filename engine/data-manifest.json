@@ -1,0 +1,32 @@
+{
+  "bundle": "lu-runtime-data",
+  "version": "2026.07.10",
+  "description": "Digest-pinned corpus inputs for the Hramatka engine. The DB files are NEVER committed; they mount read-only from HRAMATKA_DATA_DIR and are verified against these digests at startup. sources.db is optional for slice-1 (not opened) but pins the bundle identity used in the bake fingerprint.",
+  "source": {
+    "repo": "learn-ukrainian (protected build)",
+    "note": "digests captured from the operator's local protected build 2026-07-10"
+  },
+  "inputs": {
+    "vesum.db": {
+      "path": "vesum.db",
+      "sha256": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "size": 967602176,
+      "role": "morphology (VESUM forms)",
+      "required": true
+    },
+    "atlas.db": {
+      "path": "atlas.db",
+      "sha256": "091778fbe7d382fbcb0ec886041edb4eece5bed0e917dc1317c48ea9f7eaaab8",
+      "size": 149708800,
+      "role": "grounding (Word Atlas article_payloads)",
+      "required": true
+    },
+    "sources.db": {
+      "path": "sources.db",
+      "sha256": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca",
+      "size": 1878265856,
+      "role": "protected private corpus (non-redistributable)",
+      "required": false
+    }
+  }
+}

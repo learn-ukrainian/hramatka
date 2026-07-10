@@ -11,18 +11,12 @@ before validation — never added inline.
 from __future__ import annotations
 
 import copy
-import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from . import paths
-from .gates import _bootstrap_sys_path
-
-_bootstrap_sys_path()
-
 import jsonschema
 
-_B1_SCHEMA_PATH = paths.PROJECT_ROOT / "schemas" / "activities-b1.schema.json"
+from . import vendoring
 
 # activities-b1 `type` const → its self-contained def name in the schema.
 _TYPE_TO_DEF = {
@@ -36,8 +30,8 @@ _TYPE_TO_DEF = {
 
 @lru_cache(maxsize=1)
 def load_b1_schema() -> dict:
-    with open(_B1_SCHEMA_PATH, encoding="utf-8") as fh:
-        return json.load(fh)
+    """The pinned `lu.activity.v1` schema, read + digest-verified from the vendor dir."""
+    return vendoring.read_json(vendoring.LU_ACTIVITY, "activities-b1.schema.json")
 
 
 class B1ValidationError(ValueError):

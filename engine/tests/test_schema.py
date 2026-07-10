@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine import schema as S
+from hramatka.engine import schema as S
 
 
 def test_parse_raw_activity_strips_evidence_true_false():
@@ -60,7 +60,11 @@ def test_project_to_b1_defensively_strips_and_validates():
 def test_validate_b1_rejects_projection_drift_correct_to_istrue():
     # correct -> isTrue is the classic renderer-prop drift; b1 schema is
     # additionalProperties:false + requires `correct`, so this must fail.
-    drift = {"type": "true-false", "instruction": "І", "items": [{"statement": "A", "isTrue": True}]}
+    drift = {
+        "type": "true-false",
+        "instruction": "І",
+        "items": [{"statement": "A", "isTrue": True}],
+    }
     with pytest.raises(S.B1ValidationError):
         S.validate_b1(drift)
 

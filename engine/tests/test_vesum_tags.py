@@ -1,34 +1,33 @@
 """Tests for gates/vesum_tags.py — the thin structured layer over VESUM.
 
 Every Ukrainian word form referenced here was verified live against VESUM
-via `scripts.verification.vesum.verify_word` before being used (see the
-build report for the raw tool evidence) — per repo rule #M-4
-(deterministic-over-hallucination), no form is invented.
+before being used — per repo rule #M-4 (deterministic-over-hallucination), no
+form is invented. Lookups run against the offline fixture VESUM bundle the
+conftest injects (extracted from the real DB for exactly these forms).
 """
 
 from __future__ import annotations
 
-from engine import paths
-from engine.gates import vesum_tags as vt
+from hramatka.engine import paths
+from hramatka.engine.gates import vesum_tags as vt
 
 
 # ---------------------------------------------------------------------------
-# paths.py sanity — the engine must resolve real absolute DB paths regardless
-# of cwd (build brief §R path-robustness requirement)
+# Resolution sanity — DB paths come from the digest-verified data bundle
+# (conftest injects the offline fixture bundle), never a checkout walk or a
+# cwd-relative default.
 # ---------------------------------------------------------------------------
-def test_project_root_and_dbs_resolve():
-    assert (paths.PROJECT_ROOT / ".git").exists() or (
-        paths.PROJECT_ROOT / "pyproject.toml"
-    ).exists()
-    assert paths.ATLAS_DB.is_absolute()
-    assert paths.VESUM_DB.is_absolute()
-    assert paths.ATLAS_DB.exists()
-    assert paths.VESUM_DB.exists()
+def test_dbs_resolve_from_active_bundle():
+    assert paths.vesum_db().is_absolute()
+    assert paths.atlas_db().is_absolute()
+    assert paths.vesum_db().exists()
+    assert paths.atlas_db().exists()
 
 
-def test_preflight_passes_in_this_environment():
-    # Confirms opencode + the google-ais key + both DBs are present, i.e.
-    # the preflight function itself is wired correctly (not just "returns").
+def test_preflight_verifies_vendor_and_data_digests():
+    # Offline preflight: every vendored artifact's digests verify AND the active
+    # data bundle's input digests match its manifest. require_generator defaults
+    # to False, so the AIS key is not needed for an offline run.
     paths.preflight()
 
 

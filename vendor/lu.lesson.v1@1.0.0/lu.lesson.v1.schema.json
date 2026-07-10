@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://learn-ukrainian.github.io/contracts/lu.lesson.v1.interim.schema.json",
+  "title": "lu.lesson.v1 interim contract-derived schema",
+  "description": "Private offline validator derived from the public lesson-document-v1.md pinned at f77ccf76fd. It is not a shipped public JSON Schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "level",
+    "method",
+    "focus",
+    "anchor",
+    "duration",
+    "version",
+    "status",
+    "last_error",
+    "accepted",
+    "blocks",
+    "rejected",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema": { "const": "lu.lesson.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 52 },
+    "level": { "const": "B1" },
+    "method": { "const": "ttt" },
+    "focus": { "type": ["string", "null"] },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "source", "chars"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "source": { "enum": ["teacher-paste", "teacher-url"] },
+        "chars": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "duration": { "enum": [45, 60, 90] },
+    "version": { "const": 1 },
+    "status": { "enum": ["draft", "baking", "ready", "failed"] },
+    "last_error": { "type": ["string", "null"] },
+    "accepted": { "type": "boolean" },
+    "blocks": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/block" }
+    },
+    "rejected": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rejectedDraft" }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "failed" } } },
+      "then": { "properties": { "last_error": { "type": "string", "minLength": 1 } } },
+      "else": { "properties": { "last_error": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "accepted": { "const": true } } },
+      "then": { "properties": { "status": { "const": "ready" } } }
+    }
+  ],
+  "$defs": {
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "phase",
+        "type",
+        "mode",
+        "activity",
+        "answer_key",
+        "mark",
+        "note",
+        "edited",
+        "provenance"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "phase": { "enum": [1, 2, 3] },
+        "type": {
+          "enum": [
+            "true-false",
+            "cloze",
+            "match-up",
+            "text-questions",
+            "multiple-choice",
+            "glossary",
+            "form-build",
+            "error-correction",
+            "paraphrase",
+            "continue-sentence",
+            "roleplay-dialog",
+            "short-writing"
+          ]
+        },
+        "mode": { "enum": ["усно", "письмово", "вдома"] },
+        "activity": { "$ref": "#/$defs/activityEnvelope" },
+        "answer_key": { "type": ["string", "object", "array", "null"] },
+        "mark": { "enum": ["ok", "warn"] },
+        "note": { "type": ["string", "null"] },
+        "edited": { "type": "boolean" },
+        "provenance": { "$ref": "#/$defs/blockProvenance" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provenance": {
+                "properties": { "external_options": { "const": true } }
+              }
+            }
+          },
+          "then": { "properties": { "mark": { "const": "warn" } } }
+        }
+      ]
+    },
+    "activityEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "title", "level", "payload", "answer_key", "provenance"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "type": { "enum": ["true-false", "cloze", "match-up"] },
+        "title": { "type": "string", "minLength": 1 },
+        "level": { "const": "b1" },
+        "payload": { "type": "object", "minProperties": 1 },
+        "answer_key": { "type": "object", "minProperties": 1 },
+        "provenance": { "$ref": "#/$defs/activityProvenance" }
+      }
+    },
+    "activityProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "generator", "gates"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "generator": { "type": "string", "minLength": 1 },
+        "gates": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "blockProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "generator", "gates", "external_options"],
+      "properties": {
+        "source": { "enum": ["anchor", "generated", "teacher"] },
+        "generator": { "type": "string", "minLength": 1 },
+        "gates": { "type": "array", "items": { "type": "string" } },
+        "external_options": { "type": "boolean" }
+      }
+    },
+    "rejectedDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "activity", "reason"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "activity": { "type": "object" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
