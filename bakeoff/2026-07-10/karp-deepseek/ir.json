@@ -1,0 +1,468 @@
+{
+  "anchor": {
+    "anchor_id": "537d0beaeb67",
+    "body_uk": "Подорож Карпатами\n\nВосени Карпати особливо гарні. Ми з друзями давно мріяли про гори, тому в пʼятницю ввечері спакували рюкзаки, а в суботу рано-вранці виїхали зі Львова. Дорога до Яремча зайняла майже три години: спочатку ми їхали швидкісною трасою, потім — вузькою дорогою через невеликі села, де продають мед і теплі шкарпетки з овечої вовни.\n\nУ Яремчі ми спершу пішли до водоспаду Пробій. Стежка до нього коротка, але камениста, тому потрібне зручне взуття. Біля водоспаду шумить річка Прут: вода в ній холодна навіть улітку. Потім ми піднялися стежкою на полонину. Підйом тривав годину, і з кожним кроком краєвид ставав ширшим: унизу лишилися дахи села, а навколо — тільки гори й небо.\n\nНа полонині ми зустріли вівчаря, який пригостив нас свіжим сиром. Він розповів, що живе тут із травня до вересня, а взимку повертається в село. Ми купили в нього кілограм сиру й пішли назад — цього разу довшою, але легшою дорогою через ліс.\n\nУвечері ми сиділи біля садиби, пили чай із карпатських трав і слухали, як шумить річка. Господиня, пані Марічка, порадила нам приїхати ще раз узимку: тоді в горах тихо, а сніг лежить до самого березня. Ми пообіцяли повернутися — бо той, хто раз побачив осінні Карпати, обовʼязково приїде знову.\n",
+    "hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "source": "teacher-paste",
+    "content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "char_len": 1229,
+    "diagnostics": [
+      {
+        "form": "Карпатами",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Карпати",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "пʼятницю",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Львова",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Яремча",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Яремчі",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Марічка",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "обовʼязково",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "063cc6820657034b71cbed56152c47f48e8ebb69dcc7ed0f5a307676d4376417",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "40df28af2c11a94fb4968227b92b5f5d1e062bf9d3716b87c990e47a69d24124",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "2584910d73b75b20164ffe324b3156a15f0d58a31876d6d59c7c8b1261c81c22",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "4fe754be177819e7d8125b1bc4979ae9aa03b22d5ce90b2d18208a3897c07977",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Визначте, чи є твердження правильним (True) або хибним (False) відповідно до тексту.",
+        "items": [
+          {
+            "statement": "Дорога до Яремча зайняла майже три години.",
+            "correct": true,
+            "explanation": "У тексті сказано, що дорога до Яремча зайняла майже три години."
+          },
+          {
+            "statement": "Вода в річці Прут тепла навіть узимку.",
+            "correct": false,
+            "explanation": "У тексті сказано, що вода в річці Прут холодна навіть улітку, а не тепла взимку."
+          },
+          {
+            "statement": "Вівчар живе на полонині з травня до вересня.",
+            "correct": true,
+            "explanation": "У тексті вівчар розповів, що живе тут із травня до вересня."
+          },
+          {
+            "statement": "Назад до садиби ми повернулися коротшою дорогою через ліс.",
+            "correct": false,
+            "explanation": "У тексті сказано, що ми пішли назад довшою, але легшою дорогою через ліс."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Дорога до Яремча зайняла майже три години: спочатку ми їхали швидкісною трасою, потім — вузькою дорогою через невеликі села, де продають мед і теплі шкарпетки з овечої вовни.",
+          "locator": "items[0]",
+          "char_start": 171,
+          "char_end": 345,
+          "kind": "literal"
+        },
+        {
+          "quote": "Біля водоспаду шумить річка Прут: вода в ній холодна навіть улітку.",
+          "locator": "items[1]",
+          "char_start": 462,
+          "char_end": 529,
+          "kind": "literal"
+        },
+        {
+          "quote": "Він розповів, що живе тут із травня до вересня, а взимку повертається в село.",
+          "locator": "items[2]",
+          "char_start": 758,
+          "char_end": 835,
+          "kind": "literal"
+        },
+        {
+          "quote": "Ми купили в нього кілограм сиру й пішли назад — цього разу довшою, але легшою дорогою через ліс.",
+          "locator": "items[3]",
+          "char_start": 836,
+          "char_end": 932,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "063cc6820657034b71cbed56152c47f48e8ebb69dcc7ed0f5a307676d4376417"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [171:345] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [462:529] (offsets recomputed).",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [758:835] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [836:932] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Заповніть пропуск словом, яке стояло в тексті.",
+        "text": "Стежка до нього {gap}, але камениста, тому потрібне зручне взуття.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "коротка",
+            "options": [
+              "коротка",
+              "довга",
+              "широка",
+              "крута"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Стежка до нього коротка, але камениста, тому потрібне зручне взуття.",
+          "locator": "text",
+          "char_start": 393,
+          "char_end": 461,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "063cc6820657034b71cbed56152c47f48e8ebb69dcc7ed0f5a307676d4376417"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [393:461] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "З'єднайте слово з лівої колонки з його правильним значенням у правій колонці.",
+        "pairs": [
+          {
+            "left": "вівчар",
+            "right": "людина, яка пасе овець"
+          },
+          {
+            "left": "краєвид",
+            "right": "пейзаж, вигляд місцевості"
+          },
+          {
+            "left": "шкарпетки",
+            "right": "предмет одягу для ніг"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Потім ми піднялися стежкою на полонину.",
+          "locator": "pairs[0]",
+          "char_start": 530,
+          "char_end": 569,
+          "kind": "literal"
+        },
+        {
+          "quote": "На полонині ми зустріли вівчаря, який пригостив нас свіжим сиром.",
+          "locator": "pairs[1]",
+          "char_start": 692,
+          "char_end": 757,
+          "kind": "literal"
+        },
+        {
+          "quote": "з кожним кроком краєвид ставав ширшим: унизу лишилися дахи села, а навколо — тільки гори й небо.",
+          "locator": "pairs[2]",
+          "char_start": 594,
+          "char_end": 690,
+          "kind": "literal"
+        },
+        {
+          "quote": "де продають мед і теплі шкарпетки з овечої вовни.",
+          "locator": "pairs[3]",
+          "char_start": 296,
+          "char_end": 345,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "063cc6820657034b71cbed56152c47f48e8ebb69dcc7ed0f5a307676d4376417"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [530:569] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "vesum_token",
+            "status": "fail",
+            "detail": "'Карпатах' not found in VESUM — fabricated or misspelled form.",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'полонина' ↔ 'високогірне пасовище в Карпатах'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [692:757] (offsets recomputed).",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas has no relation record for the left-hand term: 'вівчар' ↔ 'людина, яка пасе овець'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [594:690] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [296:345] (offsets recomputed).",
+            "locator": "pairs[3]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'шкарпетки' ↔ 'предмет одягу для ніг'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "pairs[0]",
+          "reasons": [
+            {
+              "gate": "vesum_token",
+              "detail": "'Карпатах' not found in VESUM — fabricated or misspelled form."
+            }
+          ],
+          "item": {
+            "left": "полонина",
+            "right": "високогірне пасовище в Карпатах"
+          }
+        }
+      ]
+    },
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Визначте, чи є твердження правильним (True) або хибним (False) відповідно до тексту.",
+        "items": [
+          {
+            "statement": "Близько три годин тривала дорога до Яремча.",
+            "correct": true,
+            "explanation": "У тексті сказано, що дорога зайняла майже три години, тому числовий зонд «близько три годин» є правильним (іменник у родовому відмінку після числівника)."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Дорога до Яремча зайняла майже три години: спочатку ми їхали швидкісною трасою, потім — вузькою дорогою через невеликі села, де продають мед і теплі шкарпетки з овечої вовни.",
+          "locator": "items[0]",
+          "char_start": 171,
+          "char_end": 345,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "063cc6820657034b71cbed56152c47f48e8ebb69dcc7ed0f5a307676d4376417"
+      },
+      "gate_result": {
+        "status": "failed",
+        "passed": false,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [171:345] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[gov-ends_2_4] 'годин' has no VESUM form matching nominative plural, required by numeral class ends_2_4 in context case 'nom'. expected=nominative plural (e.g. 'години')",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "partition",
+            "status": "fail",
+            "detail": "Only 0 item(s) survived per-item gating; true-false requires >= 1 — dropping the whole activity.",
+            "locator": null
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[0]",
+          "reasons": [
+            {
+              "gate": "numeral",
+              "detail": "[gov-ends_2_4] 'годин' has no VESUM form matching nominative plural, required by numeral class ends_2_4 in context case 'nom'. expected=nominative plural (e.g. 'години')"
+            }
+          ],
+          "item": {
+            "statement": "Близько три годин тривала дорога до Яремча.",
+            "correct": true,
+            "explanation": "У тексті сказано, що дорога зайняла майже три години, тому числовий зонд «близько три годин» є правильним (іменник у родовому відмінку після числівника)."
+          }
+        }
+      ]
+    }
+  ]
+}
