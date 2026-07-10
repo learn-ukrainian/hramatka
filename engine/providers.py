@@ -70,8 +70,13 @@ class HttpChatTransport:
         import httpx
 
         url = self.base_url.rstrip("/") + "/chat/completions"
+        # Canonical ids carry OUR routing prefix ("google-ais/gemma-4-31b-it");
+        # the provider API knows only the bare model id. Sending the prefixed id
+        # returns HTTP 404 (bake-off 2026-07-10, all gemma cells). Strip at the
+        # wire; keep the canonical id in fingerprints/meta.
+        wire_model = model.split("/", 1)[1] if "/" in model else model
         payload = {
-            "model": model,
+            "model": wire_model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         }  # TOOLLESS: no `tools` key by construction

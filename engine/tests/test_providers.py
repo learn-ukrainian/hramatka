@@ -63,6 +63,22 @@ def test_request_is_toolless_openai_shape_with_bearer_auth():
     assert "tools" not in seen["body"]  # TOOLLESS by construction
 
 
+def test_wire_model_strips_our_provider_prefix():
+    """Regression: bake-off 2026-07-10 — sending the canonical routed id
+    ("google-ais/gemma-4-31b-it") to the provider returned HTTP 404 for every
+    cell. The wire payload must carry the bare model id; the canonical id stays
+    in fingerprints/meta only."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    _transport(handler)("p", api_key="k", model="google-ais/gemma-4-31b-it", timeout_s=5)
+    assert seen["body"]["model"] == "gemma-4-31b-it"
+    assert "/" not in seen["body"]["model"]
+
+
 # --- retry semantics: single retry on 5xx / timeout ------------------------
 def test_retries_once_on_5xx_then_succeeds():
     handler, calls = _seq([503, 200])
