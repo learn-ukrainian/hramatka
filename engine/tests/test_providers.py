@@ -142,11 +142,19 @@ def test_make_generator_gemma_ais_uses_locked_route():
     assert isinstance(gen._transport, providers.HttpChatTransport)
 
 
-def test_make_generator_deepseek_reads_env(monkeypatch):
+@pytest.mark.parametrize(
+    ("name", "model"),
+    [
+        ("deepseek", providers.DEEPSEEK_MODEL),
+        ("deepseek-v4-flash", providers.DEEPSEEK_V4_FLASH_MODEL),
+        ("deepseek-v4-pro", providers.DEEPSEEK_V4_PRO_MODEL),
+    ],
+)
+def test_make_generator_deepseek_reads_env(monkeypatch, name, model):
     monkeypatch.setenv("HRAMATKA_DEEPSEEK_BASE_URL", "https://deep.example/v9")
     monkeypatch.setenv("HRAMATKA_DEEPSEEK_API_KEY", "ds-key")
-    gen = providers.make_generator("deepseek")
-    assert gen._model == providers.DEEPSEEK_MODEL
+    gen = providers.make_generator(name)
+    assert gen._model == model
     assert gen._transport.base_url == "https://deep.example/v9"
     # the port resolves the deepseek-specific key env
     assert gen._resolve_key() == "ds-key"

@@ -1,0 +1,411 @@
+{
+  "anchor": {
+    "anchor_id": "685781ddb4d8",
+    "body_uk": "Як ми шукали квартиру у Львові\n\nТорік восени ми з дружиною вирішили переїхати до Львова. Ми обоє працюємо з дому, тому нам була потрібна квартира з двома кімнатами: одна для роботи, друга для життя. Наш бюджет був невеликий, але й вимоги прості: тихий район, зупинка поруч і сусіди, які не співають уночі.\n\nПершу квартиру ми подивилися в центрі. Вона була красива, але дорога: власник хотів двадцять тисяч гривень на місяць. Друга квартира була дешевша за першу, проте темна й холодна: вікна виходили на стіну сусіднього будинку, а батареї ледве гріли. Третя була найдивніша з усіх — з рожевими стінами й дзеркалом на стелі. Ми ввічливо подякували й швидко пішли.\n\nЧерез два тижні пошуків ми вже майже втратили надію. Аж раптом подруга надіслала нам оголошення: «Здаємо світлу квартиру в тихому районі, поруч парк і зупинка трамвая. Ціна помірна». Ми зателефонували того ж вечора.\n\nВласниця, пані Оксана, виявилася привітною жінкою. Вона показала нам кухню з новою технікою, теплу спальню і навіть місце для велосипедів у дворі. Будинок цегляний, тому взимку в ньому тепліше, ніж у панельному. Єдиний мінус — четвертий поверх без ліфта. Але ми молоді, а сходи корисні для здоровʼя.\n\nМи погодилися одразу. Тепер щоранку я пʼю каву біля вікна й дивлюся на парк. Нова квартира менша, ніж наша стара, зате світліша, тепліша і вдвічі ближча до центру. Найважливіше ми зрозуміли за ці два тижні: ідеального житла не існує, але існує житло, у якому хочеться жити.\n",
+    "hash": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+    "source": "teacher-paste",
+    "content_fingerprint": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+    "char_len": 1457,
+    "diagnostics": [
+      {
+        "form": "Львові",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Львова",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Оксана",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "здоровʼя",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "пʼю",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "7f716e4b0cfbee00badc0bfc6ae67129d6e765cecb7ed8beb7e900353ff97655",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "150d01f273823c9e7cd9f2c54fc9a69fbb2f108092bcbbb929b4b3bacadc4732",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "2584910d73b75b20164ffe324b3156a15f0d58a31876d6d59c7c8b1261c81c22",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Прочитайте твердження. Позначте, чи є вони правдивими відповідно до тексту.",
+        "items": [
+          {
+            "statement": "Перша квартира, яку вони подивилися, знаходилася в тихому районі.",
+            "correct": false,
+            "explanation": "Текст повідомляє, що перша квартира була в центрі, а не в тихому районі."
+          },
+          {
+            "statement": "Друга квартира була дешевшою за першу, але темною та холодною.",
+            "correct": true,
+            "explanation": "У тексті зазначено: «Друга квартира була дешевша за першу, проте темна й холодна…»."
+          },
+          {
+            "statement": "Третя квартира мала рожеві стіни та дзеркало на підлозі.",
+            "correct": false,
+            "explanation": "У тексті йдеться про дзеркало на стелі, а не на підлозі."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Ми обоє працюємо з дому, тому нам була потрібна квартира з двома кімнатами: одна для роботи, друга для життя.",
+          "locator": "items[0]",
+          "char_start": 89,
+          "char_end": 198,
+          "kind": "literal"
+        },
+        {
+          "quote": "Першу квартиру ми подивилися в центрі.",
+          "locator": "items[1]",
+          "char_start": 307,
+          "char_end": 345,
+          "kind": "literal"
+        },
+        {
+          "quote": "Друга квартира була дешевша за першу, проте темна й холодна: вікна виходили на стіну сусіднього будинку, а батареї ледве гріли.",
+          "locator": "items[2]",
+          "char_start": 425,
+          "char_end": 552,
+          "kind": "literal"
+        },
+        {
+          "quote": "Третя була найдивніша з усіх — з рожевими стінами й дзеркалом на стелі.",
+          "locator": "items[3]",
+          "char_start": 553,
+          "char_end": 624,
+          "kind": "literal"
+        },
+        {
+          "quote": "власник хотів двадцять тисяч гривень на місяць.",
+          "locator": "items[4]",
+          "char_start": 377,
+          "char_end": 424,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "685781ddb4d8",
+        "anchor_hash": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "7f716e4b0cfbee00badc0bfc6ae67129d6e765cecb7ed8beb7e900353ff97655"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [89:198] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[no-noun-found] No governed noun found after the numeral in 'обоє працюють'.",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [307:345] (offsets recomputed).",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [425:552] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [553:624] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [377:424] (offsets recomputed).",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[no-noun-found] No governed noun found after the numeral in 'двадцять тисяч'.",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[nested-magnitude-form] 'тисяч' is not a VESUM form of 'тисяча' matching nominative singular (required by outer numeral class ends_1). expected=nominative singular (e.g. 'тисяча')",
+            "locator": "items[4]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[0]",
+          "reasons": [
+            {
+              "gate": "numeral",
+              "detail": "[no-noun-found] No governed noun found after the numeral in 'обоє працюють'."
+            }
+          ],
+          "item": {
+            "statement": "Автор і його дружина шукали квартиру з двома кімнатами, бо обоє працюють з дому.",
+            "correct": true,
+            "explanation": "У тексті сказано: «Ми обоє працюємо з дому, тому нам була потрібна квартира з двома кімнатами»."
+          }
+        },
+        {
+          "locator": "items[4]",
+          "reasons": [
+            {
+              "gate": "numeral",
+              "detail": "[no-noun-found] No governed noun found after the numeral in 'двадцять тисяч'."
+            },
+            {
+              "gate": "numeral",
+              "detail": "[nested-magnitude-form] 'тисяч' is not a VESUM form of 'тисяча' matching nominative singular (required by outer numeral class ends_1). expected=nominative singular (e.g. 'тисяча')"
+            }
+          ],
+          "item": {
+            "statement": "Ціна першої квартири становила двадцять тисяч гривень на місяць.",
+            "correct": true,
+            "explanation": "Текст чітко називає вартість, яку просив власник: двадцять тисяч гривень на місяць."
+          }
+        }
+      ]
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Заповніть пропуск у реченні з тексту.",
+        "text": "Друга квартира була дешевша за першу, проте {gap} й холодна: вікна виходили на стіну сусіднього будинку, а батареї ледве гріли.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "темна",
+            "options": [
+              "світла",
+              "тісна",
+              "сира",
+              "темна"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Друга квартира була дешевша за першу, проте темна й холодна: вікна виходили на стіну сусіднього будинку, а батареї ледве гріли.",
+          "locator": "text",
+          "char_start": 425,
+          "char_end": 552,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "685781ddb4d8",
+        "anchor_hash": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "7f716e4b0cfbee00badc0bfc6ae67129d6e765cecb7ed8beb7e900353ff97655"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [425:552] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "Поєднайте слово з тексту з його значенням.",
+        "pairs": [
+          {
+            "left": "бюджет",
+            "right": "кошторис"
+          },
+          {
+            "left": "власник",
+            "right": "господар"
+          },
+          {
+            "left": "оголошення",
+            "right": "повідомлення про здачу квартири"
+          },
+          {
+            "left": "велосипед",
+            "right": "ровер"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Наш бюджет був невеликий",
+          "locator": "pairs[0]",
+          "char_start": 199,
+          "char_end": 223,
+          "kind": "literal"
+        },
+        {
+          "quote": "власник хотів двадцять тисяч гривень на місяць",
+          "locator": "pairs[1]",
+          "char_start": 377,
+          "char_end": 423,
+          "kind": "literal"
+        },
+        {
+          "quote": "подруга надіслала нам оголошення",
+          "locator": "pairs[2]",
+          "char_start": 728,
+          "char_end": 760,
+          "kind": "literal"
+        },
+        {
+          "quote": "і навіть місце для велосипедів у дворі",
+          "locator": "pairs[3]",
+          "char_start": 989,
+          "char_end": 1027,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "685781ddb4d8",
+        "anchor_hash": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "685781ddb4d854c962e2f06dbc94967123d5cf85b8ed87b1a74afc53ba86c110",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "7f716e4b0cfbee00badc0bfc6ae67129d6e765cecb7ed8beb7e900353ff97655"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [199:223] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'бюджет' ↔ 'кошторис'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [377:423] (offsets recomputed).",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [728:760] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [989:1027] (offsets recomputed).",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": []
+    }
+  ]
+}

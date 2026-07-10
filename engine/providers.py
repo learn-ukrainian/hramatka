@@ -39,6 +39,8 @@ DEEPSEEK_API_KEY_ENV = "HRAMATKA_DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL_ENV = "HRAMATKA_DEEPSEEK_BASE_URL"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_V4_FLASH_MODEL = "deepseek-v4-flash"
+DEEPSEEK_V4_PRO_MODEL = "deepseek-v4-pro"
 
 
 def _extract_text(body: Any) -> str:
@@ -135,7 +137,8 @@ def make_generator(name: str) -> AISGeneratorPort:
     swaps engines by name through this registry.
 
       "gemma-ais" / "gemma" / "google-ais" -> locked Gemma route, HRAMATKA_AIS_API_KEY
-      "deepseek"                            -> HRAMATKA_DEEPSEEK_API_KEY + _BASE_URL
+      "deepseek"                            -> deepseek-chat, HRAMATKA_DEEPSEEK_API_KEY + _BASE_URL
+      "deepseek-v4-flash" / "deepseek-v4-pro" -> explicit V4 tier, same DeepSeek route
     """
     key = name.lower()
     if key in ("gemma-ais", "gemma", "google-ais"):
@@ -153,4 +156,14 @@ def make_generator(name: str) -> AISGeneratorPort:
             model=DEEPSEEK_MODEL,
             transport=HttpChatTransport(base_url=base),
         )
-    raise ValueError(f"unknown generator {name!r}; known: gemma-ais, deepseek")
+    if key in (DEEPSEEK_V4_FLASH_MODEL, DEEPSEEK_V4_PRO_MODEL):
+        base = os.environ.get(DEEPSEEK_BASE_URL_ENV, DEFAULT_DEEPSEEK_BASE_URL)
+        return AISGeneratorPort(
+            api_key_env=DEEPSEEK_API_KEY_ENV,
+            model=key,
+            transport=HttpChatTransport(base_url=base),
+        )
+    raise ValueError(
+        "unknown generator "
+        f"{name!r}; known: gemma-ais, deepseek, deepseek-v4-flash, deepseek-v4-pro"
+    )

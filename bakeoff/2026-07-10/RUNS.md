@@ -73,3 +73,18 @@ PY
 ```
 
 X-Agent: codex/bakeoff-runner-r2 (dispatched by main-claude)
+
+## Round 3 (explicit V4 tiers)
+
+| cell | items generated | clean | review_required | failed | rejected | wall-clock | status |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| rent × deepseek-v4-flash | 3 | 1 | 2 | 0 | 0 | 1.625 s | completed |
+| karp × deepseek-v4-flash | 2 | 0 | 2 | 1 | 1 | 36.282 s | completed |
+| var × deepseek-v4-flash | 3 | 1 | 2 | 0 | 0 | 33.863 s | completed |
+| rent × deepseek-v4-pro | 3 | 1 | 2 | 0 | 0 | 61.141 s | completed |
+| karp × deepseek-v4-pro | 3 | 1 | 2 | 0 | 0 | 47.455 s | completed |
+| var × deepseek-v4-pro | 3 | 1 | 2 | 0 | 0 | 1.844 s | completed |
+
+The gemma comparison column reuses the r2 `gemma-ais` cells (no re-run: fingerprint-lean). The r2 `deepseek-chat` model was an API alias; `GET https://api.deepseek.com/v1/models` lists only `deepseek-v4-flash` and `deepseek-v4-pro`. Each r3 cell's `meta.json` records its exact bare V4 model id.
+
+X-Agent: codex/bakeoff-runner-r3 (dispatched by main-claude)

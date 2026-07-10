@@ -1,0 +1,407 @@
+{
+  "anchor": {
+    "anchor_id": "537d0beaeb67",
+    "body_uk": "Подорож Карпатами\n\nВосени Карпати особливо гарні. Ми з друзями давно мріяли про гори, тому в пʼятницю ввечері спакували рюкзаки, а в суботу рано-вранці виїхали зі Львова. Дорога до Яремча зайняла майже три години: спочатку ми їхали швидкісною трасою, потім — вузькою дорогою через невеликі села, де продають мед і теплі шкарпетки з овечої вовни.\n\nУ Яремчі ми спершу пішли до водоспаду Пробій. Стежка до нього коротка, але камениста, тому потрібне зручне взуття. Біля водоспаду шумить річка Прут: вода в ній холодна навіть улітку. Потім ми піднялися стежкою на полонину. Підйом тривав годину, і з кожним кроком краєвид ставав ширшим: унизу лишилися дахи села, а навколо — тільки гори й небо.\n\nНа полонині ми зустріли вівчаря, який пригостив нас свіжим сиром. Він розповів, що живе тут із травня до вересня, а взимку повертається в село. Ми купили в нього кілограм сиру й пішли назад — цього разу довшою, але легшою дорогою через ліс.\n\nУвечері ми сиділи біля садиби, пили чай із карпатських трав і слухали, як шумить річка. Господиня, пані Марічка, порадила нам приїхати ще раз узимку: тоді в горах тихо, а сніг лежить до самого березня. Ми пообіцяли повернутися — бо той, хто раз побачив осінні Карпати, обовʼязково приїде знову.\n",
+    "hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "source": "teacher-paste",
+    "content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "char_len": 1229,
+    "diagnostics": [
+      {
+        "form": "Карпатами",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Карпати",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "пʼятницю",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Львова",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Яремча",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Яремчі",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "Марічка",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "обовʼязково",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "722eb751f997d4b5c2369710030a7ca9b3b7d959092832a59bc770072e0a62f8",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "40df28af2c11a94fb4968227b92b5f5d1e062bf9d3716b87c990e47a69d24124",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "2584910d73b75b20164ffe324b3156a15f0d58a31876d6d59c7c8b1261c81c22",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Прочитайте твердження. Позначте, чи вони правдиві, чи хибні, спираючись на текст «Подорож Карпатами».",
+        "items": [
+          {
+            "statement": "Мандрівники виїхали зі Львова в суботу вранці.",
+            "correct": true,
+            "explanation": "У тексті сказано: «а в суботу рано-вранці виїхали зі Львова»."
+          },
+          {
+            "statement": "Друзі купили у вівчаря два кілограми сиру.",
+            "correct": false,
+            "explanation": "У тексті куплено лише один кілограм: «купили в нього кілограм сиру»."
+          },
+          {
+            "statement": "Вівчар живе в горах із травня до вересня.",
+            "correct": true,
+            "explanation": "Він сам каже: «живе тут із травня до вересня»."
+          },
+          {
+            "statement": "Мандрівники витратили близько трьох годин на дорогу до Яремча.",
+            "correct": true,
+            "explanation": "У тексті час позначено як «майже три години»; числівник три узгоджено з іменником у родовому відмінку після прийменника близько."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "а в суботу рано-вранці виїхали зі Львова.",
+          "locator": "items[0]",
+          "char_start": 129,
+          "char_end": 170,
+          "kind": "literal"
+        },
+        {
+          "quote": "Ми купили в нього кілограм сиру",
+          "locator": "items[1]",
+          "char_start": 836,
+          "char_end": 867,
+          "kind": "literal"
+        },
+        {
+          "quote": "Він розповів, що живе тут із травня до вересня",
+          "locator": "items[2]",
+          "char_start": 758,
+          "char_end": 804,
+          "kind": "literal"
+        },
+        {
+          "quote": "Стежка до нього коротка, але камениста",
+          "locator": "items[3]",
+          "char_start": 393,
+          "char_end": 431,
+          "kind": "literal"
+        },
+        {
+          "quote": "Дорога до Яремча зайняла майже три години",
+          "locator": "items[4]",
+          "char_start": 171,
+          "char_end": 212,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "722eb751f997d4b5c2369710030a7ca9b3b7d959092832a59bc770072e0a62f8"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [129:170] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [836:867] (offsets recomputed).",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [758:804] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [393:431] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "vesum_token",
+            "status": "fail",
+            "detail": "'кам’яниста' not found in VESUM — fabricated or misspelled form.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [171:212] (offsets recomputed).",
+            "locator": "items[4]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[3]",
+          "reasons": [
+            {
+              "gate": "vesum_token",
+              "detail": "'кам’яниста' not found in VESUM — fabricated or misspelled form."
+            }
+          ],
+          "item": {
+            "statement": "Стежка до водоспаду Пробій довга й кам’яниста.",
+            "correct": false,
+            "explanation": "Стежка насправді коротка: «Стежка до нього коротка, але камениста»."
+          }
+        }
+      ]
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Заповніть пропуск у реченні, вибравши одне з поданих слів.",
+        "text": "У Яремчі ми спершу пішли до {gap} Пробій.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "водоспаду",
+            "options": [
+              "лісу",
+              "села",
+              "водоспаду",
+              "мосту"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "У Яремчі ми спершу пішли до водоспаду Пробій.",
+          "locator": "text",
+          "char_start": 347,
+          "char_end": 392,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "722eb751f997d4b5c2369710030a7ca9b3b7d959092832a59bc770072e0a62f8"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [347:392] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "З’єднайте слово з тексту (ліворуч) із його значенням або синонімом (праворуч).",
+        "pairs": [
+          {
+            "left": "рюкзак",
+            "right": "наплічник"
+          },
+          {
+            "left": "вівчар",
+            "right": "пастух овець"
+          },
+          {
+            "left": "шкарпетки",
+            "right": "панчохи"
+          },
+          {
+            "left": "трави",
+            "right": "зелень"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "спакували рюкзаки",
+          "locator": "pairs[0]",
+          "char_start": 110,
+          "char_end": 127,
+          "kind": "literal"
+        },
+        {
+          "quote": "ми зустріли вівчаря",
+          "locator": "pairs[1]",
+          "char_start": 704,
+          "char_end": 723,
+          "kind": "literal"
+        },
+        {
+          "quote": "теплі шкарпетки з овечої вовни",
+          "locator": "pairs[2]",
+          "char_start": 314,
+          "char_end": 344,
+          "kind": "literal"
+        },
+        {
+          "quote": "чай із карпатських трав",
+          "locator": "pairs[3]",
+          "char_start": 970,
+          "char_end": 993,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "537d0beaeb67",
+        "anchor_hash": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "537d0beaeb679742f19cc8e719240b3257629223d7ca2496e3ee53968c7326b0",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "722eb751f997d4b5c2369710030a7ca9b3b7d959092832a59bc770072e0a62f8"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [110:127] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [704:723] (offsets recomputed).",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [314:344] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'шкарпетки' ↔ 'панчохи'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [970:993] (offsets recomputed).",
+            "locator": "pairs[3]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'трави' ↔ 'зелень'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": []
+    }
+  ]
+}
