@@ -21,9 +21,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
+from typing import Literal
 
 from . import ENGINE_VERSION, data, paths, registry, retrieval, schema, selector, vendoring
-from .gates import evidence_span, matchup_semantics, numeral
 from .gates import vesum as vesum_gate
 from .generate import (
     GEMMA_MODEL,
@@ -224,161 +224,6 @@ def make_fingerprint(**inputs) -> str:
     return _sha(blob)
 
 
-# ---------------------------------------------------------------------------
-# Per-type gate chains (§7)
-# ---------------------------------------------------------------------------
-def _numeral_phrases(text: str) -> list[str]:
-    return [d["raw_span"] for d in retrieval.extract_numeral_inventory(text) if d["following_noun"]]
-
-
-def _run_numeral_gate(text: str, gr: schema.GateResult, locator: str) -> None:
-    for phrase in _numeral_phrases(text):
-        result = numeral.check_numeral_government(phrase)
-        status = result["status"]
-        if status in ("fail", "warn"):
-            gr.add(
-                "numeral",
-                status,
-                f"[{result['rule']}] {result['detail']}"
-                + (f" expected={result['expected']}" if result.get("expected") else ""),
-                locator=locator,
-            )
-
-
-def _gate_true_false(
-    activity: dict,
-    evidence: list[schema.Evidence],
-    anchor_body: str,
-    gr: schema.GateResult,
-    atlas_lookup: dict | None = None,
-) -> None:
-    ev_by_loc = {e.locator: e for e in evidence}
-    for i, item in enumerate(activity.get("items", [])):
-        loc = f"items[{i}]"
-        statement = item.get("statement", "")
-        ev = ev_by_loc.get(loc)
-        verdict = evidence_span.check_evidence(ev.quote if ev else "", anchor_body)
-        gr.add("evidence_span", verdict["status"], verdict["detail"], locator=loc)
-        if ev is not None:
-            ev.char_start = verdict["char_start"]
-            ev.char_end = verdict["char_end"]
-            ev.kind = verdict["kind"]
-        # introduced-token validity + heritage on the statement
-        token_verdicts = vesum_gate.check_tokens(
-            vesum_gate.content_tokens(statement), anchor_body, atlas_lookup=atlas_lookup
-        )
-        worst = vesum_gate.worst_status(token_verdicts)
-        if worst != "pass":
-            bad = [v for v in token_verdicts if v["status"] == worst]
-            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
-        # numeral government on any numeral phrase in the statement
-        _run_numeral_gate(statement, gr, loc)
-        # FALSE statements: falsity can't be verified deterministically -> warn
-        if item.get("correct") is False:
-            gr.add(
-                "false_statement",
-                "warn",
-                "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
-                locator=loc,
-            )
-
-
-def _gate_cloze(
-    activity: dict,
-    evidence: list[schema.Evidence],
-    anchor_body: str,
-    gr: schema.GateResult,
-    atlas_lookup: dict | None = None,
-) -> None:
-    text = activity.get("text", "")
-    ev = next((e for e in evidence if e.locator == "text"), None)
-    verdict = evidence_span.check_evidence(ev.quote if ev else "", anchor_body)
-    gr.add("evidence_span", verdict["status"], verdict["detail"], locator="text")
-    if ev is not None:
-        ev.char_start = verdict["char_start"]
-        ev.char_end = verdict["char_end"]
-        ev.kind = verdict["kind"]
-    has_gap = "{gap}" in text or "{{" in text
-    if not has_gap:
-        gr.add("cloze_gap", "fail", "Cloze text has no {gap}/{{N}} marker.", locator="text")
-    # answer removed from the exact source span (pre-gap span rule, §R)
-    for blank in activity.get("blanks", []) or []:
-        answer = blank.get("answer", "")
-        options = blank.get("options", []) or []
-        if answer and ev and answer not in ev.quote:
-            gr.add(
-                "cloze_answer",
-                "fail",
-                f"Cloze answer '{answer}' is not present in the source sentence.",
-                locator="text",
-            )
-        if answer and answer not in options:
-            gr.add(
-                "cloze_answer",
-                "fail",
-                f"Cloze answer '{answer}' is not among its own options.",
-                locator="text",
-            )
-        # distractors (introduced tokens) VESUM-valid + heritage-checked
-        distractors = [o for o in options if o != answer]
-        token_verdicts = vesum_gate.check_tokens(
-            distractors, anchor_body, atlas_lookup=atlas_lookup
-        )
-        worst = vesum_gate.worst_status(token_verdicts)
-        if worst != "pass":
-            bad = [v for v in token_verdicts if v["status"] == worst]
-            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator="text")
-
-
-def _gate_match_up(
-    activity: dict,
-    evidence: list[schema.Evidence],
-    anchor_body: str,
-    gr: schema.GateResult,
-    atlas_lookup: dict | None = None,
-) -> None:
-    ev_by_loc = {e.locator: e for e in evidence}
-    for i, pair in enumerate(activity.get("pairs", [])):
-        loc = f"pairs[{i}]"
-        left = pair.get("left", "")
-        right = pair.get("right", "")
-        ev = ev_by_loc.get(loc)
-        # left should be anchor-derived
-        quote = ev.quote if ev else left
-        verdict = evidence_span.check_evidence(quote, anchor_body)
-        gr.add("evidence_span", verdict["status"], verdict["detail"], locator=loc)
-        if ev is not None:
-            ev.char_start = verdict["char_start"]
-            ev.char_end = verdict["char_end"]
-            ev.kind = verdict["kind"]
-        # right side (gloss) VESUM-valid + heritage-checked; a fabricated gloss
-        # FAILs (drops the pair), a russianism gloss WARNs (teacher-confirm).
-        token_verdicts = vesum_gate.check_tokens(
-            vesum_gate.content_tokens(right), anchor_body, atlas_lookup=atlas_lookup
-        )
-        worst = vesum_gate.worst_status(token_verdicts)
-        if worst != "pass":
-            bad = [v for v in token_verdicts if v["status"] == worst]
-            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
-        semantic_verdict = matchup_semantics.check_pair(
-            left, right, atlas_lookup=atlas_lookup
-        )
-        if semantic_verdict["status"] != "pass":
-            gr.add(
-                "matchup_semantics",
-                semantic_verdict["status"],
-                semantic_verdict["detail"],
-                locator=loc,
-            )
-
-
-_GATE_CHAINS: dict[str, Callable] = {
-    registry.ACTIVITY_REGISTRY["true-false"].gate_chain: _gate_true_false,
-    registry.ACTIVITY_REGISTRY["cloze"].gate_chain: _gate_cloze,
-    registry.ACTIVITY_REGISTRY["match-up"].gate_chain: _gate_match_up,
-}
-
-
 # Per-item (collection-index) gate locators look like "items[3]" / "pairs[1]".
 # Everything else ("text", None) is an ACTIVITY-level locator.
 _ITEM_LOCATOR_RE = re.compile(r"^(items|pairs)\[(\d+)\]$")
@@ -507,7 +352,7 @@ def gate_activity(
                 f"{registry.REGISTRY_VERSION}."
             ),
         )
-    contract_errors = entry.raw_candidate_schema.validate(raw_activity, entry.activity_type)
+    contract_errors = entry.raw_validator(raw_activity)
     if contract_errors:
         return reject_raw_candidate(
             raw_activity,
@@ -535,13 +380,7 @@ def gate_activity(
     )
     gr = ir.gate_result
     a_type = clean.get("type")
-    chain = _GATE_CHAINS.get(entry.gate_chain)
-    if chain is None:
-        gr.add("type", "fail", f"Unsupported activity type {a_type!r} for slice 1.")
-        gr.status = schema.GATE_FAILED
-        return ir
-
-    chain(clean, evidence, anchor_body, gr, atlas_lookup)
+    entry.gate(clean, evidence, anchor_body, gr, atlas_lookup)
     per_item, activity_status = _locator_statuses(gr)
 
     # Activity-level FAIL (cloze text gates, etc.) -> drop the whole activity.
@@ -618,7 +457,7 @@ def gate_activity(
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
-def run(
+def _run(
     anchor: str | dict,
     level: str = "B1",
     types: list[str] | None = None,
@@ -632,16 +471,13 @@ def run(
     cache_dir: str | Path | None = None,
     count_plan: dict[str, int] | None = None,
     max_regeneration_attempts: int = 0,
-    _candidate_generator: Callable[..., list[object]] = generate,
-    _pipeline_mode: str = "candidate-bank.v1",
+    _candidate_generator: Callable[..., list[object]],
+    _pipeline_mode: str,
 ) -> PipelineResult:
-    """Run the Wave-0 typed candidate-bank pipeline end-to-end.
+    """Run a deliberately selected pipeline mode.
 
-    Stages are snapshot/annotation, registry-planned generation, raw-contract
-    validation, gates and salvage, three-way disposition, deterministic lesson
-    selection, optional quota regeneration, then public projection.  Only
-    ``ready`` candidates reach ``lesson.b1.json``; review material remains in
-    private IR and cannot be auto-included.
+    This is private so the production entrypoint cannot inject the measurement
+    generator or its legacy selection mode.
     """
     types = list(types or EXTRACTIVE_TYPES)
     registry.entries_for(types)
@@ -730,9 +566,7 @@ def run(
         if not isinstance(raw, dict):
             return False
         entry = registry.ACTIVITY_REGISTRY.get(raw.get("type"))
-        return entry is not None and not entry.raw_candidate_schema.validate(
-            raw, entry.activity_type
-        )
+        return entry is not None and not entry.raw_validator(raw)
 
     raw_dicts = [
         raw
@@ -903,21 +737,65 @@ def run(
     return result
 
 
+def run(
+    anchor: str | dict,
+    level: str = "B1",
+    types: list[str] | None = None,
+    *,
+    pedagogy: str | None = None,
+    phase: str | None = None,
+    generator: Callable[[str], str] = call_gemma,
+    out_dir: str | Path | None = None,
+    atlas_db=None,
+    use_cache: bool = True,
+    cache_dir: str | Path | None = None,
+    count_plan: dict[str, int] | None = None,
+    max_regeneration_attempts: int = 0,
+) -> PipelineResult:
+    """Run the production typed candidate-bank pipeline end-to-end.
+
+    Only ``ready`` candidates reach ``lesson.b1.json``; review material remains
+    in private IR and cannot be auto-included. The measurement baseline uses a
+    separate, explicitly guarded entrypoint below.
+    """
+    return _run(
+        anchor,
+        level,
+        types,
+        pedagogy=pedagogy,
+        phase=phase,
+        generator=generator,
+        out_dir=out_dir,
+        atlas_db=atlas_db,
+        use_cache=use_cache,
+        cache_dir=cache_dir,
+        count_plan=count_plan,
+        max_regeneration_attempts=max_regeneration_attempts,
+        _candidate_generator=generate,
+        _pipeline_mode="candidate-bank.v1",
+    )
+
+
 def run_baseline_v1(
     anchor: str | dict,
     level: str = "B1",
     types: list[str] | None = None,
+    *,
+    measurement_only: Literal[True],
     **kwargs,
 ) -> PipelineResult:
     """Run the versioned extractive-v1 baseline for like-for-like measurement.
 
     This is intentionally not the production selection path: it recreates the
     pre-Wave-0 delivery rule in which every non-rejected activity entered the
-    lesson.  The normal ``run`` path is ready-only.
+    lesson. ``measurement_only=True`` is required because the result includes
+    review-tray items that the normal ``run`` path can never assemble.
     """
+    if measurement_only is not True:
+        raise ValueError("run_baseline_v1 is restricted to measurement_only=True")
     from .generate import generate_baseline_v1
 
-    result = run(
+    result = _run(
         anchor,
         level,
         types,
