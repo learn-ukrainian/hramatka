@@ -1,6 +1,6 @@
 {
   "anchor_id": "anchor01",
-  "anchor_file": "/Users/krisztiankoos/projects/learn-ukrainian/.agent/tmp/hramatka/engine/anchors/anchor01.txt",
+  "anchor_file": "anchor01.txt",
   "anchor_sha256": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
   "provider": "deepseek-v4-pro",
   "model": "deepseek-v4-pro",
