@@ -1,0 +1,60 @@
+{
+  "rater": "A",
+  "rater_identity": "main-claude (orchestrator seat)",
+  "date": "2026-07-11",
+  "rubric": "hramatka/step7-measurement-plan.md §5",
+  "framing": "Would a teacher run this item as-is in a paid 1-1 B1 lesson?",
+  "engine_sha": "4d1943082656c582a89be340e0555f2126b4769b",
+  "data_pin": "2026-07-10-ed779c7eabc6",
+  "calibration_dir": "hramatka/calibration/2026-07-11",
+  "scope_note": "CALIBRATION round (plan §5) — excluded from main KPIs. Blind to rater B. Scoring basis = the ASSEMBLED (shipped) activity in each cell; sub-items held back by gates (rejected[], review_required) are the honesty surface, NOT counted as shipped-item defects (see rubric_ambiguity a). matchup_semantics warns treated as known-empty-Atlas false positives (#4949). All shipped Ukrainian spot-verified against VESUM; TF/fact claims cross-checked against the anchor texts.",
+  "verdict_scale": ["accept", "edit-minor", "edit-content", "reject"],
+  "reason_classes": ["reject-lang", "reject-fact", "reject-pedagogy", "edit-content", "edit-minor"],
+  "verdicts": [
+    {"cell": "anchor01-gemma-ais", "item": 0, "type": "true-false", "verdict": "accept", "reason_class": null, "note": "5 statements; every true/false label correct vs anchor; clean UA; false items are well-built factual reversals (найпростіших↔найскладніших, збільшує↔знижує)."},
+    {"cell": "anchor01-gemma-ais", "item": 1, "type": "cloze", "verdict": "accept", "reason_class": null, "note": "answer насолоду (direct anchor quote); distractors втому/тривогу/нудьгу all acc.f.sg, plausible, non-fitting."},
+    {"cell": "anchor01-gemma-ais", "item": 2, "type": "match-up", "verdict": "accept", "reason_class": null, "note": "4 synonym pairs valid; all left terms from anchor; діяльність→праця loosest but teachable at B1."},
+
+    {"cell": "anchor01-deepseek-v4-pro", "item": 0, "type": "true-false", "verdict": "accept", "reason_class": null, "note": "5 statements correct vs anchor incl. 23 квітня and «у 2,5 рази»; numeral warn on 2,5 is a non-issue (government correct)."},
+    {"cell": "anchor01-deepseek-v4-pro", "item": 1, "type": "cloze", "verdict": "accept", "reason_class": null, "note": "answer завдань; distractors забав/занять/заходів gen.pl parallel and discriminating."},
+    {"cell": "anchor01-deepseek-v4-pro", "item": 2, "type": "match-up", "verdict": "accept", "reason_class": null, "note": "hallucinated pair (дозвілля→вільний час) correctly HELD (rejected[], not shipped); shipped 3 word→definition pairs valid; недоумство VESUM-verified modern-codified, not a russianism."},
+
+    {"cell": "anchor02-gemma-ais", "item": 0, "type": "true-false", "verdict": "accept", "reason_class": null, "note": "4 shipped statements correct (girls not boys told to be tidy; men have 2× muscle mass); the 5th (7%/зростом) correctly HELD by numeral+russianism gates."},
+    {"cell": "anchor02-gemma-ais", "item": 1, "type": "cloze", "verdict": "accept", "reason_class": null, "note": "answer роль; tests collocation відігравати роль; distractors позицію/функцію/частину are wrong collocations."},
+    {"cell": "anchor02-gemma-ais", "item": 2, "type": "match-up", "verdict": "edit-content", "reason_class": "edit-content", "note": "2 weak glosses: відмінності→«розрізнення або відхилення» (відхилення=deviation ≠ differences, imprecise); зумовленість→«причина або обґрунтованість» (B2+ abstract noun + muddy gloss, too hard for B1)."},
+
+    {"cell": "anchor02-deepseek-v4-pro", "item": 0, "type": "true-false", "verdict": "accept", "reason_class": null, "note": "3 shipped statements correct; hallucinated item and numeral item correctly HELD; thin at 3 items but runnable."},
+    {"cell": "anchor02-deepseek-v4-pro", "item": 1, "type": "cloze", "verdict": "edit-content", "reason_class": "edit-content", "note": "answer вказівки, but distractors поради/інструкції/настанови are near-synonyms that ALSO fit the gap → non-discriminating, multiple valid answers. Gates cannot catch this; rater-only defect."},
+    {"cell": "anchor02-deepseek-v4-pro", "item": 2, "type": "match-up", "verdict": "accept", "reason_class": null, "note": "4 pairs valid (виховання→процес формування особистості; вербальні здібності→мовні здібності; годувати→харчувати); left terms in anchor."},
+
+    {"cell": "var-gemma-ais", "item": 0, "type": "true-false", "verdict": "accept", "reason_class": null, "note": "4 shipped statements correct (тісто просте; подавати гарячими; not immediately after surfacing). NOTE: held-back 5th «почекати близько двох-трьох хвилин» is actually CORRECT UA (близько+genitive→gen.pl хвилин) wrongly held by a numeral-gate FALSE POSITIVE (expected nom.pl хвилини per ends_2_4, ignoring близько-government). Shipped content unaffected; gate FP flagged as finding."},
+    {"cell": "var-gemma-ais", "item": 1, "type": "cloze", "verdict": "accept", "reason_class": null, "note": "answer змішайте; distractors виріжте/розкачайте/покладіть are dough-verbs that don't fit «зі смаженою цибулею» → discriminating."},
+    {"cell": "var-gemma-ais", "item": 2, "type": "match-up", "verdict": "accept", "reason_class": null, "note": "4 pairs valid (начинка→фарш…; подавати→…; простий→…; родина→сім'я)."},
+
+    {"cell": "var-deepseek-v4-pro", "item": 0, "type": "true-false", "verdict": "edit-minor", "reason_class": "edit-minor", "note": "s0–s2 correct; s3 «Дві хвилини — це час, який потрібно витримати» marked TRUE but anchor says «дві-три хвилини» → borderline. Reasoning (two minutes is part of the window) is defensible but the phrasing invites dispute; a teacher would sharpen to «дві-три хвилини»."},
+    {"cell": "var-deepseek-v4-pro", "item": 1, "type": "cloze", "verdict": "accept", "reason_class": null, "note": "answer борошна; distractors цукру/молока/сиру gen. food nouns, only борошна fits dough ingredients → discriminating."},
+    {"cell": "var-deepseek-v4-pro", "item": 2, "type": "match-up", "verdict": "edit-content", "reason_class": "edit-content", "note": "гарячий→палкий teaches WRONG sense: anchor uses гарячий=hot (temperature, «подавайте гарячими»); палкий=ardent/passionate (figurative) → sense mismatch. варити→готувати loose hyponym but ok; начинка→фарш, родина→сім'я fine."}
+  ],
+  "tally": {"accept": 14, "edit-minor": 1, "edit-content": 3, "reject": 0},
+  "derived": {
+    "accept_or_minor": "15/18 (83.3%)",
+    "substantive_edit": "3/18 (16.7%)",
+    "reject": "0/18 (0%)",
+    "per_generator_calibration_only_not_a_KPI": {
+      "gemma-ais": {"accept": 8, "edit-content": 1, "n": 9, "accept_or_minor": "8/9"},
+      "deepseek-v4-pro": {"accept": 6, "edit-minor": 1, "edit-content": 2, "n": 9, "accept_or_minor": "7/9"}
+    }
+  },
+  "findings": [
+    "Honesty architecture validated: 0 hard-gate defects reached shipped content. Every hallucinated extractive item (2) and numeral-government issue (3) was held in rejected[]/review_required. All shipped UA is VESUM-clean and anchor-grounded → 0 reject-lang, 0 reject-fact.",
+    "NUMERAL-GATE FALSE POSITIVE (candidate private issue): «близько + двох-трьох + gen.pl noun» wrongly fails the ends_2_4 nominative-plural expectation (var-gemma held a correct statement). Over-holds correct content — conservative, not unsafe — but should be fixed for accuracy.",
+    "Rater-only defect classes gates cannot see (the value of §5 human rating): cloze distractor discrimination (near-synonym options), matchup gloss precision, wrong-sense synonyms, B1-appropriateness of abstract terms, borderline-TF phrasing.",
+    "matchup_semantics warns fire on ~100% of pairs (empty Atlas related_entries, #4949) → currently non-informative; raters must judge matchup pairs manually until the #4949 backfill lands."
+  ],
+  "rubric_ambiguity_notes_for_lock": {
+    "a": "Scoring basis = SHIPPED (assembled) activity; held-back sub-items are the honesty surface, not a shipped-item defect. Rater B must use the same basis — make explicit in locked rubric.",
+    "b": "Cloze with multiple plausible options → I used edit-content (item does not test what it claims). Candidate clarification vs edit-minor.",
+    "c": "Wrong-sense synonym in matchup → I used edit-content (fixable by swapping gloss). Candidate clarification vs reject-pedagogy.",
+    "d": "Thin activity (3 TF items after salvage) → I used accept (runnable). Candidate clarification."
+  }
+}
