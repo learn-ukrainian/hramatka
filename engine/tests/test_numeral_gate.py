@@ -218,6 +218,14 @@ def test_magnitude_accept():
     assert _rule(result) == "nested-magnitude"
 
 
+def test_magnitude_decade_outer_numeral_accepts_genitive_plural_magnitude():
+    # Regression #52: «двадцять» is ends_5_9_0, so «тисяч» (not bare-one
+    # «тисяча») is required; the magnitude then governs «гривень» in gen-pl.
+    result = check_numeral_government("двадцять тисяч гривень")
+    assert result["status"] == "pass"
+    assert _rule(result) == "nested-magnitude"
+
+
 def test_magnitude_negative_wrong_complement_case():
     # "дві тисячі людина" — complement must be gen-pl "людей", not nom-sg.
     result = check_numeral_government("дві тисячі людина")
@@ -545,23 +553,39 @@ def test_digit_plus_magnitude_word_is_wellformed():
     assert _rule(result) == "nested-magnitude"
 
 
-# --- Should-fix 7: hyphenated tokens ---------------------------------------
+# --- Hyphenated ranges and glued tokens -------------------------------------
 def test_hyphen_glued_number_noun_warns():
     result = check_numeral_government("17-ділянок")
     assert result["status"] == "warn"
     assert _rule(result) == "hyphenated-token"
 
 
-def test_hyphen_word_range_warns():
+def test_hyphen_word_range_agrees_by_its_last_numeral():
     result = check_numeral_government("два-три роки")
-    assert result["status"] == "warn"
-    assert _rule(result) == "hyphenated-token"
+    assert result["status"] == "pass"
+    assert _rule(result) == "gov-ends_2_4"
 
 
-def test_hyphen_digit_range_warns():
+def test_hyphen_digit_range_agrees_by_its_last_numeral():
     result = check_numeral_government("2-3 рази")
-    assert result["status"] == "warn"
-    assert _rule(result) == "hyphenated-token"
+    assert result["status"] == "pass"
+    assert _rule(result) == "gov-ends_2_4"
+
+
+def test_split_hyphen_word_range_agrees_by_its_last_numeral():
+    # Retrieval can split the same range as «дві -три». It remains one unit
+    # and is governed by its last endpoint («три хвилини»).
+    result = check_numeral_government("дві -три хвилини")
+    assert result["status"] == "pass"
+    assert _rule(result) == "gov-ends_2_4"
+
+
+def test_collective_and_pair_numerals_before_a_verb_need_no_noun():
+    # #52 fixture rows are exact VESUM rows copied from the pinned release.
+    for phrase in ("обоє працюють з дому", "обидва працюють з дому", "обидві працюють з дому"):
+        result = check_numeral_government(phrase)
+        assert result["status"] == "pass"
+        assert _rule(result) == "collective-predicative"
 
 
 def test_en_dash_year_range_warns_instead_of_false_failing():

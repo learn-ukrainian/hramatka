@@ -30,6 +30,31 @@ def test_fabricated_token_fails():
     assert VG.worst_status(v) == "fail"
 
 
+def test_introduced_capitalized_proper_noun_passes():
+    # VESUM stores this proper-noun form capitalized, so a lower-only exact
+    # query used to report it as fabricated.
+    v = VG.check_tokens(["Карпатах"], ANCHOR)
+    assert v[0]["status"] == "pass"
+    assert VG.worst_status(v) == "pass"
+
+
+def test_introduced_apostrophe_variants_pass_and_anchor_is_normalized():
+    # VESUM stores the straight apostrophe; model output uses both U+2019 and
+    # straight apostrophe. The last assertion also exercises verbatim matching.
+    v = VG.check_tokens(["кам’яниста", "кам'яниста"], ANCHOR)
+    assert all(x["status"] == "pass" for x in v)
+
+    verbatim = VG.check_tokens(["кам’яниста"], "Стежка кам'яниста.")
+    assert verbatim[0]["status"] == "pass"
+    assert "anchor-verbatim" in verbatim[0]["detail"]
+
+
+def test_fabricated_proper_noun_form_still_fails():
+    v = VG.check_tokens(["Карпатіях"], ANCHOR)
+    assert v[0]["status"] == "fail"
+    assert VG.worst_status(v) == "fail"
+
+
 def test_russianism_warns_when_atlas_flags_heritage():
     # a valid VESUM token whose atlas record flags a heritage/russianism ->
     # warn (teacher-confirm), never a hard fail in the MVP.

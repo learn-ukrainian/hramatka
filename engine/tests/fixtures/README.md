@@ -7,7 +7,13 @@ The engine test suite runs fully offline against a tiny SQLite bundle the
 - `anchor01.txt` — a **synthetic** B1 anchor (fabricated; no real teacher text).
   Every `evidence` quote in `engine/fixtures.py` is a verbatim substring of it.
 - `vesum_forms.json` — the exact VESUM `forms` rows the suite queries
-  (`word_form`, `lemma`, `tags`, `pos`), extracted from the real DB.
+  (`word_form`, `lemma`, `tags`, `pos`), extracted from the real DB. It also
+  includes the #53 regression rows for capitalized `Карпатах` and straight-
+  apostrophe `кам'яниста`, added from the real DB because the gate tests now
+  exercise those lookup-normalization shapes. It also includes the #52 rows
+  for nested magnitude (`гривень`), paucal government (`годин`, `трьох`),
+  ranges (`хвилини`), and collective/pair predicates (`обоє`, `працюємо`,
+  `працюють`), likewise copied from the real DB.
 - `atlas_rows.json` — the public Word Atlas payloads for the anchor's lemmas,
   trimmed to the fields `retrieval.build_atlas_lookup` reads.
 - `_build_fixtures.py` — regenerates the two JSON files from a real corpus

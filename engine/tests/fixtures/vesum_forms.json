@@ -1,5 +1,11 @@
 [
  {
+  "word_form": "Карпатах",
+  "lemma": "Карпати",
+  "tags": "noun:inanim:p:v_mis:ns:prop:geo",
+  "pos": "noun"
+ },
+ {
   "word_form": "активізуються",
   "lemma": "активізуватися",
   "tags": "verb:rev:imperf:pres:p:3",
@@ -162,6 +168,12 @@
   "pos": "noun"
  },
  {
+  "word_form": "годин",
+  "lemma": "година",
+  "tags": "noun:inanim:p:v_rod",
+  "pos": "noun"
+ },
+ {
   "word_form": "головного",
   "lemma": "головний",
   "tags": "adj:m:v_rod:compb",
@@ -183,6 +195,12 @@
   "word_form": "головного",
   "lemma": "головне",
   "tags": "noun:inanim:n:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривень",
+  "lemma": "гривня",
+  "tags": "noun:inanim:p:v_rod",
   "pos": "noun"
  },
  {
@@ -430,6 +448,18 @@
   "lemma": "йтися",
   "tags": "verb:rev:imperf:pres:s:3",
   "pos": "verb"
+ },
+ {
+  "word_form": "кам'яниста",
+  "lemma": "кам'янистий",
+  "tags": "adj:f:v_kly",
+  "pos": "adj"
+ },
+ {
+  "word_form": "кам'яниста",
+  "lemma": "кам'янистий",
+  "tags": "adj:f:v_naz",
+  "pos": "adj"
  },
  {
   "word_form": "квітень",
@@ -960,6 +990,18 @@
   "pos": "numr"
  },
  {
+  "word_form": "обоє",
+  "lemma": "обоє",
+  "tags": "numr:p:v_naz",
+  "pos": "numr"
+ },
+ {
+  "word_form": "обоє",
+  "lemma": "обоє",
+  "tags": "numr:p:v_zna",
+  "pos": "numr"
+ },
+ {
   "word_form": "одним",
   "lemma": "один",
   "tags": "numr:m:v_oru",
@@ -1138,6 +1180,18 @@
   "lemma": "половина",
   "tags": "noun:inanim:f:v_oru",
   "pos": "noun"
+ },
+ {
+  "word_form": "працюємо",
+  "lemma": "працювати",
+  "tags": "verb:imperf:pres:p:1",
+  "pos": "verb"
+ },
+ {
+  "word_form": "працюють",
+  "lemma": "працювати",
+  "tags": "verb:imperf:pres:p:3",
+  "pos": "verb"
  },
  {
   "word_form": "прийшли",
@@ -2052,6 +2106,12 @@
   "pos": "adj"
  },
  {
+  "word_form": "трьох",
+  "lemma": "три",
+  "tags": "numr:p:v_rod",
+  "pos": "numr"
+ },
+ {
   "word_form": "три",
   "lemma": "три",
   "tags": "numr:p:v_naz",
@@ -2109,6 +2169,12 @@
   "word_form": "усі",
   "lemma": "ухо",
   "tags": "noun:inanim:n:v_mis:arch",
+  "pos": "noun"
+ },
+ {
+  "word_form": "хвилини",
+  "lemma": "хвилина",
+  "tags": "noun:inanim:p:v_naz",
   "pos": "noun"
  },
  {

@@ -24,10 +24,16 @@ from .. import paths
 from ..linguistics import verify_words
 
 _WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", re.UNICODE)
+_APOSTROPHE_TRANSLATION = str.maketrans({"’": "'", "ʼ": "'"})
 
 
 def _nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text)
+
+
+def _lookup_form(text: str) -> str:
+    """Canonical VESUM lookup form: NFC plus the DB's straight apostrophe."""
+    return _nfc(text).translate(_APOSTROPHE_TRANSLATION)
 
 
 def content_tokens(text: str) -> list[str]:
@@ -36,7 +42,29 @@ def content_tokens(text: str) -> list[str]:
 
 
 def _is_anchor_verbatim(token: str, anchor_body_lower: str) -> bool:
-    return token.lower() in anchor_body_lower
+    return _lookup_form(token).lower() in anchor_body_lower
+
+
+def _lookup_matches(tokens: list[str]) -> dict[str, list[dict]]:
+    """Batch VESUM lookups under the normalizations users actually emit.
+
+    VESUM's ``word_form`` index is byte-exact.  A form may be stored with an
+    initial capital (for example, ``Карпатах``), while models can emit either
+    case.  Query both the normalized original and lowercase spelling, then
+    retain both result sets for the token verdict.
+    """
+    lookup_forms = {
+        variant
+        for token in tokens
+        for variant in (_lookup_form(token), _lookup_form(token).lower())
+    }
+    return verify_words(sorted(lookup_forms), db_path=paths.vesum_db()) if lookup_forms else {}
+
+
+def _matches_for_token(token: str, results: dict[str, list[dict]]) -> list[dict]:
+    """Return all exact-case and lowercase matches for one normalized token."""
+    form = _lookup_form(token)
+    return [match for key in dict.fromkeys((form, form.lower())) for match in results.get(key, [])]
 
 
 # Heritage classifications that are NOT a russianism/calque flag.
@@ -75,13 +103,12 @@ def check_tokens(
     lemma is available for the heritage lookup; the verbatim verdict still never
     depends on VESUM membership, only on the atlas heritage flag.
     """
-    anchor_lower = _nfc(anchor_body).lower()
-    lowered = sorted({t.lower() for t in tokens})
-    vesum_results = verify_words(lowered, db_path=paths.vesum_db()) if lowered else {}
+    anchor_lower = _lookup_form(anchor_body).lower()
+    vesum_results = _lookup_matches(tokens)
     verdicts: list[dict] = []
 
     for token in tokens:
-        matches = vesum_results.get(token.lower(), [])
+        matches = _matches_for_token(token, vesum_results)
         heritage = _heritage_flag(matches, atlas_lookup)
         if _is_anchor_verbatim(token, anchor_lower):
             if heritage:
@@ -147,17 +174,16 @@ def anchor_baseline_diagnostics(
     original-source error.
     """
     tokens = content_tokens(anchor_body)
-    lowered = sorted({token.lower() for token in tokens})
-    matches_by_token = verify_words(lowered, db_path=paths.vesum_db()) if lowered else {}
+    matches_by_token = _lookup_matches(tokens)
     diagnostics: list[dict] = []
     seen: set[str] = set()
 
     for token in tokens:
-        key = token.lower()
+        key = _lookup_form(token).lower()
         if key in seen:
             continue
         seen.add(key)
-        matches = matches_by_token.get(key, [])
+        matches = _matches_for_token(token, matches_by_token)
         heritage = _heritage_flag(matches, atlas_lookup)
         if not matches:
             diagnostics.append(

@@ -26,25 +26,54 @@ _CONTENT_POS = {"noun", "adj", "verb", "adv"}
 
 # Numeral surface forms worth flagging in the inventory (digits are matched
 # separately). Kept small + deterministic — the moat gate does the real work.
-_NUMERAL_WORD_RE = re.compile(
-    r"\b("
+# Include the VESUM-confirmed oblique forms needed by the case-trigger path:
+# otherwise «близько двадцяти/трьох ...» never reaches the gate at all.
+_NUMERAL_SURFACE = (
     r"нуль|один|одна|одне|два|дві|обидва|обидві|три|чотири|п'ять|шість|сім|"
     r"вісім|дев'ять|десять|одинадцять|дванадцять|тринадцять|чотирнадцять|"
     r"п'ятнадцять|шістнадцять|сімнадцять|вісімнадцять|дев'ятнадцять|двадцять|"
-    r"тридцять|сорок|п'ятдесят|шістдесят|сімдесят|вісімдесят|дев'яносто|сто|"
-    r"двоє|троє|четверо|п'ятеро|обоє|півтора|півтори|тисяч[аіуео]?|мільйон\w*"
-    r")\b",
+    r"двадцяти|трьох|тридцять|сорок|п'ятдесят|шістдесят|сімдесят|вісімдесят|"
+    r"дев'яносто|сто|двоє|троє|четверо|п'ятеро|обоє|обидвоє|півтора|півтори|"
+    r"тисяч[аіуео]?|мільйон\w*"
+)
+_NUMERAL_WORD_RE = re.compile(r"\b(" + _NUMERAL_SURFACE + r")\b", re.UNICODE | re.IGNORECASE)
+_DIGIT_NUM_RE = re.compile(r"\b\d+(?:[.,]\d+)?\b")
+
+_WORD_SURFACE = r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+"
+_MAGNITUDE_SURFACE = r"тисяч[аіуео]?|мільйон\w*|мільярд\w*"
+
+# Nested magnitude: the magnitude word itself is governed by the outer
+# cardinal, then in turn governs its complement. Preserve all three pieces so
+# the numeral gate sees «двадцять тисяч гривень», not two broken overlaps.
+_MAGNITUDE_TAIL_RE = re.compile(
+    r"\s+(?P<magnitude>" + _MAGNITUDE_SURFACE + r")\s+(?P<noun>" + _WORD_SURFACE + r")",
     re.UNICODE | re.IGNORECASE,
 )
-_DIGIT_NUM_RE = re.compile(r"\b\d+(?:[.,]\d+)?\b")
+
+# A range can reach the inventory as one token («дві-три») or as a split
+# sequence («дві -три»). Restrict the right endpoint to another recognized
+# numeral; a glued numeral+noun token such as «17-ділянок» is not a range.
+_RANGE_TAIL_RE = re.compile(
+    r"\s*[-–]\s*(?P<last>(?:" + _NUMERAL_SURFACE + r")|\d+(?:[.,]\d+)?)\s+"
+    r"(?P<noun>" + _WORD_SURFACE + r")",
+    re.UNICODE | re.IGNORECASE,
+)
+
+# Preserve a nearby curated case trigger in the extracted span. The numeral
+# gate owns case semantics; this only prevents truncation from erasing the
+# essential «близько» in «близько трьох годин».
+_LEADING_TRIGGER_RE = re.compile(
+    r"(?P<trigger>більше\s+ніж|менше\s+ніж|більш\s+ніж|менш\s+ніж|"
+    r"близько|коло|до|від|завдяки|понад|під|з|із|зі)\s+$",
+    re.UNICODE | re.IGNORECASE,
+)
 
 # Mixed-fraction continuation right after a cardinal: "<numeral> з половиною|
 # чвертю|третиною <noun>" (spelled-out decimal, e.g. «два з половиною рази»).
 # Captured so the raw_span reaches the real governed noun instead of stopping
 # at the preposition «з» (which otherwise made the gate report no-noun-found).
 _FRACTION_TAIL_RE = re.compile(
-    r"\s+(?:з|із|зі)\s+(?:половиною|чвертю|третиною)\s+"
-    r"(?P<noun>[А-ЯҐЄІЇа-яґєіїʼ'’-]+)",
+    r"\s+(?:з|із|зі)\s+(?:половиною|чвертю|третиною)\s+(?P<noun>" + _WORD_SURFACE + r")",
     re.UNICODE | re.IGNORECASE,
 )
 
@@ -238,13 +267,13 @@ def augmented_atlas_lookup(
 # Numeral inventory
 # ---------------------------------------------------------------------------
 def extract_numeral_inventory(text: str) -> list[dict]:
-    """Every numeral (digit or spelled-out) + its following noun candidate.
+    """Every numeral (digit or spelled-out) + its governed-noun candidate.
 
     Returns [{raw_span, char_offset, numeral, following_noun}] — feeds both
     the grounding pack and the numeral gate (which does the verification).
     """
     body = nfc(text)
-    inventory: list[dict] = []
+    candidates: list[tuple[int, int, dict]] = []
     seen: set[tuple[int, str]] = set()
     for rx in (_DIGIT_NUM_RE, _NUMERAL_WORD_RE):
         for m in rx.finditer(body):
@@ -253,33 +282,67 @@ def extract_numeral_inventory(text: str) -> list[dict]:
             tail = body[m.end():]
             frac_match = _FRACTION_TAIL_RE.match(tail)
             date_match = _DATE_TAIL_RE.match(tail)
+            magnitude_match = _MAGNITUDE_TAIL_RE.match(tail)
+            range_match = _RANGE_TAIL_RE.match(tail)
             if date_match:
                 # Extend across "[<ordinal-day>] <genitive-month>" so the gate
                 # sees the whole date and recognizes it (date-not-cardinal),
                 # instead of "двадцять третє" -> a spurious cardinal span.
                 following = date_match.group("month")
-                raw_span = numeral + tail[: date_match.end()]
+                tail_end = date_match.end()
             elif frac_match:
                 # Extend the span across "з половиною/чвертю/третиною <noun>"
                 # so the gate sees the whole mixed fraction, not just "два з".
                 following = frac_match.group("noun")
-                raw_span = numeral + tail[: frac_match.end()]
+                tail_end = frac_match.end()
+            elif magnitude_match:
+                # The outer numeral classifies the magnitude word, while the
+                # magnitude word governs its complement. Keeping the entire
+                # span also prevents a duplicate «тисяч гривень» probe.
+                following = magnitude_match.group("noun")
+                tail_end = magnitude_match.end()
+            elif range_match:
+                # Range agreement belongs to its last endpoint. Preserve the
+                # range and its noun together even when punctuation tokenizes
+                # it as «дві -три».
+                following = range_match.group("noun")
+                tail_end = range_match.end()
             else:
                 noun_match = _WORD_RE.search(tail)
                 following = noun_match.group(0) if noun_match else None
-                raw_span = numeral + (f" {following}" if following else "")
+                tail_end = noun_match.end() if noun_match else 0
+
+            trigger_match = _LEADING_TRIGGER_RE.search(body[:start])
+            span_start = trigger_match.start() if trigger_match else start
+            span_end = m.end() + tail_end
+            raw_span = body[span_start:m.end()] + tail[:tail_end]
             key = (start, numeral)
             if key in seen:
                 continue
             seen.add(key)
-            inventory.append(
-                {
+            candidates.append(
+                (
+                    start,
+                    span_end,
+                    {
                     "raw_span": raw_span,
                     "char_offset": start,
                     "numeral": numeral,
                     "following_noun": following,
-                }
+                    },
+                )
             )
+
+    # Nested magnitudes and ranges have an inner numeral-looking token. Keep
+    # only the earliest enclosing candidate, so the gate receives one complete
+    # unit instead of a valid span plus a false-positive fragment.
+    inventory: list[dict] = []
+    covered_until = -1
+    for start, end, item in sorted(candidates, key=lambda candidate: (candidate[0], -candidate[1])):
+        if start < covered_until:
+            continue
+        inventory.append(item)
+        covered_until = end
     inventory.sort(key=lambda d: d["char_offset"])
     return inventory
 

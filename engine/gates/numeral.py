@@ -130,10 +130,10 @@ ORDINAL = "ordinal"
 DECIMAL = "decimal"
 HYPHENATED = "hyphenated"
 
-# A range may use an ASCII hyphen or Ukrainian typography's en dash.  Both
-# spellings are intentionally sent to teacher review rather than treated as a
-# single cardinal.  (The latter was absent from the original regression bank,
-# so ``1939–1940`` could fall through as "no numeral found".)
+# A range may use an ASCII hyphen or Ukrainian typography's en dash. A genuine
+# numeral range governs its noun by its LAST endpoint (``дві-три хвилини`` ->
+# ``три хвилини``). Four-digit year ranges remain conservative WARNs: their
+# period-reading (``1939–1940 роки``) is not ordinary cardinal government.
 _RANGE_SEPARATORS = "-–"
 
 # Lemma → class, for cardinal numeral WORDS (VESUM pos == "numr"). Digits are
@@ -251,7 +251,8 @@ def _classify_token(token: str) -> _TokenInfo | None:
 
     Recognition is entirely VESUM-tag-driven:
     - a hyphenated token whose first segment is numeral-ish is a HYPHENATED
-      range/glued token (deliberate WARN — never silently misinterpreted);
+      glued/unsupported token; valid numeral ranges are collapsed to their
+      last endpoint by `_collapse_numeral_ranges` before this function runs;
     - a bare digit/decimal string is classified arithmetically;
     - a VESUM `pos == "numr"` match resolves via the `_LEMMA_CLASS` lexicon;
     - a VESUM `pos == "adj"` match carrying VESUM's own trailing `:numr`
@@ -292,6 +293,67 @@ def _classify_token(token: str) -> _TokenInfo | None:
         return _TokenInfo(token=token, class_=ENDS_5_9_0, lemma="нуль")
 
     return None
+
+
+def _range_last_endpoint(first: str, last: str) -> str | None:
+    """Return a valid range's last endpoint, or None when it is not a range.
+
+    Ranges are one numeral unit for noun government, and Ukrainian agreement
+    follows the last endpoint.  Keep four-digit year periods out of that
+    arithmetic rule: ``1939–1940 роки`` needs contextual interpretation and
+    continues to receive the deliberate conservative warning.
+    """
+    first_core, last_core = _strip(first), _strip(last)
+    first_info = _classify_token(first_core)
+    last_info = _classify_token(last_core)
+    if first_info is None or last_info is None:
+        return None
+    if first_info.is_digit and last_info.is_digit and len(first_core) == len(last_core) == 4:
+        return None
+    return last_core
+
+
+def _collapse_numeral_ranges(tokens: list[str]) -> list[str]:
+    """Replace a valid N-M range with its final numeral for government checks.
+
+    The retrieval tokenizer can surface the same range as ``дві-три`` or as
+    ``дві -три``/``дві - три``.  In each valid shape, retaining only the last
+    endpoint makes the standard agreement rule explicit while leaving glued
+    numeral+noun tokens (``17-ділянок``) and year ranges for the HYPHENATED
+    warning path.
+    """
+    collapsed: list[str] = []
+    idx = 0
+    while idx < len(tokens):
+        core = _strip(tokens[idx])
+        split = re.split(f"[{_RANGE_SEPARATORS}]", core)
+        if len(split) == 2 and split[0] and split[1]:
+            endpoint = _range_last_endpoint(split[0], split[1])
+            if endpoint is not None:
+                collapsed.append(endpoint)
+                idx += 1
+                continue
+
+        if idx + 1 < len(tokens):
+            next_core = _strip(tokens[idx + 1])
+            if next_core[:1] in _RANGE_SEPARATORS and next_core[1:]:
+                endpoint = _range_last_endpoint(core, next_core[1:])
+                if endpoint is not None:
+                    collapsed.append(endpoint)
+                    idx += 2
+                    continue
+            if (
+                next_core in _RANGE_SEPARATORS
+                and idx + 2 < len(tokens)
+                and (endpoint := _range_last_endpoint(core, _strip(tokens[idx + 2]))) is not None
+            ):
+                collapsed.append(endpoint)
+                idx += 3
+                continue
+
+        collapsed.append(tokens[idx])
+        idx += 1
+    return collapsed
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +606,7 @@ def check_numeral_government(phrase: str, context_case: str | None = None) -> di
             )
 
     auto_case, tokens, trigger = _strip_trigger(raw_tokens)
+    tokens = _collapse_numeral_ranges(tokens)
 
     if trigger is not None and trigger.kind == "ambiguous" and normalized_context is None:
         return _warn(
@@ -682,6 +745,22 @@ def check_numeral_government(phrase: str, context_case: str | None = None) -> di
             f"{phrase!r} — government is variable (VESUM confirms both e.g. "
             f"'рази'/'раза'); governed noun '{fraction_noun}' located; "
             "deferring to teacher review rather than failing.",
+        )
+
+    # «обоє/обидва/обидві» may be an independent plural subject before a
+    # predicate (e.g. «Ми обоє працюємо з дому»), not a numeral governing an
+    # overt noun. Short-circuit BEFORE scanning later tokens: the predicate's
+    # own prepositional noun (``з дому``) is not this numeral's complement.
+    next_core = _strip(post_numeral_tokens[0]) if post_numeral_tokens else ""
+    if (
+        last.lemma in {"обоє", "обидва"}
+        and next_core
+        and vt.parse_word(next_core, pos_filter="verb")
+    ):
+        return _pass(
+            "collective-predicative",
+            f"'{last.token}' is an independent collective/pair subject before "
+            f"the verb '{next_core}'; no governed noun is required.",
         )
 
     # Governed head noun = rightmost genuine NOUN after the numeral (skips

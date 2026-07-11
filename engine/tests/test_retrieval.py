@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from hramatka.engine import retrieval as R
 from hramatka.engine.fixtures import load_anchor
+from hramatka.engine.gates.numeral import check_numeral_government
 
 ANCHOR = (
     "Третина українців за рік не прочитує жодної книжки, зате дві третини "
@@ -63,6 +64,26 @@ def test_numeral_inventory_does_not_over_slice_cardinal_before_month():
     # word) — the cardinal span must stay "двадцять хвилин", not swallow the month.
     inv = R.extract_numeral_inventory("Лишилось двадцять хвилин лютого місяця.")
     assert "двадцять хвилин" in {d["raw_span"] for d in inv}
+
+
+def test_bake_off_numeral_spans_reach_the_gate_intact():
+    """#52 full bake strings: extraction and gate must agree end-to-end."""
+    cases = (
+        ("Ціна першої квартири була двадцять тисяч гривень.", "двадцять тисяч гривень", "pass"),
+        (
+            "Оренда коштувала близько двадцяти тисяч гривень на місяць.",
+            "близько двадцяти тисяч гривень",
+            "pass",
+        ),
+        ("зачекайте ще дві-три хвилини", "дві-три хвилини", "pass"),
+        ("Ми обоє працюємо з дому.", "обоє працюємо", "pass"),
+        ("близько трьох годин", "близько трьох годин", "pass"),
+        ("Близько три годин тривала дорога.", "Близько три годин", "fail"),
+    )
+    for text, expected_span, expected_status in cases:
+        inventory = R.extract_numeral_inventory(text)
+        span = next(item for item in inventory if item["raw_span"] == expected_span)
+        assert check_numeral_government(span["raw_span"])["status"] == expected_status
 
 
 def test_build_atlas_lookup_single_pass_needed_only():
