@@ -1,0 +1,62 @@
+{
+  "anchor_id": "anchor01",
+  "anchor_file": "/Users/krisztiankoos/projects/learn-ukrainian/.agent/tmp/hramatka/engine/anchors/anchor01.txt",
+  "anchor_sha256": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+  "provider": "gemma-ais",
+  "model": "google-ais/gemma-4-31b-it",
+  "wall_clock_seconds": 1.586886,
+  "generator_calls": 1,
+  "retry_count": 0,
+  "generation_error": "GeneratorUnavailable: provider returned HTTP 500",
+  "tri_state_counts": {
+    "clean": 0,
+    "review_required": 0,
+    "failed": 0
+  },
+  "slate_pin_assertion": {
+    "configured": true,
+    "expected": {
+      "engine_sha": "4d1943082656c582a89be340e0555f2126b4769b",
+      "engine_version": "slice1-b1.2026.07.10",
+      "model": "google-ais/gemma-4-31b-it",
+      "package_versions": {
+        "python": "3.12.8",
+        "jsonschema": "4.26.0"
+      },
+      "vendor_artifact_digests": {
+        "lu.activity.v1@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+          }
+        },
+        "lu.lesson.v1@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+          }
+        },
+        "learn_ukrainian_linguistics@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+          }
+        }
+      },
+      "data_bundle_digests": {
+        "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+        "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+        "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+      }
+    },
+    "matches": {
+      "engine_sha": true,
+      "engine_version": true,
+      "model": true,
+      "package_versions": true,
+      "vendor_artifact_digests": true,
+      "data_bundle_digests": true
+    },
+    "pins_match": true
+  }
+}

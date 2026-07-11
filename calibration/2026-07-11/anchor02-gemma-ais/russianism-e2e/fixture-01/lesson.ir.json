@@ -1,0 +1,131 @@
+{
+  "anchor": {
+    "anchor_id": "8bd6816ac75d",
+    "body_uk": "Третина українців за рік не прочитує жодної книжки, зате дві третини мають телевізор.",
+    "hash": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+    "source": "teacher-paste",
+    "content_fingerprint": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+    "char_len": 85,
+    "diagnostics": []
+  },
+  "fingerprint": "b08834d8abd173a4f40e1ec99aa0bdf6a466c7da94bfd1f02e1497c707f4539c",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "7040cf226fd369c18d0272b7cd90acc9c4fb54a5bec03e33a1766dd5de6654f9",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Познач правильні твердження за текстом.",
+        "items": [
+          {
+            "statement": "Третина українців втратили получку.",
+            "correct": true
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Третина українців за рік не прочитує жодної книжки",
+          "locator": "items[0]",
+          "char_start": 0,
+          "char_end": 50,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "8bd6816ac75d",
+        "anchor_hash": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "b08834d8abd173a4f40e1ec99aa0bdf6a466c7da94bfd1f02e1497c707f4539c"
+      },
+      "gate_result": {
+        "status": "failed",
+        "passed": false,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [0:50] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "vesum_token",
+            "status": "fail",
+            "detail": "'получку' not found in VESUM — fabricated or misspelled form.",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "partition",
+            "status": "fail",
+            "detail": "Only 0 item(s) survived per-item gating; true-false requires >= 1 — dropping the whole activity.",
+            "locator": null
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[0]",
+          "reasons": [
+            {
+              "gate": "vesum_token",
+              "detail": "'получку' not found in VESUM — fabricated or misspelled form."
+            }
+          ],
+          "item": {
+            "statement": "Третина українців втратили получку.",
+            "correct": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "anchor": {
+    "anchor_id": "20f5c62837ab",
+    "body_uk": "Багато людей щомісяця отримують получку і телевізор.",
+    "hash": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+    "source": "teacher-paste",
+    "content_fingerprint": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+    "char_len": 52,
+    "diagnostics": [
+      {
+        "form": "получку",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "1325600c49ba2d18b76ac2d65b5632ede483d2521544b0c44ad6320b563ab98e",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "deepseek-v4-pro",
+    "anchor_hash": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "2d70b59190051ee381cb91a55544491c255eafb8a0f5e29ea18412a358ba0a7c",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Познач правильні твердження за текстом.",
+        "items": [
+          {
+            "statement": "Багато людей отримують получку.",
+            "correct": true
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Багато людей щомісяця отримують получку",
+          "locator": "items[0]",
+          "char_start": 0,
+          "char_end": 39,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "20f5c62837ab",
+        "anchor_hash": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "1325600c49ba2d18b76ac2d65b5632ede483d2521544b0c44ad6320b563ab98e"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [0:39] (offsets recomputed).",
+            "locator": "items[0]"
+          }
+        ]
+      },
+      "flagged": []
+    }
+  ]
+}

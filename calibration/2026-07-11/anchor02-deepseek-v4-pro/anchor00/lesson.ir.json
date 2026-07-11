@@ -1,0 +1,392 @@
+{
+  "anchor": {
+    "anchor_id": "anchor02",
+    "body_uk": "Жінка та чоловік: різні від природи чи через виховання?\n\nВід перших днів життя дитини соціальне оточення відіграє головну роль у її вихованні. «Не плач, – кажуть хлопчику, – ти ж чоловік, а чоловіки не плачуть!» або «Не плач, козаче, отаманом будеш!». «Вимий краще рученята, – кажуть дівчинці, – дівчатка повинні бути охайними». Такі вказівки супроводжують дітей всюди: вдома, у дитячому садку, у школі; вони чують про це з екранів телевізорів, читають у книжках.\n\nЧимало людей схильні думати, що хлопчики значно активніші, ініціативніші в пізнанні навколишнього простору, ніж дівчатка. Також вважають, що хлопчики краще орієнтуються у просторі, бо в них розвинута просторова уява, натомість у дівчаток, мовляв, кращі вербальні здібності. Цікаво, що порівняння цих здібностей насправді не виявило відмінностей.\n\nБіологічні відмінності між статями – очевидні. Чоловіки не можуть народити дитину і годувати її грудьми. Вони в середньому на 7% вищі зростом, мають удвічі більшу масу м’язів. Біологічну зумовленість психологічних відмінностей жінок та чоловіків пояснюють дією гормонів; маса мозку жінки є меншою – і тому чоловік, нібито, здібніший за неї.\n",
+    "hash": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+    "source": "teacher-paste",
+    "content_fingerprint": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+    "char_len": 1153,
+    "diagnostics": [
+      {
+        "form": "школі",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті позначено як authentic-archaism; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "зростом",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті позначено як historism; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "c81e29a76c6fd7b1cf6979c6ac28927a201666423bddd4ac8db222aa0d9166e5",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "deepseek-v4-pro",
+    "anchor_hash": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "f4a118aea6d614b74254efd31c1bf8f68ed20500096bd9d2d719050ce619e595",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Прочитайте твердження. Визначте, чи відповідають вони змісту тексту (True), чи суперечать йому (False).",
+        "items": [
+          {
+            "statement": "Соціальне оточення відіграє головну роль у вихованні дитини з перших днів її життя.",
+            "correct": true,
+            "explanation": "У тексті прямо сказано, що соціальне оточення відіграє головну роль у вихованні від перших днів."
+          },
+          {
+            "statement": "Багато людей вважають, що дівчатка мають кращі вербальні здібності, ніж хлопчики.",
+            "correct": true,
+            "explanation": "Текст підтверджує, що поширена думка про кращі вербальні здібності дівчаток."
+          },
+          {
+            "statement": "Порівняння показало, що між хлопчиками та дівчатками є суттєві відмінності у просторових здібностях.",
+            "correct": false,
+            "explanation": "Текст стверджує протилежне: порівняння насправді не виявило відмінностей."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Від перших днів життя дитини соціальне оточення відіграє головну роль у її вихованні.",
+          "locator": "items[0]",
+          "char_start": 57,
+          "char_end": 142,
+          "kind": "literal"
+        },
+        {
+          "quote": "«Не плач, – кажуть хлопчику, – ти ж чоловік, а чоловіки не плачуть!» ... «Вимий краще рученята, – кажуть дівчинці, – дівчатка повинні бути охайними».",
+          "locator": "items[1]",
+          "char_start": null,
+          "char_end": null,
+          "kind": "absent"
+        },
+        {
+          "quote": "натомість у дівчаток, мовляв, кращі вербальні здібності.",
+          "locator": "items[2]",
+          "char_start": 682,
+          "char_end": 738,
+          "kind": "literal"
+        },
+        {
+          "quote": "Цікаво, що порівняння цих здібностей насправді не виявило відмінностей.",
+          "locator": "items[3]",
+          "char_start": 739,
+          "char_end": 810,
+          "kind": "literal"
+        },
+        {
+          "quote": "Вони в середньому на 7% вищі зростом",
+          "locator": "items[4]",
+          "char_start": 917,
+          "char_end": 953,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor02",
+        "anchor_hash": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "c81e29a76c6fd7b1cf6979c6ac28927a201666423bddd4ac8db222aa0d9166e5"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [57:142] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "fail",
+            "detail": "Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [682:738] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [739:810] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [917:953] (offsets recomputed).",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "vesum_token",
+            "status": "warn",
+            "detail": "'зростом' is quoted verbatim from the anchor but atlas flags heritage/russianism='historism' — kept as a source quote, NOT engine-verified as standard. Teacher-confirm.",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[no-numeral-found] No numeral token found in '7% вищі'.",
+            "locator": "items[4]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[1]",
+          "reasons": [
+            {
+              "gate": "evidence_span",
+              "detail": "Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review."
+            }
+          ],
+          "item": {
+            "statement": "У тексті радять хлопчикам бути охайними, а дівчаткам — не плакати.",
+            "correct": false,
+            "explanation": "Насправді хлопчику кажуть не плакати, а дівчинці — бути охайною, тобто поради протилежні."
+          }
+        },
+        {
+          "locator": "items[4]",
+          "reasons": [
+            {
+              "gate": "numeral",
+              "detail": "[no-numeral-found] No numeral token found in '7% вищі'."
+            }
+          ],
+          "item": {
+            "statement": "Чоловіки в середньому на 7% вищі зростом, ніж жінки.",
+            "correct": true,
+            "explanation": "Це перефразоване твердження з тексту з точною цифрою 7%."
+          }
+        }
+      ]
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Заповніть пропуск у реченні, вибравши одне слово з чотирьох запропонованих.",
+        "text": "Такі {gap} супроводжують дітей всюди: вдома, у дитячому садку, у школі; вони чують про це з екранів телевізорів, читають у книжках.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "вказівки",
+            "options": [
+              "поради",
+              "інструкції",
+              "настанови",
+              "вказівки"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Такі вказівки супроводжують дітей всюди: вдома, у дитячому садку, у школі; вони чують про це з екранів телевізорів, читають у книжках.",
+          "locator": "text",
+          "char_start": 329,
+          "char_end": 463,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor02",
+        "anchor_hash": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "c81e29a76c6fd7b1cf6979c6ac28927a201666423bddd4ac8db222aa0d9166e5"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [329:463] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "З’єднайте слово з лівої колонки з його значенням у правій.",
+        "pairs": [
+          {
+            "left": "виховання",
+            "right": "процес формування особистості"
+          },
+          {
+            "left": "вказівки",
+            "right": "настанови"
+          },
+          {
+            "left": "вербальні здібності",
+            "right": "мовні здібності"
+          },
+          {
+            "left": "годувати",
+            "right": "харчувати"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "соціальне оточення відіграє головну роль у її вихованні",
+          "locator": "pairs[0]",
+          "char_start": 86,
+          "char_end": 141,
+          "kind": "literal"
+        },
+        {
+          "quote": "Такі вказівки супроводжують дітей всюди",
+          "locator": "pairs[1]",
+          "char_start": 329,
+          "char_end": 368,
+          "kind": "literal"
+        },
+        {
+          "quote": "кращі вербальні здібності",
+          "locator": "pairs[2]",
+          "char_start": 712,
+          "char_end": 737,
+          "kind": "literal"
+        },
+        {
+          "quote": "не можуть народити дитину і годувати її грудьми",
+          "locator": "pairs[3]",
+          "char_start": 868,
+          "char_end": 915,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor02",
+        "anchor_hash": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "c81e29a76c6fd7b1cf6979c6ac28927a201666423bddd4ac8db222aa0d9166e5"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [86:141] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'виховання' ↔ 'процес формування особистості'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [329:368] (offsets recomputed).",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [712:737] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'вербальні здібності' ↔ 'мовні здібності'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [868:915] (offsets recomputed).",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": []
+    }
+  ]
+}

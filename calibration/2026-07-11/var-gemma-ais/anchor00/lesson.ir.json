@@ -1,0 +1,372 @@
+{
+  "anchor": {
+    "anchor_id": "var",
+    "body_uk": "Українська кухня: вареники\n\nВареники — одна з найвідоміших українських страв. Їх ліплять у кожному регіоні, а начинка буває різна: картопля, сир, тушкована капуста, а влітку — вишні чи чорниці.\n\nТісто для вареників просте. Візьміть пів кілограма борошна, склянку теплої води та дрібку солі. Замісіть мʼяке тісто й залиште його на пів години під рушником. Тим часом приготуйте начинку: відваріть картоплю, розімніть її та змішайте зі смаженою цибулею.\n\nДалі розкачайте тісто тонким шаром і виріжте склянкою кружечки. На кожен покладіть ложку начинки, зліпіть краї — і вареник готовий. Варіть вареники в підсоленій воді: коли спливуть, зачекайте ще дві-три хвилини й виймайте.\n\nПодавайте вареники гарячими — зі сметаною або зі шкварками. У багатьох родинах їх ліплять разом: хтось розкачує тісто, хтось кладе начинку, а наймолодші рахують, скільки вареників уже на столі. Саме тому кажуть: вареники смакують найкраще тоді, коли їх ліпила вся родина.\n",
+    "hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "source": "teacher-paste",
+    "content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "char_len": 948,
+    "diagnostics": [
+      {
+        "form": "Тим",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті позначено як authentic-archaism; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "3aff253340fd67e531044e3903e798e698b87702b33abe84b2b8117028f2e96c",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Визначте, чи є твердження правдивими (true), чи хибними (false), спираючись на текст.",
+        "items": [
+          {
+            "statement": "Начинкою для вареників може бути тушкована капуста.",
+            "correct": true,
+            "explanation": "У тексті прямо зазначено, що начинка буває різна, зокрема тушкована капуста."
+          },
+          {
+            "statement": "Тісто для вареників дуже складне у приготуванні.",
+            "correct": false,
+            "explanation": "У тексті сказано, що тісто для вареників просте."
+          },
+          {
+            "statement": "Вареники рекомендується подавати гарячими.",
+            "correct": true,
+            "explanation": "У тексті є пряма інструкція подавати страву гарячою."
+          },
+          {
+            "statement": "Вареники слід виймати з води одразу після того, як вони спливуть.",
+            "correct": false,
+            "explanation": "Потрібно зачекати ще дві-три хвилини після того, як вони спливуть."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "начинка буває різна: картопля, сир, тушкована капуста",
+          "locator": "items[0]",
+          "char_start": 110,
+          "char_end": 163,
+          "kind": "literal"
+        },
+        {
+          "quote": "Тісто для вареників просте.",
+          "locator": "items[1]",
+          "char_start": 195,
+          "char_end": 222,
+          "kind": "literal"
+        },
+        {
+          "quote": "Подавайте вареники гарячими",
+          "locator": "items[2]",
+          "char_start": 676,
+          "char_end": 703,
+          "kind": "literal"
+        },
+        {
+          "quote": "коли спливуть, зачекайте ще дві-три хвилини й виймайте",
+          "locator": "items[3]",
+          "char_start": 619,
+          "char_end": 673,
+          "kind": "literal"
+        },
+        {
+          "quote": "зачекайте ще дві-три хвилини й виймайте",
+          "locator": "items[4]",
+          "char_start": 634,
+          "char_end": 673,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "var",
+        "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [110:163] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [195:222] (offsets recomputed).",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [676:703] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [619:673] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [634:673] (offsets recomputed).",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "numeral",
+            "status": "fail",
+            "detail": "[gov-ends_2_4] 'хвилин' has no VESUM form matching nominative plural, required by numeral class ends_2_4 in context case 'nom'. expected=nominative plural (e.g. 'хвилини')",
+            "locator": "items[4]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "items[4]",
+          "reasons": [
+            {
+              "gate": "numeral",
+              "detail": "[gov-ends_2_4] 'хвилин' has no VESUM form matching nominative plural, required by numeral class ends_2_4 in context case 'nom'. expected=nominative plural (e.g. 'хвилини')"
+            }
+          ],
+          "item": {
+            "statement": "Після того як вареники спливуть, треба почекати близько двох-трьох хвилин.",
+            "correct": true,
+            "explanation": "Це переказ часу очікування, зазначеного в тексті."
+          }
+        }
+      ]
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Оберіть правильне слово, щоб доповнити речення з тексту.",
+        "text": "Тим часом приготуйте начинку: відваріть картоплю, розімніть її та {gap} зі смаженою цибулею.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "змішайте",
+            "options": [
+              "змішайте",
+              "виріжте",
+              "розкачайте",
+              "покладіть"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Тим часом приготуйте начинку: відваріть картоплю, розімніть її та змішайте зі смаженою цибулею.",
+          "locator": "text",
+          "char_start": 355,
+          "char_end": 450,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "var",
+        "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [355:450] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "Знайдіть відповідність між словом з тексту та його значенням.",
+        "pairs": [
+          {
+            "left": "начинка",
+            "right": "фарш або продукти, які кладуть всередину виробу"
+          },
+          {
+            "left": "подавати",
+            "right": "виносити страву на стіл, сервірувати"
+          },
+          {
+            "left": "простий",
+            "right": "нескладний, легкий у виконанні"
+          },
+          {
+            "left": "родина",
+            "right": "сім'я"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "начинка буває різна: картопля, сир, тушкована капуста",
+          "locator": "pairs[0]",
+          "char_start": 110,
+          "char_end": 163,
+          "kind": "literal"
+        },
+        {
+          "quote": "Подавайте вареники гарячими",
+          "locator": "pairs[1]",
+          "char_start": 676,
+          "char_end": 703,
+          "kind": "literal"
+        },
+        {
+          "quote": "Тісто для вареників просте.",
+          "locator": "pairs[2]",
+          "char_start": 195,
+          "char_end": 222,
+          "kind": "literal"
+        },
+        {
+          "quote": "У багатьох родинах їх ліплять разом",
+          "locator": "pairs[3]",
+          "char_start": 736,
+          "char_end": 771,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "var",
+        "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "google-ais/gemma-4-31b-it",
+        "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [110:163] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [676:703] (offsets recomputed).",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'подавати' ↔ 'виносити страву на стіл, сервірувати'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [195:222] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'простий' ↔ 'нескладний, легкий у виконанні'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [736:771] (offsets recomputed).",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": []
+    }
+  ]
+}

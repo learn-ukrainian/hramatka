@@ -1,0 +1,65 @@
+{
+  "anchor": {
+    "anchor_id": "var",
+    "body_uk": "Українська кухня: вареники\n\nВареники — одна з найвідоміших українських страв. Їх ліплять у кожному регіоні, а начинка буває різна: картопля, сир, тушкована капуста, а влітку — вишні чи чорниці.\n\nТісто для вареників просте. Візьміть пів кілограма борошна, склянку теплої води та дрібку солі. Замісіть мʼяке тісто й залиште його на пів години під рушником. Тим часом приготуйте начинку: відваріть картоплю, розімніть її та змішайте зі смаженою цибулею.\n\nДалі розкачайте тісто тонким шаром і виріжте склянкою кружечки. На кожен покладіть ложку начинки, зліпіть краї — і вареник готовий. Варіть вареники в підсоленій воді: коли спливуть, зачекайте ще дві-три хвилини й виймайте.\n\nПодавайте вареники гарячими — зі сметаною або зі шкварками. У багатьох родинах їх ліплять разом: хтось розкачує тісто, хтось кладе начинку, а наймолодші рахують, скільки вареників уже на столі. Саме тому кажуть: вареники смакують найкраще тоді, коли їх ліпила вся родина.\n",
+    "hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "source": "teacher-paste",
+    "content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "char_len": 948,
+    "diagnostics": [
+      {
+        "form": "Тим",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті позначено як authentic-archaism; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "3aff253340fd67e531044e3903e798e698b87702b33abe84b2b8117028f2e96c",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": "GeneratorUnavailable: provider returned HTTP 500",
+  "activities": []
+}

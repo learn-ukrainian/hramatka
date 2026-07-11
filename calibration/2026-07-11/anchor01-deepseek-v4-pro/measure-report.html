@@ -1,0 +1,520 @@
+<meta charset='utf-8'>
+<title>Hramatka Step-7 measurement report</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;line-height:1.5}
+.badge{font-size:.8em;padding:.1em .5em;border-radius:.4em;color:#fff}.ok{background:#1a7f37}.warn{background:#9a6700}.bad{background:#cf222e}
+table.gates{border-collapse:collapse;width:100%;font-size:.85em;margin:.5rem 0}table.gates td,table.gates th{border:1px solid #ddd;padding:.2em .4em;text-align:left}
+tr.warn td{background:#fff8e1}tr.bad td{background:#ffebe9}tr.ok td{background:#f0fff4}.activity{border:1px solid #ccc;border-radius:.5em;padding:1rem;margin:1rem 0}
+pre{background:#f6f8fa;padding:.6rem;overflow-x:auto;font-size:.8em}.kpi{background:#f6f8fa;padding:1rem;border-radius:.5em}.accept{font-weight:600}.rejected{border-top:1px solid #ddd;padding:.5rem 0}
+</style>
+<h1>Hramatka Step-7 — measurement report</h1>
+<details open><summary>Report header and pinned runtime identity</summary>
+<pre>{
+  &quot;cache_enabled_for_anchor_bakes&quot;: true,
+  &quot;data_bundle_digests&quot;: {
+    &quot;atlas.db&quot;: &quot;213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b&quot;,
+    &quot;sources.db&quot;: &quot;e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca&quot;,
+    &quot;vesum.db&quot;: &quot;3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462&quot;
+  },
+  &quot;engine_sha&quot;: &quot;4d1943082656c582a89be340e0555f2126b4769b&quot;,
+  &quot;engine_version&quot;: &quot;slice1-b1.2026.07.10&quot;,
+  &quot;generated_at&quot;: &quot;2026-07-11T13:30:02.722036+00:00&quot;,
+  &quot;model&quot;: &quot;deepseek-v4-pro&quot;,
+  &quot;package_versions&quot;: {
+    &quot;jsonschema&quot;: &quot;4.26.0&quot;,
+    &quot;python&quot;: &quot;3.12.8&quot;
+  },
+  &quot;report_contract&quot;: &quot;step7-5b-rater-observability-v1&quot;,
+  &quot;slate_pin_assertion&quot;: {
+    &quot;configured&quot;: true,
+    &quot;expected&quot;: {
+      &quot;data_bundle_digests&quot;: {
+        &quot;atlas.db&quot;: &quot;213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b&quot;,
+        &quot;sources.db&quot;: &quot;e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca&quot;,
+        &quot;vesum.db&quot;: &quot;3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462&quot;
+      },
+      &quot;engine_sha&quot;: &quot;4d1943082656c582a89be340e0555f2126b4769b&quot;,
+      &quot;engine_version&quot;: &quot;slice1-b1.2026.07.10&quot;,
+      &quot;model&quot;: &quot;deepseek-v4-pro&quot;,
+      &quot;package_versions&quot;: {
+        &quot;jsonschema&quot;: &quot;4.26.0&quot;,
+        &quot;python&quot;: &quot;3.12.8&quot;
+      },
+      &quot;vendor_artifact_digests&quot;: {
+        &quot;learn_ukrainian_linguistics@1.0.0&quot;: {
+          &quot;files&quot;: {
+            &quot;vesum.py&quot;: &quot;f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49&quot;
+          },
+          &quot;version&quot;: &quot;1.0.0&quot;
+        },
+        &quot;lu.activity.v1@1.0.0&quot;: {
+          &quot;files&quot;: {
+            &quot;activities-b1.schema.json&quot;: &quot;0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453&quot;
+          },
+          &quot;version&quot;: &quot;1.0.0&quot;
+        },
+        &quot;lu.lesson.v1@1.0.0&quot;: {
+          &quot;files&quot;: {
+            &quot;lu.lesson.v1.schema.json&quot;: &quot;ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c&quot;
+          },
+          &quot;version&quot;: &quot;1.0.0&quot;
+        }
+      }
+    },
+    &quot;matches&quot;: {
+      &quot;data_bundle_digests&quot;: true,
+      &quot;engine_sha&quot;: true,
+      &quot;engine_version&quot;: true,
+      &quot;model&quot;: true,
+      &quot;package_versions&quot;: true,
+      &quot;vendor_artifact_digests&quot;: true
+    },
+    &quot;pins_match&quot;: true
+  },
+  &quot;vendor_artifact_digests&quot;: {
+    &quot;learn_ukrainian_linguistics@1.0.0&quot;: {
+      &quot;files&quot;: {
+        &quot;vesum.py&quot;: &quot;f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49&quot;
+      },
+      &quot;version&quot;: &quot;1.0.0&quot;
+    },
+    &quot;lu.activity.v1@1.0.0&quot;: {
+      &quot;files&quot;: {
+        &quot;activities-b1.schema.json&quot;: &quot;0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453&quot;
+      },
+      &quot;version&quot;: &quot;1.0.0&quot;
+    },
+    &quot;lu.lesson.v1@1.0.0&quot;: {
+      &quot;files&quot;: {
+        &quot;lu.lesson.v1.schema.json&quot;: &quot;ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c&quot;
+      },
+      &quot;version&quot;: &quot;1.0.0&quot;
+    }
+  }
+}</pre></details>
+<div class='kpi'>
+<p><b>Tri-state activities:</b> {&#x27;clean&#x27;: 1, &#x27;review_required&#x27;: 2, &#x27;failed&#x27;: 0} &nbsp; rates: {&#x27;clean&#x27;: 0.333, &#x27;review_required&#x27;: 0.667, &#x27;failed&#x27;: 0.0}</p>
+<p><b>Russianism real-anchor warn rate:</b> {&#x27;warned_items&#x27;: 0, &#x27;total_items&#x27;: 3, &#x27;warn_rate&#x27;: 0.0}</p>
+<p><b>Numeral transfer:</b> 2 pass / 1 warn / 0 fail from 3 numeral-bearing generated items</p>
+<p><b>Wall-clock:</b> P50 79.281797s; P95 79.281797s; <b>cost:</b> $0 per bake</p>
+<p><b>Russianism e2e fixtures:</b> 0 caught / 2 uncaught; generated-task case caught: False; hard gate: False</p>
+<p><b>Shipped mark distribution:</b> {&#x27;ok&#x27;: 1, &#x27;warn&#x27;: 2, &#x27;shipped&#x27;: 3}</p>
+<p><b>Determinism:</b> cache off, 2 runs; complete=False; stable=False</p>
+<p><b>Numeral moat:</b> 20/20 positive accepted (clean 13; review-required 7); 9/9 negative rejected</p>
+</div>
+<h2>Determinism probes</h2>
+<pre>{
+  &quot;cache_enabled&quot;: false,
+  &quot;classes&quot;: {},
+  &quot;complete&quot;: false,
+  &quot;lesson_assembly&quot;: {
+    &quot;measured&quot;: false,
+    &quot;reason&quot;: &quot;the real assembler is not the live measurement runtime path&quot;
+  },
+  &quot;required_classes&quot;: [
+    &quot;R&quot;,
+    &quot;T&quot;,
+    &quot;P&quot;,
+    &quot;A&quot;
+  ],
+  &quot;runs_per_anchor&quot;: 2,
+  &quot;stable&quot;: false
+}</pre>
+<h2>Russianism e2e fixtures</h2>
+<pre>{
+  &quot;catch_count&quot;: 0,
+  &quot;fixture_total&quot;: 2,
+  &quot;fixtures&quot;: [
+    {
+      &quot;bake&quot;: {
+        &quot;cache_enabled&quot;: true,
+        &quot;cost_basis&quot;: &quot;locked google-ais/gemma-4-31b-it route ($0)&quot;,
+        &quot;cost_usd&quot;: 0.0,
+        &quot;generation_error&quot;: null,
+        &quot;generator_calls&quot;: 1,
+        &quot;retry_count&quot;: 0,
+        &quot;wall_clock_seconds&quot;: 0.22877
+      },
+      &quot;caught&quot;: false,
+      &quot;generated_task_language&quot;: false,
+      &quot;id&quot;: &quot;quoted-anchor-russianism&quot;,
+      &quot;items&quot;: [
+        {
+          &quot;activity&quot;: {
+            &quot;instruction&quot;: &quot;Познач правильні твердження за текстом.&quot;,
+            &quot;items&quot;: [
+              {
+                &quot;correct&quot;: true,
+                &quot;statement&quot;: &quot;Багато людей отримують получку.&quot;
+              }
+            ],
+            &quot;type&quot;: &quot;true-false&quot;
+          },
+          &quot;activity_provenance&quot;: {
+            &quot;external_options&quot;: false,
+            &quot;generation_history&quot;: [
+              {
+                &quot;anchor_content_fingerprint&quot;: &quot;20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc&quot;,
+                &quot;anchor_hash&quot;: &quot;20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc&quot;,
+                &quot;anchor_id&quot;: &quot;20f5c62837ab&quot;,
+                &quot;anchor_source&quot;: &quot;teacher-paste&quot;,
+                &quot;fingerprint&quot;: &quot;1325600c49ba2d18b76ac2d65b5632ede483d2521544b0c44ad6320b563ab98e&quot;,
+                &quot;generator&quot;: &quot;deepseek-v4-pro&quot;,
+                &quot;level&quot;: &quot;B1&quot;,
+                &quot;pedagogy&quot;: null,
+                &quot;phase&quot;: null
+              }
+            ]
+          },
+          &quot;block_provenance&quot;: {
+            &quot;anchor&quot;: {
+              &quot;anchor_id&quot;: &quot;20f5c62837ab&quot;,
+              &quot;content_fingerprint&quot;: &quot;20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc&quot;,
+              &quot;source&quot;: &quot;teacher-paste&quot;
+            },
+            &quot;gates_run&quot;: [
+              &quot;evidence_span&quot;
+            ],
+            &quot;generated&quot;: {
+              &quot;fingerprint&quot;: &quot;1325600c49ba2d18b76ac2d65b5632ede483d2521544b0c44ad6320b563ab98e&quot;,
+              &quot;generator&quot;: &quot;deepseek-v4-pro&quot;
+            },
+            &quot;teacher&quot;: {
+              &quot;edited&quot;: false
+            }
+          },
+          &quot;evidence&quot;: [
+            {
+              &quot;char_end&quot;: 39,
+              &quot;char_start&quot;: 0,
+              &quot;kind&quot;: &quot;literal&quot;,
+              &quot;locator&quot;: &quot;items[0]&quot;,
+              &quot;quote&quot;: &quot;Багато людей щомісяця отримують получку&quot;
+            }
+          ],
+          &quot;gate_checks&quot;: [
+            {
+              &quot;detail&quot;: &quot;Quote located in anchor at [0:39] (offsets recomputed).&quot;,
+              &quot;gate&quot;: &quot;evidence_span&quot;,
+              &quot;locator&quot;: &quot;items[0]&quot;,
+              &quot;status&quot;: &quot;pass&quot;
+            }
+          ],
+          &quot;gate_outcome&quot;: &quot;clean&quot;,
+          &quot;mark&quot;: &quot;ok&quot;,
+          &quot;note&quot;: &quot;Згенеровано з опори; гейти чисті — звірте перед уроком.&quot;,
+          &quot;rater_controls&quot;: [
+            &quot;accept&quot;,
+            &quot;edit-minor&quot;,
+            &quot;edit-content&quot;,
+            &quot;reject&quot;
+          ],
+          &quot;rejected&quot;: []
+        }
+      ]
+    },
+    {
+      &quot;bake&quot;: {
+        &quot;cache_enabled&quot;: true,
+        &quot;cost_basis&quot;: &quot;locked google-ais/gemma-4-31b-it route ($0)&quot;,
+        &quot;cost_usd&quot;: 0.0,
+        &quot;generation_error&quot;: null,
+        &quot;generator_calls&quot;: 1,
+        &quot;retry_count&quot;: 0,
+        &quot;wall_clock_seconds&quot;: 0.441277
+      },
+      &quot;caught&quot;: false,
+      &quot;generated_task_language&quot;: true,
+      &quot;id&quot;: &quot;generated-task-russianism&quot;,
+      &quot;items&quot;: [
+        {
+          &quot;activity&quot;: {
+            &quot;instruction&quot;: &quot;Познач правильні твердження за текстом.&quot;,
+            &quot;items&quot;: [
+              {
+                &quot;correct&quot;: true,
+                &quot;statement&quot;: &quot;Третина українців втратили получку.&quot;
+              }
+            ],
+            &quot;type&quot;: &quot;true-false&quot;
+          },
+          &quot;activity_provenance&quot;: {
+            &quot;external_options&quot;: false,
+            &quot;generation_history&quot;: [
+              {
+                &quot;anchor_content_fingerprint&quot;: &quot;8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707&quot;,
+                &quot;anchor_hash&quot;: &quot;8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707&quot;,
+                &quot;anchor_id&quot;: &quot;8bd6816ac75d&quot;,
+                &quot;anchor_source&quot;: &quot;teacher-paste&quot;,
+                &quot;fingerprint&quot;: &quot;419d22e63c4e6eba9b5a3240c05a1afb00f542c6290cb4514bda9fbc1c4114cc&quot;,
+                &quot;generator&quot;: &quot;deepseek-v4-pro&quot;,
+                &quot;level&quot;: &quot;B1&quot;,
+                &quot;pedagogy&quot;: null,
+                &quot;phase&quot;: null
+              }
+            ]
+          },
+          &quot;block_provenance&quot;: {
+            &quot;anchor&quot;: {
+              &quot;anchor_id&quot;: &quot;8bd6816ac75d&quot;,
+              &quot;content_fingerprint&quot;: &quot;8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707&quot;,
+              &quot;source&quot;: &quot;teacher-paste&quot;
+            },
+            &quot;gates_run&quot;: [
+              &quot;evidence_span&quot;,
+              &quot;partition&quot;,
+              &quot;vesum_token&quot;
+            ],
+            &quot;generated&quot;: {
+              &quot;fingerprint&quot;: &quot;419d22e63c4e6eba9b5a3240c05a1afb00f542c6290cb4514bda9fbc1c4114cc&quot;,
+              &quot;generator&quot;: &quot;deepseek-v4-pro&quot;
+            },
+            &quot;teacher&quot;: {
+              &quot;edited&quot;: false
+            }
+          },
+          &quot;evidence&quot;: [
+            {
+              &quot;char_end&quot;: 50,
+              &quot;char_start&quot;: 0,
+              &quot;kind&quot;: &quot;literal&quot;,
+              &quot;locator&quot;: &quot;items[0]&quot;,
+              &quot;quote&quot;: &quot;Третина українців за рік не прочитує жодної книжки&quot;
+            }
+          ],
+          &quot;gate_checks&quot;: [
+            {
+              &quot;detail&quot;: &quot;Quote located in anchor at [0:50] (offsets recomputed).&quot;,
+              &quot;gate&quot;: &quot;evidence_span&quot;,
+              &quot;locator&quot;: &quot;items[0]&quot;,
+              &quot;status&quot;: &quot;pass&quot;
+            },
+            {
+              &quot;detail&quot;: &quot;&#x27;получку&#x27; not found in VESUM — fabricated or misspelled form.&quot;,
+              &quot;gate&quot;: &quot;vesum_token&quot;,
+              &quot;locator&quot;: &quot;items[0]&quot;,
+              &quot;status&quot;: &quot;fail&quot;
+            },
+            {
+              &quot;detail&quot;: &quot;Only 0 item(s) survived per-item gating; true-false requires &gt;= 1 — dropping the whole activity.&quot;,
+              &quot;gate&quot;: &quot;partition&quot;,
+              &quot;locator&quot;: null,
+              &quot;status&quot;: &quot;fail&quot;
+            }
+          ],
+          &quot;gate_outcome&quot;: &quot;failed&quot;,
+          &quot;mark&quot;: &quot;blocked&quot;,
+          &quot;note&quot;: &quot;Вправу не показано: автоматична перевірка її відхилила.&quot;,
+          &quot;rater_controls&quot;: [
+            &quot;accept&quot;,
+            &quot;edit-minor&quot;,
+            &quot;edit-content&quot;,
+            &quot;reject&quot;
+          ],
+          &quot;rejected&quot;: [
+            {
+              &quot;content&quot;: {
+                &quot;instruction&quot;: &quot;Познач правильні твердження за текстом.&quot;,
+                &quot;items&quot;: [
+                  {
+                    &quot;correct&quot;: true,
+                    &quot;statement&quot;: &quot;Третина українців втратили получку.&quot;
+                  }
+                ],
+                &quot;type&quot;: &quot;true-false&quot;
+              },
+              &quot;kind&quot;: &quot;rejected&quot;,
+              &quot;locator&quot;: null,
+              &quot;machine_reason_class&quot;: &quot;gate-failed:vesum_token&quot;
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  &quot;generated_task_fixture_caught&quot;: false,
+  &quot;hard_gate_met&quot;: false,
+  &quot;hard_gate_reason&quot;: &quot;Seeded russianism fixture data is unavailable or did not reach a russianism/calque warning.&quot;,
+  &quot;offline_seed_required&quot;: true,
+  &quot;uncaught_count&quot;: 2
+}</pre>
+<h2>Numeral moat bank</h2><table class='gates'><tr><th>side</th><th>class</th><th>phrase</th><th>ctx</th><th>status</th><th>rule</th><th>ok</th></tr><tr class='ok'><td>positive</td><td>date</td><td>23 квітня</td><td>None</td><td>pass</td><td>date-not-cardinal</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>range</td><td>1939–1940 роки</td><td>None</td><td>warn</td><td>hyphenated-token</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>mixed-fraction</td><td>два з половиною рази</td><td>None</td><td>warn</td><td>fraction-variable-government</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>mixed-fraction</td><td>два з чвертю метри</td><td>None</td><td>warn</td><td>fraction-variable-government</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>mixed-fraction</td><td>три з третиною роки</td><td>None</td><td>warn</td><td>fraction-variable-government</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>decimal</td><td>2,5 рази</td><td>None</td><td>warn</td><td>decimal-fraction</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>percentage</td><td>на сім відсотків</td><td>acc</td><td>pass</td><td>gov-ends_5_9_0</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>ordinal</td><td>сімнадцятий поверх</td><td>None</td><td>warn</td><td>ordinal-skip</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>ambiguous-preposition</td><td>з двома студентами</td><td>None</td><td>warn</td><td>ambiguous-preposition</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>collective</td><td>двоє студентів</td><td>None</td><td>pass</td><td>gov-collective</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>gender-agreement</td><td>два столи</td><td>None</td><td>pass</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>gender-agreement</td><td>дві книги</td><td>None</td><td>pass</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>half-cardinal</td><td>півтора року</td><td>None</td><td>pass</td><td>gov-half</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>двадцять тисяч гривень</td><td>None</td><td>pass</td><td>nested-magnitude</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>близько двадцяти тисяч гривень</td><td>None</td><td>pass</td><td>nested-magnitude</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>дві-три хвилини</td><td>None</td><td>pass</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>обоє працюємо</td><td>None</td><td>pass</td><td>collective-predicative</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>двадцять тисяч п&#x27;ять гривень</td><td>None</td><td>pass</td><td>gov-ends_5_9_0</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>дві-три тисячі гривень</td><td>None</td><td>pass</td><td>nested-magnitude</td><td>✓</td></tr><tr class='ok'><td>positive</td><td>bake-regression</td><td>одна тисяча двісті тридцять чотири книги</td><td>None</td><td>pass</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>date</td><td>23 квітень</td><td>None</td><td>fail</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>mixed-fraction</td><td>два з половиною</td><td>None</td><td>fail</td><td>no-noun-found</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>percentage</td><td>на сім відсотки</td><td>acc</td><td>fail</td><td>gov-ends_5_9_0</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>ambiguous-preposition</td><td>з двома студенти</td><td>instr</td><td>fail</td><td>gov-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>collective</td><td>двоє студенти</td><td>None</td><td>fail</td><td>gov-collective</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>gender-agreement</td><td>дві столи</td><td>None</td><td>fail</td><td>gender-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>gender-agreement</td><td>два книги</td><td>None</td><td>fail</td><td>gender-ends_2_4</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>cardinal-government</td><td>п&#x27;ять студенти</td><td>None</td><td>fail</td><td>gov-ends_5_9_0</td><td>✓</td></tr><tr class='ok'><td>negative</td><td>bake-regression</td><td>Близько три годин</td><td>None</td><td>fail</td><td>numeral-form-ends_2_4</td><td>✓</td></tr></table>
+<h2>Anchor anchor01 (2020 chars; class None)</h2>
+<p><b>Anchor provenance:</b> {&#x27;source&#x27;: &#x27;teacher-paste&#x27;, &#x27;content_fingerprint&#x27;: &#x27;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&#x27;}</p><p><b>Bake:</b> {&#x27;wall_clock_seconds&#x27;: 79.281797, &#x27;cost_usd&#x27;: 0.0, &#x27;cost_basis&#x27;: &#x27;locked google-ais/gemma-4-31b-it route ($0)&#x27;, &#x27;generator_calls&#x27;: 1, &#x27;retry_count&#x27;: 0, &#x27;cache_enabled&#x27;: True, &#x27;generation_error&#x27;: None}</p><p><b>Tri-state:</b> {&#x27;clean&#x27;: 1, &#x27;review_required&#x27;: 2, &#x27;failed&#x27;: 0} &nbsp; <b>Salvage:</b> {&#x27;generated&#x27;: 3, &#x27;shipped&#x27;: 2, &#x27;flagged&#x27;: 1, &#x27;rejected&#x27;: 0} &nbsp; <b>Shipped marks:</b> {&#x27;ok&#x27;: 1, &#x27;warn&#x27;: 2, &#x27;shipped&#x27;: 3}</p>
+<details open><summary class='warn'>Anchor baseline: forms not verified as normative (not engine-verified)</summary><pre>[
+  {
+    &quot;form&quot;: &quot;Фрідленд&quot;,
+    &quot;reason&quot;: &quot;Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма.&quot;,
+    &quot;status&quot;: &quot;flagged-not-verified&quot;
+  },
+  {
+    &quot;form&quot;: &quot;слабоумству&quot;,
+    &quot;reason&quot;: &quot;Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма.&quot;,
+    &quot;status&quot;: &quot;flagged-not-verified&quot;
+  }
+]</pre></details>
+<div class='activity'><h3>true-false <span class='badge warn'>review_required</span></h3><p><b>Teacher mark:</b> warn &nbsp; <b>Note:</b> Згенеровано з опори; перевірте: хибне твердження потребує підтвердження; є попередження щодо числівника — підтвердьте перед прийняттям.</p><p class='accept'><b>Rater verdict:</b> ☐ accept &nbsp; ☐ edit-minor &nbsp; ☐ edit-content &nbsp; ☐ reject</p><details><summary>Block + activity provenance</summary><p><b>Block:</b></p><pre>{
+  &quot;anchor&quot;: {
+    &quot;anchor_id&quot;: &quot;anchor01&quot;,
+    &quot;content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+    &quot;source&quot;: &quot;teacher-paste&quot;
+  },
+  &quot;gates_run&quot;: [
+    &quot;evidence_span&quot;,
+    &quot;false_statement&quot;,
+    &quot;numeral&quot;
+  ],
+  &quot;generated&quot;: {
+    &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+    &quot;generator&quot;: &quot;deepseek-v4-pro&quot;
+  },
+  &quot;teacher&quot;: {
+    &quot;edited&quot;: false
+  }
+}</pre><p><b>Activity:</b></p><pre>{
+  &quot;external_options&quot;: true,
+  &quot;generation_history&quot;: [
+    {
+      &quot;anchor_content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_hash&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_id&quot;: &quot;anchor01&quot;,
+      &quot;anchor_source&quot;: &quot;teacher-paste&quot;,
+      &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+      &quot;generator&quot;: &quot;deepseek-v4-pro&quot;,
+      &quot;level&quot;: &quot;B1&quot;,
+      &quot;pedagogy&quot;: null,
+      &quot;phase&quot;: null
+    }
+  ]
+}</pre></details><pre class='payload'>{
+  &quot;instruction&quot;: &quot;Визначте, чи відповідають твердження тексту. Позначте &#x27;правда&#x27; або &#x27;неправда&#x27;.&quot;,
+  &quot;items&quot;: [
+    {
+      &quot;correct&quot;: true,
+      &quot;explanation&quot;: &quot;Саме так сказано в першому реченні тексту.&quot;,
+      &quot;statement&quot;: &quot;Третина українців за рік не прочитує жодної книжки.&quot;
+    },
+    {
+      &quot;correct&quot;: false,
+      &quot;explanation&quot;: &quot;У тексті йдеться, що дві третини знаходять час увімкнути телевізор, а не читати книжки.&quot;,
+      &quot;statement&quot;: &quot;Дві третини українців щодня читають книжки.&quot;
+    },
+    {
+      &quot;correct&quot;: true,
+      &quot;explanation&quot;: &quot;Текст прямо вказує цю дату.&quot;,
+      &quot;statement&quot;: &quot;Всесвітній день книги та авторського права відзначають 23 квітня.&quot;
+    },
+    {
+      &quot;correct&quot;: false,
+      &quot;explanation&quot;: &quot;Насправді в тексті сказано, що перегляд телепередач, навпаки, підвищує ризик.&quot;,
+      &quot;statement&quot;: &quot;Перегляд телепередач знижує ризик розвитку хвороби Альцгеймера.&quot;
+    },
+    {
+      &quot;correct&quot;: true,
+      &quot;explanation&quot;: &quot;У тексті наведено таке саме число – 2,5 рази.&quot;,
+      &quot;statement&quot;: &quot;Читання знижує ризик розвитку хвороби Альцгеймера у 2,5 рази.&quot;
+    }
+  ],
+  &quot;type&quot;: &quot;true-false&quot;
+}</pre><details open><summary>Evidence spans</summary><ul><li><code>items[0]</code> [19:128] (literal) — Третина українців за рік не прочитує жодної книжки, зате дві третини щодня знаходять час увімкнути телевізор.</li><li><code>items[1]</code> [71:127] (literal) — зате дві третини щодня знаходять час увімкнути телевізор</li><li><code>items[2]</code> [373:454] (literal) — Всесвітній день книги та авторського права, який традиційно відзначають 23 квітня</li><li><code>items[3]</code> [1465:1519] (literal) — Тоді як перегляд телепередач, навпаки, підвищує ризик.</li><li><code>items[4]</code> [1395:1447] (literal) — знижує в 2,5 рази ризик розвитку хвороби Альцгеймера</li></ul></details><table class='gates'><tr><th>gate</th><th>status</th><th>locator</th><th>detail</th></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>items[0]</td><td>Quote located in anchor at [19:128] (offsets recomputed).</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>items[1]</td><td>Quote located in anchor at [71:127] (offsets recomputed).</td></tr><tr class='warn'><td>false_statement</td><td>warn</td><td>items[1]</td><td>FALSE statement — deterministic falsity check out of scope; teacher-confirm.</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>items[2]</td><td>Quote located in anchor at [373:454] (offsets recomputed).</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>items[3]</td><td>Quote located in anchor at [1465:1519] (offsets recomputed).</td></tr><tr class='warn'><td>false_statement</td><td>warn</td><td>items[3]</td><td>FALSE statement — deterministic falsity check out of scope; teacher-confirm.</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>items[4]</td><td>Quote located in anchor at [1395:1447] (offsets recomputed).</td></tr><tr class='warn'><td>numeral</td><td>warn</td><td>items[4]</td><td>[decimal-fraction] Decimal/fraction numeral &#x27;2,5&#x27; — government is genuinely variable in modern usage (VESUM confirms both singular and paucal complement forms attested); deferring to teacher review rather than hard-failing.</td></tr></table></div>
+<div class='activity'><h3>cloze <span class='badge ok'>clean</span></h3><p><b>Teacher mark:</b> ok &nbsp; <b>Note:</b> Згенеровано з опори; гейти чисті — звірте перед уроком.</p><p class='accept'><b>Rater verdict:</b> ☐ accept &nbsp; ☐ edit-minor &nbsp; ☐ edit-content &nbsp; ☐ reject</p><details><summary>Block + activity provenance</summary><p><b>Block:</b></p><pre>{
+  &quot;anchor&quot;: {
+    &quot;anchor_id&quot;: &quot;anchor01&quot;,
+    &quot;content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+    &quot;source&quot;: &quot;teacher-paste&quot;
+  },
+  &quot;gates_run&quot;: [
+    &quot;evidence_span&quot;
+  ],
+  &quot;generated&quot;: {
+    &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+    &quot;generator&quot;: &quot;deepseek-v4-pro&quot;
+  },
+  &quot;teacher&quot;: {
+    &quot;edited&quot;: false
+  }
+}</pre><p><b>Activity:</b></p><pre>{
+  &quot;external_options&quot;: false,
+  &quot;generation_history&quot;: [
+    {
+      &quot;anchor_content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_hash&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_id&quot;: &quot;anchor01&quot;,
+      &quot;anchor_source&quot;: &quot;teacher-paste&quot;,
+      &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+      &quot;generator&quot;: &quot;deepseek-v4-pro&quot;,
+      &quot;level&quot;: &quot;B1&quot;,
+      &quot;pedagogy&quot;: null,
+      &quot;phase&quot;: null
+    }
+  ]
+}</pre></details><pre class='payload'>{
+  &quot;blanks&quot;: [
+    {
+      &quot;answer&quot;: &quot;завдань&quot;,
+      &quot;id&quot;: 1,
+      &quot;options&quot;: [
+        &quot;завдань&quot;,
+        &quot;забав&quot;,
+        &quot;занять&quot;,
+        &quot;заходів&quot;
+      ]
+    }
+  ],
+  &quot;instruction&quot;: &quot;Заповніть пропуск у реченні, вибравши правильне слово.&quot;,
+  &quot;text&quot;: &quot;На думку вчених, читання є одним з найскладніших {gap} для мозку.&quot;,
+  &quot;type&quot;: &quot;cloze&quot;
+}</pre><details open><summary>Evidence spans</summary><ul><li><code>text</code> [758:825] (literal) — На думку вчених, читання є одним з найскладніших завдань для мозку.</li></ul></details><table class='gates'><tr><th>gate</th><th>status</th><th>locator</th><th>detail</th></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>text</td><td>Quote located in anchor at [758:825] (offsets recomputed).</td></tr></table></div>
+<div class='activity'><h3>match-up <span class='badge warn'>review_required</span></h3><p><b>Teacher mark:</b> warn &nbsp; <b>Note:</b> Згенеровано з опори; перевірте: зв’язок у парі потребує звірки; опору не вдалося повністю підтвердити — підтвердьте перед прийняттям.</p><p class='accept'><b>Rater verdict:</b> ☐ accept &nbsp; ☐ edit-minor &nbsp; ☐ edit-content &nbsp; ☐ reject</p><details><summary>Block + activity provenance</summary><p><b>Block:</b></p><pre>{
+  &quot;anchor&quot;: {
+    &quot;anchor_id&quot;: &quot;anchor01&quot;,
+    &quot;content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+    &quot;source&quot;: &quot;teacher-paste&quot;
+  },
+  &quot;gates_run&quot;: [
+    &quot;evidence_span&quot;,
+    &quot;matchup_semantics&quot;
+  ],
+  &quot;generated&quot;: {
+    &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+    &quot;generator&quot;: &quot;deepseek-v4-pro&quot;
+  },
+  &quot;teacher&quot;: {
+    &quot;edited&quot;: false
+  }
+}</pre><p><b>Activity:</b></p><pre>{
+  &quot;external_options&quot;: true,
+  &quot;generation_history&quot;: [
+    {
+      &quot;anchor_content_fingerprint&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_hash&quot;: &quot;8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b&quot;,
+      &quot;anchor_id&quot;: &quot;anchor01&quot;,
+      &quot;anchor_source&quot;: &quot;teacher-paste&quot;,
+      &quot;fingerprint&quot;: &quot;e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a&quot;,
+      &quot;generator&quot;: &quot;deepseek-v4-pro&quot;,
+      &quot;level&quot;: &quot;B1&quot;,
+      &quot;pedagogy&quot;: null,
+      &quot;phase&quot;: null
+    }
+  ]
+}</pre></details><pre class='payload'>{
+  &quot;instruction&quot;: &quot;З’єднайте слово з тексту (ліворуч) з його значенням (праворуч).&quot;,
+  &quot;pairs&quot;: [
+    {
+      &quot;left&quot;: &quot;гаджет&quot;,
+      &quot;right&quot;: &quot;електронний пристрій&quot;
+    },
+    {
+      &quot;left&quot;: &quot;головоломка&quot;,
+      &quot;right&quot;: &quot;складна загадка або задача для розуму&quot;
+    },
+    {
+      &quot;left&quot;: &quot;слабоумство&quot;,
+      &quot;right&quot;: &quot;порушення розумових здібностей, недоумство&quot;
+    }
+  ],
+  &quot;type&quot;: &quot;match-up&quot;
+}</pre><details open><summary>Evidence spans</summary><ul><li><code>pairs[0]</code> [129:166] (literal) — У світі гаджетів та повсюдних екранів</li><li><code>pairs[1]</code> [None:None] (absent) — чим відпочинком, проведенням дозвілля чи потребою; located-failure: Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review.</li><li><code>pairs[2]</code> [1361:1393] (literal) — розгадування головоломок чи шахи</li><li><code>pairs[3]</code> [1969:2018] (literal) — запобігає слабоумству та іншими процесам деменції</li></ul></details><table class='gates'><tr><th>gate</th><th>status</th><th>locator</th><th>detail</th></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>pairs[0]</td><td>Quote located in anchor at [129:166] (offsets recomputed).</td></tr><tr class='warn'><td>matchup_semantics</td><td>warn</td><td>pairs[0]</td><td>Atlas lists no synonym relation between the pair sides: &#x27;гаджет&#x27; ↔ &#x27;електронний пристрій&#x27;. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.</td></tr><tr class='bad'><td>evidence_span</td><td>fail</td><td>pairs[1]</td><td>Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review.</td></tr><tr class='warn'><td>matchup_semantics</td><td>warn</td><td>pairs[1]</td><td>Atlas lists no synonym relation between the pair sides: &#x27;дозвілля&#x27; ↔ &#x27;вільний час, відпочинок&#x27;. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>pairs[2]</td><td>Quote located in anchor at [1361:1393] (offsets recomputed).</td></tr><tr class='warn'><td>matchup_semantics</td><td>warn</td><td>pairs[2]</td><td>Atlas lists no synonym relation between the pair sides: &#x27;головоломка&#x27; ↔ &#x27;складна загадка або задача для розуму&#x27;. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.</td></tr><tr class='ok'><td>evidence_span</td><td>pass</td><td>pairs[3]</td><td>Quote located in anchor at [1969:2018] (offsets recomputed).</td></tr><tr class='warn'><td>matchup_semantics</td><td>warn</td><td>pairs[3]</td><td>Atlas has no relation record for the left-hand term: &#x27;слабоумство&#x27; ↔ &#x27;порушення розумових здібностей, недоумство&#x27;. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.</td></tr></table><details open><summary class='bad'>Rejected or flagged content</summary><div class='rejected'><p><b>flagged:</b> <code>gate-failed:evidence_span</code> ☐ accept &nbsp; ☐ edit-minor &nbsp; ☐ edit-content &nbsp; ☐ reject</p><pre>{
+  &quot;left&quot;: &quot;дозвілля&quot;,
+  &quot;right&quot;: &quot;вільний час, відпочинок&quot;
+}</pre></div></details></div>

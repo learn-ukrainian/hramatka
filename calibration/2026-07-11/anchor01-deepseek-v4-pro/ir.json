@@ -1,0 +1,389 @@
+{
+  "anchor": {
+    "anchor_id": "anchor01",
+    "body_uk": "10 причин читати!\n\nТретина українців за рік не прочитує жодної книжки, зате дві третини щодня знаходять час увімкнути телевізор. У світі гаджетів та повсюдних екранів дуже легко забути про насолоду від неспішного читання книжок. У такий святковий день для всіх книголюбів – авторів, видавців, читачів, критиків, бібліотекарів та інших причетних до книжкової справи людей – Всесвітній день книги та авторського права, який традиційно відзначають 23 квітня, хочеться нагадати, що читання може бути чимось більшим, ніж відпочинком, проведенням дозвілля чи потребою. А тому зібрали для вас найцікавіші факти та дослідження про те, як книжки впливають на нас і чому мозок так любить читати. Тож не відмовляйте йому в такому задоволенні!\n\nЧитання «прокачує» мозок\nНа думку вчених, читання є одним з найскладніших завдань для мозку. А що складніші завдання ми перед ним ставимо, то менше відпочинку він має, а отже – то ліпші наші розумові здібності й пам’ять. Зокрема, вчені з’ясували, що під час читання активізуються одразу 17 ділянок головного мозку! Щоразу, коли ви читаєте, створюються нові синапси, які дозволяють зберігати більше спогадів, а отже, підтримувати гостроту пам’яті. А як інакше ви би запам’ятали стільки героїв, їхні імена та риси, а також перебіг сюжету та інші деталі книжки.\n\nЧитання знижує ризик хвороб мозку\nЧитання (разом із такими хобі, як розгадування головоломок чи шахи) знижує в 2,5 рази ризик розвитку хвороби Альцгеймера у старшому віці. Тоді як перегляд телепередач, навпаки, підвищує ризик. «Мозок – також орган, як і будь-який інший орган в організмі. Він старіє залежно від того, як його використовують. Подібно до того, як фізична активність робить міцнішими серце, м’язи і кістки, інтелектуальна діяльність зміцнює опір мозку хворобам», – зазначив провідний доктор Роберт П. Фрідленд в інтерв’ю «USA Today», де опубліковано результати дослідження. Так читання є найдоступнішим тренажером для нашого мозку, що підтримує його в тонусі та запобігає слабоумству та іншими процесам деменції.\n",
+    "hash": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+    "source": "teacher-paste",
+    "content_fingerprint": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+    "char_len": 2020,
+    "diagnostics": [
+      {
+        "form": "Фрідленд",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      },
+      {
+        "form": "слабоумству",
+        "status": "flagged-not-verified",
+        "reason": "Форму в опорному тексті не підтверджено VESUM; це цитата, а не перевірена нормативна форма."
+      }
+    ]
+  },
+  "fingerprint": "e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a",
+  "fingerprint_inputs": {
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "deepseek-v4-pro",
+    "anchor_hash": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+    "level": "B1",
+    "pedagogy": null,
+    "phase": null,
+    "types": [
+      "cloze",
+      "match-up",
+      "true-false"
+    ],
+    "grounding_digest": "b0149ab38688365213d28705bb624a7346b9ec9e92c35ce3187a35f2cb01400a",
+    "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+    "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+    "packages": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    }
+  },
+  "generation_error": null,
+  "activities": [
+    {
+      "activity": {
+        "type": "true-false",
+        "instruction": "Визначте, чи відповідають твердження тексту. Позначте 'правда' або 'неправда'.",
+        "items": [
+          {
+            "statement": "Третина українців за рік не прочитує жодної книжки.",
+            "correct": true,
+            "explanation": "Саме так сказано в першому реченні тексту."
+          },
+          {
+            "statement": "Дві третини українців щодня читають книжки.",
+            "correct": false,
+            "explanation": "У тексті йдеться, що дві третини знаходять час увімкнути телевізор, а не читати книжки."
+          },
+          {
+            "statement": "Всесвітній день книги та авторського права відзначають 23 квітня.",
+            "correct": true,
+            "explanation": "Текст прямо вказує цю дату."
+          },
+          {
+            "statement": "Перегляд телепередач знижує ризик розвитку хвороби Альцгеймера.",
+            "correct": false,
+            "explanation": "Насправді в тексті сказано, що перегляд телепередач, навпаки, підвищує ризик."
+          },
+          {
+            "statement": "Читання знижує ризик розвитку хвороби Альцгеймера у 2,5 рази.",
+            "correct": true,
+            "explanation": "У тексті наведено таке саме число – 2,5 рази."
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "Третина українців за рік не прочитує жодної книжки, зате дві третини щодня знаходять час увімкнути телевізор.",
+          "locator": "items[0]",
+          "char_start": 19,
+          "char_end": 128,
+          "kind": "literal"
+        },
+        {
+          "quote": "зате дві третини щодня знаходять час увімкнути телевізор",
+          "locator": "items[1]",
+          "char_start": 71,
+          "char_end": 127,
+          "kind": "literal"
+        },
+        {
+          "quote": "Всесвітній день книги та авторського права, який традиційно відзначають 23 квітня",
+          "locator": "items[2]",
+          "char_start": 373,
+          "char_end": 454,
+          "kind": "literal"
+        },
+        {
+          "quote": "Тоді як перегляд телепередач, навпаки, підвищує ризик.",
+          "locator": "items[3]",
+          "char_start": 1465,
+          "char_end": 1519,
+          "kind": "literal"
+        },
+        {
+          "quote": "знижує в 2,5 рази ризик розвитку хвороби Альцгеймера",
+          "locator": "items[4]",
+          "char_start": 1395,
+          "char_end": 1447,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor01",
+        "anchor_hash": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [19:128] (offsets recomputed).",
+            "locator": "items[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [71:127] (offsets recomputed).",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [373:454] (offsets recomputed).",
+            "locator": "items[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [1465:1519] (offsets recomputed).",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "false_statement",
+            "status": "warn",
+            "detail": "FALSE statement — deterministic falsity check out of scope; teacher-confirm.",
+            "locator": "items[3]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [1395:1447] (offsets recomputed).",
+            "locator": "items[4]"
+          },
+          {
+            "gate": "numeral",
+            "status": "warn",
+            "detail": "[decimal-fraction] Decimal/fraction numeral '2,5' — government is genuinely variable in modern usage (VESUM confirms both singular and paucal complement forms attested); deferring to teacher review rather than hard-failing.",
+            "locator": "items[4]"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "cloze",
+        "instruction": "Заповніть пропуск у реченні, вибравши правильне слово.",
+        "text": "На думку вчених, читання є одним з найскладніших {gap} для мозку.",
+        "blanks": [
+          {
+            "id": 1,
+            "answer": "завдань",
+            "options": [
+              "завдань",
+              "забав",
+              "занять",
+              "заходів"
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "На думку вчених, читання є одним з найскладніших завдань для мозку.",
+          "locator": "text",
+          "char_start": 758,
+          "char_end": 825,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor01",
+        "anchor_hash": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a"
+      },
+      "gate_result": {
+        "status": "clean",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [758:825] (offsets recomputed).",
+            "locator": "text"
+          }
+        ]
+      },
+      "flagged": []
+    },
+    {
+      "activity": {
+        "type": "match-up",
+        "instruction": "З’єднайте слово з тексту (ліворуч) з його значенням (праворуч).",
+        "pairs": [
+          {
+            "left": "гаджет",
+            "right": "електронний пристрій"
+          },
+          {
+            "left": "головоломка",
+            "right": "складна загадка або задача для розуму"
+          },
+          {
+            "left": "слабоумство",
+            "right": "порушення розумових здібностей, недоумство"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "quote": "У світі гаджетів та повсюдних екранів",
+          "locator": "pairs[0]",
+          "char_start": 129,
+          "char_end": 166,
+          "kind": "literal"
+        },
+        {
+          "quote": "чим відпочинком, проведенням дозвілля чи потребою",
+          "locator": "pairs[1]",
+          "char_start": null,
+          "char_end": null,
+          "kind": "absent"
+        },
+        {
+          "quote": "розгадування головоломок чи шахи",
+          "locator": "pairs[2]",
+          "char_start": 1361,
+          "char_end": 1393,
+          "kind": "literal"
+        },
+        {
+          "quote": "запобігає слабоумству та іншими процесам деменції",
+          "locator": "pairs[3]",
+          "char_start": 1969,
+          "char_end": 2018,
+          "kind": "literal"
+        }
+      ],
+      "provenance": {
+        "anchor_id": "anchor01",
+        "anchor_hash": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "anchor_source": "teacher-paste",
+        "anchor_content_fingerprint": "8ad7e1c5aabda27fd45d0606a9d7b0a4a59405da64830b76e5eccb0ff752309b",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "generator": "deepseek-v4-pro",
+        "fingerprint": "e386ecd773c7f4c71e0d12c10c248d7a40ce8d4a1b2bfa9f13a7bbe3efc5283a"
+      },
+      "gate_result": {
+        "status": "review_required",
+        "passed": true,
+        "checks": [
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [129:166] (offsets recomputed).",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'гаджет' ↔ 'електронний пристрій'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[0]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "fail",
+            "detail": "Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review.",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'дозвілля' ↔ 'вільний час, відпочинок'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[1]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [1361:1393] (offsets recomputed).",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas lists no synonym relation between the pair sides: 'головоломка' ↔ 'складна загадка або задача для розуму'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[2]"
+          },
+          {
+            "gate": "evidence_span",
+            "status": "pass",
+            "detail": "Quote located in anchor at [1969:2018] (offsets recomputed).",
+            "locator": "pairs[3]"
+          },
+          {
+            "gate": "matchup_semantics",
+            "status": "warn",
+            "detail": "Atlas has no relation record for the left-hand term: 'слабоумство' ↔ 'порушення розумових здібностей, недоумство'. VESUM-valid wording is not semantic proof; teacher-confirm this MatchUp pair.",
+            "locator": "pairs[3]"
+          }
+        ]
+      },
+      "flagged": [
+        {
+          "locator": "pairs[1]",
+          "reasons": [
+            {
+              "gate": "evidence_span",
+              "detail": "Evidence quote not found in the anchor — hallucinated item for an extractive type; must not reach teacher review."
+            }
+          ],
+          "item": {
+            "left": "дозвілля",
+            "right": "вільний час, відпочинок"
+          }
+        }
+      ]
+    }
+  ]
+}

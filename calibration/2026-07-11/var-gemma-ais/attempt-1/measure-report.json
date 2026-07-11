@@ -1,0 +1,859 @@
+{
+  "header": {
+    "report_contract": "step7-5b-rater-observability-v1",
+    "generated_at": "2026-07-11T13:34:08.596158+00:00",
+    "engine_sha": "4d1943082656c582a89be340e0555f2126b4769b",
+    "engine_version": "slice1-b1.2026.07.10",
+    "model": "google-ais/gemma-4-31b-it",
+    "package_versions": {
+      "python": "3.12.8",
+      "jsonschema": "4.26.0"
+    },
+    "vendor_artifact_digests": {
+      "lu.activity.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+        }
+      },
+      "lu.lesson.v1@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+        }
+      },
+      "learn_ukrainian_linguistics@1.0.0": {
+        "version": "1.0.0",
+        "files": {
+          "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+        }
+      }
+    },
+    "data_bundle_digests": {
+      "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+      "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+      "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+    },
+    "cache_enabled_for_anchor_bakes": true,
+    "slate_pin_assertion": {
+      "configured": true,
+      "expected": {
+        "engine_sha": "4d1943082656c582a89be340e0555f2126b4769b",
+        "engine_version": "slice1-b1.2026.07.10",
+        "package_versions": {
+          "python": "3.12.8",
+          "jsonschema": "4.26.0"
+        },
+        "vendor_artifact_digests": {
+          "lu.activity.v1@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+            }
+          },
+          "lu.lesson.v1@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+            }
+          },
+          "learn_ukrainian_linguistics@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+            }
+          }
+        },
+        "data_bundle_digests": {
+          "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+          "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+          "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+        },
+        "model": "google-ais/gemma-4-31b-it"
+      },
+      "matches": {
+        "engine_sha": true,
+        "engine_version": true,
+        "model": true,
+        "package_versions": true,
+        "vendor_artifact_digests": true,
+        "data_bundle_digests": true
+      },
+      "pins_match": true
+    }
+  },
+  "anchors": [
+    {
+      "anchor_id": "var",
+      "measurement_class": null,
+      "char_len": 948,
+      "anchor_provenance": {
+        "source": "teacher-paste",
+        "content_fingerprint": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994"
+      },
+      "anchor_diagnostics": [
+        {
+          "form": "Тим",
+          "status": "flagged-not-verified",
+          "reason": "Форму в опорному тексті позначено як authentic-archaism; це цитата, а не перевірена нормативна форма."
+        }
+      ],
+      "fingerprint": "cb5bd51bf3e751526a3eb3c28a3a91a481659711b18ab47b33d31025138d6082",
+      "fingerprint_inputs": {
+        "engine_version": "slice1-b1.2026.07.10",
+        "model": "google-ais/gemma-4-31b-it",
+        "anchor_hash": "fb4d6427ed6276007c10efe7885cfacd40a200665414aee9beec0f9dd0b75994",
+        "level": "B1",
+        "pedagogy": null,
+        "phase": null,
+        "types": [
+          "cloze",
+          "match-up",
+          "true-false"
+        ],
+        "grounding_digest": "3aff253340fd67e531044e3903e798e698b87702b33abe84b2b8117028f2e96c",
+        "prompt_digest": "9b0c30a97f64b7f769053592b5ac976262e9803c18edeea29d1d3e2b9fa9dfb9",
+        "gate_impl_digest": "d16b256f1b30a7fa4df67e861d14175532b930377153d30795b3651062ebca17",
+        "packages": {
+          "python": "3.12.8",
+          "jsonschema": "4.26.0"
+        },
+        "vendor": {
+          "lu.activity.v1@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+            }
+          },
+          "lu.lesson.v1@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+            }
+          },
+          "learn_ukrainian_linguistics@1.0.0": {
+            "version": "1.0.0",
+            "files": {
+              "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+            }
+          }
+        },
+        "data_bundle": {
+          "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+          "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+          "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+        }
+      },
+      "bake": {
+        "wall_clock_seconds": 1.375961,
+        "cost_usd": 0.0,
+        "cost_basis": "locked google-ais/gemma-4-31b-it route ($0)",
+        "generator_calls": 1,
+        "retry_count": 0,
+        "cache_enabled": true,
+        "generation_error": "GeneratorUnavailable: provider returned HTTP 500"
+      },
+      "tri_state_counts": {
+        "clean": 0,
+        "review_required": 0,
+        "failed": 0
+      },
+      "salvage_counts": {
+        "generated": 0,
+        "shipped": 0,
+        "flagged": 0,
+        "rejected": 0
+      },
+      "mark_distribution": {
+        "ok": 0,
+        "warn": 0,
+        "shipped": 0
+      },
+      "russianism": {
+        "warned_items": 0,
+        "total_items": 0,
+        "warn_rate": 0.0
+      },
+      "numeral_transfer": {
+        "numeral_bearing_items": 0,
+        "pass": 0,
+        "warn": 0,
+        "fail": 0,
+        "pass_rate": 0.0,
+        "warn_rate": 0.0,
+        "fail_rate": 0.0,
+        "items": []
+      },
+      "items": []
+    }
+  ],
+  "kpi": {
+    "total_items": 0,
+    "tri_state_counts": {
+      "clean": 0,
+      "review_required": 0,
+      "failed": 0
+    },
+    "tri_state_rates": {
+      "clean": 0.0,
+      "review_required": 0.0,
+      "failed": 0.0
+    },
+    "mark_distribution": {
+      "ok": 0,
+      "warn": 0,
+      "shipped": 0
+    },
+    "russianism_real_anchors": {
+      "warned_items": 0,
+      "total_items": 0,
+      "warn_rate": 0.0
+    },
+    "numeral_transfer": {
+      "numeral_bearing_items": 0,
+      "pass": 0,
+      "warn": 0,
+      "fail": 0,
+      "pass_rate": 0.0,
+      "warn_rate": 0.0,
+      "fail_rate": 0.0,
+      "items": []
+    },
+    "wall_clock_seconds": {
+      "bake_count": 1,
+      "p50": 1.375961,
+      "p95": 1.375961
+    },
+    "cost_usd": {
+      "per_bake": 0.0,
+      "total": 0.0
+    }
+  },
+  "numeral_bank": {
+    "positive_accept": 20,
+    "positive_total": 20,
+    "positive_clean": 13,
+    "positive_review_required": 7,
+    "negative_reject": 9,
+    "negative_total": 9,
+    "positive_rows": [
+      {
+        "id": "date-digit-month",
+        "class": "date",
+        "phrase": "23 квітня",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "date-not-cardinal",
+        "ok": true
+      },
+      {
+        "id": "range-en-dash",
+        "class": "range",
+        "phrase": "1939–1940 роки",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "hyphenated-token",
+        "ok": true
+      },
+      {
+        "id": "fraction-half",
+        "class": "mixed-fraction",
+        "phrase": "два з половиною рази",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "fraction-variable-government",
+        "ok": true
+      },
+      {
+        "id": "fraction-quarter",
+        "class": "mixed-fraction",
+        "phrase": "два з чвертю метри",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "fraction-variable-government",
+        "ok": true
+      },
+      {
+        "id": "fraction-third",
+        "class": "mixed-fraction",
+        "phrase": "три з третиною роки",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "fraction-variable-government",
+        "ok": true
+      },
+      {
+        "id": "decimal",
+        "class": "decimal",
+        "phrase": "2,5 рази",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "decimal-fraction",
+        "ok": true
+      },
+      {
+        "id": "percentage",
+        "class": "percentage",
+        "phrase": "на сім відсотків",
+        "context_case": "acc",
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": "acc",
+        "status": "pass",
+        "rule": "gov-ends_5_9_0",
+        "ok": true
+      },
+      {
+        "id": "ordinal",
+        "class": "ordinal",
+        "phrase": "сімнадцятий поверх",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "ordinal-skip",
+        "ok": true
+      },
+      {
+        "id": "ambiguous-z",
+        "class": "ambiguous-preposition",
+        "phrase": "з двома студентами",
+        "context_case": null,
+        "accepted_statuses": [
+          "warn"
+        ],
+        "ctx": null,
+        "status": "warn",
+        "rule": "ambiguous-preposition",
+        "ok": true
+      },
+      {
+        "id": "collective",
+        "class": "collective",
+        "phrase": "двоє студентів",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-collective",
+        "ok": true
+      },
+      {
+        "id": "gender-masculine",
+        "class": "gender-agreement",
+        "phrase": "два столи",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "gender-feminine",
+        "class": "gender-agreement",
+        "phrase": "дві книги",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "half-cardinal",
+        "class": "half-cardinal",
+        "phrase": "півтора року",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-half",
+        "ok": true
+      },
+      {
+        "id": "r2-nested-magnitude",
+        "class": "bake-regression",
+        "phrase": "двадцять тисяч гривень",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "nested-magnitude",
+        "ok": true
+      },
+      {
+        "id": "r2-blyzko-nested-magnitude",
+        "class": "bake-regression",
+        "phrase": "близько двадцяти тисяч гривень",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "nested-magnitude",
+        "ok": true
+      },
+      {
+        "id": "r2-word-range",
+        "class": "bake-regression",
+        "phrase": "дві-три хвилини",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "r2-collective-predicative",
+        "class": "bake-regression",
+        "phrase": "обоє працюємо",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "collective-predicative",
+        "ok": true
+      },
+      {
+        "id": "r3-compound-final-head",
+        "class": "bake-regression",
+        "phrase": "двадцять тисяч п'ять гривень",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-ends_5_9_0",
+        "ok": true
+      },
+      {
+        "id": "r3-range-magnitude",
+        "class": "bake-regression",
+        "phrase": "дві-три тисячі гривень",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "nested-magnitude",
+        "ok": true
+      },
+      {
+        "id": "r3-long-compound",
+        "class": "bake-regression",
+        "phrase": "одна тисяча двісті тридцять чотири книги",
+        "context_case": null,
+        "accepted_statuses": [
+          "pass"
+        ],
+        "ctx": null,
+        "status": "pass",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      }
+    ],
+    "negative_rows": [
+      {
+        "id": "date-nominative-month",
+        "class": "date",
+        "phrase": "23 квітень",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "fraction-missing-noun",
+        "class": "mixed-fraction",
+        "phrase": "два з половиною",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "no-noun-found",
+        "ok": true
+      },
+      {
+        "id": "percentage-nominative-complement",
+        "class": "percentage",
+        "phrase": "на сім відсотки",
+        "context_case": "acc",
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": "acc",
+        "status": "fail",
+        "rule": "gov-ends_5_9_0",
+        "ok": true
+      },
+      {
+        "id": "ambiguous-z-resolved-wrong-case",
+        "class": "ambiguous-preposition",
+        "phrase": "з двома студенти",
+        "context_case": "instr",
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": "instr",
+        "status": "fail",
+        "rule": "gov-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "collective-nominative-complement",
+        "class": "collective",
+        "phrase": "двоє студенти",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "gov-collective",
+        "ok": true
+      },
+      {
+        "id": "gender-feminine-with-masculine",
+        "class": "gender-agreement",
+        "phrase": "дві столи",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "gender-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "gender-masculine-with-feminine",
+        "class": "gender-agreement",
+        "phrase": "два книги",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "gender-ends_2_4",
+        "ok": true
+      },
+      {
+        "id": "cardinal-nominative-complement",
+        "class": "cardinal-government",
+        "phrase": "п'ять студенти",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "gov-ends_5_9_0",
+        "ok": true
+      },
+      {
+        "id": "r2-blyzko-bad-government",
+        "class": "bake-regression",
+        "phrase": "Близько три годин",
+        "context_case": null,
+        "accepted_statuses": [
+          "fail"
+        ],
+        "ctx": null,
+        "status": "fail",
+        "rule": "numeral-form-ends_2_4",
+        "ok": true
+      }
+    ]
+  },
+  "russianism_e2e": {
+    "offline_seed_required": true,
+    "fixture_total": 2,
+    "catch_count": 0,
+    "uncaught_count": 2,
+    "generated_task_fixture_caught": false,
+    "hard_gate_met": false,
+    "hard_gate_reason": "Seeded russianism fixture data is unavailable or did not reach a russianism/calque warning.",
+    "fixtures": [
+      {
+        "id": "quoted-anchor-russianism",
+        "generated_task_language": false,
+        "caught": false,
+        "bake": {
+          "wall_clock_seconds": 0.245536,
+          "cost_usd": 0.0,
+          "cost_basis": "locked google-ais/gemma-4-31b-it route ($0)",
+          "generator_calls": 1,
+          "retry_count": 0,
+          "cache_enabled": true,
+          "generation_error": null
+        },
+        "items": [
+          {
+            "activity": {
+              "type": "true-false",
+              "instruction": "Познач правильні твердження за текстом.",
+              "items": [
+                {
+                  "statement": "Багато людей отримують получку.",
+                  "correct": true
+                }
+              ]
+            },
+            "gate_outcome": "clean",
+            "gate_checks": [
+              {
+                "gate": "evidence_span",
+                "status": "pass",
+                "locator": "items[0]",
+                "detail": "Quote located in anchor at [0:39] (offsets recomputed)."
+              }
+            ],
+            "mark": "ok",
+            "note": "Згенеровано з опори; гейти чисті — звірте перед уроком.",
+            "block_provenance": {
+              "anchor": {
+                "anchor_id": "20f5c62837ab",
+                "source": "teacher-paste",
+                "content_fingerprint": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc"
+              },
+              "generated": {
+                "generator": "google-ais/gemma-4-31b-it",
+                "fingerprint": "87aef4ee47cf73842c6c6992fc3ded0fb082474480b691b0e437896732d17f96"
+              },
+              "teacher": {
+                "edited": false
+              },
+              "gates_run": [
+                "evidence_span"
+              ]
+            },
+            "activity_provenance": {
+              "generation_history": [
+                {
+                  "anchor_id": "20f5c62837ab",
+                  "anchor_hash": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+                  "anchor_source": "teacher-paste",
+                  "anchor_content_fingerprint": "20f5c62837abf1cfe45b7f4b316341d7b28c07ed44e1bd3f8699faddf6521fcc",
+                  "level": "B1",
+                  "pedagogy": null,
+                  "phase": null,
+                  "generator": "google-ais/gemma-4-31b-it",
+                  "fingerprint": "87aef4ee47cf73842c6c6992fc3ded0fb082474480b691b0e437896732d17f96"
+                }
+              ],
+              "external_options": false
+            },
+            "evidence": [
+              {
+                "locator": "items[0]",
+                "quote": "Багато людей щомісяця отримують получку",
+                "char_start": 0,
+                "char_end": 39,
+                "kind": "literal"
+              }
+            ],
+            "rejected": [],
+            "rater_controls": [
+              "accept",
+              "edit-minor",
+              "edit-content",
+              "reject"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "generated-task-russianism",
+        "generated_task_language": true,
+        "caught": false,
+        "bake": {
+          "wall_clock_seconds": 0.437477,
+          "cost_usd": 0.0,
+          "cost_basis": "locked google-ais/gemma-4-31b-it route ($0)",
+          "generator_calls": 1,
+          "retry_count": 0,
+          "cache_enabled": true,
+          "generation_error": null
+        },
+        "items": [
+          {
+            "activity": {
+              "type": "true-false",
+              "instruction": "Познач правильні твердження за текстом.",
+              "items": [
+                {
+                  "statement": "Третина українців втратили получку.",
+                  "correct": true
+                }
+              ]
+            },
+            "gate_outcome": "failed",
+            "gate_checks": [
+              {
+                "gate": "evidence_span",
+                "status": "pass",
+                "locator": "items[0]",
+                "detail": "Quote located in anchor at [0:50] (offsets recomputed)."
+              },
+              {
+                "gate": "vesum_token",
+                "status": "fail",
+                "locator": "items[0]",
+                "detail": "'получку' not found in VESUM — fabricated or misspelled form."
+              },
+              {
+                "gate": "partition",
+                "status": "fail",
+                "locator": null,
+                "detail": "Only 0 item(s) survived per-item gating; true-false requires >= 1 — dropping the whole activity."
+              }
+            ],
+            "mark": "blocked",
+            "note": "Вправу не показано: автоматична перевірка її відхилила.",
+            "block_provenance": {
+              "anchor": {
+                "anchor_id": "8bd6816ac75d",
+                "source": "teacher-paste",
+                "content_fingerprint": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707"
+              },
+              "generated": {
+                "generator": "google-ais/gemma-4-31b-it",
+                "fingerprint": "b08834d8abd173a4f40e1ec99aa0bdf6a466c7da94bfd1f02e1497c707f4539c"
+              },
+              "teacher": {
+                "edited": false
+              },
+              "gates_run": [
+                "evidence_span",
+                "partition",
+                "vesum_token"
+              ]
+            },
+            "activity_provenance": {
+              "generation_history": [
+                {
+                  "anchor_id": "8bd6816ac75d",
+                  "anchor_hash": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+                  "anchor_source": "teacher-paste",
+                  "anchor_content_fingerprint": "8bd6816ac75da3a5b3b38cbe199a147fc51fc2f627d53ee25e50bcba09e6b707",
+                  "level": "B1",
+                  "pedagogy": null,
+                  "phase": null,
+                  "generator": "google-ais/gemma-4-31b-it",
+                  "fingerprint": "b08834d8abd173a4f40e1ec99aa0bdf6a466c7da94bfd1f02e1497c707f4539c"
+                }
+              ],
+              "external_options": false
+            },
+            "evidence": [
+              {
+                "locator": "items[0]",
+                "quote": "Третина українців за рік не прочитує жодної книжки",
+                "char_start": 0,
+                "char_end": 50,
+                "kind": "literal"
+              }
+            ],
+            "rejected": [
+              {
+                "kind": "rejected",
+                "locator": null,
+                "machine_reason_class": "gate-failed:vesum_token",
+                "content": {
+                  "type": "true-false",
+                  "instruction": "Познач правильні твердження за текстом.",
+                  "items": [
+                    {
+                      "statement": "Третина українців втратили получку.",
+                      "correct": true
+                    }
+                  ]
+                }
+              }
+            ],
+            "rater_controls": [
+              "accept",
+              "edit-minor",
+              "edit-content",
+              "reject"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "determinism": {
+    "cache_enabled": false,
+    "runs_per_anchor": 2,
+    "required_classes": [
+      "R",
+      "T",
+      "P",
+      "A"
+    ],
+    "classes": {},
+    "complete": false,
+    "stable": false,
+    "lesson_assembly": {
+      "measured": false,
+      "reason": "the real assembler is not the live measurement runtime path"
+    }
+  },
+  "out_files": {
+    "html": "hramatka/calibration/2026-07-11/var-gemma-ais/measure-report.html",
+    "json": "hramatka/calibration/2026-07-11/var-gemma-ais/measure-report.json"
+  }
+}

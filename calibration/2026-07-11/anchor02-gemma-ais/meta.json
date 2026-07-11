@@ -1,0 +1,63 @@
+{
+  "anchor_id": "anchor02",
+  "anchor_file": "/Users/krisztiankoos/projects/learn-ukrainian/.agent/tmp/hramatka/engine/anchors/anchor02.txt",
+  "anchor_sha256": "b586bfabfc24f5bf46456d1b2ae6b2188f51c1ee303b7aa97bb7fda51ea183bb",
+  "provider": "gemma-ais",
+  "model": "google-ais/gemma-4-31b-it",
+  "cell_attempt": 1,
+  "wall_clock_seconds": 63.784848,
+  "generator_calls": 1,
+  "retry_count": 0,
+  "generation_error": null,
+  "tri_state_counts": {
+    "clean": 1,
+    "review_required": 2,
+    "failed": 0
+  },
+  "slate_pin_assertion": {
+    "configured": true,
+    "expected": {
+      "engine_sha": "4d1943082656c582a89be340e0555f2126b4769b",
+      "engine_version": "slice1-b1.2026.07.10",
+      "package_versions": {
+        "python": "3.12.8",
+        "jsonschema": "4.26.0"
+      },
+      "vendor_artifact_digests": {
+        "lu.activity.v1@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "activities-b1.schema.json": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453"
+          }
+        },
+        "lu.lesson.v1@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "lu.lesson.v1.schema.json": "ebd6d3bd38ccb0816adf38dd4efdd275dfef38fedf64f23e28baab076404601c"
+          }
+        },
+        "learn_ukrainian_linguistics@1.0.0": {
+          "version": "1.0.0",
+          "files": {
+            "vesum.py": "f377c3c2f28b3b126bada210b2bb2fcaaffb259726817c885aac3063f7e08b49"
+          }
+        }
+      },
+      "data_bundle_digests": {
+        "vesum.db": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+        "atlas.db": "213f076d20c767377fae64e6c3cfa3c2cb8701f21df80e813434efcb2e3fe83b",
+        "sources.db": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca"
+      },
+      "model": "google-ais/gemma-4-31b-it"
+    },
+    "matches": {
+      "engine_sha": true,
+      "engine_version": true,
+      "model": true,
+      "package_versions": true,
+      "vendor_artifact_digests": true,
+      "data_bundle_digests": true
+    },
+    "pins_match": true
+  }
+}
