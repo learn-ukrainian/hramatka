@@ -38,6 +38,14 @@ def test_introduced_capitalized_proper_noun_passes():
     assert VG.worst_status(v) == "pass"
 
 
+def test_introduced_lowercase_proper_noun_finds_cap_only_vesum_form():
+    # The model may emit lowercase even when the release DB stores this proper
+    # noun form only as «Карпатах».
+    v = VG.check_tokens(["карпатах"], ANCHOR)
+    assert v[0]["status"] == "pass"
+    assert VG.worst_status(v) == "pass"
+
+
 def test_introduced_apostrophe_variants_pass_and_anchor_is_normalized():
     # VESUM stores the straight apostrophe; model output uses both U+2019 and
     # straight apostrophe. The last assertion also exercises verbatim matching.

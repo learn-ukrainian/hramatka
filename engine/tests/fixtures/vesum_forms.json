@@ -204,6 +204,54 @@
   "pos": "noun"
  },
  {
+  "word_form": "гривні",
+  "lemma": "гривна",
+  "tags": "noun:inanim:f:v_dav",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:f:v_dav",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривна",
+  "tags": "noun:inanim:f:v_mis",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:f:v_mis",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:f:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:p:v_kly",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:p:v_naz",
+  "pos": "noun"
+ },
+ {
+  "word_form": "гривні",
+  "lemma": "гривня",
+  "tags": "noun:inanim:p:v_zna",
+  "pos": "noun"
+ },
+ {
   "word_form": "два",
   "lemma": "два",
   "tags": "numr:p:v_naz",
@@ -314,6 +362,18 @@
  {
   "word_form": "дві",
   "lemma": "два",
+  "tags": "numr:p:v_zna",
+  "pos": "numr"
+ },
+ {
+  "word_form": "двісті",
+  "lemma": "двісті",
+  "tags": "numr:p:v_naz",
+  "pos": "numr"
+ },
+ {
+  "word_form": "двісті",
+  "lemma": "двісті",
   "tags": "numr:p:v_zna",
   "pos": "numr"
  },
@@ -560,6 +620,12 @@
  {
   "word_form": "квітнів",
   "lemma": "квітень",
+  "tags": "noun:inanim:p:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "книг",
+  "lemma": "книга",
   "tags": "noun:inanim:p:v_rod",
   "pos": "noun"
  },
@@ -999,6 +1065,12 @@
   "word_form": "обоє",
   "lemma": "обоє",
   "tags": "numr:p:v_zna",
+  "pos": "numr"
+ },
+ {
+  "word_form": "одна",
+  "lemma": "один",
+  "tags": "numr:f:v_naz",
   "pos": "numr"
  },
  {
@@ -2130,6 +2202,18 @@
   "pos": "verb"
  },
  {
+  "word_form": "тридцять",
+  "lemma": "тридцять",
+  "tags": "numr:p:v_naz",
+  "pos": "numr"
+ },
+ {
+  "word_form": "тридцять",
+  "lemma": "тридцять",
+  "tags": "numr:p:v_zna",
+  "pos": "numr"
+ },
+ {
   "word_form": "увімкнути",
   "lemma": "увімкнути",
   "tags": "verb:perf:inf",
@@ -2169,6 +2253,12 @@
   "word_form": "усі",
   "lemma": "ухо",
   "tags": "noun:inanim:n:v_mis:arch",
+  "pos": "noun"
+ },
+ {
+  "word_form": "хвилин",
+  "lemma": "хвилина",
+  "tags": "noun:inanim:p:v_rod",
   "pos": "noun"
  },
  {
@@ -2260,6 +2350,18 @@
   "lemma": "читати",
   "tags": "verb:imperf:pres:p:3",
   "pos": "verb"
+ },
+ {
+  "word_form": "чотири",
+  "lemma": "чотири",
+  "tags": "numr:p:v_naz",
+  "pos": "numr"
+ },
+ {
+  "word_form": "чотири",
+  "lemma": "чотири",
+  "tags": "numr:p:v_zna",
+  "pos": "numr"
  },
  {
   "word_form": "щодня",

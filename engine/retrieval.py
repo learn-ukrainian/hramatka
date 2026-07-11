@@ -91,6 +91,54 @@ _DATE_TAIL_RE = re.compile(
     r"\s+(?:[А-ЯҐЄІЇа-яґєіїʼ'’-]+[еє]\s+)?(?P<month>" + _MONTHS_GEN + r")\b",
     re.UNICODE | re.IGNORECASE,
 )
+_SENTENCE_END_RE = re.compile(r"[.!?…]")
+
+
+def _vesum_noun_words(text: str) -> list[re.Match[str]]:
+    """The word tokens in *text* which VESUM parses as nouns.
+
+    The inventory normally stays regex-only, but a magnitude/range tail can
+    put another numeral where its ``_WORD_SURFACE`` placeholder expects the
+    governed noun. Use one batched, noun-filtered VESUM lookup to distinguish
+    that placeholder from the actual head noun deterministically.
+    """
+    words = list(_WORD_RE.finditer(text))
+    if not words:
+        return []
+    forms = sorted({word.group(0) for word in words})
+    matches = verify_words(forms, pos_filter="noun", db_path=paths.vesum_db())
+    return [word for word in words if matches.get(word.group(0))]
+
+
+def _extend_tail_to_head_noun(tail: str, match: re.Match[str]) -> tuple[str, int]:
+    """Return the genuine governed noun and end offset for a matched tail.
+
+    ``_MAGNITUDE_TAIL_RE`` and ``_RANGE_TAIL_RE`` must initially capture a
+    word surface to recognize their shape. That surface may be a following
+    cardinal (``тисяч п'ять``), or a magnitude that itself still needs a
+    complement (``дві-три тисячі``). In either case, continue *after* the
+    regex match to the first VESUM-confirmed noun in the same sentence. A
+    genuine non-magnitude noun already captured by the tail remains the head,
+    preventing a normal span such as ``двадцять тисяч гривень у банку`` from
+    swallowing ``банку``.
+    """
+    following = match.group("noun")
+    tail_end = match.end()
+    sentence_end = _SENTENCE_END_RE.search(tail)
+    sentence_tail = tail[: sentence_end.start()] if sentence_end else tail
+    noun_words = _vesum_noun_words(sentence_tail)
+    captured_start = match.start("noun")
+    captured_is_noun = any(word.start() == captured_start for word in noun_words)
+    captured_is_magnitude = re.fullmatch(
+        _MAGNITUDE_SURFACE, following, re.IGNORECASE
+    ) is not None
+    if captured_is_noun and not captured_is_magnitude:
+        return following, tail_end
+
+    head = next((word for word in noun_words if word.start() >= tail_end), None)
+    if head is None:
+        return following, tail_end
+    return head.group(0), head.end()
 
 
 def nfc(text: str) -> str:
@@ -297,16 +345,15 @@ def extract_numeral_inventory(text: str) -> list[dict]:
                 tail_end = frac_match.end()
             elif magnitude_match:
                 # The outer numeral classifies the magnitude word, while the
-                # magnitude word governs its complement. Keeping the entire
-                # span also prevents a duplicate «тисяч гривень» probe.
-                following = magnitude_match.group("noun")
-                tail_end = magnitude_match.end()
+                # magnitude word governs its complement. The first surface
+                # after it can be another numeral, so extend to the genuine
+                # VESUM noun rather than truncating a compound cardinal.
+                following, tail_end = _extend_tail_to_head_noun(tail, magnitude_match)
             elif range_match:
                 # Range agreement belongs to its last endpoint. Preserve the
-                # range and its noun together even when punctuation tokenizes
-                # it as «дві -три».
-                following = range_match.group("noun")
-                tail_end = range_match.end()
+                # range and its real head noun together even when punctuation
+                # tokenizes it as «дві -три» or its next word is a magnitude.
+                following, tail_end = _extend_tail_to_head_noun(tail, range_match)
             else:
                 noun_match = _WORD_RE.search(tail)
                 following = noun_match.group(0) if noun_match else None

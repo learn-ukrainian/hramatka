@@ -244,6 +244,28 @@ def test_magnitude_negative_wrong_magnitude_word_form():
     assert "тисяч" in result["expected"]
 
 
+def test_compound_cardinals_govern_the_final_head_noun():
+    """#58: long cardinal chains keep their real head noun in the gate."""
+    cases = (
+        ("двадцять тисяч п'ять гривень", "pass", "gov-ends_5_9_0"),
+        ("двадцять тисяч п'ять гривні", "fail", "gov-ends_5_9_0"),
+        ("дві-три тисячі хвилин", "pass", "nested-magnitude"),
+        ("дві-три тисячі хвилини", "fail", "nested-magnitude-complement"),
+        ("одна тисяча двісті тридцять чотири книги", "pass", "gov-ends_2_4"),
+        ("одна тисяча двісті тридцять чотири книг", "fail", "gov-ends_2_4"),
+    )
+    for phrase, status, rule in cases:
+        result = check_numeral_government(phrase)
+        assert result["status"] == status
+        assert _rule(result) == rule
+
+
+def test_blyzko_three_hours_still_fails_government():
+    result = check_numeral_government("Близько три годин")
+    assert result["status"] == "fail"
+    assert _rule(result) == "numeral-form-ends_2_4"
+
+
 # ---------------------------------------------------------------------------
 # decimal / fraction — WARN, never hard-fail
 # ---------------------------------------------------------------------------

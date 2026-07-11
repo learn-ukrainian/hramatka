@@ -36,6 +36,11 @@ def _lookup_form(text: str) -> str:
     return _nfc(text).translate(_APOSTROPHE_TRANSLATION)
 
 
+def _capitalized_variant(text: str) -> str:
+    """First-letter-uppercase spelling for cap-only VESUM entries."""
+    return text[:1].upper() + text[1:]
+
+
 def content_tokens(text: str) -> list[str]:
     """Cyrillic word tokens (len>1), NFC-normalized, order-preserving."""
     return [t for t in _WORD_RE.findall(_nfc(text)) if len(t) > 1]
@@ -50,21 +55,26 @@ def _lookup_matches(tokens: list[str]) -> dict[str, list[dict]]:
 
     VESUM's ``word_form`` index is byte-exact.  A form may be stored with an
     initial capital (for example, ``Карпатах``), while models can emit either
-    case.  Query both the normalized original and lowercase spelling, then
-    retain both result sets for the token verdict.
+    case. Query the normalized original, lowercase, and first-letter-uppercase
+    spellings, then retain all result sets for the token verdict.
     """
     lookup_forms = {
         variant
         for token in tokens
-        for variant in (_lookup_form(token), _lookup_form(token).lower())
+        for variant in (
+            _lookup_form(token),
+            _lookup_form(token).lower(),
+            _capitalized_variant(_lookup_form(token)),
+        )
     }
     return verify_words(sorted(lookup_forms), db_path=paths.vesum_db()) if lookup_forms else {}
 
 
 def _matches_for_token(token: str, results: dict[str, list[dict]]) -> list[dict]:
-    """Return all exact-case and lowercase matches for one normalized token."""
+    """Return all normalized case-variant matches for one token."""
     form = _lookup_form(token)
-    return [match for key in dict.fromkeys((form, form.lower())) for match in results.get(key, [])]
+    keys = (form, form.lower(), _capitalized_variant(form))
+    return [match for key in dict.fromkeys(keys) for match in results.get(key, [])]
 
 
 # Heritage classifications that are NOT a russianism/calque flag.

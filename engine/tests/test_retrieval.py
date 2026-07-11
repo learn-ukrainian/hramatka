@@ -86,6 +86,32 @@ def test_bake_off_numeral_spans_reach_the_gate_intact():
         assert check_numeral_government(span["raw_span"])["status"] == expected_status
 
 
+def test_compound_cardinal_spans_reach_the_real_head_noun_and_gate():
+    """#58: no numeral/magnitude fragment may replace the governed noun."""
+    cases = (
+        ("двадцять тисяч п'ять гривень", "pass"),
+        ("двадцять тисяч п'ять гривні", "fail"),
+        ("дві-три тисячі хвилин", "pass"),
+        ("дві-три тисячі хвилини", "fail"),
+        ("одна тисяча двісті тридцять чотири книги", "pass"),
+        ("одна тисяча двісті тридцять чотири книг", "fail"),
+    )
+    for phrase, expected_status in cases:
+        inventory = R.extract_numeral_inventory(phrase)
+        assert [item["raw_span"] for item in inventory] == [phrase]
+        assert inventory[0]["following_noun"] == phrase.split()[-1]
+        assert check_numeral_government(inventory[0]["raw_span"])["status"] == expected_status
+
+
+def test_compound_cardinal_never_borrows_a_noun_from_the_next_sentence():
+    # A dangling compound must not reach past its sentence terminator to make
+    # itself look grammatical using the next sentence's noun.
+    text = "двадцять тисяч п'ять. гривень немає."
+    inventory = R.extract_numeral_inventory(text)
+    assert [item["raw_span"] for item in inventory] == ["двадцять тисяч п'ять"]
+    assert check_numeral_government(inventory[0]["raw_span"])["status"] == "fail"
+
+
 def test_build_atlas_lookup_single_pass_needed_only():
     lookup = R.build_atlas_lookup({"книжка", "час"})
     # only requested lemmas returned, keyed lowercase
