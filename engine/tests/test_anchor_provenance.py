@@ -5,31 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-from hramatka.api.baking.engine_adapter import EngineLessonBaker
-from hramatka.api.lesson import materialize_lesson
-from hramatka.api.store import JobRecord, now_iso
-from hramatka.engine import measure
+from hramatka.engine import measure, pipeline
 from hramatka.engine.gates import vesum
-
-
-def _job(anchor: str, *, source: str = "teacher-paste") -> JobRecord:
-    timestamp = now_iso()
-    return JobRecord(
-        id="provenance-lesson",
-        anchor_text=anchor,
-        anchor_source=source,
-        duration=45,
-        focus=None,
-        request_hash="test",
-        status="baking",
-        step="перевірка",
-        last_error=None,
-        lesson=None,
-        warning_acknowledgements=frozenset(),
-        created_at=timestamp,
-        updated_at=timestamp,
-        started_at=timestamp,
-    )
 
 
 def _single_true_false(anchor_sentence: str):
@@ -64,19 +41,19 @@ def test_anchor_baseline_marks_an_unverified_verbatim_form_not_clean():
     assert "перевірена нормативна" in diagnostic["reason"]
 
 
-def test_emitted_document_carries_anchor_source_fingerprint_and_diagnostic(tmp_path):
+def test_pipeline_carries_anchor_source_fingerprint_and_diagnostic(tmp_path):
     sentence = "Учні кажуть здрастуйте."
     anchor = {"anchor_id": "source-quote", "body_uk": sentence, "source": "teacher-url"}
-    baker = EngineLessonBaker(
-        generator=_single_true_false(sentence), cache_dir=tmp_path / "cache"
+    result = pipeline.run(
+        anchor,
+        generator=_single_true_false(sentence),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
     )
 
-    template = baker.bake(anchor, duration=45, focus=None)
-    document = materialize_lesson(template, _job(sentence, source="teacher-url"))
-
-    emitted_anchor = document["anchor"]
+    emitted_anchor = result.anchor
     assert emitted_anchor["source"] == "teacher-url"
-    assert emitted_anchor["fingerprint"] == hashlib.sha256(sentence.encode()).hexdigest()
+    assert emitted_anchor["content_fingerprint"] == hashlib.sha256(sentence.encode()).hexdigest()
     diagnostic = next(
         item for item in emitted_anchor["diagnostics"] if item["form"].lower() == "здрастуйте"
     )
@@ -101,18 +78,18 @@ def test_c1_anchor_does_not_fail_b1_task_language_gate(tmp_path):
         "герменевтичну парадигму. "
         f"{task_sentence}"
     )
-    baker = EngineLessonBaker(
-        generator=_single_true_false(task_sentence), cache_dir=tmp_path / "cache"
+    result = pipeline.run(
+        anchor,
+        generator=_single_true_false(task_sentence),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
     )
 
-    template = baker.bake(anchor, duration=45, focus=None)
-
-    assert template["blocks"]
-    payload = template["blocks"][0]["activity"]["payload"]
+    assert result.lesson_b1
+    payload = result.lesson_b1[0]
     assert payload["items"][0]["statement"] == task_sentence
     # No C1 anchor form is converted into a failed task gate.
-    assert template["rejected"] == []
-    assert all(block["mark"] in {"ok", "warn"} for block in template["blocks"])
+    assert result.rejected == []
 
 
 def test_measurement_report_surfaces_anchor_baseline_without_raw_ir(tmp_path):

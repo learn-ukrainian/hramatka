@@ -7,12 +7,10 @@ plumbing, real generator, pedagogy validation) is a separate step. The
 generator is injectable, so the pipeline runs offline in tests with a fake
 generator and never touches the network here.
 
-Block mark carries the engine's tri-state gate verdict end-to-end (Sol defect
-1): a `review_required` activity ships as `warn` (`external_options: true`) so
-the acceptance gate blocks auto-accept until the teacher acknowledges it, while
-a `clean` activity ships as `ok`. A `failed` activity never becomes a block —
-it, and every per-item salvage, surface in `rejected[]` with a
-`gate-failed:<gate>` reason (Sol defect 3): never all-or-nothing, never silent.
+Wave 0 consumes the engine selector rather than reimplementing selection here:
+only `ready` candidates become lesson blocks. `review_required` material stays
+in the pipeline IR review tray and never becomes a warning block by accident;
+rejected candidates and per-item salvage remain visible through `rejected[]`.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-from hramatka.engine import data, pipeline, schema
+from hramatka.engine import data, pipeline, registry, schema
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 
@@ -121,18 +119,28 @@ class EngineLessonBaker:
         if result.generation_error:
             raise BakeError("Bake failed: the lesson generator is unavailable.")
 
-        shipped = [
-            ir for ir in result.activities if ir.gate_result.status != schema.GATE_FAILED
-        ]
-        if not shipped:
+        if not result.ready:
             raise BakeError(
-                "Bake produced no gate-passing activities from this anchor."
+                "Bake produced no automatically includable activities from this anchor."
             )
 
-        blocks = [
-            self._block(shipped[slot % len(shipped)], slot, phase)
-            for slot, phase in enumerate(plan)
-        ]
+        available = list(result.selected)
+        blocks = []
+        for slot, phase in enumerate(plan):
+            selected_index = next(
+                (
+                    index
+                    for index, candidate in enumerate(available)
+                    if phase in registry.ACTIVITY_REGISTRY[candidate.activity["type"]].ttt_phases
+                ),
+                None,
+            )
+            if selected_index is None:
+                raise BakeError(
+                    "Bake produced too few distinct automatically includable activities "
+                    f"for the TTT plan ({len(blocks)} of {len(plan)})."
+                )
+            blocks.append(self._block(available.pop(selected_index), slot, phase))
         # Pipeline carries these diagnostics in IR.  The fallback keeps direct
         # adapter callers honest while older cached results are still readable.
         anchor_body = result.anchor["body_uk"]

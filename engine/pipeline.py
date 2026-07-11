@@ -2,8 +2,8 @@
 -> per-type gate chain (§7) -> project + validate -> persist.
 
 Emits two artifacts per run:
-  lesson.b1.json  — array of pure activities-b1 items (gate-passing, schema-valid)
-  lesson.ir.json  — full IR (evidence + gate results + provenance) for measure/review
+  lesson.b1.json  — selected READY activities projected to lu.activity.v1
+  lesson.ir.json  — full candidate IR, including review/rejected reasons
 
 Idempotency (§R): the cache key is a fingerprint over ALL inputs (anchor hash
 + grounding-pack hash + prompt-template hash + model id + db fingerprint), so
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 
-from . import ENGINE_VERSION, data, paths, retrieval, schema, vendoring
+from . import ENGINE_VERSION, data, paths, registry, retrieval, schema, selector, vendoring
 from .gates import evidence_span, matchup_semantics, numeral
 from .gates import vesum as vesum_gate
 from .generate import (
@@ -43,9 +43,14 @@ class PipelineResult:
     fingerprint: str
     fingerprint_inputs: dict = field(default_factory=dict)
     activities: list[schema.HramatkaActivity] = field(default_factory=list)
+    ready: list[schema.HramatkaActivity] = field(default_factory=list)
+    review_required: list[schema.HramatkaActivity] = field(default_factory=list)
+    rejected: list[schema.HramatkaActivity] = field(default_factory=list)
+    selected: list[schema.HramatkaActivity] = field(default_factory=list)
     lesson_b1: list[dict] = field(default_factory=list)
     out_files: dict = field(default_factory=dict)
     generation_error: str | None = None
+    regeneration_attempts: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +58,18 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _file_sha256(path: str | Path | None) -> str | None:
+    """Content identity for an explicitly supplied database override."""
+    if path is None:
+        return None
+    candidate = Path(path)
+    h = hashlib.sha256()
+    with candidate.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def snapshot_anchor(anchor: str | dict) -> dict:
@@ -67,6 +84,18 @@ def snapshot_anchor(anchor: str | dict) -> dict:
     body = retrieval.nfc(body)
     if source not in {"teacher-paste", "teacher-url"}:
         raise ValueError("anchor source must be teacher-paste or teacher-url")
+    sentence_matches = list(re.finditer(r"[^.!?…]+[.!?…]?", body))
+    sentences = [
+        {
+            "id": f"sentence-{index + 1}",
+            "text": match.group(0).strip(),
+            "char_start": match.start(),
+            "char_end": match.end(),
+        }
+        for index, match in enumerate(sentence_matches)
+        if match.group(0).strip()
+    ]
+    terms = retrieval.tokenize(body)
     return {
         "anchor_id": anchor_id,
         "body_uk": body,
@@ -75,6 +104,23 @@ def snapshot_anchor(anchor: str | dict) -> dict:
         # This is content identity only — no external URL or teacher identity.
         "content_fingerprint": _sha(body),
         "char_len": len(body),
+        # The snapshot is immutable input to generation.  Lemmas/numerals are
+        # completed from the pinned grounding pack below; the remaining fields
+        # require no model or mutable external state.
+        "spans": [
+            {
+                "id": sentence["id"],
+                "char_start": sentence["char_start"],
+                "char_end": sentence["char_end"],
+            }
+            for sentence in sentences
+        ],
+        "sentences": sentences,
+        "terms": sorted(set(terms)),
+        "lemmas": [],
+        "numerals": [],
+        "candidate_facts": [sentence["text"] for sentence in sentences],
+        "candidate_forms": sorted(set(terms)),
     }
 
 
@@ -95,14 +141,22 @@ def _package_versions() -> dict:
 
 
 def _gate_impl_digest() -> str:
-    """Content digest of the gate implementations + retrieval (review-p46 nit 2).
+    """Content digest of every local generation, gate, and selection decision.
 
     A change to gate LOGIC must reshuffle the bake fingerprint even when every
     declared input is identical — otherwise cached raw generation would be
-    silently reused under different gating code. Hashes `gates/*.py` plus
-    `retrieval.py` by content, keyed by their relative path for stability.
+    silently reused under different decision code. Hashes the gate modules and
+    Wave-0 orchestration modules by content, keyed by relative path for
+    stability.
     """
-    gate_files = [*(paths.ENGINE_DIR / "gates").glob("*.py"), paths.ENGINE_DIR / "retrieval.py"]
+    gate_files = [
+        *(paths.ENGINE_DIR / "gates").glob("*.py"),
+        paths.ENGINE_DIR / "retrieval.py",
+        paths.ENGINE_DIR / "generate.py",
+        paths.ENGINE_DIR / "pipeline.py",
+        paths.ENGINE_DIR / "registry.py",
+        paths.ENGINE_DIR / "selector.py",
+    ]
     h = hashlib.sha256()
     for fp in sorted(gate_files, key=lambda p: p.relative_to(paths.ENGINE_DIR).as_posix()):
         h.update(fp.relative_to(paths.ENGINE_DIR).as_posix().encode("utf-8"))
@@ -120,6 +174,12 @@ def fingerprint_inputs(
     types: list[str],
     grounding_text: str,
     prompt_template: str,
+    count_plan: dict[str, int] | None = None,
+    registry_versions: dict | None = None,
+    selector_policy: dict | None = None,
+    max_regeneration_attempts: int = 0,
+    atlas_override_digest: str | None = None,
+    pipeline_mode: str = "candidate-bank.v1",
 ) -> dict:
     """The FULL bake-identity input set (Sol defect #4 / review item 4).
 
@@ -138,12 +198,18 @@ def fingerprint_inputs(
         "pedagogy": pedagogy,
         "phase": phase,
         "types": sorted(types),
+        "requested_type_count_plan": count_plan or {activity_type: 1 for activity_type in types},
         "grounding_digest": _sha(grounding_text),
         "prompt_digest": _sha(prompt_template),
+        "registry": registry_versions or registry.registry_fingerprint(types),
+        "selector_policy": selector_policy or selector.DEFAULT_POLICY.as_dict(),
+        "max_regeneration_attempts": max_regeneration_attempts,
+        "pipeline_mode": pipeline_mode,
         "gate_impl_digest": _gate_impl_digest(),
         "packages": _package_versions(),
         "vendor": vendoring.artifact_versions(),
         "data_bundle": data.active_bundle().digests(),
+        "database_overrides": {"atlas_db_sha256": atlas_override_digest},
     }
 
 
@@ -307,21 +373,15 @@ def _gate_match_up(
 
 
 _GATE_CHAINS: dict[str, Callable] = {
-    "true-false": _gate_true_false,
-    "cloze": _gate_cloze,
-    "match-up": _gate_match_up,
+    registry.ACTIVITY_REGISTRY["true-false"].gate_chain: _gate_true_false,
+    registry.ACTIVITY_REGISTRY["cloze"].gate_chain: _gate_cloze,
+    registry.ACTIVITY_REGISTRY["match-up"].gate_chain: _gate_match_up,
 }
 
 
 # Per-item (collection-index) gate locators look like "items[3]" / "pairs[1]".
 # Everything else ("text", None) is an ACTIVITY-level locator.
 _ITEM_LOCATOR_RE = re.compile(r"^(items|pairs)\[(\d+)\]$")
-
-# Minimum surviving items per type after per-item filtering (schema minItems).
-_MIN_ITEMS = {"true-false": 1, "match-up": 2}
-# The collection key each partitionable type filters on.
-_COLL_KEY = {"true-false": "items", "match-up": "pairs"}
-
 
 def _status_rank(status: str) -> int:
     return {"pass": 0, "warn": 1, "fail": 2}[status]
@@ -376,11 +436,15 @@ def _ship_status(
     return schema.GATE_CLEAN
 
 
-def _project_and_validate(activity: dict, gr: schema.GateResult) -> dict | None:
+def _project_and_validate(
+    activity: dict,
+    gr: schema.GateResult,
+    projector: Callable[[schema.HramatkaActivity], dict],
+) -> dict | None:
     """Project + jsonschema-validate a (possibly filtered) activity. Returns
     the clean b1 item, or None (recording a 'schema' fail) on drift."""
     try:
-        projected = schema.project_to_b1(schema.HramatkaActivity(activity=activity))
+        projected = projector(schema.HramatkaActivity(activity=activity))
         schema.validate_b1(projected)
         return projected
     except schema.B1ValidationError as exc:
@@ -388,11 +452,38 @@ def _project_and_validate(activity: dict, gr: schema.GateResult) -> dict | None:
         return None
 
 
+def reject_raw_candidate(
+    raw_activity: object,
+    provenance: dict,
+    *,
+    candidate_id: str,
+    detail: str,
+) -> schema.HramatkaActivity:
+    """Retain an invalid raw candidate with a first-class rejection reason."""
+    if isinstance(raw_activity, dict):
+        clean, evidence = schema.parse_raw_activity(raw_activity)
+        raw_copy = dict(raw_activity)
+    else:
+        clean, evidence, raw_copy = {"type": "unknown"}, [], {"value": raw_activity}
+    ir = schema.HramatkaActivity(
+        activity=clean,
+        evidence=evidence,
+        provenance=dict(provenance),
+        raw_candidate=raw_copy,
+        candidate_id=candidate_id,
+    )
+    ir.gate_result.add("raw_contract", "fail", detail)
+    ir.gate_result.status = schema.DISPOSITION_REJECTED
+    return ir
+
+
 def gate_activity(
     raw_activity: dict,
     anchor_body: str,
     provenance: dict,
     atlas_lookup: dict | None = None,
+    *,
+    candidate_id: str | None = None,
 ) -> schema.HramatkaActivity:
     """Run the per-type gate chain, then PER-ITEM granularity (approved
     design): a per-statement/per-pair gate FAIL drops only that item/pair
@@ -401,16 +492,50 @@ def gate_activity(
     validity, cloze gap/answer structure) stay all-or-nothing; the whole
     activity is dropped only when an activity-level gate fails or too few
     items survive (match-up needs >=2). `gate_result.status` is the tri-state
-    verdict: `failed` == dropped, `clean`/`review_required` == this
-    (possibly-filtered) activity ships.
+    disposition: `rejected` == dropped; `ready` / `review_required` retain the
+    (possibly-filtered) candidate for selection or the review tray.
     """
+    activity_type = raw_activity.get("type") if isinstance(raw_activity, dict) else None
+    entry = registry.ACTIVITY_REGISTRY.get(activity_type)
+    if entry is None:
+        return reject_raw_candidate(
+            raw_activity,
+            provenance,
+            candidate_id=candidate_id or "candidate-unknown",
+            detail=(
+                f"Unsupported activity type {activity_type!r} for registry "
+                f"{registry.REGISTRY_VERSION}."
+            ),
+        )
+    contract_errors = entry.raw_candidate_schema.validate(raw_activity, entry.activity_type)
+    if contract_errors:
+        return reject_raw_candidate(
+            raw_activity,
+            provenance,
+            candidate_id=candidate_id or "candidate-unknown",
+            detail="; ".join(contract_errors),
+        )
+
     clean, evidence = schema.parse_raw_activity(raw_activity)
+    if {evidence_item.locator for evidence_item in evidence} != set(
+        entry.evidence_locator(raw_activity)
+    ):
+        return reject_raw_candidate(
+            raw_activity,
+            provenance,
+            candidate_id=candidate_id or "candidate-unknown",
+            detail="evidence locators do not match the registered raw contract",
+        )
     ir = schema.HramatkaActivity(
-        activity=clean, evidence=evidence, provenance=dict(provenance)
+        activity=clean,
+        evidence=evidence,
+        provenance=dict(provenance),
+        raw_candidate=dict(raw_activity),
+        candidate_id=candidate_id,
     )
     gr = ir.gate_result
     a_type = clean.get("type")
-    chain = _GATE_CHAINS.get(a_type)
+    chain = _GATE_CHAINS.get(entry.gate_chain)
     if chain is None:
         gr.add("type", "fail", f"Unsupported activity type {a_type!r} for slice 1.")
         gr.status = schema.GATE_FAILED
@@ -424,11 +549,11 @@ def gate_activity(
         gr.status = schema.GATE_FAILED
         return ir
 
-    coll_key = _COLL_KEY.get(a_type)
+    coll_key = entry.partition_key
     if coll_key is None:
         # Non-partitionable (cloze): all-or-nothing. No activity-level fail
         # above, so it ships; still project+validate for schema safety.
-        projected = _project_and_validate(clean, gr)
+        projected = _project_and_validate(clean, gr, entry.public_projector)
         if projected is None:
             gr.status = schema.GATE_FAILED
             return ir
@@ -437,16 +562,17 @@ def gate_activity(
         return ir
 
     # Partition the collection: keep non-failing items, flag the failing ones.
-    kept, flagged = [], []
+    kept, kept_indices, flagged = [], [], []
     for i, item in enumerate(clean.get(coll_key, [])):
         loc = f"{coll_key}[{i}]"
         if per_item.get(loc) == "fail":
             flagged.append({"locator": loc, "reasons": _fail_reasons(gr, loc), "item": item})
         else:
             kept.append(item)
+            kept_indices.append(i)
     ir.flagged = flagged
 
-    min_items = _MIN_ITEMS.get(a_type, 1)
+    min_items = entry.minimum_survivors
     if len(kept) < min_items:
         gr.add(
             "partition",
@@ -459,7 +585,23 @@ def gate_activity(
 
     filtered = dict(clean)
     filtered[coll_key] = kept
-    projected = _project_and_validate(filtered, gr)
+    # The public activity has compacted collection indices.  Keep evidence in
+    # the same coordinate system and omit discarded-item spans so selector
+    # coverage and evidence/answer de-duplication describe only survivors.
+    remapped_evidence: list[schema.Evidence] = []
+    original_to_filtered = {
+        f"{coll_key}[{original}]": f"{coll_key}[{filtered_index}]"
+        for filtered_index, original in enumerate(kept_indices)
+    }
+    for evidence_item in evidence:
+        remapped_locator = original_to_filtered.get(evidence_item.locator)
+        if remapped_locator is not None:
+            evidence_item.locator = remapped_locator
+            remapped_evidence.append(evidence_item)
+        elif not _ITEM_LOCATOR_RE.match(evidence_item.locator):
+            remapped_evidence.append(evidence_item)
+    ir.evidence = remapped_evidence
+    projected = _project_and_validate(filtered, gr, entry.public_projector)
     if projected is None:
         gr.status = schema.GATE_FAILED
         return ir
@@ -488,24 +630,30 @@ def run(
     atlas_db=None,
     use_cache: bool = True,
     cache_dir: str | Path | None = None,
+    count_plan: dict[str, int] | None = None,
+    max_regeneration_attempts: int = 0,
+    _candidate_generator: Callable[..., list[object]] = generate,
+    _pipeline_mode: str = "candidate-bank.v1",
 ) -> PipelineResult:
-    """Run the slice-1 pipeline end-to-end. `generator` is injectable (tests
-    pass a mock; the real run uses `call_gemma`). All inputs resolve through the
-    pinned vendor + data indirections, so the run is cwd- and checkout-independent.
+    """Run the Wave-0 typed candidate-bank pipeline end-to-end.
 
-    `pedagogy`/`phase` are carried into the bake fingerprint even though slice-1
-    generation does not yet branch on them, so the identity is correct the moment
-    a pedagogy/phase layer lands (Sol defect #4).
-
-    `cache_dir` isolates the raw-generation cache. Mock/offline callers MUST
-    pass their own tmp `cache_dir` so fixture output never lands in the
-    default `engine/.cache/` that the real-Gemma run reads (the fingerprint
-    is generator-agnostic by design, so a shared cache would otherwise
-    let a mock run poison a real one).
+    Stages are snapshot/annotation, registry-planned generation, raw-contract
+    validation, gates and salvage, three-way disposition, deterministic lesson
+    selection, optional quota regeneration, then public projection.  Only
+    ``ready`` candidates reach ``lesson.b1.json``; review material remains in
+    private IR and cannot be auto-included.
     """
     types = list(types or EXTRACTIVE_TYPES)
+    registry.entries_for(types)
+    plan = {activity_type: int((count_plan or {}).get(activity_type, 1)) for activity_type in types}
+    if any(count < 1 for count in plan.values()):
+        raise ValueError("count_plan values must be positive integers")
+    selection_policy = selector.SelectorPolicy(density_target=sum(plan.values()))
+    atlas_override_digest = _file_sha256(atlas_db)
     snap = snapshot_anchor(anchor)
     grounding = retrieval.build_grounding_pack(snap["body_uk"], level, atlas_db=atlas_db)
+    snap["lemmas"] = sorted(grounding["lemmas"])
+    snap["numerals"] = grounding["numeral_inventory"]
     template = load_extractive_template()
     fp_inputs = fingerprint_inputs(
         anchor_hash=snap["hash"],
@@ -515,6 +663,12 @@ def run(
         types=types,
         grounding_text=grounding["text"],
         prompt_template=template,
+        count_plan=plan,
+        registry_versions=registry.registry_fingerprint(types),
+        selector_policy=selection_policy.as_dict(),
+        max_regeneration_attempts=max_regeneration_attempts,
+        atlas_override_digest=atlas_override_digest,
+        pipeline_mode=_pipeline_mode,
     )
     fingerprint = _sha(
         json.dumps(fp_inputs, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -542,31 +696,52 @@ def run(
         anchor=snap, fingerprint=fingerprint, fingerprint_inputs=fp_inputs
     )
 
-    # ---- generate (cache-first) --------------------------------------
-    raw_activities: list[dict] = []
+    # ---- generate typed candidates (cache-first) ---------------------
+    raw_batches: list[tuple[list[str], list[object]]] = []
     if use_cache and cache_file.exists():
-        raw_activities = json.loads(cache_file.read_text(encoding="utf-8"))
+        cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        if isinstance(cached, list):  # extractive-v1 cache compatibility
+            raw_batches = [(types, cached)]
+        elif isinstance(cached, dict) and isinstance(cached.get("batches"), list):
+            for batch in cached["batches"]:
+                if not isinstance(batch, dict):
+                    continue
+                bank = batch.get("types")
+                activities = batch.get("activities")
+                if isinstance(bank, list) and isinstance(activities, list):
+                    raw_batches.append(([str(activity_type) for activity_type in bank], activities))
     else:
         try:
-            raw_activities = generate(
+            raw_batches = [(types, _candidate_generator(
                 snap["body_uk"],
                 level,
                 types,
                 generator=generator,
                 grounding_pack=grounding["text"],
-            )
-            cache_file.write_text(
-                json.dumps(raw_activities, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            ))]
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
 
-    # ---- gate + project ----------------------------------------------
+    # ---- validate raw candidates, gate, and partition ----------------
     # Wire the grounding atlas lookup into every lexical gate (Sol defect 5),
     # extended to cover the model's INTRODUCED lexicon so a generated russianism
     # is caught too, not only one quoted from the anchor.
+    def safe_for_grounding(raw: object) -> bool:
+        if not isinstance(raw, dict):
+            return False
+        entry = registry.ACTIVITY_REGISTRY.get(raw.get("type"))
+        return entry is not None and not entry.raw_candidate_schema.validate(
+            raw, entry.activity_type
+        )
+
+    raw_dicts = [
+        raw
+        for _bank, activities in raw_batches
+        for raw in activities
+        if safe_for_grounding(raw)
+    ]
     atlas_lookup = retrieval.augmented_atlas_lookup(
-        snap["body_uk"], raw_activities, grounding["atlas_lookup"], atlas_db=atlas_db
+        snap["body_uk"], raw_dicts, grounding["atlas_lookup"], atlas_db=atlas_db
     )
     # Treat the source as a quotation rather than a clean linguistic baseline.
     # These diagnostics belong in IR + the emitted private document, but do not
@@ -574,13 +749,128 @@ def run(
     snap["diagnostics"] = vesum_gate.anchor_baseline_diagnostics(
         snap["body_uk"], atlas_lookup=atlas_lookup
     )
-    for raw in raw_activities:
-        ir = gate_activity(raw, snap["body_uk"], provenance, atlas_lookup=atlas_lookup)
+    def append_candidate(
+        raw: object,
+        candidate_id: str,
+        lookup: dict | None,
+        expected_types: list[str],
+    ) -> None:
+        if not isinstance(raw, dict):
+            ir = reject_raw_candidate(
+                raw,
+                provenance,
+                candidate_id=candidate_id,
+                detail="candidate must be a JSON object",
+            )
+        elif raw.get("type") not in expected_types:
+            ir = reject_raw_candidate(
+                raw,
+                provenance,
+                candidate_id=candidate_id,
+                detail=(
+                    f"candidate type {raw.get('type')!r} was emitted outside requested "
+                    f"typed bank {expected_types!r}"
+                ),
+            )
+        else:
+            ir = gate_activity(
+                raw,
+                snap["body_uk"],
+                provenance,
+                atlas_lookup=lookup,
+                candidate_id=candidate_id,
+            )
         result.activities.append(ir)
 
-    result.lesson_b1 = [
-        ir.activity for ir in result.activities if ir.gate_result.passed
-    ]
+    for batch_index, (bank, activities) in enumerate(raw_batches):
+        for index, raw in enumerate(activities):
+            append_candidate(raw, f"candidate-{batch_index}-{index:03d}", atlas_lookup, bank)
+    result.regeneration_attempts = max(0, len(raw_batches) - 1)
+
+    selector_phase = int(phase) if isinstance(phase, str) and phase.isdigit() else phase
+
+    def partition_and_select() -> None:
+        result.ready = [
+            ir for ir in result.activities if ir.gate_result.status == schema.DISPOSITION_READY
+        ]
+        result.review_required = [
+            ir
+            for ir in result.activities
+            if ir.gate_result.status == schema.DISPOSITION_REVIEW
+        ]
+        result.rejected = [
+            ir
+            for ir in result.activities
+            if ir.gate_result.status == schema.DISPOSITION_REJECTED
+        ]
+        result.selected = selector.select_lesson(
+            result.ready,
+            count_plan=plan,
+            phase=selector_phase if isinstance(selector_phase, int) else None,
+            policy=selection_policy,
+        )
+        result.lesson_b1 = [ir.activity for ir in result.selected]
+
+    partition_and_select()
+
+    # Wave 0 keeps retries deliberately simple: callers opt in while later
+    # waves acquire targeted per-type prompts.  Regenerated raw candidates are
+    # still given stable ids, validated, and placed in the same partitions.
+    for attempt in range(len(raw_batches), max_regeneration_attempts + 1):
+        selected_counts = {
+            activity_type: sum(
+                ir.activity.get("type") == activity_type for ir in result.selected
+            )
+            for activity_type in types
+        }
+        unmet = [
+            activity_type
+            for activity_type, count in plan.items()
+            if selected_counts[activity_type] < count
+        ]
+        if not unmet or result.generation_error:
+            break
+        try:
+            regenerated = _candidate_generator(
+                snap["body_uk"],
+                level,
+                unmet,
+                generator=generator,
+                grounding_pack=grounding["text"],
+            )
+        except (GeneratorUnavailable, GenerationUnparseable) as exc:
+            result.generation_error = f"{type(exc).__name__}: {exc}"
+            break
+        raw_batches.append((unmet, regenerated))
+        retry_dicts = [
+            raw
+            for _bank, activities in raw_batches
+            for raw in activities
+            if safe_for_grounding(raw)
+        ]
+        retry_lookup = retrieval.augmented_atlas_lookup(
+            snap["body_uk"], retry_dicts, grounding["atlas_lookup"], atlas_db=atlas_db
+        )
+        for index, raw in enumerate(regenerated):
+            append_candidate(raw, f"candidate-{attempt}-{index:03d}", retry_lookup, unmet)
+        result.regeneration_attempts = attempt
+        partition_and_select()
+
+    if use_cache and not result.generation_error:
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "format": "candidate-bank.v1",
+                    "batches": [
+                        {"types": bank, "activities": activities}
+                        for bank, activities in raw_batches
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     # ---- persist ------------------------------------------------------
     b1_path = out_dir / "lesson.b1.json"
@@ -595,6 +885,13 @@ def run(
                 "fingerprint": fingerprint,
                 "fingerprint_inputs": fp_inputs,
                 "generation_error": result.generation_error,
+                "dispositions": {
+                    "ready": [ir.candidate_id for ir in result.ready],
+                    "review_required": [ir.candidate_id for ir in result.review_required],
+                    "rejected": [ir.candidate_id for ir in result.rejected],
+                    "selected": [ir.candidate_id for ir in result.selected],
+                },
+                "regeneration_attempts": result.regeneration_attempts,
                 "activities": [ir.as_dict() for ir in result.activities],
             },
             ensure_ascii=False,
@@ -603,4 +900,38 @@ def run(
         encoding="utf-8",
     )
     result.out_files = {"lesson_b1": str(b1_path), "lesson_ir": str(ir_path)}
+    return result
+
+
+def run_baseline_v1(
+    anchor: str | dict,
+    level: str = "B1",
+    types: list[str] | None = None,
+    **kwargs,
+) -> PipelineResult:
+    """Run the versioned extractive-v1 baseline for like-for-like measurement.
+
+    This is intentionally not the production selection path: it recreates the
+    pre-Wave-0 delivery rule in which every non-rejected activity entered the
+    lesson.  The normal ``run`` path is ready-only.
+    """
+    from .generate import generate_baseline_v1
+
+    result = run(
+        anchor,
+        level,
+        types,
+        _candidate_generator=generate_baseline_v1,
+        _pipeline_mode="extractive-v1.baseline",
+        **kwargs,
+    )
+    result.selected = [ir for ir in result.activities if ir.gate_result.passed]
+    result.lesson_b1 = [ir.activity for ir in result.selected]
+    b1_path = Path(result.out_files["lesson_b1"])
+    b1_path.write_text(json.dumps(result.lesson_b1, ensure_ascii=False, indent=2), encoding="utf-8")
+    ir_path = Path(result.out_files["lesson_ir"])
+    persisted = json.loads(ir_path.read_text(encoding="utf-8"))
+    persisted["baseline_version"] = "extractive-v1"
+    persisted["dispositions"]["selected"] = [ir.candidate_id for ir in result.selected]
+    ir_path.write_text(json.dumps(persisted, ensure_ascii=False, indent=2), encoding="utf-8")
     return result

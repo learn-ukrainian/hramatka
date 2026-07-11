@@ -18,7 +18,7 @@ def _anchor():
     return fixtures.load_anchor()
 
 
-def test_full_pipeline_all_items_pass(tmp_path):
+def test_full_pipeline_partitions_ready_and_review_candidates(tmp_path):
     res = pipeline.run(
         _anchor(),
         generator=fixtures.mock_generator,
@@ -29,7 +29,11 @@ def test_full_pipeline_all_items_pass(tmp_path):
     types = [ir.activity["type"] for ir in res.activities]
     assert types == ["true-false", "cloze", "match-up"]
     assert all(ir.gate_result.passed for ir in res.activities)
-    assert len(res.lesson_b1) == 3
+    assert [ir.activity["type"] for ir in res.ready] == ["cloze"]
+    assert [ir.activity["type"] for ir in res.review_required] == ["true-false", "match-up"]
+    assert res.rejected == []
+    # Review-required candidates are visible in IR but never auto-projected.
+    assert [activity["type"] for activity in res.lesson_b1] == ["cloze"]
 
 
 def test_persisted_lesson_b1_validates_against_schema(tmp_path):
@@ -40,7 +44,7 @@ def test_persisted_lesson_b1_validates_against_schema(tmp_path):
         cache_dir=tmp_path / "cache",
     )
     b1 = json.loads((tmp_path / "out" / "lesson.b1.json").read_text(encoding="utf-8"))
-    assert len(b1) == 3
+    assert len(b1) == 1
     for item in b1:
         schema.validate_b1(item)  # every persisted item is schema-valid
         # evidence must never leak onto the b1 item
@@ -106,8 +110,9 @@ def test_spelled_out_fraction_statement_survives_as_warn(tmp_path):
         for c in numeral_checks
     )
     assert all(c.status != "fail" for c in numeral_checks)
-    assert tf.gate_result.passed  # warn keeps the item; it reaches lesson_b1
-    assert len(res.lesson_b1) == 1
+    assert tf.gate_result.status == schema.DISPOSITION_REVIEW
+    assert tf in res.review_required
+    assert res.lesson_b1 == []
 
 
 def test_hallucinated_item_dropped_by_evidence_span(tmp_path):
@@ -118,7 +123,7 @@ def test_hallucinated_item_dropped_by_evidence_span(tmp_path):
         cache_dir=tmp_path / "cache",
     )
     assert len(res.activities) == 4
-    assert len(res.lesson_b1) == 3  # hallucinated one dropped (its only item failed)
+    assert len(res.lesson_b1) == 1  # only the clean cloze is auto-selected
     hallucinated = res.activities[-1]
     assert not hallucinated.gate_result.passed
     assert any(
@@ -165,9 +170,10 @@ def test_partial_true_false_keeps_good_items_flags_bad(tmp_path):
     assert len(tf.flagged) == 1
     assert tf.flagged[0]["locator"] == "items[4]"
     assert tf.flagged[0]["reasons"][0]["gate"] == "evidence_span"
-    # lesson_b1 carries the 4-item activity (not deleted, not shrunk to 0)
-    assert len(res.lesson_b1) == 1
-    assert len(res.lesson_b1[0]["items"]) == 4
+    assert [e.locator for e in tf.evidence] == ["items[0]", "items[1]", "items[2]", "items[3]"]
+    # Salvage is review-required, not silently auto-shipped.
+    assert tf.gate_result.status == schema.DISPOSITION_REVIEW
+    assert res.lesson_b1 == []
     # persisted IR carries the flagged item for the review sheet
     ir_json = json.loads((tmp_path / "out" / "lesson.ir.json").read_text(encoding="utf-8"))
     assert ir_json["activities"][0]["flagged"][0]["locator"] == "items[4]"

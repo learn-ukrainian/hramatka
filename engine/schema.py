@@ -54,14 +54,21 @@ class Evidence:
     kind: str = "literal"  # literal | inference | absent
 
 
-# Tri-state activity gate verdict (Sol separation review §Item 2, defect 1).
-# Replaces a single `passed` boolean so a consumer can tell "linguistically
-# clean, auto-acceptable" apart from "ships but a warning must block automatic
-# acceptance" apart from "dropped". A bare boolean conflated the first two,
-# which is exactly how a FALSE-statement WARN used to ship as if verified.
-GATE_CLEAN = "clean"  # ships; no gate warning — auto-acceptable
-GATE_REVIEW = "review_required"  # ships; a warn/salvage must block auto-accept
-GATE_FAILED = "failed"  # does NOT ship (dropped or too few items survived)
+# Candidate disposition.  This is deliberately not a boolean: a candidate can
+# be valid enough for a teacher to inspect while still being unsafe to place in
+# a lesson automatically.  In particular, an extractive FALSE statement has
+# no deterministic falsity proof and therefore belongs in the review tray.
+DISPOSITION_READY = "ready"
+DISPOSITION_REVIEW = "review_required"
+DISPOSITION_REJECTED = "rejected"
+
+# Compatibility names for the slice-1 gate API.  Consumers must use the
+# disposition, not `passed`, for selection.  Keeping these aliases makes old
+# IR readable while the versioned `extractive-v1` baseline remains available
+# for measurements.
+GATE_CLEAN = DISPOSITION_READY
+GATE_REVIEW = DISPOSITION_REVIEW
+GATE_FAILED = DISPOSITION_REJECTED
 
 _GATE_RANK = {GATE_CLEAN: 0, GATE_REVIEW: 1, GATE_FAILED: 2}
 _CHECK_TO_STATUS = {"pass": GATE_CLEAN, "warn": GATE_REVIEW, "fail": GATE_FAILED}
@@ -91,7 +98,7 @@ class GateResult:
 
     @property
     def passed(self) -> bool:
-        """Back-compat convenience: "this (possibly-filtered) activity ships"."""
+        """Legacy convenience only; it is NOT an auto-inclusion decision."""
         return self.status != GATE_FAILED
 
     def as_dict(self) -> dict:
@@ -117,6 +124,11 @@ class HramatkaActivity:
     # they were filtered OUT of the shipped `activity` but carried here for the
     # review sheet ("N items need teacher attention" — not silently deleted).
     flagged: list[dict] = field(default_factory=list)
+    # The typed candidate contract is validated before evidence is stripped.
+    # Keeping this private IR copy means rejected candidates retain the exact
+    # raw material and reasons rather than disappearing during projection.
+    raw_candidate: dict | None = None
+    candidate_id: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -134,6 +146,8 @@ class HramatkaActivity:
             "provenance": self.provenance,
             "gate_result": self.gate_result.as_dict(),
             "flagged": self.flagged,
+            "raw_candidate": self.raw_candidate,
+            "candidate_id": self.candidate_id,
         }
 
 

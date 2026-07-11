@@ -31,8 +31,11 @@ __all__ = [
     "call_gemma",
     "extract_json",
     "generate",
+    "generate_baseline_v1",
     "make_generator",
 ]
+
+LEGACY_GENERATOR_VERSION = "extractive-v1"
 
 # The default real generator: the locked Gemma AIS route over the real HTTP
 # transport (env key, toolless). Constructing it performs no network I/O and
@@ -89,7 +92,7 @@ def extract_json(text: str) -> dict | None:
     return None
 
 
-def generate(
+def generate_baseline_v1(
     anchor: str,
     level: str = "B1",
     types: list[str] | None = None,
@@ -98,17 +101,23 @@ def generate(
     grounding_pack: str = "",
     prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
 ) -> list[dict]:
-    """Build the prompt, call the (injectable) generator, parse the first
-    balanced JSON object, and return the raw `activities` list (evidence-
-    carrying SUPERSET — projection/stripping happens in schema.py).
+    """Frozen pre-Wave-0 one-shot extractive path for measurement.
 
-    Retries once on unparseable output; a 2nd failure raises
-    GenerationUnparseable. Transport failure raises GeneratorUnavailable
-    (from `call_gemma`). Both are caught by the pipeline as gate-fails.
+    This preserves the original whole-prompt content, JSON extraction, and
+    retry semantics.  The public orchestrator below plans this same call via
+    the typed registry, rather than splitting the three legacy types into
+    content-drifting model calls.
     """
     types = types or ["true-false", "cloze", "match-up"]
     build = prompt_builder or _default_prompt_builder
     prompt = build(anchor, level, types, grounding_pack)
+    return _generate_from_prompt(prompt, generator)
+
+
+def _generate_from_prompt(
+    prompt: str, generator: Callable[[str], str], *, retain_all: bool = False
+) -> list[object]:
+    """Legacy JSON parsing/retry semantics shared by baseline and registry."""
 
     raw = generator(prompt)
     obj = extract_json(raw)
@@ -128,7 +137,44 @@ def generate(
         raise GenerationUnparseable(
             "Parsed JSON has no 'activities' array and is not a single activity."
         )
-    return [a for a in activities if isinstance(a, dict)]
+    if retain_all:
+        return activities
+    return [activity for activity in activities if isinstance(activity, dict)]
+
+
+def generate(
+    anchor: str,
+    level: str = "B1",
+    types: list[str] | None = None,
+    *,
+    generator: Callable[[str], str] = call_gemma,
+    grounding_pack: str = "",
+    prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
+) -> list[object]:
+    """Registry-planned typed candidate generation.
+
+    Wave 0 entries deliberately resolve to the identical frozen
+    ``extractive-v1`` prompt.  Equal prompts are coalesced into one model call,
+    preserving the generated content while candidates enter distinct typed
+    banks.  Future entries may use different prompts without changing callers.
+    """
+    from .registry import entries_for
+
+    requested = list(types or ["true-false", "cloze", "match-up"])
+    entries = entries_for(requested)
+    prompt_groups: dict[str, list[str]] = {}
+    for entry in entries:
+        builder = prompt_builder or entry.prompt_builder
+        prompt = builder(anchor, level, requested, grounding_pack)
+        prompt_groups.setdefault(prompt, []).append(entry.activity_type)
+
+    candidates: list[object] = []
+    for prompt in prompt_groups:
+        # Preserve every emitted member, including primitives and types outside
+        # the target bank.  The pipeline turns each into a visible rejection
+        # when appropriate; generation must never silently discard evidence.
+        candidates.extend(_generate_from_prompt(prompt, generator, retain_all=True))
+    return candidates
 
 
 def _default_prompt_builder(

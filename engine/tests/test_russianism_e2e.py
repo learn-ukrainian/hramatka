@@ -22,6 +22,7 @@ import os
 import pytest
 
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
+from hramatka.api.baking.port import BakeError
 from hramatka.engine import pipeline, schema
 
 # The seed only exists in the offline fixture bundle; in real-data mode the
@@ -116,19 +117,11 @@ def test_russianism_introduced_in_generated_task_language_is_caught(tmp_path):
     warns = _vesum_warns(tf)
     assert warns and RUSSIANISM in warns[0].detail and "russianism" in warns[0].detail
 
-    # 2) adapter: the gate name reaches the shipped block's provenance.gates
+    # 2) adapter: review-required material cannot become an auto-included
+    # block.  With no other ready candidate, the bake safely reports shortfall.
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    template = baker.bake(anchor, duration=45, focus=None)
-    russianism_blocks = [
-        b
-        for b in template["blocks"]
-        if "получку" in b["activity"]["payload"]["items"][0]["statement"]
-    ]
-    assert russianism_blocks, "the introduced-russianism activity must ship as a block"
-    block = russianism_blocks[0]
-    assert "vesum_token" in block["provenance"]["gates"]
-    assert "vesum_token" in block["activity"]["provenance"]["gates"]
-    assert block["mark"] == "warn"  # a russianism block must block auto-accept
+    with pytest.raises(BakeError, match="no automatically includable"):
+        baker.bake(anchor, duration=45, focus=None)
 
 
 def test_augmentation_is_required_grounding_alone_would_miss_it(tmp_path):

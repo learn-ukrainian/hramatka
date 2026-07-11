@@ -235,16 +235,12 @@ def test_measure_reports_whole_activity_rejection(tmp_path):
     assert item["gate_outcome"] == schema.GATE_FAILED
     assert item["mark"] == "blocked"
     evidence = item["evidence"]
-    assert len(evidence) == 1
-    assert evidence[0]["locator"] == "items[0]"
-    assert evidence[0]["quote"] is None
-    assert evidence[0]["kind"] == "absent"
-    assert evidence[0]["located_failure_reason"]
+    assert evidence == []
     assert item["rejected"] == [
         {
             "kind": "rejected",
             "locator": None,
-            "machine_reason_class": "gate-failed:evidence_span",
+            "machine_reason_class": "gate-failed:raw_contract",
             "content": item["activity"],
         }
     ]
