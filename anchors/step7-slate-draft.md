@@ -27,8 +27,12 @@
 ## Alternates (verified, on the bench)
 - **P-alt:** «Депортація 1944» chunk `ext-imtgsh-61` (probe ✓) — history/human-rights; heavy acronyms (СРСР, УПА).
 - **A4-alt:** numbered disjoint drill sentences, `10-klas-ukrajinska-mova-zabolotnij-2018.txt` (file ✓; agy's label said "8-klas Zabolotnyi" — mismatch, content must be re-verified before promotion).
-- **A1-alt wanted:** decimals/percentages-dense text (economics-style). agy's candidate was a
-  phantom (below); find a real one at pre-reg (grep textbooks for `%`-dense chunks).
+- **A1-alt FOUND (2026-07-11, grep-verified):** `docs/references/textbooks-txt/11-klas-history.txt`
+  ≈L12121–12141 — computer/internet-adoption statistics 2002–2010, the file's densest `%` window
+  (11 hits/80 lines). Numeral hazards exactly per spec: decimal comma «35,6 %», ranges
+  «від 15 до 28 %» and «5—7 %», mixed spacing «4%» vs «4 %», year spans. NB same FILE as
+  anchor 09 (different section, ~10.4K lines apart) — acceptable for an ALTERNATE; if promoted
+  to primary, source diversity must be re-weighed. Replaces the phantom economics candidate.
 
 ## Rejected at verification (#M-4)
 - **A1_1 «Grade 10 Economics (Krupska)»** — `docs/references/textbooks-txt/10-klas-ekonomika-krupska-2018.txt` **does not exist**; no economics textbook in the corpus at all. agy's ⭐-recommended candidate with detailed "quoted" percentages — fabricated. (13/14 other candidates verified real; the detailed landmine lists made this one indistinguishable without a probe.)
