@@ -34,7 +34,9 @@ from .generate import (
 )
 from .prompts import load_extractive_template
 
-EXTRACTIVE_TYPES = ("true-false", "cloze", "match-up")
+# Production defaults are registry-derived so registering a future extractive
+# activity makes it eligible without introducing a pipeline type branch.
+EXTRACTIVE_TYPES = tuple(registry.ACTIVITY_REGISTRY)
 
 
 @dataclass

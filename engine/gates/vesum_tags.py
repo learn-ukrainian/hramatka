@@ -12,6 +12,8 @@ bundle (`engine.data`) — never a cwd-relative or checkout default.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ..linguistics import verify_lemma, verify_word
 
 # ---------------------------------------------------------------------------
@@ -44,6 +46,74 @@ CASE_LABELS: dict[str, str] = {
 NUMBER_LABELS: dict[str, str] = {"sg": "singular", "pl": "plural"}
 
 _GENDER_CODES = {"m", "f", "n"}
+_MARKABLE_POS = {"noun", "verb", "adj"}
+_TENSE_CODES = {"past", "pres", "futr"}
+
+
+@dataclass(frozen=True)
+class TagCriterion:
+    """A deliberately small, VESUM-native noticing-task criterion.
+
+    Mark-the-words needs a criterion that can be checked for every token in a
+    quoted passage.  The public activity schema exposes that criterion as a
+    string, so the engine accepts only this canonical mini-language instead of
+    attempting to infer morphology from a free-form human description:
+
+    ``pos=noun`` / ``pos=noun;case=gen`` / ``pos=verb;tense=pres``.
+
+    The learner-facing instruction remains Ukrainian; this field is the
+    deterministic verification contract carried with the activity.
+    """
+
+    pos: str
+    case: str | None = None
+    tense: str | None = None
+
+
+def parse_criterion(value: object) -> TagCriterion | None:
+    """Parse the strict VESUM criterion grammar used by mark-the-words.
+
+    Unknown fields, duplicated fields, unsupported parts of speech, and
+    incompatible feature combinations all return ``None``.  Callers must fail
+    closed rather than trying to judge a fuzzy criterion themselves.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    fields: dict[str, str] = {}
+    for segment in value.split(";"):
+        key, separator, raw = segment.partition("=")
+        key, raw = key.strip(), raw.strip()
+        if not separator or not key or not raw or key in fields:
+            return None
+        fields[key] = raw
+
+    if set(fields) - {"pos", "case", "tense"} or "pos" not in fields:
+        return None
+    pos = fields["pos"]
+    case = fields.get("case")
+    tense = fields.get("tense")
+    if pos not in _MARKABLE_POS:
+        return None
+    if case is not None and case not in set(CASE_CODES.values()):
+        return None
+    if tense is not None and tense not in _TENSE_CODES:
+        return None
+    if case is not None and pos not in {"noun", "adj"}:
+        return None
+    if tense is not None and pos != "verb":
+        return None
+    return TagCriterion(pos=pos, case=case, tense=tense)
+
+
+def matches_criterion(parsed: dict, criterion: TagCriterion) -> bool:
+    """Whether one structured VESUM parse satisfies ``criterion`` exactly."""
+    if parsed.get("pos") != criterion.pos:
+        return False
+    if criterion.case is not None and parsed.get("case") != criterion.case:
+        return False
+    if criterion.tense is not None and criterion.tense not in parsed.get("raw", "").split(":"):
+        return False
+    return True
 
 
 def parse_tag(tags: str) -> dict:

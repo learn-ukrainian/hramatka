@@ -158,9 +158,9 @@ def generate(
     preserving the generated content while candidates enter distinct typed
     banks.  Future entries may use different prompts without changing callers.
     """
-    from .registry import entries_for
+    from .registry import ACTIVITY_REGISTRY, entries_for
 
-    requested = list(types or ["true-false", "cloze", "match-up"])
+    requested = list(types or ACTIVITY_REGISTRY)
     entries = entries_for(requested)
     prompt_groups: dict[str, list[str]] = {}
     for entry in entries:

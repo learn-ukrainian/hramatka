@@ -240,6 +240,116 @@ def test_cloze_answer_must_be_in_source_and_options(tmp_path):
     assert any(c.gate == "cloze_answer" and c.status == "fail" for c in cloze_ir.gate_result.checks)
 
 
+# ---------------------------------------------------------------------------
+# Wave 1A extractive types — fully deterministic gate coverage.
+# ---------------------------------------------------------------------------
+_MARK_TEXT = "Під час читання активізуються одразу 17 ділянок головного мозку."
+
+
+def _ready_quiz() -> dict:
+    return {
+        "type": "quiz",
+        "instruction": "Обери правильну відповідь за текстом.",
+        "items": [
+            {
+                "question": "Що активізується під час читання?",
+                "options": ["ділянок", "книжки", "телевізор"],
+                "correct": 0,
+                "evidence": "активізуються одразу 17 ділянок головного мозку",
+            }
+        ],
+    }
+
+
+def _ready_mark_the_words() -> dict:
+    return {
+        "type": "mark-the-words",
+        "instruction": "Познач усі дієслова.",
+        "text": _MARK_TEXT,
+        "target_words": ["активізуються"],
+        "criteria": "pos=verb",
+        "evidence": _MARK_TEXT,
+    }
+
+
+def test_quiz_and_mark_the_words_reach_ready_and_mix_in_a_lesson(tmp_path):
+    activities = [_ready_quiz(), _ready_mark_the_words()]
+    result = pipeline.run(
+        _anchor(),
+        types=["quiz", "mark-the-words"],
+        count_plan={"quiz": 1, "mark-the-words": 1},
+        generator=lambda _prompt: json.dumps({"activities": activities}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert [(ir.activity["type"], ir.gate_result.status) for ir in result.activities] == [
+        ("quiz", schema.DISPOSITION_READY),
+        ("mark-the-words", schema.DISPOSITION_READY),
+    ]
+    assert [activity["type"] for activity in result.lesson_b1] == ["quiz", "mark-the-words"]
+
+
+def test_quiz_rejects_an_ambiguous_key_with_two_evidence_supported_options(tmp_path):
+    quiz = _ready_quiz()
+    quiz["items"][0]["options"] = ["ділянок", "мозку", "книжки"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["quiz"],
+        generator=lambda _prompt: json.dumps({"activities": [quiz]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    rejected = result.rejected[0]
+    assert rejected.gate_result.status == schema.DISPOSITION_REJECTED
+    assert any(
+        check.gate == "quiz_ambiguous_key" and check.status == "fail"
+        for check in rejected.gate_result.checks
+    )
+
+
+def test_mark_the_words_rejects_an_incomplete_target_set(tmp_path):
+    mark = _ready_mark_the_words()
+    mark["instruction"] = "Познач усі іменники."
+    mark["criteria"] = "pos=noun"
+    mark["target_words"] = ["ділянок"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["mark-the-words"],
+        generator=lambda _prompt: json.dumps({"activities": [mark]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    rejected = result.rejected[0]
+    assert rejected.gate_result.status == schema.DISPOSITION_REJECTED
+    assert any(
+        check.gate == "mark_words_completeness" and check.status == "fail"
+        for check in rejected.gate_result.checks
+    )
+
+
+def test_mark_the_words_rejects_a_non_vesum_criterion(tmp_path):
+    mark = _ready_mark_the_words()
+    mark["criteria"] = "усі важливі слова"
+
+    result = pipeline.run(
+        _anchor(),
+        types=["mark-the-words"],
+        generator=lambda _prompt: json.dumps({"activities": [mark]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "mark_words_criterion" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
 def test_fingerprint_includes_gate_impl_digest(monkeypatch):
     # review-p46 nit 2: gate LOGIC is part of bake identity, so a gate-code
     # change reshuffles the fingerprint even with identical declared inputs.

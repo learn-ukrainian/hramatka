@@ -118,6 +118,14 @@ def test_parse_word_unknown_form_returns_empty():
     assert vt.parse_word("асдфасдф") == []
 
 
+def test_mark_the_words_criterion_parser_and_matcher():
+    criterion = vt.parse_criterion("pos=verb;tense=pres")
+    assert criterion is not None
+    assert vt.matches_criterion(vt.parse_word("активізуються")[0], criterion)
+    assert vt.parse_criterion("усі важливі слова") is None
+    assert vt.parse_criterion("pos=verb;case=gen") is None
+
+
 # ---------------------------------------------------------------------------
 # find_form — reverse lookup for human-readable 'expected' hints
 # ---------------------------------------------------------------------------

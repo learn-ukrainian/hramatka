@@ -1,9 +1,4 @@
-"""Versioned activity registry for the typed candidate-bank pipeline.
-
-Wave 0 deliberately registers only the three proven extractive activities.
-Their prompt builder preserves the exact ``extractive-v1`` prompt so changing
-the plumbing does not change generated exercise content.
-"""
+"""Versioned activity registry for the typed candidate-bank pipeline."""
 
 from __future__ import annotations
 
@@ -15,12 +10,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import retrieval, schema
-from .gates import evidence_span, matchup_semantics, numeral
+from .gates import evidence_span, matchup_semantics, numeral, vesum_tags
 from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
 
-REGISTRY_VERSION = "wave0.registry.v1"
-EXTRACTIVE_PROMPT_VERSION = "extractive-v1:9b0c30a97f64"
+REGISTRY_VERSION = "wave1a.registry.v1"
+EXTRACTIVE_PROMPT_VERSION = "extractive-v2:f1af460a555c"
 
 PromptBuilder = Callable[[str, str, list[str], str], str]
 EvidenceLocator = Callable[[dict[str, Any]], tuple[str, ...]]
@@ -33,16 +28,14 @@ _SPACE_RE = re.compile(r"\s+")
 
 
 def build_extractive_v1_prompt(
-    anchor: str, level: str, _types: list[str], grounding_pack: str
+    anchor: str, level: str, types: list[str], grounding_pack: str
 ) -> str:
-    """The unmodified one-shot extractive-v1 prompt.
-
-    ``types`` intentionally remains unused because the frozen prompt itself
-    asks for all three legacy types.  The registry routes that one response
-    into typed banks; it does not split the model call and risk drift.
-    """
+    """Build the one-shot extractive prompt shared by registered types."""
+    template = load_extractive_template().replace(
+        "{{REQUESTED_ACTIVITY_TYPES}}", ", ".join(types)
+    )
     return (
-        f"{load_extractive_template()}\n\n"
+        f"{template}\n\n"
         f"=== GROUNDING PACK ===\n{grounding_pack}\n\n"
         f"=== ТЕКСТ-ОПОРА (anchor, рівень {level}) ===\n{anchor}\n"
     )
@@ -77,6 +70,36 @@ def _validate_true_false(raw: object) -> list[str]:
                 errors.append(f"items[{index}] requires a non-empty statement")
             if not isinstance(item.get("correct"), bool):
                 errors.append(f"items[{index}] requires boolean correct")
+    return errors
+
+
+def _validate_quiz(raw: object) -> list[str]:
+    if errors := _validate_basics(raw, "quiz"):
+        return errors
+    assert isinstance(raw, dict)
+    errors = []
+    items = raw.get("items")
+    if not isinstance(items, list) or not items:
+        errors.append("quiz requires a non-empty items list")
+    else:
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"items[{index}] must be an object")
+                continue
+            if not isinstance(item.get("evidence"), str) or not item["evidence"].strip():
+                errors.append(f"items[{index}] requires a non-empty evidence quote")
+            if not isinstance(item.get("question"), str) or not item["question"].strip():
+                errors.append(f"items[{index}] requires a non-empty question")
+            options = item.get("options")
+            if not isinstance(options, list) or not 3 <= len(options) <= 4:
+                errors.append(f"items[{index}] requires 3–4 options (one key plus 2–3 distractors)")
+            elif any(not isinstance(option, str) or not option.strip() for option in options):
+                errors.append(f"items[{index}] options must be non-empty strings")
+            correct = item.get("correct")
+            if isinstance(correct, bool) or not isinstance(correct, int):
+                errors.append(f"items[{index}] requires an integer correct index")
+            elif isinstance(options, list) and not 0 <= correct < len(options):
+                errors.append(f"items[{index}] correct index must select an option")
     return errors
 
 
@@ -127,6 +150,25 @@ def _validate_match_up(raw: object) -> list[str]:
     return errors
 
 
+def _validate_mark_the_words(raw: object) -> list[str]:
+    if errors := _validate_basics(raw, "mark-the-words"):
+        return errors
+    assert isinstance(raw, dict)
+    errors = []
+    if not isinstance(raw.get("evidence"), str) or not raw["evidence"].strip():
+        errors.append("mark-the-words requires a non-empty activity evidence quote")
+    if not isinstance(raw.get("text"), str) or not raw["text"].strip():
+        errors.append("mark-the-words requires non-empty text")
+    if not isinstance(raw.get("criteria"), str) or not raw["criteria"].strip():
+        errors.append("mark-the-words requires a non-empty VESUM criterion")
+    target_words = raw.get("target_words")
+    if not isinstance(target_words, list) or not target_words:
+        errors.append("mark-the-words requires a non-empty target_words list")
+    elif any(not isinstance(word, str) or not word.strip() for word in target_words):
+        errors.append("mark-the-words target_words must be non-empty strings")
+    return errors
+
+
 def _item_locators(raw: dict[str, Any]) -> tuple[str, ...]:
     return tuple(f"items[{index}]" for index, _item in enumerate(raw.get("items", [])))
 
@@ -154,6 +196,19 @@ def _true_false_evidence_answer_pairs(ir: schema.HramatkaActivity) -> list[tuple
     ]
 
 
+def _quiz_evidence_answer_pairs(ir: schema.HramatkaActivity) -> list[tuple[str, str]]:
+    evidence_by_locator = {e.locator: e.quote for e in ir.evidence}
+    pairs = []
+    for index, item in enumerate(ir.activity.get("items", [])):
+        options = item.get("options", [])
+        correct = item.get("correct")
+        answer = options[correct] if isinstance(correct, int) and correct < len(options) else ""
+        pairs.append(
+            (_signature_value(evidence_by_locator.get(f"items[{index}]")), _signature_value(answer))
+        )
+    return pairs
+
+
 def _cloze_evidence_answer_pairs(ir: schema.HramatkaActivity) -> list[tuple[str, str]]:
     evidence_by_locator = {e.locator: e.quote for e in ir.evidence}
     answer = "|".join(
@@ -171,6 +226,14 @@ def _match_up_evidence_answer_pairs(ir: schema.HramatkaActivity) -> list[tuple[s
         )
         for index, pair in enumerate(ir.activity.get("pairs", []))
     ]
+
+
+def _mark_the_words_evidence_answer_pairs(
+    ir: schema.HramatkaActivity,
+) -> list[tuple[str, str]]:
+    evidence_by_locator = {e.locator: e.quote for e in ir.evidence}
+    marked = sorted(_signature_value(word) for word in ir.activity.get("target_words", []))
+    return [(_signature_value(evidence_by_locator.get("text")), "|".join(marked))]
 
 
 def _numeral_phrases(text: str) -> list[str]:
@@ -226,6 +289,93 @@ def _gate_true_false(
             )
 
 
+def _gate_quiz(
+    activity: dict[str, Any],
+    evidence: list[schema.Evidence],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
+) -> None:
+    ev_by_loc = {e.locator: e for e in evidence}
+    for i, item in enumerate(activity.get("items", [])):
+        loc = f"items[{i}]"
+        ev = ev_by_loc.get(loc)
+        quote = ev.quote if ev else ""
+        verdict = evidence_span.check_evidence(quote, anchor_body)
+        gr.add("evidence_span", verdict["status"], verdict["detail"], locator=loc)
+        if ev is not None:
+            ev.char_start = verdict["char_start"]
+            ev.char_end = verdict["char_end"]
+            ev.kind = verdict["kind"]
+
+        options = item.get("options", [])
+        correct_index = item.get("correct")
+        if not isinstance(correct_index, int) or not 0 <= correct_index < len(options):
+            # The raw contract normally catches this, but retain a fail-closed
+            # gate for direct callers and future raw-contract changes.
+            gr.add("quiz_key", "fail", "Quiz has no valid correct-option index.", locator=loc)
+            continue
+
+        normalized_options = [_signature_value(option) for option in options]
+        if len(set(normalized_options)) != len(normalized_options):
+            gr.add(
+                "quiz_ambiguous_key",
+                "fail",
+                "Quiz options repeat a form, so the single correct key is ambiguous.",
+                locator=loc,
+            )
+
+        correct_verdict = evidence_span.check_evidence(options[correct_index], quote)
+        gr.add(
+            "quiz_correct_evidence",
+            correct_verdict["status"],
+            correct_verdict["detail"],
+            locator=loc,
+        )
+        supported_indices = [
+            index
+            for index, option in enumerate(options)
+            if evidence_span.check_evidence(option, quote)["status"] == "pass"
+        ]
+        if supported_indices != [correct_index]:
+            gr.add(
+                "quiz_ambiguous_key",
+                "fail",
+                "Exactly one option must be literally supported by this item's evidence, "
+                "and it must be the marked key.",
+                locator=loc,
+            )
+
+        option_tokens = []
+        for option in options:
+            tokens = vesum_gate.content_tokens(option)
+            if not tokens:
+                gr.add(
+                    "quiz_option_vesum",
+                    "fail",
+                    f"Quiz option '{option}' contains no Ukrainian word form to verify.",
+                    locator=loc,
+                )
+            option_tokens.extend(tokens)
+        token_verdicts = vesum_gate.check_tokens(
+            option_tokens, anchor_body, atlas_lookup=atlas_lookup
+        )
+        worst = vesum_gate.worst_status(token_verdicts)
+        if worst != "pass":
+            bad = [v for v in token_verdicts if v["status"] == worst]
+            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
+        for token in sorted(set(option_tokens), key=str.casefold):
+            if not vesum_tags.parse_word(token):
+                gr.add(
+                    "quiz_option_vesum",
+                    "fail",
+                    f"Quiz option token '{token}' has no VESUM form.",
+                    locator=loc,
+                )
+        _run_numeral_gate(item.get("question", ""), gr, loc)
+        _run_numeral_gate(" ".join(options), gr, loc)
+
+
 def _gate_cloze(
     activity: dict[str, Any],
     evidence: list[schema.Evidence],
@@ -269,6 +419,148 @@ def _gate_cloze(
         if worst != "pass":
             bad = [v for v in token_verdicts if v["status"] == worst]
             gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator="text")
+
+
+def _gate_mark_the_words(
+    activity: dict[str, Any],
+    evidence: list[schema.Evidence],
+    anchor_body: str,
+    gr: schema.GateResult,
+    _atlas_lookup: dict | None = None,
+) -> None:
+    """Verify a noticing-task answer set against VESUM, including completeness.
+
+    This is deliberately atomic: because the answer is a complete set, an
+    omitted matching word invalidates the whole activity rather than admitting
+    the rest as a partially useful task.
+    """
+    loc = "text"
+    text = activity.get("text", "")
+    ev = next((item for item in evidence if item.locator == loc), None)
+    quote = ev.quote if ev else ""
+    verdict = evidence_span.check_evidence(quote, anchor_body)
+    gr.add("evidence_span", verdict["status"], verdict["detail"], locator=loc)
+    if ev is not None:
+        ev.char_start = verdict["char_start"]
+        ev.char_end = verdict["char_end"]
+        ev.kind = verdict["kind"]
+    if evidence_span.check_evidence(text, anchor_body)["status"] != "pass":
+        gr.add(
+            "mark_words_source",
+            "fail",
+            "Mark-the-words text must itself be a literal span of the anchor.",
+            locator=loc,
+        )
+    if _signature_value(quote) != _signature_value(text):
+        gr.add(
+            "mark_words_source",
+            "fail",
+            "Mark-the-words evidence must be the exact displayed text.",
+            locator=loc,
+        )
+
+    criterion = vesum_tags.parse_criterion(activity.get("criteria"))
+    if criterion is None:
+        gr.add(
+            "mark_words_criterion",
+            "fail",
+            "Criterion is not in the supported VESUM form "
+            "(pos=noun|adj|verb with optional case=… or tense=…).",
+            locator=loc,
+        )
+        return
+
+    text_tokens = vesum_gate.content_tokens(text)
+    parses_by_token = {
+        _signature_value(token): vesum_tags.parse_word(token)
+        for token in dict.fromkeys(text_tokens)
+    }
+    for token, parses in parses_by_token.items():
+        if not parses:
+            gr.add(
+                "mark_words_vesum",
+                "fail",
+                f"Cannot verify anchor token '{token}' against VESUM, so completeness is unknown.",
+                locator=loc,
+            )
+
+    expected = {
+        token
+        for token, parses in parses_by_token.items()
+        if any(vesum_tags.matches_criterion(parsed, criterion) for parsed in parses)
+    }
+    if not expected:
+        gr.add(
+            "mark_words_criterion",
+            "fail",
+            "The VESUM criterion matches no words in the displayed text.",
+            locator=loc,
+        )
+
+    marked: set[str] = set()
+    for target in activity.get("target_words", []):
+        target_tokens = vesum_gate.content_tokens(target)
+        if (
+            len(target_tokens) != 1
+            or _signature_value(target_tokens[0]) != _signature_value(target)
+        ):
+            gr.add(
+                "mark_words_target",
+                "fail",
+                f"Marked target '{target}' must be exactly one word from the text.",
+                locator=loc,
+            )
+            continue
+        token = _signature_value(target_tokens[0])
+        target_verdict = evidence_span.check_evidence(target, text)
+        gr.add(
+            "evidence_span",
+            target_verdict["status"],
+            target_verdict["detail"],
+            locator=loc,
+        )
+        if target_verdict["status"] != "pass" or token not in parses_by_token:
+            gr.add(
+                "mark_words_target",
+                "fail",
+                f"Marked target '{target}' does not occur as a word in the displayed text.",
+                locator=loc,
+            )
+            continue
+        if not any(
+            vesum_tags.matches_criterion(parsed, criterion) for parsed in parses_by_token[token]
+        ):
+            gr.add(
+                "mark_words_tag",
+                "fail",
+                f"Marked target '{target}' does not match criterion '{activity.get('criteria')}'.",
+                locator=loc,
+            )
+        if token in marked:
+            gr.add(
+                "mark_words_target",
+                "fail",
+                f"Marked target '{target}' is duplicated; target_words is a set.",
+                locator=loc,
+            )
+        marked.add(token)
+
+    missing = sorted(expected - marked)
+    if missing:
+        gr.add(
+            "mark_words_completeness",
+            "fail",
+            "Unmarked VESUM-matching word(s): " + ", ".join(missing) + ".",
+            locator=loc,
+        )
+    extra = sorted(marked - expected)
+    if extra:
+        gr.add(
+            "mark_words_tag",
+            "fail",
+            "Marked word(s) do not satisfy the criterion: " + ", ".join(extra) + ".",
+            locator=loc,
+        )
 
 
 def _gate_match_up(
@@ -366,6 +658,25 @@ ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
         is_puzzle=False,
         public_projector=schema.project_to_b1,
     ),
+    "quiz": ActivityRegistryEntry(
+        activity_type="quiz",
+        prompt_builder=build_extractive_v1_prompt,
+        prompt_version=EXTRACTIVE_PROMPT_VERSION,
+        raw_schema_version="quiz.raw.v1",
+        raw_validator=_validate_quiz,
+        evidence_locator=_item_locators,
+        gate=_gate_quiz,
+        evidence_answer_pairs=_quiz_evidence_answer_pairs,
+        assessment_mode="auto_gradable",
+        gate_chain="quiz.extractive.v1",
+        gate_version="quiz.gates.v1",
+        partition_key="items",
+        minimum_survivors=1,
+        ttt_phases=(1, 2, 3),
+        item_budget=4,
+        is_puzzle=False,
+        public_projector=schema.project_to_b1,
+    ),
     "cloze": ActivityRegistryEntry(
         activity_type="cloze",
         prompt_builder=build_extractive_v1_prompt,
@@ -402,6 +713,25 @@ ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
         ttt_phases=(1, 2),
         item_budget=4,
         is_puzzle=True,
+        public_projector=schema.project_to_b1,
+    ),
+    "mark-the-words": ActivityRegistryEntry(
+        activity_type="mark-the-words",
+        prompt_builder=build_extractive_v1_prompt,
+        prompt_version=EXTRACTIVE_PROMPT_VERSION,
+        raw_schema_version="mark-the-words.raw.v1",
+        raw_validator=_validate_mark_the_words,
+        evidence_locator=_text_locator,
+        gate=_gate_mark_the_words,
+        evidence_answer_pairs=_mark_the_words_evidence_answer_pairs,
+        assessment_mode="auto_gradable",
+        gate_chain="mark-the-words.extractive.v1",
+        gate_version="mark-the-words.gates.v1",
+        partition_key=None,
+        minimum_survivors=1,
+        ttt_phases=(1, 2, 3),
+        item_budget=1,
+        is_puzzle=False,
         public_projector=schema.project_to_b1,
     ),
 }

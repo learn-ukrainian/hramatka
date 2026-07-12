@@ -12,5 +12,4 @@ from __future__ import annotations
 
 # Bumped whenever engine behaviour that could change bake output changes; it is
 # a component of the bake fingerprint (Sol defect #4).
-ENGINE_VERSION = "slice1-b1.2026.07.10"
-
+ENGINE_VERSION = "slice1-b1.2026.07.12.wave1a"

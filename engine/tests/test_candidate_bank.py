@@ -14,11 +14,39 @@ def _project(raw: dict) -> dict:
     return schema.project_to_b1(schema.HramatkaActivity(activity=raw))
 
 
-def test_registry_migrates_the_three_legacy_activity_types():
-    assert set(registry.ACTIVITY_REGISTRY) == {"true-false", "cloze", "match-up"}
-    for raw in fixtures.GOOD_ACTIVITIES:
+def test_registry_migrates_all_wave_1a_activity_types():
+    assert set(registry.ACTIVITY_REGISTRY) == {
+        "true-false",
+        "cloze",
+        "match-up",
+        "quiz",
+        "mark-the-words",
+    }
+    wave_1a_examples = [
+        {
+            "type": "quiz",
+            "instruction": "Обери правильну відповідь.",
+            "items": [
+                {
+                    "question": "Що активізується?",
+                    "options": ["ділянки", "книжки", "телевізор"],
+                    "correct": 0,
+                    "evidence": "активізуються одразу 17 ділянок головного мозку",
+                }
+            ],
+        },
+        {
+            "type": "mark-the-words",
+            "instruction": "Познач усі дієслова.",
+            "text": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+            "target_words": ["активізуються"],
+            "criteria": "pos=verb",
+            "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+        },
+    ]
+    for raw in [*fixtures.GOOD_ACTIVITIES, *wave_1a_examples]:
         entry = registry.ACTIVITY_REGISTRY[raw["type"]]
-        assert entry.prompt_version.startswith("extractive-v1:")
+        assert entry.prompt_version.startswith("extractive-v2:")
         assert entry.assessment_mode in {"auto_gradable", "teacher_assessed"}
         assert entry.gate_chain and entry.gate_version
         assert entry.minimum_survivors >= 1 and entry.item_budget >= 1
@@ -28,6 +56,12 @@ def test_registry_migrates_the_three_legacy_activity_types():
         assert entry.gate and entry.evidence_answer_pairs
         projected = entry.public_projector(schema.HramatkaActivity(activity=raw))
         schema.validate_b1(projected)
+
+
+def test_default_extractive_types_are_registry_derived_and_non_puzzle():
+    assert pipeline.EXTRACTIVE_TYPES == tuple(registry.ACTIVITY_REGISTRY)
+    assert not registry.ACTIVITY_REGISTRY["quiz"].is_puzzle
+    assert not registry.ACTIVITY_REGISTRY["mark-the-words"].is_puzzle
 
 
 def test_extractive_v1_baseline_and_registry_generation_are_equivalent():
