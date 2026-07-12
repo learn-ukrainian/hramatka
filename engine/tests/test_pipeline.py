@@ -476,6 +476,47 @@ def test_error_correction_rejects_a_non_restoring_correction(tmp_path):
     )
 
 
+def test_error_correction_with_a_non_vesum_error_option_reaches_ready(tmp_path):
+    activity = _ready_error_correction()
+    item = activity["items"][0]
+    item["sentence"] = "Під час читання активізуються одразу 17 ділянокк головного мозку."
+    item["error"] = "ділянокк"
+    item["options"] = ["ділянокк", "ділянок", "книжки"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["error-correction"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert [ir.gate_result.status for ir in result.activities] == [schema.DISPOSITION_READY]
+    assert [activity["type"] for activity in result.lesson_b1] == ["error-correction"]
+    assert not any(
+        check.gate == "error_correction_vesum" and check.status == "fail"
+        for check in result.activities[0].gate_result.checks
+    )
+
+
+def test_error_correction_rejects_a_non_vesum_distractor(tmp_path):
+    activity = _ready_error_correction()
+    activity["items"][0]["options"] = ["ділянки", "ділянок", "книжкк"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["error-correction"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "error_correction_vesum" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
 def test_error_correction_rejects_a_valid_form_without_a_proven_target_rule(tmp_path):
     activity = _ready_error_correction()
     activity["items"] = [

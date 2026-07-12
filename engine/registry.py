@@ -657,7 +657,8 @@ def _gate_error_correction(
 ) -> None:
     """Gate a single, source-restoring correction with deterministic proof.
 
-    A non-VESUM error form is directly invalid. A VESUM-attested error form is
+    A non-VESUM error form is an intentional typo and may appear among the
+    options, but is not itself VESUM-verified. A VESUM-attested error form is
     accepted only when the numeral-government gate proves the malformed source
     phrase wrong and the correction restores an evidence sentence that passes.
     This deliberately fails closed for agreement/word errors outside a rule the
@@ -724,8 +725,14 @@ def _gate_error_correction(
                 "The declared correction must occur exactly once in the options.",
                 locator=loc,
             )
+        error_is_non_vesum = not vesum_tags.parse_word(error_word)
+        vesum_words = (
+            [word for word in words if _signature_value(word) != _signature_value(error_word)]
+            if error_is_non_vesum
+            else words
+        )
         _add_verified_vesum_tokens(
-            words,
+            vesum_words,
             anchor_body,
             gr,
             loc,
@@ -750,7 +757,7 @@ def _gate_error_correction(
                 locator=loc,
             )
 
-        if not vesum_tags.parse_word(error_word):
+        if error_is_non_vesum:
             continue
         if not _numeral_failures(sentence) or _numeral_failures(quote):
             gr.add(
