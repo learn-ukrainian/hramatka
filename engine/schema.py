@@ -25,6 +25,10 @@ _TYPE_TO_DEF = {
     "match-up": "match-up-b1",
     "mark-the-words": "mark-the-words-b1",
     "quiz": "quiz-b1",
+    "error-correction": "error-correction-b1",
+    "fill-in": "fill-in-b1",
+    "text-questions": "text-questions-b1",
+    "short-writing": "short-writing-b1",
 }
 
 

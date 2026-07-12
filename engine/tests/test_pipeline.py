@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from hramatka.engine import fixtures, pipeline, schema
+from hramatka.engine import fixtures, pipeline, registry, schema
 from hramatka.engine.generate import GeneratorUnavailable
 
 
@@ -346,6 +346,213 @@ def test_mark_the_words_rejects_a_non_vesum_criterion(tmp_path):
 
     assert any(
         check.gate == "mark_words_criterion" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wave 1B feature-rich types — deterministic injected bake coverage.
+# ---------------------------------------------------------------------------
+_NUMERAL_EVIDENCE = "Під час читання активізуються одразу 17 ділянок головного мозку."
+_FILL_EVIDENCE = "На думку вчених, читання є одним з найскладніших завдань для мозку."
+
+
+def _ready_error_correction() -> dict:
+    return {
+        "type": "error-correction",
+        "instruction": "Виправ помилку.",
+        "items": [
+            {
+                "sentence": "Під час читання активізуються одразу 17 ділянки головного мозку.",
+                "error": "ділянки",
+                "correction": "ділянок",
+                "options": ["ділянки", "ділянок", "книжки"],
+                "explanation": "Після 17 потрібна форма родового множини.",
+                "evidence": _NUMERAL_EVIDENCE,
+            }
+        ],
+    }
+
+
+def _ready_fill_in() -> dict:
+    return {
+        "type": "fill-in",
+        "instruction": "Обери правильну форму.",
+        "items": [
+            {
+                "sentence": "На думку вчених, читання є одним з найскладніших ____ для мозку.",
+                "answer": "завдань",
+                "options": ["завдань", "вправ", "задач", "питань"],
+                "explanation": "Вибери форму з речення опори.",
+                "evidence": _FILL_EVIDENCE,
+            }
+        ],
+    }
+
+
+def _ready_text_questions() -> dict:
+    return {
+        "type": "text-questions",
+        "instruction": "Обговоріть запитання за текстом.",
+        "source_ref": "Текст-опора",
+        "items": [
+            {
+                "question": "Що активізується під час читання?",
+                "model_answer": "Під час читання активізуються 17 ділянок головного мозку.",
+                "evidence": _NUMERAL_EVIDENCE,
+            },
+            {
+                "question": "Що знижує ризик розвитку хвороби Альцгеймера?",
+                "model_answer": "Регулярне читання.",
+                "evidence": (
+                    "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера."
+                ),
+            },
+        ],
+        "teacher_guidance": "Приймайте змістовні відповіді учнів.",
+    }
+
+
+def _ready_short_writing() -> dict:
+    return {
+        "type": "short-writing",
+        "instruction": "Напиши короткий текст.",
+        "prompt": "Напиши три речення про читання своїми словами.",
+        "source_ref": "Текст-опора",
+        "word_count_guidance": "3 речення (30–40 слів)",
+        "model_answer": "Читання корисне для мозку.",
+        "rubric_hint": "Є три речення і зв'язок з опорою.",
+        "teacher_guidance": "Оцінюйте зміст і зв'язність.",
+        "evidence": _FILL_EVIDENCE,
+    }
+
+
+def test_wave1b_types_reach_ready_in_an_injected_bake(tmp_path):
+    activities = [
+        _ready_error_correction(),
+        _ready_fill_in(),
+        _ready_text_questions(),
+        _ready_short_writing(),
+    ]
+    types = [activity["type"] for activity in activities]
+    result = pipeline.run(
+        _anchor(),
+        types=types,
+        count_plan={activity_type: 1 for activity_type in types},
+        generator=lambda _prompt: json.dumps({"activities": activities}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert [(ir.activity["type"], ir.gate_result.status) for ir in result.activities] == [
+        ("error-correction", schema.DISPOSITION_READY),
+        ("fill-in", schema.DISPOSITION_READY),
+        ("text-questions", schema.DISPOSITION_READY),
+        ("short-writing", schema.DISPOSITION_READY),
+    ]
+    assert sorted(activity["type"] for activity in result.lesson_b1) == sorted(types)
+    assert all(schema.validate_b1(activity) is None for activity in result.lesson_b1)
+    assert registry.ACTIVITY_REGISTRY["text-questions"].assessment_mode == "teacher_assessed"
+    assert registry.ACTIVITY_REGISTRY["short-writing"].assessment_mode == "teacher_assessed"
+
+
+def test_error_correction_rejects_a_non_restoring_correction(tmp_path):
+    activity = _ready_error_correction()
+    item = activity["items"][0]
+    item["correction"] = "мозку"
+    item["options"] = ["ділянки", "мозку", "книжки"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["error-correction"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "error_correction_source" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
+def test_error_correction_rejects_a_valid_form_without_a_proven_target_rule(tmp_path):
+    activity = _ready_error_correction()
+    activity["items"] = [
+        {
+            "sentence": "На думку вчених, читання є одним з найскладніших завдань для речення.",
+            "error": "речення",
+            "correction": "мозку",
+            "options": ["речення", "мозку", "книжки"],
+            "explanation": "Перевірте словоформу.",
+            "evidence": _FILL_EVIDENCE,
+        }
+    ]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["error-correction"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "error_correction_error" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
+def test_fill_in_rejects_a_distractor_of_the_wrong_vesum_class(tmp_path):
+    activity = _ready_fill_in()
+    activity["items"][0]["options"] = ["завдань", "вправ", "задач", "знижує"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["fill-in"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "fill_in_pos" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
+def test_text_questions_reject_a_non_vesum_task_stem(tmp_path):
+    activity = _ready_text_questions()
+    activity["items"][0]["question"] = "Фейкословоxx читання?"
+
+    result = pipeline.run(
+        _anchor(),
+        types=["text-questions"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "open_task_vesum" and check.status == "fail"
+        for check in result.rejected[0].gate_result.checks
+    )
+
+
+def test_short_writing_rejects_a_non_vesum_task_stem(tmp_path):
+    activity = _ready_short_writing()
+    activity["prompt"] = "Фейкословоxx читання."
+
+    result = pipeline.run(
+        _anchor(),
+        types=["short-writing"],
+        generator=lambda _prompt: json.dumps({"activities": [activity]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert any(
+        check.gate == "open_task_vesum" and check.status == "fail"
         for check in result.rejected[0].gate_result.checks
     )
 

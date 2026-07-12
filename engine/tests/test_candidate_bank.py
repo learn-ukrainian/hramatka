@@ -14,15 +14,19 @@ def _project(raw: dict) -> dict:
     return schema.project_to_b1(schema.HramatkaActivity(activity=raw))
 
 
-def test_registry_migrates_all_wave_1a_activity_types():
+def test_registry_migrates_all_wave_1b_activity_types():
     assert set(registry.ACTIVITY_REGISTRY) == {
         "true-false",
         "cloze",
         "match-up",
         "quiz",
         "mark-the-words",
+        "error-correction",
+        "fill-in",
+        "text-questions",
+        "short-writing",
     }
-    wave_1a_examples = [
+    wave_1b_examples = [
         {
             "type": "quiz",
             "instruction": "Обери правильну відповідь.",
@@ -43,10 +47,67 @@ def test_registry_migrates_all_wave_1a_activity_types():
             "criteria": "pos=verb",
             "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
         },
+        {
+            "type": "error-correction",
+            "instruction": "Виправ помилку.",
+            "items": [
+                {
+                    "sentence": "Під час читання активізуються одразу 17 ділянки головного мозку.",
+                    "error": "ділянки",
+                    "correction": "ділянок",
+                    "options": ["ділянки", "ділянок", "книжки"],
+                    "explanation": "Після 17 потрібна форма родового множини.",
+                    "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+                }
+            ],
+        },
+        {
+            "type": "fill-in",
+            "instruction": "Обери правильну форму.",
+            "items": [
+                {
+                    "sentence": "На думку вчених, читання є одним з найскладніших ____ для мозку.",
+                    "answer": "завдань",
+                    "options": ["завдань", "вправ", "задач", "питань"],
+                    "evidence": (
+                        "На думку вчених, читання є одним з найскладніших завдань для мозку."
+                    ),
+                }
+            ],
+        },
+        {
+            "type": "text-questions",
+            "instruction": "Обговоріть запитання за текстом.",
+            "source_ref": "Текст-опора",
+            "items": [
+                {
+                    "question": "Що активізується під час читання?",
+                    "model_answer": "17 ділянок головного мозку.",
+                    "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+                },
+                {
+                    "question": "Що знижує ризик розвитку хвороби Альцгеймера?",
+                    "evidence": (
+                        "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера."
+                    ),
+                },
+            ],
+            "teacher_guidance": "Приймайте змістовні відповіді учнів.",
+        },
+        {
+            "type": "short-writing",
+            "instruction": "Напиши короткий текст.",
+            "prompt": "Напиши три речення про читання своїми словами.",
+            "source_ref": "Текст-опора",
+            "word_count_guidance": "3 речення (30–40 слів)",
+            "model_answer": "Читання корисне для мозку.",
+            "rubric_hint": "Є три речення і зв'язок з опорою.",
+            "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку.",
+        },
     ]
-    for raw in [*fixtures.GOOD_ACTIVITIES, *wave_1a_examples]:
+    for raw in [*fixtures.GOOD_ACTIVITIES, *wave_1b_examples]:
         entry = registry.ACTIVITY_REGISTRY[raw["type"]]
-        assert entry.prompt_version.startswith("extractive-v2:")
+        assert entry.prompt_version.startswith("extractive-v3:")
         assert entry.assessment_mode in {"auto_gradable", "teacher_assessed"}
         assert entry.gate_chain and entry.gate_version
         assert entry.minimum_survivors >= 1 and entry.item_budget >= 1
@@ -56,6 +117,9 @@ def test_registry_migrates_all_wave_1a_activity_types():
         assert entry.gate and entry.evidence_answer_pairs
         projected = entry.public_projector(schema.HramatkaActivity(activity=raw))
         schema.validate_b1(projected)
+
+    assert registry.ACTIVITY_REGISTRY["text-questions"].assessment_mode == "teacher_assessed"
+    assert registry.ACTIVITY_REGISTRY["short-writing"].assessment_mode == "teacher_assessed"
 
 
 def test_default_extractive_types_are_registry_derived_and_non_puzzle():

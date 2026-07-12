@@ -10,7 +10,7 @@ manifest before the bytes are used (`VendorIntegrityError` on mismatch).
 
 | Artifact | Kind | Consumed by |
 |---|---|---|
-| `lu.activity.v1@1.0.0` | JSON Schema (verbatim public copy) | `engine/schema.py` — projected-activity validation |
+| `lu.activity.v1@1.0.0` | JSON Schema (pinned public base + documented Wave 1B extension) | `engine/schema.py` — projected-activity validation |
 | `lu.lesson.v1@1.0.0` | JSON Schema (interim, contract-derived) | `api/validation.py` + engine e2e — lesson-document validation |
 | `learn_ukrainian_linguistics@1.0.0` | Python module (adapted) | `engine/linguistics.py` — VESUM `verify_word/words/lemma` |
 
@@ -20,6 +20,11 @@ not update anything here automatically — bump `<version>`, re-copy, refresh th
 manifest, and review the digest change. Private data (anchors, prompts, IR,
 teacher text, `sources.db`) never flows into this directory or back to the
 public repo.
+
+The Wave 1B extension in `lu.activity.v1@1.0.0` is explicitly recorded as an
+adaptation in its manifest. It exists only until public `lu.activity.v1` ships
+matching `text-questions` and `short-writing` B1 definitions; then replace it
+with a verbatim, newly versioned public pin.
 
 ## Bumping an artifact
 1. Copy the new public file into a new `<artifact>@<newversion>/` dir.

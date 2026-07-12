@@ -64,6 +64,12 @@
         "$ref": "#/definitions/select-b1"
       },
       {
+        "$ref": "#/definitions/short-writing-b1"
+      },
+      {
+        "$ref": "#/definitions/text-questions-b1"
+      },
+      {
         "$ref": "#/definitions/translate-b1"
       },
       {
@@ -1158,6 +1164,123 @@
             },
             "additionalProperties": false
           }
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional display title for the activity"
+        }
+      },
+      "additionalProperties": false
+    },
+    "short-writing-b1": {
+      "type": "object",
+      "required": [
+        "type",
+        "instruction",
+        "prompt",
+        "source_ref",
+        "word_count_guidance"
+      ],
+      "properties": {
+        "type": {
+          "const": "short-writing"
+        },
+        "id": {
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Teacher-visible reference to the anchor text"
+        },
+        "word_count_guidance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_answer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional teacher-only model response; never learner input"
+        },
+        "rubric_hint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "teacher_guidance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional display title for the activity"
+        }
+      },
+      "additionalProperties": false
+    },
+    "text-questions-b1": {
+      "type": "object",
+      "required": [
+        "type",
+        "instruction",
+        "source_ref",
+        "items"
+      ],
+      "properties": {
+        "type": {
+          "const": "text-questions"
+        },
+        "id": {
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Teacher-visible reference to the anchor text"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": [
+              "question"
+            ],
+            "properties": {
+              "question": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model_answer": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional teacher-only model response; never learner input"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "teacher_guidance": {
+          "type": "string",
+          "minLength": 1
         },
         "title": {
           "type": "string",

@@ -6,6 +6,12 @@
   "pos": "noun"
  },
  {
+  "word_form": "Альцгеймера",
+  "lemma": "Альцгеймер",
+  "tags": "noun:anim:m:v_rod:prop:lname",
+  "pos": "noun"
+ },
+ {
   "word_form": "активізуються",
   "lemma": "активізуватися",
   "tags": "verb:rev:imperf:pres:p:3",
@@ -15,6 +21,18 @@
   "word_form": "активізуються",
   "lemma": "активізуватися",
   "tags": "verb:rev:perf:futr:p:3",
+  "pos": "verb"
+ },
+ {
+  "word_form": "активізується",
+  "lemma": "активізуватися",
+  "tags": "verb:rev:imperf:pres:s:3",
+  "pos": "verb"
+ },
+ {
+  "word_form": "активізується",
+  "lemma": "активізуватися",
+  "tags": "verb:rev:perf:futr:s:3",
   "pos": "verb"
  },
  {
@@ -399,6 +417,12 @@
   "word_form": "ділянок",
   "lemma": "ділянка",
   "tags": "noun:inanim:p:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "ділянки",
+  "lemma": "ділянка",
+  "tags": "noun:inanim:p:v_naz",
   "pos": "noun"
  },
  {
@@ -996,6 +1020,12 @@
   "pos": "noun"
  },
  {
+  "word_form": "напиши",
+  "lemma": "написати",
+  "tags": "verb:perf:impr:s:2",
+  "pos": "verb"
+ },
+ {
   "word_form": "не",
   "lemma": "не",
   "tags": "part",
@@ -1344,6 +1374,12 @@
   "pos": "verb"
  },
  {
+  "word_form": "про",
+  "lemma": "про",
+  "tags": "prep",
+  "pos": "prep"
+ },
+ {
   "word_form": "півтора",
   "lemma": "півтора",
   "tags": "numr:m:v_dav:nv",
@@ -1503,6 +1539,12 @@
   "word_form": "ризик",
   "lemma": "ризик",
   "tags": "noun:inanim:m:v_zna",
+  "pos": "noun"
+ },
+ {
+  "word_form": "речення",
+  "lemma": "речення",
+  "tags": "noun:inanim:n:v_zna",
   "pos": "noun"
  },
  {
@@ -1956,6 +1998,18 @@
   "pos": "noun"
  },
  {
+  "word_form": "словами",
+  "lemma": "слово",
+  "tags": "noun:inanim:p:v_oru",
+  "pos": "noun"
+ },
+ {
+  "word_form": "своїми",
+  "lemma": "свій",
+  "tags": "adj:p:v_oru:pron:pos",
+  "pos": "adj"
+ },
+ {
   "word_form": "стіл",
   "lemma": "стіл",
   "tags": "noun:inanim:m:v_naz",
@@ -2368,5 +2422,11 @@
   "lemma": "щодня",
   "tags": "adv",
   "pos": "adv"
+ },
+ {
+  "word_form": "що",
+  "lemma": "що",
+  "tags": "noun:inanim:n:v_naz:pron:int:rel",
+  "pos": "noun"
  }
 ]

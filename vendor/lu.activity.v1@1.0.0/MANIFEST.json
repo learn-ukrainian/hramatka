@@ -8,11 +8,12 @@
     "path": "schemas/activities-b1.schema.json",
     "commit": "28c257d82bc2dbb7adea8b30264e3f6dfabab323"
   },
-  "adapted": false,
+  "adapted": true,
+  "adaptation": "Private Wave 1B B1-schema extension: adds provisional text-questions and short-writing definitions pending matching public lu.activity.v1 definitions. All pre-existing definitions remain copied from the pinned public source.",
   "files": {
     "activities-b1.schema.json": {
-      "sha256": "0faf5a3e03d2220d7d7ac35f9e2aeb4d35cd5547e9b17a88a8d10cce3b439453",
-      "size": 31935
+      "sha256": "81f2ae658913212ec0c54b7e870cc415feaa9630238169df53e080c169913a4a",
+      "size": 34930
     }
   }
 }
