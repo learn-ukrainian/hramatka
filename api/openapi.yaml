@@ -1,0 +1,1012 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Hramatka teacher pilot API
+  version: 1.0.0-pilot-frozen
+  license:
+    name: Proprietary private pilot contract
+    url: https://github.com/learn-ukrainian/learn-ukrainian-infra-private
+  description: |
+    Frozen same-origin browser contract for the pasted-text-only Hramatka pilot.
+    The browser authenticates only with the HttpOnly pilot-session cookie; the
+    legacy shared bearer credential is deliberately absent from this contract.
+servers:
+  - url: /
+    description: Same origin as the static teacher application
+tags:
+  - name: Session
+    description: Invite exchange and current-session lifecycle.
+  - name: Lessons
+    description: Owner-scoped bake, review, acceptance, and catalog lifecycle.
+  - name: Probes
+    description: Unauthenticated process-health and deployment-readiness probes.
+paths:
+  /api/session/redeem:
+    post:
+      tags: [Session]
+      operationId: redeemPilotInvite
+      summary: Exchange one invite token for a pilot session
+      security: []
+      description: |
+        The teacher bundle reads the token from `#invite=<token>`, posts it once,
+        and immediately replaces the URL with `/teacher/`. Missing, unknown,
+        used, expired, and revoked invites all return the same `410` response.
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteRedeemRequest'
+      responses:
+        '200':
+          description: Invite consumed and session committed
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '410':
+          $ref: '#/components/responses/InviteUnavailable'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/session:
+    get:
+      tags: [Session]
+      operationId: getPilotSession
+      summary: Resolve the current teacher session and its current CSRF token
+      security:
+        - PilotSession: []
+      responses:
+        '200':
+          description: Current non-expired, non-revoked session
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+    delete:
+      tags: [Session]
+      operationId: revokeCurrentPilotSession
+      summary: Revoke the current session and expire its cookie
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session revocation committed; no response body
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/ClearedSessionCookie'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons:
+    post:
+      tags: [Lessons]
+      operationId: createLesson
+      summary: Create or recover an idempotent pasted-text bake
+      description: |
+        The browser creates a UUID and reuses it for network retries. The
+        request hash covers `anchor`, `level`, `duration`, and normalized
+        `focus` (`null` when omitted). Same UUID and same request returns the
+        existing aggregate with `reused: true`; different input returns `409`.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LessonCreateRequest'
+      responses:
+        '202':
+          description: New bake durably queued or identical existing aggregate returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonCreateAccepted'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+    get:
+      tags: [Lessons]
+      operationId: listLessons
+      summary: List every lesson owned by the current teacher
+      description: |
+        Returns the complete pilot catalog ordered by `updated_at DESC, id DESC`.
+        No row owned by another teacher may participate in this query.
+      security:
+        - PilotSession: []
+      responses:
+        '200':
+          description: Owner-scoped lesson catalog, including an empty catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonCatalog'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/status:
+    get:
+      tags: [Lessons]
+      operationId: getLessonStatus
+      summary: Poll one owner-scoped bake status
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+      responses:
+        '200':
+          description: Durable aggregate status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}:
+    get:
+      tags: [Lessons]
+      operationId: getLesson
+      summary: Get one ready owner-scoped lesson resource
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+      responses:
+        '200':
+          description: Validated lesson plus concurrency and acceptance metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/LessonNotReady'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/accept:
+    post:
+      tags: [Lessons]
+      operationId: acknowledgeWarningBlock
+      summary: Acknowledge one visible warning block
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Acknowledgement committed and aggregate revision incremented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WarningAcknowledgement'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/WarningBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/accept:
+    post:
+      tags: [Lessons]
+      operationId: acceptLesson
+      summary: Accept the exact current lesson revision
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Acceptance committed at the returned revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/AcceptanceConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/draft:
+    post:
+      tags: [Lessons]
+      operationId: returnLessonToDraft
+      summary: Clear final acceptance at the exact current revision
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Draft transition committed and revision incremented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/healthz:
+    get:
+      tags: [Probes]
+      operationId: healthz
+      summary: Report that the API process can serve HTTP
+      security: []
+      responses:
+        '200':
+          description: Process is alive; this does not assert readiness
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/readyz:
+    get:
+      tags: [Probes]
+      operationId: readyz
+      summary: Check SQLite/schema and real-baker production wiring
+      security: []
+      responses:
+        '200':
+          description: Database is writable, migrations are current, and mock mode is off
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          $ref: '#/components/responses/NotReady'
+components:
+  securitySchemes:
+    PilotSession:
+      type: apiKey
+      in: cookie
+      name: __Host-hramatka_session
+      description: Opaque 256-bit session secret; only its digest is stored.
+  parameters:
+    LessonId:
+      name: lesson_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Browser-generated UUID used as both lesson ID and idempotency key.
+    BlockId:
+      name: block_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+    OriginHeader:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uri
+      description: Must exactly equal the configured HTTPS pilot origin; missing is rejected.
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+      description: Current session-bound CSRF secret returned by GET /api/session.
+  headers:
+    SessionCookie:
+      description: '__Host-hramatka_session=<opaque>; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax (no Domain attribute)'
+      schema:
+        type: string
+    ClearedSessionCookie:
+      description: '__Host-hramatka_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax (no Domain attribute)'
+      schema:
+        type: string
+    NoStore:
+      description: Sensitive session responses are never cached.
+      schema:
+        type: string
+        const: no-store
+  requestBodies:
+    RevisionMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RevisionMutation'
+  schemas:
+    PilotActivityType:
+      $ref: ../contracts/pilot_activity_types.schema.json#/$defs/pilotActivityType
+    InviteRedeemRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+          description: Base64url without padding, decoded length exactly 32 bytes.
+    Teacher:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    Session:
+      type: object
+      additionalProperties: false
+      required: [teacher, expires_at, csrf_token]
+      properties:
+        teacher:
+          $ref: '#/components/schemas/Teacher'
+        expires_at:
+          type: string
+          format: date-time
+        csrf_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+          description: Keep in memory only; never put in a URL or persistent browser storage.
+    AnchorInput:
+      type: object
+      additionalProperties: false
+      required: [text, source]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          description: 1–100000 Unicode code points after JSON decoding; whitespace-only is invalid.
+        source:
+          type: string
+          const: teacher-paste
+          description: teacher-url is not accepted by this pilot.
+    LessonCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [id, anchor, level, duration]
+      properties:
+        id:
+          type: string
+          format: uuid
+        anchor:
+          $ref: '#/components/schemas/AnchorInput'
+        level:
+          type: string
+          const: B1
+        duration:
+          type: integer
+          enum: [45, 60, 90]
+        focus:
+          type: [string, 'null']
+          maxLength: 500
+          default: null
+    LessonCreateAccepted:
+      type: object
+      additionalProperties: false
+      required: [id, status, revision, reused]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/LessonState'
+        revision:
+          type: integer
+          minimum: 1
+        reused:
+          type: boolean
+          description: True only when the UUID was already bound to the identical request.
+    LessonState:
+      type: string
+      enum: [draft, baking, ready, failed]
+    LessonStep:
+      type: string
+      enum: [текст отримано, завдання складено, перевірка, готово]
+    FailureCode:
+      type: [string, 'null']
+      enum:
+        - null
+        - bake_timeout
+        - worker_restarted
+        - provider_unavailable
+        - engine_unavailable
+        - lesson_schema_invalid
+        - unknown_safe_failure
+    LessonStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - step
+        - revision
+        - failure_code
+        - failure_message
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/LessonState'
+        step:
+          $ref: '#/components/schemas/LessonStep'
+        revision:
+          type: integer
+          minimum: 1
+        failure_code:
+          $ref: '#/components/schemas/FailureCode'
+        failure_message:
+          type: [string, 'null']
+          description: Sanitized teacher-facing text; never a traceback or provider response.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    LessonCatalogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - status
+        - duration
+        - focus
+        - revision
+        - accepted
+        - accepted_at
+        - accepted_revision
+        - failure_code
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: [string, 'null']
+          maxLength: 52
+          description: Null until a validated lesson is materialized.
+        status:
+          $ref: '#/components/schemas/LessonState'
+        duration:
+          type: integer
+          enum: [45, 60, 90]
+        focus:
+          type: [string, 'null']
+        revision:
+          type: integer
+          minimum: 1
+        accepted:
+          type: boolean
+        accepted_at:
+          type: [string, 'null']
+          format: date-time
+        accepted_revision:
+          type: [integer, 'null']
+          minimum: 1
+        failure_code:
+          $ref: '#/components/schemas/FailureCode'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    LessonCatalog:
+      type: object
+      additionalProperties: false
+      required: [lessons]
+      properties:
+        lessons:
+          type: array
+          items:
+            $ref: '#/components/schemas/LessonCatalogItem'
+    ActivityDocument:
+      allOf:
+        - $ref: ../vendor/lu.activity.v1@1.0.0-ffd54054/lu.activity.v1.schema.json
+        - type: object
+          properties:
+            type:
+              $ref: '#/components/schemas/PilotActivityType'
+    LessonAnchor:
+      type: object
+      additionalProperties: false
+      required: [text, source, chars]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        source:
+          type: string
+          const: teacher-paste
+        chars:
+          type: integer
+          minimum: 1
+          maximum: 100000
+    BlockProvenance:
+      type: object
+      additionalProperties: false
+      required: [source, generator, gates, external_options]
+      properties:
+        source:
+          type: string
+          enum: [anchor, generated, teacher]
+        generator:
+          type: string
+          minLength: 1
+        gates:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        external_options:
+          type: boolean
+    LessonBlock:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - phase
+        - type
+        - mode
+        - activity
+        - answer_key
+        - mark
+        - note
+        - edited
+        - provenance
+      properties:
+        id:
+          type: string
+          minLength: 1
+        phase:
+          type: integer
+          enum: [1, 2, 3]
+        type:
+          $ref: '#/components/schemas/PilotActivityType'
+        mode:
+          type: string
+          enum: [усно, письмово, вдома]
+        activity:
+          $ref: '#/components/schemas/ActivityDocument'
+        answer_key:
+          type: [string, object, array, 'null']
+        mark:
+          type: string
+          enum: [ok, warn]
+        note:
+          type: [string, 'null']
+        edited:
+          type: boolean
+        provenance:
+          $ref: '#/components/schemas/BlockProvenance'
+      description: |
+        `type` MUST equal `activity.type`. If `provenance.external_options` is
+        true, `mark` MUST be `warn`. Auto-checkable types MUST carry an answer key.
+    RejectedDraft:
+      type: object
+      additionalProperties: false
+      required: [type, activity, reason]
+      properties:
+        type:
+          $ref: '#/components/schemas/PilotActivityType'
+        activity:
+          $ref: '#/components/schemas/ActivityDocument'
+        reason:
+          type: string
+          minLength: 1
+      description: '`type` MUST equal `activity.type`.'
+    LessonDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - id
+        - title
+        - level
+        - method
+        - focus
+        - anchor
+        - duration
+        - version
+        - status
+        - last_error
+        - accepted
+        - blocks
+        - rejected
+        - created_at
+        - updated_at
+      properties:
+        schema:
+          type: string
+          const: lu.lesson.v1
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 52
+        level:
+          type: string
+          const: B1
+        method:
+          type: string
+          const: ttt
+        focus:
+          type: [string, 'null']
+        anchor:
+          $ref: '#/components/schemas/LessonAnchor'
+        duration:
+          type: integer
+          enum: [45, 60, 90]
+        version:
+          type: integer
+          const: 1
+        status:
+          $ref: '#/components/schemas/LessonState'
+        last_error:
+          type: [string, 'null']
+          description: Sanitized only; failed status requires a non-empty value.
+        accepted:
+          type: boolean
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/LessonBlock'
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/RejectedDraft'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      description: |
+        Pilot-constrained `lu.lesson.v1`. It matches the verbatim public schema
+        pinned at `hramatka/vendor/lu.lesson.v1@1.0.0-ffd54054/`, narrows the
+        anchor to teacher-paste, and narrows blocks to PILOT_ACTIVITY_TYPES.
+    LessonResource:
+      type: object
+      additionalProperties: false
+      required:
+        - lesson_id
+        - revision
+        - accepted_at
+        - accepted_revision
+        - warning_acknowledgements
+        - lesson
+      properties:
+        lesson_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        accepted_at:
+          type: [string, 'null']
+          format: date-time
+        accepted_revision:
+          type: [integer, 'null']
+          minimum: 1
+        warning_acknowledgements:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        lesson:
+          $ref: '#/components/schemas/LessonDocument'
+    RevisionMutation:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision:
+          type: integer
+          minimum: 1
+          description: Revision last read by this browser; stale values return 409.
+    WarningAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [lesson_id, revision, warning_acknowledgements]
+      properties:
+        lesson_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        warning_acknowledgements:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        message:
+          type: string
+          minLength: 1
+        retryable:
+          type: boolean
+        lesson_id:
+          type: string
+          format: uuid
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ready
+  responses:
+    Unauthenticated:
+      description: Missing, unknown, expired, or revoked session (indistinguishable)
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: session_required
+            message: A valid teacher session is required.
+            retryable: false
+    CsrfRejected:
+      description: Missing/mismatched Origin or missing/invalid session-bound CSRF token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: csrf_rejected
+            message: This request did not pass same-origin validation.
+            retryable: false
+    InviteUnavailable:
+      description: Invite is unknown, already used, expired, or revoked
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: invite_unavailable
+            message: This invite is no longer available.
+            retryable: false
+    InvalidInput:
+      description: Invalid JSON/shape/path value, whitespace-only paste, or paste over 100000 code points
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: invalid_input
+            message: The request is invalid.
+            retryable: false
+    PersistenceUnavailable:
+      description: SQLite read/transaction/commit failure; no success is reported before commit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: persistence_unavailable
+            message: The service could not persist this request. Try again.
+            retryable: true
+    NotReady:
+      description: Readiness dependency failed without exposing internal paths/configuration
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: service_not_ready
+            message: The service is not ready.
+            retryable: true
+    IdempotencyConflict:
+      description: The UUID is already bound to a different canonical request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: idempotency_conflict
+            message: This lesson ID is already bound to different inputs.
+            retryable: false
+            lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+    LessonNotFound:
+      description: Lesson does not exist or belongs to another teacher (indistinguishable)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: lesson_not_found
+            message: Lesson not found.
+            retryable: false
+    WarningBlockNotFound:
+      description: |
+        An absent/other-owner lesson returns `lesson_not_found`; a present ready
+        lesson whose block is absent or not a visible warning returns
+        `warning_block_not_found`. A present non-ready lesson returns 409
+        `lesson_state_conflict` instead.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            lesson_absent:
+              value:
+                code: lesson_not_found
+                message: Lesson not found.
+                retryable: false
+            block_absent:
+              value:
+                code: warning_block_not_found
+                message: Warning block not found.
+                retryable: false
+    LessonNotReady:
+      description: Aggregate has not materialized a validated ready lesson
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: lesson_not_ready
+            message: The lesson is not ready.
+            retryable: false
+    MutationConflict:
+      description: Stale expected_revision or invalid current aggregate state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            stale_revision:
+              value:
+                code: revision_conflict
+                message: The lesson changed; reload it before trying again.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+            invalid_state:
+              value:
+                code: lesson_state_conflict
+                message: The lesson is not in a state that allows this change.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+    AcceptanceConflict:
+      description: Stale expected_revision, non-ready state, or unresolved visible warnings
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            warnings:
+              value:
+                code: warning_acknowledgements_required
+                message: Acknowledge every visible warning before accepting this lesson.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+            stale_revision:
+              value:
+                code: revision_conflict
+                message: The lesson changed; reload it before trying again.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+            invalid_state:
+              value:
+                code: lesson_state_conflict
+                message: The lesson is not in a state that allows acceptance.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af

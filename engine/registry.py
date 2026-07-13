@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from hramatka.contracts import PILOT_ACTIVITY_TYPES
+
 from . import retrieval, schema
 from .gates import evidence_span, matchup_semantics, numeral, vesum_tags
 from .gates import vesum as vesum_gate
@@ -1167,7 +1169,7 @@ class ActivityRegistryEntry:
         }
 
 
-ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
+_ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
     "true-false": ActivityRegistryEntry(
         activity_type="true-false",
         prompt_builder=build_extractive_v1_prompt,
@@ -1339,6 +1341,13 @@ ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
         is_puzzle=False,
         public_projector=schema.project_to_b1,
     ),
+}
+
+if set(_ACTIVITY_ENTRIES) != set(PILOT_ACTIVITY_TYPES):
+    raise RuntimeError("Baker activity entries must match the frozen pilot registry")
+
+ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
+    activity_type: _ACTIVITY_ENTRIES[activity_type] for activity_type in PILOT_ACTIVITY_TYPES
 }
 
 

@@ -1,0 +1,18 @@
+{
+  "artifact": "lu.lesson.v1",
+  "version": "1.0.0",
+  "kind": "json-schema",
+  "description": "Verbatim public lesson contract accompanying the frozen activity contract.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "packages/activity-kit/src/lu.lesson.v1.schema.json",
+    "commit": "ffd54054d37e40a46dfed3f0a4714df20a3028be"
+  },
+  "adapted": false,
+  "files": {
+    "lu.lesson.v1.schema.json": {
+      "sha256": "960d5f36f9a622003ef622dc1bcd805694d79d28e24ea285a48abccaf98a9b2e",
+      "size": 8382
+    }
+  }
+}

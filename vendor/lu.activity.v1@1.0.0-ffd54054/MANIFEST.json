@@ -1,0 +1,23 @@
+{
+  "artifact": "lu.activity.v1",
+  "version": "1.0.0",
+  "kind": "json-schema+golden-fixture",
+  "description": "Verbatim public activity contract and nine-type golden fixture used to freeze the Hramatka pilot registry.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "schema_path": "packages/activity-kit/src/lu.activity.v1.schema.json",
+    "fixture_path": "packages/activity-kit/src/fixtures/lu.activity.v1.fixtures.json",
+    "commit": "ffd54054d37e40a46dfed3f0a4714df20a3028be"
+  },
+  "adapted": false,
+  "files": {
+    "lu.activity.v1.schema.json": {
+      "sha256": "22ad0af180d5815bd4aa7718ee174c2b0adcdb836dc81b0e1b3542d937936aac",
+      "size": 19556
+    },
+    "lu.activity.v1.fixtures.json": {
+      "sha256": "44863712fbe8a84148ecce2d7c8e28086aea00d1afce120860a2920bcc0a7ba6",
+      "size": 7188
+    }
+  }
+}

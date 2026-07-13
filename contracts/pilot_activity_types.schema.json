@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hramatka:pilot-activity-types",
+  "title": "PILOT_ACTIVITY_TYPES",
+  "description": "Frozen player-backed activity types for the pasted-text teacher pilot.",
+  "$defs": {
+    "pilotActivityType": {
+      "type": "string",
+      "enum": [
+        "true-false",
+        "cloze",
+        "match-up",
+        "quiz",
+        "mark-the-words",
+        "fill-in",
+        "error-correction",
+        "text-questions",
+        "short-writing"
+      ]
+    }
+  }
+}

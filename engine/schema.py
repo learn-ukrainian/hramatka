@@ -16,20 +16,12 @@ from functools import lru_cache
 
 import jsonschema
 
+from hramatka.contracts import PILOT_ACTIVITY_TYPES
+
 from . import vendoring
 
 # activities-b1 `type` const → its self-contained def name in the schema.
-_TYPE_TO_DEF = {
-    "true-false": "true-false-b1",
-    "cloze": "cloze-b1",
-    "match-up": "match-up-b1",
-    "mark-the-words": "mark-the-words-b1",
-    "quiz": "quiz-b1",
-    "error-correction": "error-correction-b1",
-    "fill-in": "fill-in-b1",
-    "text-questions": "text-questions-b1",
-    "short-writing": "short-writing-b1",
-}
+_TYPE_TO_DEF = {activity_type: f"{activity_type}-b1" for activity_type in PILOT_ACTIVITY_TYPES}
 
 
 @lru_cache(maxsize=1)

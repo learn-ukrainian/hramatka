@@ -1,0 +1,5 @@
+extends:
+  - recommended
+rules:
+  # Liveness/readiness probes intentionally have no client-error contract.
+  operation-4xx-response: off

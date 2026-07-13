@@ -1,4 +1,15 @@
-# Hramatka mock-first bake API
+# Hramatka bake API
+
+The frozen teacher-pilot implementation contract is checked in alongside the current
+mock-first skeleton:
+
+- `openapi.yaml` — exact same-origin `/api/*` wire contract
+- `teacher-access-contract.md` — invite, cookie, CSRF, ownership, and privacy rules
+- `persistence-contract.md` — SQLite aggregate, transaction, catalog, and revision rules
+
+The code below still describes the pre-pilot skeleton. Implementations must migrate it
+to the frozen contract above; they must not infer the pilot interface from current route
+behavior.
 
 This private API is a thin local skeleton for the Step 5 asynchronous bake
 workflow. It is poll-first and requires one `Authorization: Bearer` teacher

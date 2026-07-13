@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from hramatka.contracts import PILOT_ACTIVITY_TYPES
 from hramatka.engine import fixtures, pipeline, registry, schema
 from hramatka.engine.generate import generate, generate_baseline_v1
 
@@ -15,17 +16,7 @@ def _project(raw: dict) -> dict:
 
 
 def test_registry_migrates_all_wave_1b_activity_types():
-    assert set(registry.ACTIVITY_REGISTRY) == {
-        "true-false",
-        "cloze",
-        "match-up",
-        "quiz",
-        "mark-the-words",
-        "error-correction",
-        "fill-in",
-        "text-questions",
-        "short-writing",
-    }
+    assert tuple(registry.ACTIVITY_REGISTRY) == PILOT_ACTIVITY_TYPES
     wave_1b_examples = [
         {
             "type": "quiz",

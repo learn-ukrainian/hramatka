@@ -1,0 +1,214 @@
+[
+  {
+    "id": "golden-true-false",
+    "type": "true-false",
+    "title": "Перевірка тверджень",
+    "level": "b1",
+    "payload": {
+      "type": "true-false",
+      "instruction": "Прочитайте твердження й оберіть правильну відповідь.",
+      "items": [
+        {
+          "statement": "Це навчальне твердження позначено як правдиве.",
+          "correct": true,
+          "explanation": "У ключі для цього твердження вказано «правда»."
+        }
+      ]
+    },
+    "answer_key": {
+      "items": [{ "index": 0, "correct": true }]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-cloze",
+    "type": "cloze",
+    "title": "Читання в контексті",
+    "level": "b1",
+    "payload": {
+      "type": "cloze",
+      "instruction": "Виберіть слова, що доповнюють речення.",
+      "text": "Уважне читання [___:1] зрозуміти зміст речення.",
+      "blanks": [
+        { "id": 1, "answer": "допомагає", "options": ["допомагає", "заважає"] }
+      ]
+    },
+    "answer_key": {
+      "blanks": [{ "id": 1, "answer": "допомагає" }]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-match-up",
+    "type": "match-up",
+    "title": "Навчальні поняття",
+    "level": "b1",
+    "payload": {
+      "type": "match-up",
+      "instruction": "З'єднайте поняття з відповідним описом.",
+      "pairs": [
+        { "left": "пояснення", "right": "додатковий коментар" },
+        { "left": "відповідь", "right": "реакція на запитання" }
+      ]
+    },
+    "answer_key": {
+      "pairs": [
+        { "left_index": 0, "right_index": 0 },
+        { "left_index": 1, "right_index": 1 }
+      ]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-quiz",
+    "type": "quiz",
+    "title": "Тест",
+    "level": "b1",
+    "payload": {
+      "type": "quiz",
+      "instruction": "Оберіть правильну відповідь.",
+      "items": [
+        {
+          "question": "Яке слово правильне?",
+          "options": ["книга", "книгу"],
+          "correct": 0,
+          "explanation": "У називному відмінку — «книга»."
+        }
+      ]
+    },
+    "answer_key": {
+      "items": [{ "index": 0, "correct": 0 }]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-mark-the-words",
+    "type": "mark-the-words",
+    "title": "Позначте слова",
+    "level": "b1",
+    "payload": {
+      "type": "mark-the-words",
+      "instruction": "Позначте іменники.",
+      "text": "Книга лежить на столі.",
+      "target_words": ["Книга", "столі"],
+      "criteria": "Називний або місцевий відмінок."
+    },
+    "answer_key": {
+      "target_words": ["Книга", "столі"]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-fill-in",
+    "type": "fill-in",
+    "title": "Вставте слово",
+    "level": "b1",
+    "payload": {
+      "type": "fill-in",
+      "instruction": "Оберіть форму.",
+      "items": [
+        {
+          "sentence": "Це {правильна форма}.",
+          "answer": "книга",
+          "options": ["книга", "книгу"]
+        }
+      ]
+    },
+    "answer_key": {
+      "items": ["книга"]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-error-correction",
+    "type": "error-correction",
+    "title": "Виправте помилку",
+    "level": "b1",
+    "payload": {
+      "type": "error-correction",
+      "instruction": "Знайдіть помилку й виправте.",
+      "items": ["Це моя стіл."]
+    },
+    "answer_key": {
+      "items": ["Це мій стіл."]
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-text-questions",
+    "type": "text-questions",
+    "title": "Питання до тексту",
+    "level": "b1",
+    "payload": {
+      "type": "text-questions",
+      "instruction": "Дайте відповіді за текстом.",
+      "source_ref": "абзац 2, речення 1–3",
+      "items": [
+        "Чому їм потрібна була квартира з двома кімнатами?",
+        "Скільки коштувала перша квартира?"
+      ]
+    },
+    "answer_key": {
+      "guidance": "Перевірте відповіді за текстом якоря.",
+      "model_answers": [
+        "Одна кімната для роботи, друга для життя.",
+        "20 000 гривень на місяць."
+      ],
+      "rubric": "Повна відповідь за змістом тексту — «добре»; часткова — «задовільно»."
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  },
+  {
+    "id": "golden-short-writing",
+    "type": "short-writing",
+    "title": "Коротке письмо",
+    "level": "b1",
+    "payload": {
+      "type": "short-writing",
+      "prompt": "Опишіть квартиру вашої мрії (7–8 речень).",
+      "source_ref": "тема уроку: житло"
+    },
+    "answer_key": {
+      "guidance": "Вільна відповідь — перевірте форми порівняння.",
+      "model_answer": "Моя квартира мрії світла й тиха. Вона менша за центральні квартири, але зручніша за стару.",
+      "rubric": "Щонайменше три порівняння та 7–8 речень — «добре»."
+    },
+    "provenance": {
+      "source": "https://learn-ukrainian.github.io/",
+      "generator": "hramatka-contract-golden-fixture",
+      "gates": ["schema", "player-smoke"]
+    }
+  }
+]

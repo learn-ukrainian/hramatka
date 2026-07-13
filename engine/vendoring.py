@@ -16,6 +16,7 @@ import importlib.util
 import json
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor"
 
@@ -23,9 +24,11 @@ VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor"
 # version is a one-line change here plus a manifest refresh + review.
 LU_ACTIVITY = "lu.activity.v1@1.0.0"
 LU_LESSON = "lu.lesson.v1@1.0.0"
+PILOT_LU_ACTIVITY = "lu.activity.v1@1.0.0-ffd54054"
+PILOT_LU_LESSON = "lu.lesson.v1@1.0.0-ffd54054"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
 
-REGISTERED = (LU_ACTIVITY, LU_LESSON, LINGUISTICS)
+REGISTERED = (LU_ACTIVITY, LU_LESSON, PILOT_LU_ACTIVITY, PILOT_LU_LESSON, LINGUISTICS)
 
 _module_cache: dict[str, tuple[str, ModuleType]] = {}
 
@@ -90,7 +93,7 @@ def verified_path(artifact: str, filename: str) -> Path:
     return _artifact_dir(artifact) / filename
 
 
-def read_json(artifact: str, filename: str) -> dict:
+def read_json(artifact: str, filename: str) -> Any:
     """Parse a vendored JSON file after digest verification."""
     return json.loads(verified_path(artifact, filename).read_text(encoding="utf-8"))
 
