@@ -107,7 +107,7 @@ def test_registry_migrates_all_wave_1b_activity_types():
     ]
     for raw in [*fixtures.GOOD_ACTIVITIES, *wave_1b_examples]:
         entry = registry.ACTIVITY_REGISTRY[raw["type"]]
-        assert entry.prompt_version.startswith("extractive-v3:")
+        assert entry.prompt_version.startswith("extractive-v4:")
         assert entry.assessment_mode in {"auto_gradable", "teacher_assessed"}
         assert entry.gate_chain and entry.gate_version
         assert entry.minimum_survivors >= 1 and entry.item_budget >= 1

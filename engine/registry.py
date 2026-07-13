@@ -15,7 +15,7 @@ from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
 
 REGISTRY_VERSION = "wave1b.registry.v1"
-EXTRACTIVE_PROMPT_VERSION = "extractive-v3:c234987c5c32"
+EXTRACTIVE_PROMPT_VERSION = "extractive-v4:e5fa64ff1a28"
 
 PromptBuilder = Callable[[str, str, list[str], str], str]
 EvidenceLocator = Callable[[dict[str, Any]], tuple[str, ...]]
@@ -1274,7 +1274,7 @@ ACTIVITY_REGISTRY: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_match_up_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="match-up.extractive.v1",
-        gate_version="match-up.gates.v1",
+        gate_version="match-up.gates.v2",
         partition_key="pairs",
         minimum_survivors=2,
         ttt_phases=(1, 2),

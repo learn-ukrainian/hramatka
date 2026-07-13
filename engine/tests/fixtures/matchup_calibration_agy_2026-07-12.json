@@ -1,0 +1,53 @@
+{
+  "source": "AGY match-up calibration, 2026-07-12",
+  "pairs": [
+    {
+      "id": "balakaty-rozmovlyaty",
+      "classification": "good",
+      "left": "балакати",
+      "right": "розмовляти"
+    },
+    {
+      "id": "bazhaty-khotity",
+      "classification": "good",
+      "left": "бажати",
+      "right": "хотіти"
+    },
+    {
+      "id": "hasyty-tushyty",
+      "classification": "good",
+      "left": "гасити",
+      "right": "тушити"
+    },
+    {
+      "id": "shvydko-khutko",
+      "classification": "good",
+      "left": "швидко",
+      "right": "хутко"
+    },
+    {
+      "id": "podavaty-davaty",
+      "classification": "bad",
+      "left": "подавати",
+      "right": "давати"
+    },
+    {
+      "id": "nachynka-farsh",
+      "classification": "bad",
+      "left": "начинка",
+      "right": "фарш"
+    },
+    {
+      "id": "hodyna-chas",
+      "classification": "bad",
+      "left": "година",
+      "right": "час"
+    },
+    {
+      "id": "volodity-maty",
+      "classification": "bad",
+      "left": "володіти",
+      "right": "мати"
+    }
+  ]
+}
