@@ -3,7 +3,8 @@
   "vesum_forms": [
     {"word_form": "получка", "lemma": "получка", "tags": "noun:inanim:f:v_naz", "pos": "noun"},
     {"word_form": "получку", "lemma": "получка", "tags": "noun:inanim:f:v_zna", "pos": "noun"},
-    {"word_form": "получки", "lemma": "получка", "tags": "noun:inanim:f:v_rod", "pos": "noun"}
+    {"word_form": "получки", "lemma": "получка", "tags": "noun:inanim:f:v_rod", "pos": "noun"},
+    {"word_form": "моз", "lemma": "моз", "tags": "noun:inanim:m:v_naz", "pos": "noun"}
   ],
   "atlas_rows": [
     {

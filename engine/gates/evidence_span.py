@@ -89,3 +89,55 @@ def check_evidence(quote: str, anchor_body: str, *, extractive: bool = True) -> 
         "char_end": None,
         "detail": "Evidence quote not literal; allowed only for inferential types.",
     }
+
+
+_WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
+_APOSTROPHE_TRANSLATION = str.maketrans({"’": "'", "ʼ": "'"})
+
+
+def _normalize_token(t: str) -> str:
+    return _nfc(t).translate(_APOSTROPHE_TRANSLATION).casefold()
+
+
+def _tokenize(text: str) -> list[str]:
+    """Cyrillic word tokens (including hyphens), casefolded and normalized."""
+    if not isinstance(text, str):
+        return []
+    return [_normalize_token(t) for t in _WORD_RE.findall(_nfc(text))]
+
+
+def check_option_in_quote(option: str, quote: str) -> dict:
+    """Verify that the option is supported by the quote at token boundaries."""
+    if not isinstance(option, str) or not option.strip():
+        return {
+            "status": "fail",
+            "detail": "Empty or missing option — cannot match.",
+        }
+    if not isinstance(quote, str) or not quote.strip():
+        return {
+            "status": "fail",
+            "detail": "Empty or missing quote — cannot match.",
+        }
+
+    opt_tokens = _tokenize(option)
+    quote_tokens = _tokenize(quote)
+
+    if not opt_tokens:
+        return {
+            "status": "fail",
+            "detail": f"Option '{option}' contains no Cyrillic word tokens.",
+        }
+
+    n = len(opt_tokens)
+    m = len(quote_tokens)
+    for i in range(m - n + 1):
+        if quote_tokens[i : i + n] == opt_tokens:
+            return {
+                "status": "pass",
+                "detail": f"Option '{option}' matches the quote at token boundaries.",
+            }
+
+    return {
+        "status": "fail",
+        "detail": f"Option '{option}' not found in the quote at token boundaries.",
+    }

@@ -106,8 +106,7 @@ def test_spelled_out_fraction_statement_survives_as_warn(tmp_path):
     tf = res.activities[0]
     numeral_checks = [c for c in tf.gate_result.checks if c.gate == "numeral"]
     assert any(
-        c.status == "warn" and "fraction-variable-government" in c.detail
-        for c in numeral_checks
+        c.status == "warn" and "fraction-variable-government" in c.detail for c in numeral_checks
     )
     assert all(c.status != "fail" for c in numeral_checks)
     assert tf.gate_result.status == schema.DISPOSITION_REVIEW
@@ -127,8 +126,7 @@ def test_hallucinated_item_dropped_by_evidence_span(tmp_path):
     hallucinated = res.activities[-1]
     assert not hallucinated.gate_result.passed
     assert any(
-        c.gate == "evidence_span" and c.status == "fail"
-        for c in hallucinated.gate_result.checks
+        c.gate == "evidence_span" and c.status == "fail" for c in hallucinated.gate_result.checks
     )
 
 
@@ -141,17 +139,32 @@ def _true_false_4good_1bad() -> dict:
         "type": "true-false",
         "instruction": "Познач правильні твердження за текстом.",
         "items": [
-            {"statement": "Третина українців за рік не прочитує книжки.", "correct": True,
-             "evidence": "Третина українців за рік не прочитує жодної книжки"},
-            {"statement": "Дві третини щодня вмикають телевізор.", "correct": True,
-             "evidence": "дві третини щодня знаходять час увімкнути телевізор"},
-            {"statement": "Активізуються 17 ділянок мозку.", "correct": True,
-             "evidence": "активізуються одразу 17 ділянок головного мозку"},
-            {"statement": "Читання є одним з найскладніших завдань.", "correct": True,
-             "evidence": "читання є одним з найскладніших завдань для мозку"},
+            {
+                "statement": "Третина українців за рік не прочитує книжки.",
+                "correct": True,
+                "evidence": "Третина українців за рік не прочитує жодної книжки",
+            },
+            {
+                "statement": "Дві третини щодня вмикають телевізор.",
+                "correct": True,
+                "evidence": "дві третини щодня знаходять час увімкнути телевізор",
+            },
+            {
+                "statement": "Активізуються 17 ділянок мозку.",
+                "correct": True,
+                "evidence": "активізуються одразу 17 ділянок головного мозку",
+            },
+            {
+                "statement": "Читання є одним з найскладніших завдань.",
+                "correct": True,
+                "evidence": "читання є одним з найскладніших завдань для мозку",
+            },
             # HALLUCINATED — evidence quote absent from the anchor.
-            {"statement": "У тексті йдеться про ранкову пробіжку.", "correct": True,
-             "evidence": "щоденна ранкова пробіжка корисна для серця"},
+            {
+                "statement": "У тексті йдеться про ранкову пробіжку.",
+                "correct": True,
+                "evidence": "щоденна ранкова пробіжка корисна для серця",
+            },
         ],
     }
 
@@ -186,10 +199,16 @@ def test_match_up_dropped_when_below_two_pairs(tmp_path):
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
         "pairs": [
-            {"left": "насолода", "right": "велике задоволення",
-             "evidence": "насолоду від неспішного читання книжок"},
-            {"left": "телевізор", "right": "фейкословоxx",
-             "evidence": "немає такої цитати в опорі взагалі"},
+            {
+                "left": "насолода",
+                "right": "велике задоволення",
+                "evidence": "насолоду від неспішного читання книжок",
+            },
+            {
+                "left": "телевізор",
+                "right": "фейкословоxx",
+                "evidence": "немає такої цитати в опорі взагалі",
+            },
         ],
     }
 
@@ -308,6 +327,23 @@ def test_quiz_rejects_an_ambiguous_key_with_two_evidence_supported_options(tmp_p
         check.gate == "quiz_ambiguous_key" and check.status == "fail"
         for check in rejected.gate_result.checks
     )
+
+
+def test_quiz_accepts_substring_distractors(tmp_path):
+    quiz = _ready_quiz()
+    # "моз" is a proper substring of "мозку" but not a token in the evidence.
+    # It should not count as supported, so the quiz passes.
+    quiz["items"][0]["options"] = ["ділянок", "моз", "книжки"]
+
+    result = pipeline.run(
+        _anchor(),
+        types=["quiz"],
+        generator=lambda _prompt: json.dumps({"activities": [quiz]}, ensure_ascii=False),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert [activity["type"] for activity in result.lesson_b1] == ["quiz"]
 
 
 def test_mark_the_words_rejects_an_incomplete_target_set(tmp_path):

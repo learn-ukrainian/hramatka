@@ -16,7 +16,7 @@ def test_exact_quote_recomputes_offsets():
     assert v["status"] == "pass"
     assert v["kind"] == "literal"
     # offsets are recomputed, and actually point at the quote
-    assert ANCHOR[v["char_start"]:v["char_end"]] == "активізуються одразу 17 ділянок"
+    assert ANCHOR[v["char_start"] : v["char_end"]] == "активізуються одразу 17 ділянок"
 
 
 def test_model_offsets_ignored_quote_relocated():
@@ -24,7 +24,7 @@ def test_model_offsets_ignored_quote_relocated():
     # the quote by content — here via whitespace-collapsed matching.
     v = ES.check_evidence("активізуються   одразу  17   ділянок", ANCHOR)
     assert v["status"] == "pass"
-    assert ANCHOR[v["char_start"]:v["char_end"]].startswith("активізуються")
+    assert ANCHOR[v["char_start"] : v["char_end"]].startswith("активізуються")
 
 
 def test_absent_quote_fails_for_extractive():
@@ -45,3 +45,26 @@ def test_empty_quote_fails():
 
 def test_locate_quote_returns_none_when_absent():
     assert ES.locate_quote("немає такого", ANCHOR) is None
+
+
+def test_check_option_in_quote_substring_regression():
+    # 1. REGRESSION: distractor that is a proper substring of an evidence word -> NOT supported
+    assert ES.check_option_in_quote("кіт", "кітка")["status"] == "fail"
+    assert ES.check_option_in_quote("рік", "річка")["status"] == "fail"
+
+
+def test_check_option_in_quote_verbatim_pass():
+    # 2. Correct option present verbatim as a full token -> still pass
+    assert ES.check_option_in_quote("кіт", "Ось кіт у хаті.")["status"] == "pass"
+
+
+def test_check_option_in_quote_multi_word():
+    # 3. Multi-word option matching a contiguous token run -> supported
+    assert ES.check_option_in_quote("зелений ліс", "великий зелений ліс")["status"] == "pass"
+    # Same words non-contiguous -> not supported
+    assert ES.check_option_in_quote("зелений ліс", "ліс був зелений")["status"] == "fail"
+
+
+def test_check_option_in_quote_case_apostrophe():
+    # 4. Case/apostrophe: option «п'ять» matches quote «Пʼять...»
+    assert ES.check_option_in_quote("п'ять", "Пʼять ділянок.")["status"] == "pass"

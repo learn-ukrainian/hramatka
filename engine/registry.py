@@ -34,9 +34,7 @@ def build_extractive_v1_prompt(
     anchor: str, level: str, types: list[str], grounding_pack: str
 ) -> str:
     """Build the one-shot extractive prompt shared by registered types."""
-    template = load_extractive_template().replace(
-        "{{REQUESTED_ACTIVITY_TYPES}}", ", ".join(types)
-    )
+    template = load_extractive_template().replace("{{REQUESTED_ACTIVITY_TYPES}}", ", ".join(types))
     return (
         f"{template}\n\n"
         f"=== GROUNDING PACK ===\n{grounding_pack}\n\n"
@@ -597,7 +595,7 @@ def _gate_quiz(
                 locator=loc,
             )
 
-        correct_verdict = evidence_span.check_evidence(options[correct_index], quote)
+        correct_verdict = evidence_span.check_option_in_quote(options[correct_index], quote)
         gr.add(
             "quiz_correct_evidence",
             correct_verdict["status"],
@@ -607,7 +605,7 @@ def _gate_quiz(
         supported_indices = [
             index
             for index, option in enumerate(options)
-            if evidence_span.check_evidence(option, quote)["status"] == "pass"
+            if evidence_span.check_option_in_quote(option, quote)["status"] == "pass"
         ]
         if supported_indices != [correct_index]:
             gr.add(
@@ -1032,9 +1030,8 @@ def _gate_mark_the_words(
     marked: set[str] = set()
     for target in activity.get("target_words", []):
         target_tokens = vesum_gate.content_tokens(target)
-        if (
-            len(target_tokens) != 1
-            or _signature_value(target_tokens[0]) != _signature_value(target)
+        if len(target_tokens) != 1 or _signature_value(target_tokens[0]) != _signature_value(
+            target
         ):
             gr.add(
                 "mark_words_target",
