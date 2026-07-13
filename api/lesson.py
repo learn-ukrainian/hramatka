@@ -12,7 +12,7 @@ from .store import JobRecord, now_iso
 def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, Any]:
     """Bind an engine template to its durable job without changing block content."""
     lesson = copy.deepcopy(template)
-    anchor_diagnostics = lesson.pop("anchor_diagnostics", [])
+    lesson.pop("anchor_diagnostics", None)  # engine-out artifact only, not wire lesson
     _normalize_rejected_entries(lesson)
     timestamp = now_iso()
     lesson.update(
@@ -27,11 +27,6 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
                 "text": job.anchor_text,
                 "source": job.anchor_source,
                 "chars": len(job.anchor_text),
-                # These fields are required by the digest-pinned public lesson
-                # schema.  The FastAPI resource projection removes them to meet
-                # the narrower frozen OpenAPI browser wire shape.
-                "fingerprint": anchor_fingerprint(job.anchor_text),
-                "diagnostics": anchor_diagnostics,
             },
             "duration": job.duration,
             "version": 1,

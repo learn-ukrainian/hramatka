@@ -71,7 +71,9 @@ def _candidate_count_plan(phases: list[int]) -> dict[str, int]:
     return {activity_type: count for activity_type, count in counts.items() if count}
 
 
-def _answer_key(activity: dict) -> dict:
+def _answer_key(ir) -> dict:
+    activity = ir.activity
+    raw = ir.raw_candidate if isinstance(ir.raw_candidate, dict) else activity
     a_type = activity.get("type")
     if a_type == "true-false":
         return {
@@ -92,13 +94,104 @@ def _answer_key(activity: dict) -> dict:
                 {"left_index": i, "right_index": i} for i in range(len(activity.get("pairs", [])))
             ]
         }
-    return {"note": "answer key unavailable"}
+    if a_type == "quiz":
+        return {
+            "items": [
+                {"index": i, "correct": int(it.get("correct", 0))}
+                for i, it in enumerate(activity.get("items", []))
+            ]
+        }
+    if a_type == "mark-the-words":
+        return {"target_words": list(activity.get("target_words", []))}
+    if a_type == "fill-in":
+        return {"items": [item.get("answer", "") for item in activity.get("items", [])]}
+    if a_type == "error-correction":
+        corrected: list[str] = []
+        for item in raw.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            evidence = item.get("evidence")
+            if isinstance(evidence, str) and evidence.strip():
+                corrected.append(evidence)
+            elif isinstance(item.get("sentence"), str):
+                corrected.append(item["sentence"])
+        return {"items": corrected}
+    if a_type == "text-questions":
+        key: dict[str, Any] = {
+            "guidance": raw.get("teacher_guidance")
+            or "Перевірте відповіді за текстом якоря.",
+        }
+        model_answers = [
+            item.get("model_answer")
+            for item in raw.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("model_answer"), str)
+        ]
+        if model_answers:
+            key["model_answers"] = model_answers
+        rubric = raw.get("rubric") or raw.get("rubric_hint")
+        if isinstance(rubric, str) and rubric.strip():
+            key["rubric"] = rubric
+        return key
+    if a_type == "short-writing":
+        key = {
+            "guidance": raw.get("teacher_guidance")
+            or "Вільна відповідь — перевірте форми та зміст.",
+        }
+        model_answer = raw.get("model_answer")
+        if isinstance(model_answer, str) and model_answer.strip():
+            key["model_answer"] = model_answer
+        rubric = raw.get("rubric") or raw.get("rubric_hint")
+        if isinstance(rubric, str) and rubric.strip():
+            key["rubric"] = rubric
+        return key
+    return {"guidance": "Підтвердьте ключ разом з учителем."}
+
+
+def _pilot_payload(activity: dict) -> dict:
+    """Project a gate-passing engine activity into the frozen pilot payload shape."""
+    a_type = activity.get("type")
+    if a_type == "error-correction":
+        return {
+            "type": "error-correction",
+            "instruction": activity["instruction"],
+            "items": [
+                item["sentence"] if isinstance(item, dict) else item
+                for item in activity.get("items", [])
+            ],
+        }
+    if a_type == "text-questions":
+        payload: dict[str, Any] = {
+            "type": "text-questions",
+            "instruction": activity["instruction"],
+            "items": [
+                item["question"] if isinstance(item, dict) else item
+                for item in activity.get("items", [])
+            ],
+        }
+        source_ref = activity.get("source_ref")
+        if isinstance(source_ref, str) and source_ref.strip():
+            payload["source_ref"] = source_ref
+        return payload
+    if a_type == "short-writing":
+        payload = {"type": "short-writing", "prompt": activity["prompt"]}
+        source_ref = activity.get("source_ref")
+        if isinstance(source_ref, str) and source_ref.strip():
+            payload["source_ref"] = source_ref
+        return payload
+    payload = {key: value for key, value in activity.items() if key not in {"id", "title", "notes"}}
+    return payload
 
 
 _TITLES = {
     "true-false": "Перевірмо розуміння",
     "cloze": "Заповніть пропуски",
     "match-up": "Знайдіть пару",
+    "quiz": "Тест",
+    "mark-the-words": "Позначте слова",
+    "fill-in": "Вставте слово",
+    "error-correction": "Виправте помилку",
+    "text-questions": "Питання до тексту",
+    "short-writing": "Коротке письмо",
 }
 
 
@@ -185,7 +278,7 @@ class EngineLessonBaker:
                 "Bake produced no automatically includable activities from this anchor."
             )
 
-        available = list(result.selected)
+        available = list(result.ready)
         blocks = []
         for slot, phase in enumerate(plan):
             selected_index = next(
@@ -202,9 +295,8 @@ class EngineLessonBaker:
                     f"for the TTT plan ({len(blocks)} of {len(plan)})."
                 )
             blocks.append(self._block(available.pop(selected_index), slot, phase))
-        # These diagnostics are required by the digest-pinned public lesson
-        # schema.  The API resource projection omits them from the narrower
-        # frozen browser wire representation.
+        # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
+        # lesson schema forbids fingerprint/diagnostics on anchor.
         anchor_body = result.anchor["body_uk"]
         anchor_diagnostics = result.anchor.get("diagnostics")
         if anchor_diagnostics is None:
@@ -222,13 +314,14 @@ class EngineLessonBaker:
         # Tri-state -> block mark (Sol defect 1): review_required must block
         # auto-accept (warn + external_options), clean ships as ok.
         review = ir.gate_result.status == schema.GATE_REVIEW
+        payload = _pilot_payload(activity)
         envelope = {
             "id": f"activity-{a_type}-{slot + 1}",
             "type": a_type,
             "title": _TITLES.get(a_type, "Завдання"),
             "level": "b1",
-            "payload": activity,
-            "answer_key": _answer_key(activity),
+            "payload": payload,
+            "answer_key": _answer_key(ir),
             "provenance": {"source": "generated", "generator": GEMMA_MODEL, "gates": gates},
         }
         note = (
@@ -309,7 +402,7 @@ def rejected_entries(activities: list) -> list[dict]:
             out.append(
                 {
                     "type": "gate-failed",
-                    "activity": _rejected_activity_document(ir.activity, index),
+                    "activity": _rejected_activity_document(ir, index),
                     "reason": f"gate-failed:{_failed_gate(ir)}",
                 }
             )
@@ -327,28 +420,29 @@ def rejected_entries(activities: list) -> list[dict]:
             out.append(
                 {
                     "type": "gate-failed",
-                    "activity": _rejected_activity_document(ir.activity, index),
+                    "activity": _rejected_activity_document(ir, index),
                     "reason": f"gate-failed:{gate}",
                 }
             )
     return out
 
 
-def _rejected_activity_document(activity: dict, index: int) -> dict:
+def _rejected_activity_document(ir, index: int) -> dict:
     """Wrap rejected pipeline activity data in the frozen activity document.
 
     The pipeline's activity is a payload, not the browser-facing
     ``ActivityDocument`` required by OpenAPI.  Rejections must remain viewable
     without emitting a private IR fragment or an unsupported synthetic type.
     """
+    activity = ir.activity
     activity_type = activity["type"]
     return {
         "id": f"rejected-{activity_type}-{index}",
         "type": activity_type,
         "title": _TITLES.get(activity_type, "Завдання"),
         "level": "b1",
-        "payload": activity,
-        "answer_key": _answer_key(activity),
+        "payload": _pilot_payload(activity),
+        "answer_key": _answer_key(ir),
         "provenance": {
             "source": "generated",
             "generator": GEMMA_MODEL,

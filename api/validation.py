@@ -1,7 +1,8 @@
-"""Offline validation against the private, contract-derived interim schema.
+"""Offline validation against the frozen pilot lesson + activity contract.
 
-The schema is loaded through the digest-verifying vendor loader (review-p46
-nit 1): the API must never trust vendored bytes the engine would refuse.
+Schemas load through the digest-verifying vendor loader and resolve the lesson
+schema's external activity `$ref` offline via a pinned `referencing.Registry`
+mapping — no network fetch.
 """
 
 from __future__ import annotations
@@ -9,26 +10,44 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft7Validator, FormatChecker
+from referencing import Registry, Resource
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 from hramatka.engine import vendoring
 
+ACTIVITY_SCHEMA_URI = (
+    "https://learn-ukrainian.github.io/packages/activity-kit/lu.activity.v1.schema.json"
+)
+
 
 @lru_cache(maxsize=1)
-def lesson_validator() -> Draft202012Validator:
-    schema = vendoring.read_json(vendoring.LU_LESSON, "lu.lesson.v1.schema.json")
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+def lesson_validator() -> Draft7Validator:
+    activity_schema = vendoring.read_json(
+        vendoring.PILOT_LU_ACTIVITY, "lu.activity.v1.schema.json"
+    )
+    lesson_schema = vendoring.read_json(vendoring.PILOT_LU_LESSON, "lu.lesson.v1.schema.json")
+    activity_resource = Resource.from_contents(activity_schema)
+    registry = Registry().with_resource(ACTIVITY_SCHEMA_URI, activity_resource)
+    return Draft7Validator(lesson_schema, registry=registry, format_checker=FormatChecker())
+
+
+def lesson_validation_errors(lesson: dict[str, Any]) -> list[str]:
+    """Return human-readable schema errors (empty when valid)."""
+    validator = lesson_validator()
+    return sorted(error.message for error in validator.iter_errors(lesson))
 
 
 def validate_lesson(lesson: dict[str, Any]) -> None:
-    """Validate against the digest-pinned public schema and pilot type subset.
+    """Validate against the pilot pin and frozen nine-type registry.
 
     The public lesson schema intentionally supports more activity shapes than the
     pilot player.  Checking the private registry here, before the runner commits,
     prevents an otherwise valid but unsupported activity from becoming durable.
     """
-    lesson_validator().validate(lesson)
+    errors = lesson_validation_errors(lesson)
+    if errors:
+        raise ValueError(errors[0])
     allowed = set(PILOT_ACTIVITY_TYPES)
     for collection in ("blocks", "rejected"):
         for item in lesson.get(collection, []):
