@@ -16,6 +16,7 @@ rejected candidates and per-item salvage remain visible through `rejected[]`.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from contextlib import nullcontext
 from math import ceil
@@ -179,6 +180,17 @@ def _pilot_payload(activity: dict) -> dict:
             payload["source_ref"] = source_ref
         return payload
     payload = {key: value for key, value in activity.items() if key not in {"id", "title", "notes"}}
+    if a_type == "cloze":
+        # The engine's internal gap convention is {gap} / {{N}}; the frozen
+        # activity contract (golden fixture) renders blanks as [___:N] matched
+        # to blank ids. Without this conversion the player shows a literal
+        # "{gap}" to the learner (deployed launch-gate find, 2026-07-13).
+        text = payload.get("text", "")
+        blank_ids = [b.get("id") for b in payload.get("blanks", [])]
+        first_id = blank_ids[0] if blank_ids else 1
+        text = text.replace("{gap}", f"[___:{first_id}]")
+        text = re.sub(r"\{\{(\d+)\}\}", r"[___:\1]", text)
+        payload["text"] = text
     return payload
 
 
