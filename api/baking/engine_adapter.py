@@ -17,17 +17,20 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import uuid
-from contextlib import nullcontext
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 from math import ceil
 from pathlib import Path
 from typing import Any
 
+from hramatka.contracts import PILOT_ACTIVITY_TYPES
 from hramatka.engine import data, pipeline, registry, schema
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 
-from .port import BakeError
+from .port import BakeError, ProviderUnavailable
 
 # TTT phase plan per duration → the phase of each composed block. Mirrors the
 # visible-block budget the store enforces ({45:{1:2,2:3,3:1}}, ...).
@@ -45,31 +48,104 @@ _PHASE_PLAN: dict[int, list[int]] = {
 _READY_SURVIVAL_FLOOR = 0.60
 _MAX_REGENERATION_ATTEMPTS = 1
 
+# Keep diagnostics for fourteen days: this covers the daily-backup recovery
+# investigation window while putting a fixed bound on the host's state volume.
+_ENGINE_OUT_RETENTION_DAYS = 14
 
-def _candidate_count_plan(phases: list[int]) -> dict[str, int]:
-    """Request enough all-phase candidates to cover a duration's TTT plan.
 
-    Only types that can occupy every phase in the requested plan are used, so
-    any ready candidate can fill any remaining slot. Requests are distributed
-    round-robin across that flexible pool for type variety while preserving the
-    conservative 60% ready-pool calculation above.
+def _candidate_count_plan(phases: list[int]) -> dict[int, dict[str, int]]:
+    """Plan a mixed candidate bank independently for every TTT phase.
+
+    Each phase receives ``ceil(slots / 0.60)`` candidates.  Types whose phase
+    legality is narrower than the requested TTT plan are reserved in every
+    legal phase, giving match-up and short-writing real generation capacity.
+    The remaining capacity is assigned by the PILOT_ACTIVITY_TYPES × TTT-phase
+    incidence matrix, preferring the least-requested legal type globally.  The
+    residual all-phase capacity in every current TTT phase remains enough to
+    fill that phase's visible slots when optional constrained types do not make
+    it through the bank.
     """
     if not phases:
         raise ValueError("TTT phase plan must contain at least one slot")
-    required_phases = set(phases)
-    flexible_types = [
-        activity_type
-        for activity_type, entry in registry.ACTIVITY_REGISTRY.items()
-        if required_phases.issubset(entry.ttt_phases)
-    ]
-    if not flexible_types:
-        raise ValueError(f"No activity type can fill every TTT phase: {sorted(required_phases)}")
+    requested_phases = set(phases)
+    requested_counts = Counter(phases)
+    registry_types = set(registry.ACTIVITY_REGISTRY)
+    if set(PILOT_ACTIVITY_TYPES) != registry_types:
+        raise ValueError("Pilot activity registry does not match PILOT_ACTIVITY_TYPES.")
 
-    candidate_budget = ceil(len(phases) / _READY_SURVIVAL_FLOOR)
-    counts = {activity_type: 0 for activity_type in flexible_types}
-    for index in range(candidate_budget):
-        counts[flexible_types[index % len(flexible_types)]] += 1
-    return {activity_type: count for activity_type, count in counts.items() if count}
+    plans: dict[int, dict[str, int]] = {}
+    global_counts: Counter[str] = Counter()
+    for phase in sorted(requested_counts):
+        slots = requested_counts[phase]
+        budget = ceil(slots / _READY_SURVIVAL_FLOOR)
+        legal = [
+            activity_type
+            for activity_type in PILOT_ACTIVITY_TYPES
+            if phase in registry.ACTIVITY_REGISTRY[activity_type].ttt_phases
+        ]
+        if not legal:
+            raise ValueError(f"No pilot activity type can fill TTT phase {phase}.")
+
+        # A constrained type is still requested in every phase where it is
+        # legal. Composition later chooses it once at its earliest legal phase;
+        # the additional phase capacity is an honest bank fallback, not a
+        # hard-coded type-name preference.
+        constrained = [
+            activity_type
+            for activity_type in legal
+            if not requested_phases.issubset(registry.ACTIVITY_REGISTRY[activity_type].ttt_phases)
+        ]
+        if len(constrained) > budget:
+            raise ValueError(f"TTT phase {phase} cannot reserve its constrained activity types.")
+
+        counts: Counter[str] = Counter(constrained)
+        global_counts.update(constrained)
+        while sum(counts.values()) < budget:
+            activity_type = min(
+                legal,
+                key=lambda candidate: (
+                    global_counts[candidate],
+                    PILOT_ACTIVITY_TYPES.index(candidate),
+                ),
+            )
+            counts[activity_type] += 1
+            global_counts[activity_type] += 1
+
+        flexible_capacity = sum(
+            count
+            for activity_type, count in counts.items()
+            if requested_phases.issubset(registry.ACTIVITY_REGISTRY[activity_type].ttt_phases)
+        )
+        if flexible_capacity < slots:
+            raise ValueError(
+                f"TTT phase {phase} lacks a flexible fallback for {slots} visible slots."
+            )
+        plans[phase] = {
+            activity_type: counts[activity_type]
+            for activity_type in PILOT_ACTIVITY_TYPES
+            if counts[activity_type]
+        }
+    return plans
+
+
+def _activity_identity(ir: Any) -> str:
+    """Stable semantic identity used to keep composed visible blocks distinct."""
+    import json
+
+    return json.dumps(ir.activity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _preferred_phase_types(phases: list[int]) -> dict[int, tuple[str, ...]]:
+    """Assign each phase-constrained pilot type to its earliest legal TTT slot."""
+    requested_phases = set(phases)
+    preferred: dict[int, list[str]] = {phase: [] for phase in sorted(requested_phases)}
+    for activity_type in PILOT_ACTIVITY_TYPES:
+        legal = set(registry.ACTIVITY_REGISTRY[activity_type].ttt_phases) & requested_phases
+        if legal and not requested_phases.issubset(
+            registry.ACTIVITY_REGISTRY[activity_type].ttt_phases
+        ):
+            preferred[min(legal)].append(activity_type)
+    return {phase: tuple(types) for phase, types in preferred.items()}
 
 
 def _answer_key(ir) -> dict:
@@ -233,6 +309,40 @@ def _engine_out_root() -> Path | None:
     return None
 
 
+def _prune_engine_out(
+    root: Path,
+    *,
+    protected_names: set[str],
+    now: datetime | None = None,
+) -> None:
+    """Remove only aged completed UUID artifact directories from the state root.
+
+    The one-process runner permits one active bake. Its newly allocated UUID is
+    always in ``protected_names``; callers can protect additional in-progress
+    directories when needed. Non-UUID directories and symlinks are never part
+    of this retention policy.
+    """
+    if not root.is_dir():
+        return
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=_ENGINE_OUT_RETENTION_DAYS)
+    for candidate in root.iterdir():
+        if candidate.name in protected_names or candidate.is_symlink() or not candidate.is_dir():
+            continue
+        try:
+            uuid.UUID(candidate.name)
+            modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=UTC)
+        except (OSError, ValueError):
+            continue
+        if modified >= cutoff:
+            continue
+        try:
+            shutil.rmtree(candidate)
+        except OSError:
+            # Diagnostics retention must not turn an otherwise healthy fresh
+            # bake into a failure merely because an old directory is locked.
+            continue
+
+
 class EngineLessonBaker:
     """`LessonBaker` backed by the real engine pipeline (generator injectable)."""
 
@@ -244,8 +354,17 @@ class EngineLessonBaker:
         cache_dir: str | Path | None = None,
     ) -> None:
         self._generator = generator
-        self._bundle = bundle
+        self._resolved_bundle = bundle
         self._cache_dir = cache_dir
+
+    def resolve_data_bundle(self) -> data.DataBundle:
+        """Resolve the digest-pinned input bundle once for readiness and bakes."""
+        if self._resolved_bundle is None:
+            # ``active_bundle`` resolves and verifies the production manifest on
+            # first use, then caches it. Engine tests may intentionally install
+            # an isolated fixture bundle through that same seam.
+            self._resolved_bundle = data.active_bundle()
+        return self._resolved_bundle
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
         """Run the engine and return a lu.lesson.v1 block template.
@@ -255,23 +374,30 @@ class EngineLessonBaker:
         """
         del focus  # slice-1 generation does not branch on focus yet
         plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
-        count_plan = _candidate_count_plan(plan)
-        ctx = data.use_bundle(self._bundle) if self._bundle is not None else nullcontext()
+        phase_count_plans = _candidate_count_plan(plan)
+        ctx = data.use_bundle(self.resolve_data_bundle())
         out_root = _engine_out_root()
         try:
             with ctx:
-                result = pipeline.run(
-                    anchor,
-                    level="B1",
-                    pedagogy="ttt",
-                    types=list(count_plan),
-                    generator=self._generator,
-                    use_cache=False,
-                    cache_dir=self._cache_dir,
-                    out_dir=(out_root / uuid.uuid4().hex) if out_root else None,
-                    count_plan=count_plan,
-                    max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
-                )
+                job_out = out_root / str(uuid.uuid4()) if out_root else None
+                if job_out is not None:
+                    job_out.mkdir(parents=True)
+                    _prune_engine_out(out_root, protected_names={job_out.name})
+                phase_results: dict[int, Any] = {}
+                for phase, count_plan in phase_count_plans.items():
+                    phase_results[phase] = pipeline.run(
+                        anchor,
+                        level="B1",
+                        pedagogy="ttt",
+                        phase=str(phase),
+                        types=list(count_plan),
+                        generator=self._generator,
+                        use_cache=False,
+                        cache_dir=self._cache_dir,
+                        out_dir=(job_out / f"phase-{phase}") if job_out else None,
+                        count_plan=count_plan,
+                        max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
+                    )
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,
             # teacher-visible BakeError like any other bake failure — never a
@@ -282,40 +408,63 @@ class EngineLessonBaker:
 
         # pipeline.run degrades transport/parse failures to generation_error
         # rather than raising, so surface a safe, teacher-visible failure here.
-        if result.generation_error:
+        if any(result.generation_error for result in phase_results.values()):
+            if any(
+                (result.generation_error or "").startswith("GeneratorUnavailable:")
+                for result in phase_results.values()
+            ):
+                raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
             raise BakeError("Bake failed: the lesson generator is unavailable.")
 
-        if not result.ready:
+        if not any(result.ready for result in phase_results.values()):
             raise BakeError(
                 "Bake produced no automatically includable activities from this anchor."
             )
 
-        available = list(result.ready)
+        preferred_by_phase = _preferred_phase_types(plan)
+        seen_activities: set[str] = set()
         blocks = []
-        for slot, phase in enumerate(plan):
-            selected_index = next(
-                (
-                    index
-                    for index, candidate in enumerate(available)
-                    if phase in registry.ACTIVITY_REGISTRY[candidate.activity["type"]].ttt_phases
-                ),
-                None,
-            )
-            if selected_index is None:
+        for phase in phase_count_plans:
+            slots = plan.count(phase)
+            candidates = [
+                candidate
+                for candidate in phase_results[phase].ready
+                if _activity_identity(candidate) not in seen_activities
+            ]
+            selected: list[Any] = []
+            for activity_type in preferred_by_phase[phase]:
+                candidate = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate.activity["type"] == activity_type
+                    ),
+                    None,
+                )
+                if candidate is not None:
+                    selected.append(candidate)
+                    candidates.remove(candidate)
+            selected.extend(candidates[: max(0, slots - len(selected))])
+            if len(selected) < slots:
                 raise BakeError(
                     "Bake produced too few distinct automatically includable activities "
-                    f"for the TTT plan ({len(blocks)} of {len(plan)})."
+                    f"for TTT phase {phase} ({len(selected)} of {slots} candidates)."
                 )
-            blocks.append(self._block(available.pop(selected_index), slot, phase))
+            for candidate in selected:
+                seen_activities.add(_activity_identity(candidate))
+                blocks.append(self._block(candidate, len(blocks), phase))
         # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
         # lesson schema forbids fingerprint/diagnostics on anchor.
-        anchor_body = result.anchor["body_uk"]
-        anchor_diagnostics = result.anchor.get("diagnostics")
+        first_result = next(iter(phase_results.values()))
+        anchor_body = first_result.anchor["body_uk"]
+        anchor_diagnostics = first_result.anchor.get("diagnostics")
         if anchor_diagnostics is None:
             anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
         return {
             "blocks": blocks,
-            "rejected": rejected_entries(result.activities),
+            "rejected": rejected_entries(
+                [activity for result in phase_results.values() for activity in result.activities]
+            ),
             "anchor_diagnostics": anchor_diagnostics,
         }
 

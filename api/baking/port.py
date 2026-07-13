@@ -13,3 +13,7 @@ class LessonBaker(Protocol):
 
 class BakeError(RuntimeError):
     """A safe, teacher-visible failure raised by a lesson baker."""
+
+
+class ProviderUnavailable(BakeError):
+    """A transient provider outage eligible for one fresh bake-level retry."""

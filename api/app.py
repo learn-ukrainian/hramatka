@@ -18,6 +18,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from hramatka.engine import data
+
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
@@ -197,7 +199,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "code": "persistence_unavailable",
-                "message": "The service could not persist this request. Try again.",
+                "message": "Не вдалося зберегти запит. Спробуйте, будь ласка, ще раз.",
                 "retryable": True,
             },
         )
@@ -208,7 +210,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "code": "invalid_input",
-                "message": "The request is invalid.",
+                "message": "Запит містить помилку.",
                 "retryable": False,
             },
         )
@@ -220,7 +222,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             status_code=status.HTTP_404_NOT_FOUND,
             content={
                 "code": "lesson_not_found",
-                "message": "Lesson not found.",
+                "message": "Урок не знайдено.",
                 "retryable": False,
             },
         )
@@ -237,21 +239,21 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     def require_json(request: Request) -> None:
         content_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
         if content_type != "application/json":
-            raise PilotError(422, "invalid_input", "The request is invalid.")
+            raise PilotError(422, "invalid_input", "Запит містить помилку.")
 
     def require_origin(origin: Annotated[str | None, Header()] = None) -> None:
         if origin != settings.pilot_origin:
             raise PilotError(
-                403, "csrf_rejected", "This request did not pass same-origin validation."
+                403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
             )
 
     def require_session(request: Request) -> AuthenticatedSession:
         raw_secret = _decode_opaque(request.cookies.get(_SESSION_COOKIE))
         if raw_secret is None:
-            raise PilotError(401, "session_required", "A valid teacher session is required.")
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
         record = store.lookup_session(raw_secret)
         if record is None:
-            raise PilotError(401, "session_required", "A valid teacher session is required.")
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
         return AuthenticatedSession(record=record, raw_secret=raw_secret)
 
     def require_mutation_session(
@@ -261,7 +263,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     ) -> AuthenticatedSession:
         if not csrf_matches(settings.csrf_hmac_key, session.raw_secret, supplied_csrf):
             raise PilotError(
-                403, "csrf_rejected", "This request did not pass same-origin validation."
+                403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
             )
         return session
 
@@ -278,7 +280,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
         job = store.get(teacher_id, lesson_id)
         if job is None:
-            raise PilotError(404, "lesson_not_found", "Lesson not found.")
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return job
 
     @app.post("/api/session/redeem")
@@ -290,10 +292,10 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         try:
             redeemed = store.redeem_invite(request_body.token)
         except TokenFormatError as error:
-            raise PilotError(422, "invalid_input", "The request is invalid.") from error
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         except InviteUnavailable as error:
             raise PilotError(
-                410, "invite_unavailable", "This invite is no longer available."
+                410, "invite_unavailable", "Це запрошення більше недоступне."
             ) from error
         session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
         response = JSONResponse(content=session_payload(session))
@@ -338,16 +340,16 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             raise PilotError(
                 409,
                 "idempotency_conflict",
-                "This lesson ID is already bound to different inputs.",
+                "Цей ідентифікатор уроку вже пов’язаний з іншими даними.",
                 lesson_id=lesson_id,
             ) from error
         except SessionUnavailable as error:
             raise PilotError(
-                401, "session_required", "A valid teacher session is required."
+                401, "session_required", "Потрібна чинна сесія вчителя."
             ) from error
         if created and not runner.submit(job.id):
             store.fail_queued_drafts(
-                "The bake worker is unavailable. Create a new lesson to retry.",
+                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
                 failure_code="engine_unavailable",
             )
             job = owner_job(session.teacher_id, lesson_id)
@@ -371,7 +373,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     ) -> dict[str, object]:
         job = owner_job(session.teacher_id, _lesson_id(lesson_id))
         if job.status != "ready" or job.lesson is None:
-            raise PilotError(409, "lesson_not_ready", "The lesson is not ready.")
+            raise PilotError(409, "lesson_not_ready", "Урок ще не готовий.")
         return _resource_payload(job)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/accept")
@@ -394,23 +396,25 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 expected_revision=request_body.expected_revision,
             )
         except LessonNotFound as error:
-            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
         except RevisionConflict as error:
             raise PilotError(
                 409,
                 "revision_conflict",
-                "The lesson changed; reload it before trying again.",
+                "Урок змінено; оновіть його перед повторною спробою.",
                 lesson_id=lesson_key,
             ) from error
         except LessonStateConflict as error:
             raise PilotError(
                 409,
                 "lesson_state_conflict",
-                "The lesson is not in a state that allows this change.",
+                "Стан уроку не дозволяє цю зміну.",
                 lesson_id=lesson_key,
             ) from error
         except WarningBlockNotFound as error:
-            raise PilotError(404, "warning_block_not_found", "Warning block not found.") from error
+            raise PilotError(
+                404, "warning_block_not_found", "Блок-попередження не знайдено."
+            ) from error
         return {
             "lesson_id": job.id,
             "revision": job.revision,
@@ -430,26 +434,26 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
             )
         except LessonNotFound as error:
-            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
         except RevisionConflict as error:
             raise PilotError(
                 409,
                 "revision_conflict",
-                "The lesson changed; reload it before trying again.",
+                "Урок змінено; оновіть його перед повторною спробою.",
                 lesson_id=lesson_key,
             ) from error
         except LessonStateConflict as error:
             raise PilotError(
                 409,
                 "lesson_state_conflict",
-                "The lesson is not in a state that allows acceptance.",
+                "Стан уроку не дозволяє прийняття.",
                 lesson_id=lesson_key,
             ) from error
         except WarningAcknowledgementsRequired as error:
             raise PilotError(
                 409,
                 "warning_acknowledgements_required",
-                "Acknowledge every visible warning before accepting this lesson.",
+                "Підтвердьте всі видимі попередження перед прийняттям уроку.",
                 lesson_id=lesson_key,
             ) from error
         return _resource_payload(job)
@@ -467,19 +471,19 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
             )
         except LessonNotFound as error:
-            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
         except RevisionConflict as error:
             raise PilotError(
                 409,
                 "revision_conflict",
-                "The lesson changed; reload it before trying again.",
+                "Урок змінено; оновіть його перед повторною спробою.",
                 lesson_id=lesson_key,
             ) from error
         except LessonStateConflict as error:
             raise PilotError(
                 409,
                 "lesson_state_conflict",
-                "The lesson is not in a state that allows this change.",
+                "Стан уроку не дозволяє цю зміну.",
                 lesson_id=lesson_key,
             ) from error
         return _resource_payload(job)
@@ -494,9 +498,18 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             raise PilotError(
                 503,
                 "service_not_ready",
-                "The service is not ready.",
+                "Сервіс ще не готовий.",
                 retryable=True,
             )
+        try:
+            baker.resolve_data_bundle()
+        except (data.DataConfigError, data.DataDriftError, OSError, ValueError) as error:
+            raise PilotError(
+                503,
+                "service_not_ready",
+                "Сервіс ще не готовий.",
+                retryable=True,
+            ) from error
         return {"status": "ready"}
 
     return app

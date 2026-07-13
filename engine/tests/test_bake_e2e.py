@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from collections import Counter
 
 import pytest
@@ -18,7 +19,8 @@ import pytest
 from hramatka.api.baking import engine_adapter
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError
-from hramatka.engine import fixtures
+from hramatka.engine import data, fixtures
+from hramatka.engine.tests.conftest import _build_fixture_bundle, _sha_size
 
 
 def test_e2e_bake_refuses_to_repeat_thin_candidate_bank(tmp_path):
@@ -128,18 +130,75 @@ def _ready_text_questions(_index: int) -> dict:
     }
 
 
+def _ready_match_up(_index: int) -> dict:
+    return {
+        "type": "match-up",
+        "instruction": "З'єднай слово з опори з синонімом.",
+        "pairs": [
+            {
+                "left": "книжки",
+                "right": "книга",
+                "evidence": "не прочитує жодної книжки",
+            },
+            {
+                "left": "багато",
+                "right": "чимало",
+                "evidence": "Багато людей втратили",
+            },
+        ],
+    }
+
+
+def _ready_short_writing(_index: int) -> dict:
+    return {
+        "type": "short-writing",
+        "instruction": "Напиши короткий текст.",
+        "prompt": "Напиши три речення про читання своїми словами.",
+        "source_ref": "Текст-опора",
+        "word_count_guidance": "3 речення (30–40 слів)",
+        "model_answer": "Читання корисне для мозку.",
+        "rubric_hint": "Є три речення і зв'язок з опорою.",
+        "teacher_guidance": "Оцінюйте зміст і зв'язність.",
+        "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку.",
+    }
+
+
 _READY_CANDIDATES = {
     "true-false": _ready_true_false,
     "quiz": _ready_quiz,
     "error-correction": _ready_error_correction,
     "fill-in": _ready_fill_in,
     "cloze": _ready_cloze,
+    "match-up": _ready_match_up,
     "mark-the-words": _ready_mark_the_words,
     "text-questions": _ready_text_questions,
+    "short-writing": _ready_short_writing,
 }
 
 
-def test_e2e_baker_fills_six_block_plan_from_one_count_aware_generation(tmp_path):
+def _bundle_with_matchup_vocabulary(root):
+    """The normal fixture bundle omits two right-side synonym surface forms."""
+    root.mkdir()
+    original = _build_fixture_bundle(root)
+    connection = sqlite3.connect(root / "vesum.db")
+    try:
+        connection.executemany(
+            "INSERT INTO forms (word_form, lemma, tags, pos) VALUES (?, ?, ?, ?)",
+            [
+                ("книга", "книга", "noun:inanim:f:v_naz", "noun"),
+                ("чимало", "чимало", "adv:", "adverb"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    manifest = json.loads(json.dumps(original.manifest))
+    sha256, size = _sha_size(root / "vesum.db")
+    manifest["inputs"]["vesum.db"].update({"sha256": sha256, "size": size})
+    return data.resolve_bundle(data_dir=root, manifest=manifest, verify=True)
+
+
+def test_e2e_baker_fills_six_blocks_with_per_phase_variety(tmp_path):
     requested_counts: list[dict[str, int]] = []
     generated_counts: Counter[str] = Counter()
 
@@ -158,15 +217,50 @@ def test_e2e_baker_fills_six_block_plan_from_one_count_aware_generation(tmp_path
         generated_counts.update(activity["type"] for activity in activities)
         return json.dumps({"activities": activities}, ensure_ascii=False)
 
-    baker = EngineLessonBaker(generator=generator, cache_dir=tmp_path / "cache")
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
     expected_counts = engine_adapter._candidate_count_plan(engine_adapter._PHASE_PLAN[45])
-    assert requested_counts == [expected_counts]
-    assert generated_counts == Counter(expected_counts)
+    # Each phase starts with exactly its derived request. A phase can make its
+    # existing one safety regeneration request when a candidate is gated out.
+    assert all(counts in requested_counts for counts in expected_counts.values())
+    expected_generated = sum((Counter(counts) for counts in expected_counts.values()), Counter())
+    assert generated_counts >= expected_generated
     assert len(baked["blocks"]) == 6
     assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
     assert len({block["id"] for block in baked["blocks"]}) == 6
+    assert {block["type"] for block in baked["blocks"]} >= {"match-up", "short-writing"}
+
+
+def test_e2e_baker_fills_six_blocks_when_constrained_types_are_unavailable(tmp_path):
+    """Optional phase-specific variety must never consume the 45-minute fill floor."""
+    constrained = {"match-up", "short-writing"}
+
+    def generator(prompt: str) -> str:
+        counts = {
+            activity_type: int(count)
+            for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
+        }
+        activities = [
+            candidate(index)
+            for activity_type, count in counts.items()
+            if activity_type not in constrained
+            for index in range(count)
+            for candidate in [_READY_CANDIDATES[activity_type]]
+        ]
+        return json.dumps({"activities": activities}, ensure_ascii=False)
+
+    baker = EngineLessonBaker(generator=generator, cache_dir=tmp_path / "cache")
+    baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+    assert len(baked["blocks"]) == 6
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
+    assert len({block["id"] for block in baked["blocks"]}) == 6
+    assert not {block["type"] for block in baked["blocks"]} & constrained
 
 
 def test_e2e_bake_raises_bakeerror_when_generator_unavailable(tmp_path):

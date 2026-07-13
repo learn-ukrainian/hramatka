@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import sqlite3
 import threading
@@ -23,8 +24,9 @@ from fastapi.testclient import TestClient
 
 from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
-from hramatka.api.baking.port import BakeError
+from hramatka.api.baking.port import BakeError, ProviderUnavailable
 from hramatka.api.config import Settings
+from hramatka.engine import data
 
 ORIGIN = "https://pilot.example.test"
 CSRF_KEY = b"test-only-hmac-key-that-is-not-a-deployment-secret"
@@ -72,6 +74,28 @@ class SecretLeakingFailureBaker:
         raise BakeError("provider response: bearer super-secret-token trace /private/path")
 
 
+class InvalidClozeMarkerBaker(FixtureBaker):
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        template = super().bake(anchor, duration, focus)
+        cloze = next(block for block in template["blocks"] if block["type"] == "cloze")
+        cloze["activity"]["payload"]["text"] = "Помилковий маркер [___:0]."
+        return template
+
+
+class TransientProviderBaker:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        del anchor, duration, focus
+        self.calls += 1
+        raise ProviderUnavailable("provider 500: private trace must not be served")
+
+
 def _settings(tmp_path: Path, *, mock_mode: bool = False) -> Settings:
     """Pilot settings with an HTTPS origin and a deliberately throwaway CSRF key."""
     return Settings(
@@ -81,6 +105,27 @@ def _settings(tmp_path: Path, *, mock_mode: bool = False) -> Settings:
         mock_mode=mock_mode,
         bake_hard_timeout_seconds=30,
     )
+
+
+def _configure_ready_bundle(monkeypatch, tmp_path: Path, *, drifted: bool = False) -> None:
+    """Give readyz a small production-shaped digest-pinned bundle."""
+    release = tmp_path / "data-release"
+    release.mkdir()
+    payload = b"readiness fixture data"
+    (release / "vesum.db").write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    if drifted:
+        digest = "0" * 64
+    manifest = {
+        "inputs": {
+            "vesum.db": {"path": "vesum.db", "sha256": digest, "size": len(payload)},
+        }
+    }
+    manifest_path = tmp_path / "data-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("HRAMATKA_DATA_DIR", str(release))
+    monkeypatch.setenv("HRAMATKA_DATA_MANIFEST", str(manifest_path))
+    monkeypatch.setattr(data, "_active", None)
 
 
 @pytest.fixture
@@ -530,12 +575,88 @@ def test_baker_failure_is_durable_sanitized_and_never_exposes_a_partial_lesson(
         _error(client.get(f"/api/lessons/{lesson_id}"), 409, "lesson_not_ready")
 
 
+def test_invalid_cloze_markers_become_a_sanitized_schema_failure(tmp_path: Path) -> None:
+    app = create_app(settings=_settings(tmp_path), baker=InvalidClozeMarkerBaker())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+        assert failed["failure_code"] == "lesson_schema_invalid"
+        assert "[___:0]" not in (failed["failure_message"] or "")
+        _error(client.get(f"/api/lessons/{lesson_id}"), 409, "lesson_not_ready")
+
+
+def test_provider_unavailability_retries_once_then_persists_a_ukrainian_failure(
+    tmp_path: Path,
+) -> None:
+    baker = TransientProviderBaker()
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+
+    assert baker.calls == 2
+    assert failed["failure_code"] == "provider_unavailable"
+    assert failed["failure_message"] == "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
+    assert "private trace" not in (failed["failure_message"] or "")
+
+
 def test_readyz_requires_real_baker_and_mock_mode_off(tmp_path: Path) -> None:
     mock_app = create_app(settings=_settings(tmp_path, mock_mode=True), baker=FixtureBaker())
     with TestClient(mock_app, base_url=ORIGIN) as client:
         assert client.get("/api/healthz").json() == {"status": "ok"}
         response = client.get("/api/readyz")
         _error(response, 503, "service_not_ready", retryable=True)
+
+
+def test_readyz_resolves_the_engine_bundle_without_running_a_bake(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _configure_ready_bundle(monkeypatch, tmp_path)
+    calls = 0
+
+    def inert_generator(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "{}"
+
+    app = create_app(
+        settings=_settings(tmp_path),
+        baker=EngineLessonBaker(generator=inert_generator),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        assert client.get("/api/readyz").json() == {"status": "ready"}
+    assert calls == 0
+
+
+@pytest.mark.parametrize("drifted, absent", [(True, False), (False, True)])
+def test_readyz_returns_frozen_503_when_bundle_resolution_fails(
+    tmp_path: Path, monkeypatch, drifted: bool, absent: bool
+) -> None:
+    _configure_ready_bundle(monkeypatch, tmp_path, drifted=drifted)
+    if absent:
+        monkeypatch.setenv("HRAMATKA_DATA_MANIFEST", str(tmp_path / "absent-manifest.json"))
+    app = create_app(
+        settings=_settings(tmp_path),
+        baker=EngineLessonBaker(generator=lambda _prompt: "{}"),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        _error(client.get("/api/readyz"), 503, "service_not_ready", retryable=True)
 
 
 def test_startup_recovers_an_orphaned_baking_aggregate_without_partial_lesson(
@@ -566,12 +687,3 @@ def test_startup_recovers_an_orphaned_baking_aggregate_without_partial_lesson(
     assert recovered.status == "failed"
     assert recovered.failure_code == "worker_restarted"
     assert recovered.lesson is None
-
-    # The readiness probe verifies production wiring, not whether a generation
-    # has happened.  No bake is invoked, so the injected generator is inert.
-    real_app = create_app(
-        settings=_settings(tmp_path / "real"),
-        baker=EngineLessonBaker(generator=lambda *_args, **_kwargs: {}),
-    )
-    with TestClient(real_app, base_url=ORIGIN) as client:
-        assert client.get("/api/readyz").json() == {"status": "ready"}

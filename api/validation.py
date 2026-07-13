@@ -7,6 +7,7 @@ mapping — no network fetch.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -19,6 +20,7 @@ from hramatka.engine import vendoring
 ACTIVITY_SCHEMA_URI = (
     "https://learn-ukrainian.github.io/packages/activity-kit/lu.activity.v1.schema.json"
 )
+_CLOZE_MARKER_RE = re.compile(r"(?:\{\{|\[___:)(\d+)(?:\}\}|\])")
 
 
 @lru_cache(maxsize=1)
@@ -55,3 +57,24 @@ def validate_lesson(lesson: dict[str, Any]) -> None:
             activity_type = (item.get("activity") or {}).get("type")
             if item_type not in allowed or activity_type != item_type:
                 raise ValueError("Lesson contains an activity outside the frozen pilot registry.")
+    _validate_cloze_marker_invariants(lesson)
+
+
+def _validate_cloze_marker_invariants(lesson: dict[str, Any]) -> None:
+    """Keep numbered internal and rendered cloze markers aligned to blank positions."""
+    for collection in ("blocks", "rejected"):
+        for item in lesson.get(collection, []):
+            activity = item.get("activity") or {}
+            if activity.get("type") != "cloze":
+                continue
+            payload = activity.get("payload") or {}
+            text = payload.get("text")
+            blanks = payload.get("blanks")
+            if not isinstance(text, str) or not isinstance(blanks, list):
+                continue  # The frozen schema has already reported malformed shapes.
+            marker_numbers = {int(value) for value in _CLOZE_MARKER_RE.findall(text)}
+            if not marker_numbers:
+                continue
+            expected_numbers = set(range(1, len(blanks) + 1))
+            if marker_numbers != expected_numbers:
+                raise ValueError("Cloze markers must be 1-based and match the blank positions.")

@@ -834,7 +834,10 @@ class JobStore:
                 """,
                 (
                     _STEP_COMPLETE,
-                    "The bake was interrupted by a service restart. Create a new lesson to retry.",
+                    (
+                        "Складання уроку перервалося через перезапуск сервісу. "
+                        "Спробуйте, будь ласка, ще раз."
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -858,7 +861,7 @@ class JobStore:
                 """,
                 (
                     _STEP_COMPLETE,
-                    "The bake exceeded its time limit. Create a new lesson to retry.",
+                    "Час на складання уроку вичерпано. Спробуйте, будь ласка, ще раз.",
                     timestamp,
                     timestamp,
                     cutoff,
