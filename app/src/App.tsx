@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
@@ -168,6 +168,23 @@ export default function TeacherApp() {
   // Per-lesson local acks (until server confirms)
   const [localAcks, setLocalAcks] = useState<string[]>([]);
 
+  // Session ready gate (#93 item 1): single "session ready" state/promise proxy.
+  // Gate loads; when ready, (re)run pending route action. UA loading instead of blank.
+  const [sessionReady, setSessionReady] = useState(false);
+  const [initLoading, setInitLoading] = useState(true);
+
+  // Poll ref (prepared; used robust in item 3)
+  const pollTimerRef = useRef<number | null>(null);
+
+  // #93 item4: UA-only display for states (key logic on code; messages from server)
+  const statusLabel = (s: LessonState): string => {
+    if (s === 'baking') return 'готується';
+    if (s === 'ready') return 'готовий';
+    if (s === 'failed') return 'помилка';
+    if (s === 'draft') return 'чернетка';
+    return s;
+  };
+
   // Invite redemption (token only in memory)
   const redeemFromFragment = useCallback(async () => {
     const hash = window.location.hash || '';
@@ -188,6 +205,7 @@ export default function TeacherApp() {
         const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
         setSession(s);
         setCsrf(data.csrf_token);
+        setSessionReady(true);
         // Fetch full session for display
         await refreshSession();
         // Load catalog so paste view is fully populated (used by some flows)
@@ -218,17 +236,21 @@ export default function TeacherApp() {
       const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
       setSession(s);
       setCsrf(data.csrf_token);
+      setSessionReady(true);
       return s;
     } else if (res.status === 401) {
       setSession(null);
       setCsrf(null);
+      setSessionReady(false);
     }
     return null;
   };
 
   // On mount (and on hashchange for invite fragment): try redeem from fragment.
   // This ensures E2E direct-goto with hash (or late hash set) triggers redeem without requiring full reload.
+  // #93 item1: drive sessionReady; UA «Завантаження…» during init, never blank.
   useEffect(() => {
+    let cancelled = false;
     const tryRedeemIfInvite = async () => {
       const h = window.location.hash || '';
       if (h.includes('invite=')) {
@@ -236,20 +258,59 @@ export default function TeacherApp() {
       }
     };
     (async () => {
-      const didRedeem = await redeemFromFragment();
-      if (!didRedeem) {
-        const s = await refreshSession();
-        if (s) {
-          // already logged in → default to paste + catalog
-          await loadCatalog();
+      setInitLoading(true);
+      setError(null);
+      try {
+        const h = window.location.hash || '';
+        let did = false;
+        if (h.includes('invite=')) {
+          did = await redeemFromFragment();
         }
+        if (!did && !cancelled) {
+          const s = await refreshSession();
+          if (s) {
+            did = true;
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError('Помилка ініціалізації сесії. Спробуйте перезавантажити сторінку.');
+        }
+      } finally {
+        if (!cancelled) setInitLoading(false);
       }
     })();
     const onHash = () => { tryRedeemIfInvite(); };
     window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('hashchange', onHash);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // #93 item 1: gate route action on sessionReady. When resolves, re-run openLesson for direct-link/refresh.
+  // Prevents empty page (route lesson but no currentLessonId/lesson rendered).
+  useEffect(() => {
+    if (!sessionReady) return;
+    if (route.view === 'lesson' && route.lessonId) {
+      if (!currentLessonId) {
+        setCurrentLessonId(route.lessonId);
+      }
+      if (currentLessonId !== route.lessonId || !lesson) {
+        openLesson(route.lessonId, (route.mode as 'review' | 'run') || 'review').catch(() => {});
+      }
+    } else if (route.view !== 'lesson') {
+      // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
+      loadCatalog().catch(() => {});
+    }
+  }, [sessionReady, route.view, route.lessonId, route.mode]);
+
+  // #93 item 3 cleanup: never orphan poll loops
+  useEffect(() => {
+    return () => { clearPoll(); };
+  }, []);
+  useEffect(() => { clearPoll(); }, [currentLessonId]);
 
   const logout = async () => {
     if (!csrf) return;
@@ -260,6 +321,7 @@ export default function TeacherApp() {
     }).catch(() => {});
     setSession(null);
     setCsrf(null);
+    setSessionReady(false);
     setLesson(null);
     setCurrentLessonId(null);
     setCatalog([]);
@@ -306,49 +368,82 @@ export default function TeacherApp() {
         pollStatus(id);
       } else {
         const e: ErrorEnvelope = data;
-        setError(e.message || 'Не вдалося створити урок.');
+        setError(e.message || 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
         if (e.code === 'idempotency_conflict') {
           // rare in stub
         }
       }
     } catch (e: any) {
-      setError('Помилка мережі при створенні уроку.');
+      setError('Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
     } finally {
       setLoading(false);
     }
   };
 
-  const pollStatus = async (id: string) => {
+  const clearPoll = () => {
+    if (pollTimerRef.current != null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setPolling(false);
+  };
+
+  // #93 item 3: robust poll
+  // - update step on every tick (no stale)
+  // - converge on ready/failed
+  // - resume after refresh if baking (via 409 + route effect)
+  // - cleanup on unmount/lesson switch
+  const pollStatus = (id: string) => {
+    clearPoll();
     setPolling(true);
     let attempts = 0;
-    const max = 30;
+    const max = 120;
+    const schedule = (delay: number) => {
+      pollTimerRef.current = window.setTimeout(tick, delay);
+    };
     const tick = async () => {
       attempts++;
+      let st: any = null;
       try {
         const res = await apiFetch(`/api/lessons/${id}/status`);
-        const st = await res.json();
+        st = await res.json();
         setBakeStatus({ status: st.status, step: st.step || '', failure: st.failure_message || undefined });
         if (st.status === 'ready') {
-          setPolling(false);
+          clearPoll();
           await openLesson(id, 'review');
           await loadCatalog();
           return;
         }
         if (st.status === 'failed') {
-          setPolling(false);
-          setError(st.failure_message || 'Помилка при генерації уроку.');
+          clearPoll();
+          setError(st.failure_message || 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
           return;
         }
-      } catch {}
-      if (attempts < max) setTimeout(tick, 800);
-      else setPolling(false);
+      } catch {
+        setBakeStatus((prev) => prev || { status: 'baking', step: 'оновлення…' });
+      }
+      if (attempts < max) {
+        schedule(800);
+      } else {
+        clearPoll();
+        if (st && st.status !== 'ready' && st.status !== 'failed') {
+          setError('Тривале очікування. Спробуйте оновити сторінку.');
+        }
+      }
     };
-    setTimeout(tick, 400);
+    schedule(400);
   };
 
   // ===== Lesson load + modes =====
   const openLesson = async (id: string, mode: 'review' | 'run' = 'review') => {
-    if (!session || !csrf) return;
+    // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
+    if (!session || !csrf) {
+      const s = await refreshSession();
+      if (!s) {
+        setError('Потрібна сесія викладача.');
+        return;
+      }
+    }
     setLoading(true);
     setError(null);
     setLocalAcks([]);
@@ -362,8 +457,9 @@ export default function TeacherApp() {
         navigate({ view: 'lesson', lessonId: id, mode });
       } else if (res.status === 409) {
         const e: ErrorEnvelope = await res.json();
-        setError(e.message || 'Урок ще не готовий.');
-        // stay on status if baking
+        setBakeStatus({ status: 'baking', step: e.message || 'завдання складено' });
+        setCurrentLessonId(id);
+        pollStatus(id); // resume/ start poll for baking lesson (refresh case)
       } else if (res.status === 404) {
         setError('Урок не знайдено.');
       } else {
@@ -371,14 +467,14 @@ export default function TeacherApp() {
         handleApiError(e);
       }
     } catch {
-      setError('Помилка завантаження уроку.');
+      setError('Не вдалося завантажити урок. Спробуйте, будь ласка, ще раз.');
     } finally {
       setLoading(false);
     }
   };
 
   const loadCatalog = async () => {
-    if (!session) return;
+    // #93 item 2: auto-loaded once session ready; guard removed, manual button remains
     const res = await apiFetch('/api/lessons');
     if (res.ok) {
       const data = await res.json();
@@ -590,21 +686,26 @@ export default function TeacherApp() {
         </div>
       )}
 
-      {!session && (
+      {/* #93 item1: UA loading state (never blank page) */}
+      {initLoading && (
+        <main style={{ padding: 40, color: '#475569' }}>Завантаження…</main>
+      )}
+
+      {!session && !initLoading && (
         <main className="invite">
           <h1>Вхід для викладача</h1>
           <p>Використайте посилання-запрошення. Токен обробляється лише в пам’яті.</p>
           <button
             onClick={async () => {
               // Dev helper: allow manual redeem with test token
-              const t = prompt('Тестовий токен (або залиште порожнім для auto):') || 'TEST' + 'A'.repeat(39) + 'Q';
+              const t = prompt('Тестовий токен (або залиште порожнім для автоматичного):') || 'TEST' + 'A'.repeat(39) + 'Q';
               if (!isValidToken(t)) { setError('Некоректний формат токена.'); return; }
               window.location.hash = `#invite=${t}`;
               await redeemFromFragment();
             }}
             disabled={loading}
           >
-            Увійти за тестовим запрошенням (dev)
+            Увійти за тестовим запрошенням (тест)
           </button>
           <p className="small">У реальному сценарії — відкрийте посилання з #invite=...</p>
         </main>
@@ -660,7 +761,7 @@ export default function TeacherApp() {
                   {catalog.map(item => (
                     <li key={item.id}>
                       <button onClick={() => openLesson(item.id, 'review')}>
-                        {item.title || item.id.slice(0, 8)} — {item.status} {item.accepted ? '✓ прийнято' : ''}
+                        {item.title || item.id.slice(0, 8)} — {statusLabel(item.status)} {item.accepted ? '✓ прийнято' : ''}
                       </button>
                       <small>{new Date(item.updated_at).toLocaleString('uk')}</small>
                     </li>
@@ -671,14 +772,15 @@ export default function TeacherApp() {
           )}
 
           {/* Lesson view */}
-          {route.view === 'lesson' && currentLessonId && (
+          {/* #93 item1: render on route.lessonId to avoid blank on direct/refresh; set current early via ready effect */}
+          {route.view === 'lesson' && route.lessonId && (
             <main className="lesson-view">
               <div className="lesson-header">
                 <button onClick={() => navigate({ view: 'paste' })}>← До списку</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
                 <div className="lesson-actions">
-                  <button onClick={() => openLesson(currentLessonId, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
-                  <button onClick={() => openLesson(currentLessonId, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
+                  <button onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
+                  <button onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
                   {lesson && lesson.lesson.accepted && <span className="accepted">Прийнято</span>}
                   <button onClick={printLesson}>Друк</button>
                   <button onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
@@ -687,11 +789,15 @@ export default function TeacherApp() {
 
               {bakeStatus && !lesson && (
                 <div className="baking">
-                  <p>Статус: {bakeStatus.status} — {bakeStatus.step}</p>
+                  <p>Статус: {statusLabel(bakeStatus.status)} — {bakeStatus.step}</p>
                   {bakeStatus.failure && <p className="fail">{bakeStatus.failure}</p>}
                   {polling && <p>Оновлення…</p>}
-                  <button onClick={() => currentLessonId && openLesson(currentLessonId)}>Перевірити зараз</button>
+                  <button onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
                 </div>
+              )}
+
+              {!lesson && !bakeStatus && (
+                <p style={{ color: '#475569', padding: '12px 0' }}>Завантаження…</p>
               )}
 
               {lesson && (

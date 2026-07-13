@@ -46,6 +46,11 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test.beforeEach(async ({ page, context }) => {
     await context.clearCookies();
     await page.goto(APP);
+    // #93 item6: reset stateful stub between tests + clear after valid origin (no about:blank)
+    await page.evaluate(async () => {
+      await fetch('/api/dev/clear-session', { method: 'POST' }).catch(() => {});
+      await fetch('/api/dev/reset', { method: 'POST' }).catch(() => {});
+    });
   });
 
   test('redeem from fragment, scrub, no storage token, session active', async ({ page }) => {
@@ -142,11 +147,11 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   });
 
   test('401 on no session leads to invite screen', async ({ page }) => {
-    // Force-clear server session state (previous tests may have left one) + cookies
-    await page.evaluate(async () => {
-      await fetch('/api/dev/clear-session', { method: 'POST' });
-    });
+    // #93 item6: clear after goto (valid origin, never about:blank fetch)
     await page.goto(`${APP}/teacher/`);
+    await page.evaluate(async () => {
+      await fetch('/api/dev/clear-session', { method: 'POST' }).catch(() => {});
+    });
     // hit a protected route (proxied to stub) to exercise 401 path
     await page.evaluate(async () => {
       // @ts-ignore
@@ -154,5 +159,89 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     });
     // UI should surface invite (shown whenever !session)
     await expect(page.getByRole('heading', { name: /Вхід для викладача/i })).toBeVisible({ timeout: 3000 });
+  });
+
+  // #93 item1: direct-link load (no empty page)
+  test('direct-link / refresh to lesson renders content (no blank, session gate)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'Текст для прямого посилання.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    await page.waitForSelector('.lesson-view, .block', { timeout: 15000 });
+    const lessonUrl = await page.url();
+    expect(lessonUrl).toMatch(/#\/lessons\//);
+
+    // direct / refresh simulation
+    await page.goto(`${APP}/teacher/`);
+    await page.goto(lessonUrl);
+    await expect(page.locator('.lesson-view')).toBeVisible({ timeout: 8000 });
+    await page.waitForSelector('.block', { timeout: 10000 });
+  });
+
+  // #93 item2: catalog auto-loads
+  test('catalog auto-loads on session ready without clicking Оновити список', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    // create one lesson via UI flow (ensures session + lesson exists)
+    const text = 'Текст для перевірки авто-каталогу.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    // navigate back to hub (paste/catalog) — this route change triggers auto loadCatalog via sessionReady gate
+    await page.getByRole('button', { name: /До списку/ }).click();
+
+    // without clicking «Оновити список», catalog should have populated (auto on non-lesson route)
+    await expect(page.locator('.catalog li')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole('button', { name: /Оновити список/ })).toBeVisible();
+  });
+
+  // #93 item3: terminal convergence + no stale
+  test('pollStatus always converges to terminal state and refreshes step (no stale baking after ready)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'Тест збіжності poll.';
+    await page.getByPlaceholder(/Вставте/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    await expect(page.getByText(/готується|статус/i)).toBeVisible({ timeout: 5000 });
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+    const staleCount = await page.locator('text=завдання складено').count();
+    expect(staleCount).toBe(0);
+  });
+
+  // #93 item4: UA failure banner (key off code, use server msg or UA fallback)
+  test('failure banner is Ukrainian (server message or fallback, no English leak)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'bad bake text';
+    await page.getByPlaceholder(/Вставте/).fill(text);
+
+    // force stub bad id for immediate failed (with UA message in stub)
+    await page.evaluate(() => {
+      const BAD = '00000000-0000-0000-0000-000000000bad';
+      // @ts-ignore
+      crypto.randomUUID = () => BAD;
+    });
+
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    // use first or specific to avoid strict multi-match; assert UA content present
+    await expect(page.locator('.banner.error')).toContainText(/Постачальник тимчасово недоступний|Не вдалося скласти урок/i, { timeout: 10000 });
+
+    const en = await page.locator('text=The lesson bake could not be completed').count();
+    expect(en).toBe(0);
   });
 });

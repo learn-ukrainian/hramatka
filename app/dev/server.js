@@ -225,6 +225,15 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 204, null);
   }
 
+  // #93 item6: reset stub state between E2E for determinism
+  if (pathname === '/api/dev/reset' && method === 'POST') {
+    state.session = null;
+    state.lessons = {};
+    state.createCounters = {};
+    state.errorScripts = {};
+    return sendJSON(res, 204, null);
+  }
+
   // Session redeem (no auth yet)
   if (pathname === '/api/session/redeem' && method === 'POST') {
     const body = await parseBody(req);

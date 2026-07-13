@@ -1,9 +1,11 @@
 /* Teacher frontend styles — Ukrainian, clean, print-friendly */
+/* #93 item5: force light (color-scheme + explicit) — OS dark must not break contrast on pilot. */
 .teacher-app {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   color: #222;
   background: #fafafa;
   min-height: 100vh;
+  color-scheme: light;
 }
 
 .appbar {
@@ -92,8 +94,23 @@
 }
 
 /* Minimal polish */
-button { padding: 8px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: white; cursor: pointer; }
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #222;
+  cursor: pointer;
+}
 button:disabled { opacity: 0.6; cursor: default; }
 button:hover:not(:disabled) { background: #f8fafc; }
-textarea, input, select { font-family: inherit; }
+textarea, input, select {
+  font-family: inherit;
+  background: #fff;
+  color: #222;
+  border: 1px solid #cbd5e1;
+}
 .small { font-size: 0.8rem; color: #64748b; }
+
+/* Force light controls (pilot safety) */
+.appbar, .paste, .catalog, .lesson-view, .block, .invite { color-scheme: light; }
