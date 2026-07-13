@@ -207,6 +207,59 @@
 
 .run-note { font-size: 13px; color: var(--ink-soft); margin-top: 12px; font-style: italic; }
 
+/* anchor / source text (demo dochead + anchorbody) */
+.dochead {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--accent);
+  padding: 16px 0 4px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dochead .pn { font-style: italic; color: var(--wheat); }
+.anchorbody {
+  font-size: 14.5px;
+  line-height: 1.7;
+  padding: 10px 2px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: pre-line;
+}
+.anchor-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px 6px;
+  margin: 12px 0 16px;
+}
+.anchor-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent);
+  list-style: none;
+  padding: 4px 0 8px;
+}
+.anchor-panel summary::before { content: '▸ '; }
+.anchor-panel[open] summary::before { content: '▾ '; }
+.anchor-panel.run-open {
+  margin-top: 10px;
+  padding: 12px 14px;
+}
+.anchor-run-bar { margin: 8px 0 12px; }
+.anchor-print { display: none; }
+.bake-elapsed { margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* student print prep: hide teacher-only chrome as soon as variant is chosen */
+.print-variant-student .teacher-key,
+.print-variant-student .teacher-only,
+.print-variant-student .meta,
+.print-variant-student .block-meta,
+.print-variant-student .ack-btn,
+.print-variant-student .acked { display: none !important; }
+
 .footer { text-align: center; padding: 24px 12px; color: var(--ink-soft); font-size: 12px; border-top: 1px solid var(--line); margin-top: 32px; }
 
 /* Invite (card) */
@@ -246,10 +299,19 @@ textarea, input, select {
 @media print {
   .appbar, .banner, .lesson-actions, .accept-bar, .footer, button, .noprint { display: none !important; }
   .lesson-view { max-width: 100%; padding: 0; }
+  .anchor-print { display: block !important; }
+  .anchor-panel { display: none !important; }
   .block { break-inside: avoid; page-break-inside: avoid; border: 1px solid var(--line); margin-bottom: 12pt; background: #fff; box-shadow: none; }
   .teacher-key { background: var(--paper); border: 1px solid var(--line); }
   .phase h3 { page-break-after: avoid; }
   @page { margin: 1.5cm; }
   .block.warn { background: #fff; border-color: var(--line); }
   .meta, .accept-bar { background: #fff; border: 1px solid var(--line); }
+  .print-variant-student .teacher-key,
+  .print-variant-student .teacher-only,
+  .print-variant-student .meta,
+  .print-variant-student .block-meta,
+  .print-variant-student .ack-btn,
+  .print-variant-student .acked { display: none !important; }
+  .print-variant-teacher .teacher-key { display: block !important; }
 }

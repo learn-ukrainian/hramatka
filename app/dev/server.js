@@ -33,8 +33,10 @@ try {
 }
 
 // Build a deterministic full 9-type golden lesson document for the pilot (one per type)
-function buildGoldenLesson(id) {
+function buildGoldenLesson(id, opts = {}) {
   const now = new Date().toISOString();
+  const anchorText = opts.anchor?.text
+    || 'Це демонстраційний текст для перевірки рендеру всіх типів діяльності. Текст не чутливий.';
   const blocks = [];
   const pilotTypes = loadPilotTypes();
 
@@ -87,13 +89,13 @@ function buildGoldenLesson(id) {
     title: 'Золотий урок — всі 9 типів (stub)',
     level: 'B1',
     method: 'ttt',
-    focus: 'демонстрація контракту',
+    focus: opts.focus || 'демонстрація контракту',
     anchor: {
-      text: 'Це демонстраційний текст для перевірки рендеру всіх типів діяльності. Текст не чутливий.',
+      text: anchorText,
       source: 'teacher-paste',
-      chars: 120
+      chars: anchorText.length,
     },
-    duration: 60,
+    duration: opts.duration || 60,
     version: 1,
     status: 'ready',
     last_error: null,
@@ -120,6 +122,35 @@ function loadPilotTypes() {
 }
 
 const PILOT_TYPES = loadPilotTypes();
+const SLOW_BAKE_MARKER = '__SLOW_BAKE__';
+
+function isSlowBake(l) {
+  const text = l?._anchor?.text || '';
+  return text.includes(SLOW_BAKE_MARKER);
+}
+
+function slowBakePollsRequired() {
+  return 8;
+}
+
+function bakeReadyAfterPolls(l) {
+  return isSlowBake(l) ? slowBakePollsRequired() : 1;
+}
+
+function bakeProgressFor(l) {
+  const counter = l._bakeCounter || 0;
+  const planned = bakeReadyAfterPolls(l) * 3;
+  const phase = Math.min(3, Math.max(1, Math.ceil((counter / bakeReadyAfterPolls(l)) * 3)));
+  const steps = ['generation', 'gates', 'assembly'];
+  return {
+    phase,
+    phases_total: 3,
+    step: steps[phase - 1] || 'generation',
+    calls_done: counter,
+    calls_planned: planned,
+    updated_at: new Date().toISOString(),
+  };
+}
 
 // In-memory stub state (dev only)
 const state = {
@@ -358,14 +389,22 @@ const server = http.createServer(async (req, res) => {
     if (!l) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
     // Simulate progress: after 1 poll -> ready (covers E2E polling)
     l._bakeCounter = (l._bakeCounter || 0) + 1;
-    if (l.status === 'baking' && l._bakeCounter >= 1 && !l.failure_code) {
-      const fullLesson = buildGoldenLesson(lid);
+    if (l.status === 'baking' && l._bakeCounter >= bakeReadyAfterPolls(l) && !l.failure_code) {
+      const fullLesson = buildGoldenLesson(lid, {
+        anchor: l._anchor,
+        duration: l._duration,
+        focus: l._focus,
+      });
       l.lesson = fullLesson;
       l.status = 'ready';
       l.updated_at = new Date().toISOString();
     }
-    const step = l.status === 'baking' ? 'завдання складено' : (l.status === 'ready' ? 'готовий' : 'текст отримано');
-    return sendJSON(res, 200, {
+    const step = l.status === 'failed'
+      ? ''
+      : l.status === 'baking'
+        ? 'завдання складено'
+        : (l.status === 'ready' ? 'готово' : 'текст отримано');
+    const payload = {
       id: lid,
       status: l.status,
       step,
@@ -374,7 +413,11 @@ const server = http.createServer(async (req, res) => {
       failure_message: l.failure_message || null,
       created_at: l.created_at,
       updated_at: l.updated_at,
-    });
+    };
+    if (l.status === 'baking') {
+      payload.progress = bakeProgressFor(l);
+    }
+    return sendJSON(res, 200, payload);
   }
 
   // Get lesson (ready only)

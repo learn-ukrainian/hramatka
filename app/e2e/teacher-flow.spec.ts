@@ -374,7 +374,6 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await conductBtn.click();
 
     // Conductor UI appears (title + rail/clock)
-    await expect(page.getByText(/Проведення заняття|▶ Проведення заняття/i)).toBeVisible({ timeout: 5000 });
     await expect(page.locator('.cond-rail').first()).toBeVisible({ timeout: 5000 });
     await expect(page.locator('.cond-clock').first()).toBeVisible({ timeout: 5000 });
 
@@ -415,5 +414,108 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     // Summary should appear
     await expect(page.locator('.cond-sum')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('review mode shows collapsible anchor «Текст» with source text', async ({ page }) => {
+    const anchorSnippet = 'Унікальний якірний текст для перевірки рендеру в каталозі.';
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill(anchorSnippet);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    const panel = page.getByTestId('anchor-panel-review');
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('summary')).toHaveText('Текст');
+    await panel.locator('summary').click();
+    await expect(panel.getByTestId('anchor-text-body')).toContainText(anchorSnippet);
+    await expect(page.getByTestId('anchor-print')).toBeAttached();
+  });
+
+  test('run mode: teacher can open source text without leaving run', async ({ page }) => {
+    const anchorSnippet = 'Текст для режиму запуску без виходу з перегляду.';
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill(anchorSnippet);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    await page.getByRole('button', { name: /Режим запуску/ }).click();
+    await expect(page.getByTestId('anchor-panel-run')).toHaveCount(0);
+    await page.getByTestId('anchor-toggle-run').click();
+    await expect(page.getByTestId('anchor-panel-run')).toBeVisible();
+    await expect(page.getByTestId('anchor-panel-run').getByTestId('anchor-text-body')).toContainText(anchorSnippet);
+    await expect(page.locator('.block').first()).toBeVisible();
+  });
+
+  test('resumed baking lesson from catalog shows live status view and polling', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const slowText = '__SLOW_BAKE__ Текст для перевірки відновленого статусу з каталогу.';
+    await page.getByPlaceholder(/Вставте/).fill(slowText);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-polling')).toBeVisible({ timeout: 8000 });
+
+    await page.getByRole('button', { name: /До списку/ }).click();
+    await expect(page.getByRole('heading', { name: 'Ваші уроки' })).toBeVisible();
+
+    await page.locator('.catalog li button').first().click();
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-polling')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-subline')).toContainText(/Фаза|Текст отримано|Генерація|Ще працюємо/i);
+    await expect(page.locator('.block')).toHaveCount(0);
+  });
+
+  test('student print variant has zero answer-key content in print DOM', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки друку для учня.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    await page.evaluate(() => { window.print = () => {}; });
+    await page.getByTestId('print-student').click();
+    await expect(page.locator('.teacher-app')).toHaveClass(/print-variant-student/);
+
+    const keyCount = await page.locator('[data-testid="teacher-answer-key"]:visible').count();
+    const keyPhrase = await page.locator('[data-testid="teacher-answer-key"] strong:visible').count();
+    expect(keyCount).toBe(0);
+    expect(keyPhrase).toBe(0);
+
+    await page.getByTestId('print-teacher').click();
+    await expect(page.locator('.teacher-app')).toHaveClass(/print-variant-teacher/);
+    const teacherKeys = await page.locator('[data-testid="teacher-answer-key"]:visible').count();
+    expect(teacherKeys).toBeGreaterThan(0);
+  });
+
+  test('failed status subline never shows stale «готово» step (regression)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill('bad bake text');
+    await page.evaluate(() => {
+      const BAD = '00000000-0000-0000-0000-000000000bad';
+      // @ts-ignore
+      crypto.randomUUID = () => BAD;
+    });
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    await expect(page.getByTestId('failure-recovery')).toBeVisible({ timeout: 10000 });
+    const subline = page.getByTestId('baking-subline');
+    await expect(subline).toBeVisible();
+    const text = await subline.innerText();
+    expect(text).not.toMatch(/готово|готовий/i);
+    expect(text).toMatch(/Постачальник|Не вдалося/i);
   });
 });

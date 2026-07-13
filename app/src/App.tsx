@@ -6,10 +6,14 @@ import './teacher.css';
 import {
   statusLabel,
   bakeStatusSubline,
+  formatBakeProgressLine,
+  formatBakeElapsedFallback,
+  formatBakeElapsedClock,
   saveLastBakeRequest,
   loadLastBakeRequest,
   clearLastBakeRequest,
   type BakeRequestPayload,
+  type BakeProgress,
 } from './app-helpers';
 import Conductor from './Conductor';
 
@@ -171,8 +175,15 @@ export default function TeacherApp() {
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
   const [lesson, setLesson] = useState<LessonResource | null>(null);
   const [catalog, setCatalog] = useState<LessonCatalogItem[]>([]);
-  const [bakeStatus, setBakeStatus] = useState<{ status: LessonState; step: string; failure?: string } | null>(null);
+  const [bakeStatus, setBakeStatus] = useState<{
+    status: LessonState;
+    step: string;
+    failure?: string;
+    progress?: BakeProgress;
+    startedAt?: string;
+  } | null>(null);
   const [polling, setPolling] = useState(false);
+  const [bakeElapsedMs, setBakeElapsedMs] = useState(0);
 
   // Per-lesson local acks (until server confirms)
   const [localAcks, setLocalAcks] = useState<string[]>([]);
@@ -192,6 +203,8 @@ export default function TeacherApp() {
   const [showAnswers, setShowAnswers] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [restoredTextNotice, setRestoredTextNotice] = useState(false);
+  const [anchorOpen, setAnchorOpen] = useState(false);
+  const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -217,6 +230,9 @@ export default function TeacherApp() {
     setShowAnswers(true);
     setError(null);
     setRestoredTextNotice(false);
+    setAnchorOpen(false);
+    setPrintVariant(null);
+    setBakeElapsedMs(0);
   }, [clearPoll]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
@@ -420,7 +436,9 @@ export default function TeacherApp() {
         setDuration(source.duration);
         setFocus(source.focus?.trim() || '');
         setCurrentLessonId(id);
-        setBakeStatus({ status: data.status || 'baking', step: 'текст отримано' });
+        const startedAt = new Date().toISOString();
+        setBakeStatus({ status: data.status || 'baking', step: 'текст отримано', startedAt });
+        setBakeElapsedMs(0);
         navigate({ view: 'lesson', lessonId: id, mode: 'review' });
         pollStatus(id);
       } else {
@@ -489,7 +507,13 @@ export default function TeacherApp() {
       try {
         const res = await apiFetch(`/api/lessons/${id}/status`);
         st = await res.json();
-        setBakeStatus({ status: st.status, step: st.step || '', failure: st.failure_message || undefined });
+        setBakeStatus((prev) => ({
+          status: st.status,
+          step: st.step || '',
+          failure: st.failure_message || undefined,
+          progress: st.progress || undefined,
+          startedAt: prev?.startedAt || st.created_at,
+        }));
         if (st.status === 'ready') {
           clearPoll();
           await openLesson(id, 'review');
@@ -533,14 +557,20 @@ export default function TeacherApp() {
       if (res.status === 200) {
         const lr: LessonResource = await res.json();
         setLesson(lr);
+        setBakeStatus(null);
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
+        setAnchorOpen(false);
         navigate({ view: 'lesson', lessonId: id, mode });
       } else if (res.status === 409) {
         const e: ErrorEnvelope = await res.json();
-        setBakeStatus({ status: 'baking', step: e.message || 'завдання складено' });
+        setLesson(null);
+        const startedAt = new Date().toISOString();
+        setBakeStatus({ status: 'baking', step: e.message || 'завдання складено', startedAt });
+        setBakeElapsedMs(0);
         setCurrentLessonId(id);
-        pollStatus(id); // resume/ start poll for baking lesson (refresh case)
+        navigate({ view: 'lesson', lessonId: id, mode });
+        pollStatus(id);
       } else if (res.status === 404) {
         setError('Урок не знайдено.');
       } else {
@@ -664,10 +694,45 @@ export default function TeacherApp() {
     URL.revokeObjectURL(a.href);
   };
 
-  // Browser print (with stylesheet)
-  const printLesson = () => {
-    window.print();
+  // Browser print (with stylesheet) — teacher keeps keys; student worksheet has none
+  const printLesson = (variant: 'teacher' | 'student') => {
+    setPrintVariant(variant);
+    requestAnimationFrame(() => {
+      window.print();
+      window.setTimeout(() => setPrintVariant(null), 500);
+    });
   };
+
+  // Live elapsed clock while baking (honest wait — not a fake percent)
+  useEffect(() => {
+    if (!bakeStatus || bakeStatus.status !== 'baking' || !bakeStatus.startedAt) {
+      setBakeElapsedMs(0);
+      return undefined;
+    }
+    const started = new Date(bakeStatus.startedAt).getTime();
+    const tick = () => setBakeElapsedMs(Math.max(0, Date.now() - started));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [bakeStatus?.status, bakeStatus?.startedAt]);
+
+  const bakingSubline = () => {
+    if (!bakeStatus) return '';
+    if (bakeStatus.status === 'failed') {
+      return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure);
+    }
+    if (bakeStatus.progress) {
+      return formatBakeProgressLine(bakeStatus.progress);
+    }
+    if (bakeStatus.status === 'baking') {
+      return formatBakeElapsedFallback(bakeElapsedMs);
+    }
+    return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure);
+  };
+
+  const renderAnchorBody = (text: string, testId?: string) => (
+    <div className="anchorbody" {...(testId ? { 'data-testid': testId } : {})}>{text}</div>
+  );
 
   function handleApiError(e: ErrorEnvelope) {
     if (e.code === 'session_required') {
@@ -719,7 +784,7 @@ export default function TeacherApp() {
                 </div>
 
                 {showKey && (
-                  <div className="teacher-key">
+                  <div className="teacher-key teacher-only" data-testid="teacher-answer-key">
                     <strong>Ключ відповіді:</strong>
                     <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
                     {block.note && <div className="note">Примітка: {block.note}</div>}
@@ -753,7 +818,7 @@ export default function TeacherApp() {
   const currentMode = (route.mode as 'review' | 'run' | 'conduct') || 'review';
 
   return (
-    <div className="teacher-app">
+    <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}`}>
       <header className="appbar">
         <div className="brand">Граматка</div>
         {session && (
@@ -954,19 +1019,43 @@ export default function TeacherApp() {
                     <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')} disabled={currentMode === 'conduct'}>▶ Провести заняття</button>
                   )}
                   {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
-                  <button className="btn ghost" onClick={printLesson}>Друк</button>
+                  {lesson && lesson.lesson.status === 'ready' && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        data-testid="print-teacher"
+                        onClick={() => printLesson('teacher')}
+                      >
+                        Друк для вчителя
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        data-testid="print-student"
+                        onClick={() => printLesson('student')}
+                      >
+                        Друк для учня
+                      </button>
+                    </>
+                  )}
                   <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
                 </div>
               </div>
 
               {bakeStatus && !lesson && (
-                <div className="baking">
+                <div className="baking" data-testid="baking-status-view">
                   <div className="steps">
                     <div className={`step ${bakeStatus.status === 'baking' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
                       <div className="dot">{bakeStatus.status === 'baking' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
                       <div>
                         <b>Статус: {statusLabel(bakeStatus.status)}</b>
-                        <div className="sd">{bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure)}</div>
+                        <div className="sd" data-testid="baking-subline">{bakingSubline()}</div>
+                        {bakeStatus.status === 'baking' && (
+                          <div className="sd bake-elapsed" data-testid="baking-elapsed">
+                            Минуло {formatBakeElapsedClock(bakeElapsedMs)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1002,7 +1091,9 @@ export default function TeacherApp() {
                       </div>
                     </div>
                   )}
-                  {bakeStatus.status === 'baking' && polling && <p className="hint" style={{marginTop:6}}>Оновлення…</p>}
+                  {bakeStatus.status === 'baking' && polling && (
+                    <p className="hint" style={{marginTop:6}} data-testid="baking-polling">Оновлення…</p>
+                  )}
                   {bakeStatus.status === 'baking' && (
                     <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
                   )}
@@ -1020,6 +1111,40 @@ export default function TeacherApp() {
                     <div>Ревізія: {lesson.revision} • Прийнято: {lesson.lesson.accepted ? 'так' : 'ні'}</div>
                     {lesson.lesson.focus && <div>Фокус: {lesson.lesson.focus}</div>}
                   </div>
+
+                  {currentMode === 'review' && lesson.lesson.anchor?.text && (
+                    <details className="anchor-panel noprint-student" data-testid="anchor-panel-review">
+                      <summary>Текст</summary>
+                      <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                      {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
+                    </details>
+                  )}
+
+                  {currentMode === 'run' && lesson.lesson.anchor?.text && (
+                    <div className="anchor-run-bar noprint">
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        data-testid="anchor-toggle-run"
+                        onClick={() => setAnchorOpen((v) => !v)}
+                      >
+                        {anchorOpen ? 'Сховати текст' : 'Текст'}
+                      </button>
+                      {anchorOpen && (
+                        <div className="anchor-panel run-open" data-testid="anchor-panel-run">
+                          <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                          {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {lesson.lesson.anchor?.text && (
+                    <div className="anchor-print" data-testid="anchor-print">
+                      <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                      {renderAnchorBody(lesson.lesson.anchor.text)}
+                    </div>
+                  )}
 
                   {currentMode !== 'conduct' && (
                     <div className={`modes ${currentMode}`}>
