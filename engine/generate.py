@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 
 from .providers import make_generator
 from .transport import (
@@ -36,6 +37,7 @@ __all__ = [
 ]
 
 LEGACY_GENERATOR_VERSION = "extractive-v1"
+RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
 
 # The default real generator: the locked Gemma AIS route over the real HTTP
 # transport (env key, toolless). Constructing it performs no network I/O and
@@ -43,53 +45,77 @@ LEGACY_GENERATOR_VERSION = "extractive-v1"
 call_gemma = make_generator("gemma-ais")
 
 
-def extract_json(text: str) -> dict | None:
-    """Extract the first balanced top-level {...} JSON object from `text`.
+def extract_json(text: str) -> dict | list | None:
+    """Extract the first top-level JSON object or array from `text`.
 
     Tolerates leading prose / a stripped <thought> block / trailing text.
-    Ignores braces inside strings. Returns the parsed dict, or None.
+    Returns the parsed container, or None.
     """
     if not text:
         return None
     stripped = text.strip()
     try:  # fast path: the whole thing is already a JSON object
         obj = json.loads(stripped)
-        if isinstance(obj, dict):
+        if isinstance(obj, (dict, list)):
             return obj
     except ValueError:
         pass
 
-    start = text.find("{")
-    while start != -1:
-        depth = 0
-        in_str = False
-        escape = False
-        for i in range(start, len(text)):
-            ch = text[i]
-            if in_str:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_str = False
-                continue
-            if ch == '"':
-                in_str = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[start : i + 1]
-                    try:
-                        obj = json.loads(candidate)
-                        if isinstance(obj, dict):
-                            return obj
-                    except ValueError:
-                        break  # try the next '{'
-        start = text.find("{", start + 1)
+    decoder = json.JSONDecoder()
+    starts = sorted(index for index, char in enumerate(text) if char in "{[")
+    for start in starts:
+        try:
+            obj, _end = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if isinstance(obj, (dict, list)):
+            return obj
     return None
+
+
+def _persist_raw_parse_failure(raw: str, out_dir: str | Path | None, attempt: int) -> None:
+    """Keep failed model output in the private phase artifact directory only."""
+    if out_dir is None:
+        return
+    raw_path = Path(out_dir) / f"generation-raw-attempt{attempt}.txt"
+    capped = raw.encode("utf-8")[:RAW_PARSE_FAILURE_MAX_BYTES]
+    raw_path.write_text(capped.decode("utf-8", errors="ignore"), encoding="utf-8")
+
+
+def _activities_from_parsed(obj: dict | list) -> list[object] | None:
+    """Accept documented one-level host shape variants without validating content."""
+    if isinstance(obj, list):
+        return obj if all(isinstance(activity, dict) for activity in obj) else None
+
+    activities = obj.get("activities")
+    if isinstance(activities, list):
+        return activities
+    if isinstance(activities, dict):
+        values = list(activities.values())
+        return values if all(isinstance(activity, dict) for activity in values) else None
+    if obj.get("type"):
+        return [obj]
+
+    # Some hosts add one response-envelope object. Deliberately do not recurse:
+    # only the sole wrapper level is a tolerated transport shape variation.
+    if len(obj) == 1:
+        wrapped = next(iter(obj.values()))
+        if isinstance(wrapped, (dict, list)):
+            return _activities_from_parsed_without_wrapper(wrapped)
+    return None
+
+
+def _activities_from_parsed_without_wrapper(obj: dict | list) -> list[object] | None:
+    """Apply ordinary activity rules after exactly one wrapper descent."""
+    if isinstance(obj, list):
+        return obj if all(isinstance(activity, dict) for activity in obj) else None
+    activities = obj.get("activities")
+    if isinstance(activities, list):
+        return activities
+    if isinstance(activities, dict):
+        values = list(activities.values())
+        return values if all(isinstance(activity, dict) for activity in values) else None
+    return [obj] if obj.get("type") else None
 
 
 def generate_baseline_v1(
@@ -101,6 +127,8 @@ def generate_baseline_v1(
     generator: Callable[[str], str] = call_gemma,
     grounding_pack: str = "",
     prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
+    out_dir: str | Path | None = None,
+    _raw_attempt_counter: list[int] | None = None,
 ) -> list[dict]:
     """Frozen pre-Wave-0 one-shot extractive path for measurement.
 
@@ -118,35 +146,44 @@ def generate_baseline_v1(
     types = types or ["true-false", "cloze", "match-up"]
     build = prompt_builder or _default_prompt_builder
     prompt = build(anchor, level, types, grounding_pack)
-    return _generate_from_prompt(prompt, generator)
+    return _generate_from_prompt(
+        prompt,
+        generator,
+        out_dir=out_dir,
+        raw_attempt_counter=_raw_attempt_counter,
+    )
 
 
 def _generate_from_prompt(
-    prompt: str, generator: Callable[[str], str], *, retain_all: bool = False
+    prompt: str,
+    generator: Callable[[str], str],
+    *,
+    retain_all: bool = False,
+    out_dir: str | Path | None = None,
+    raw_attempt_counter: list[int] | None = None,
 ) -> list[object]:
     """Legacy JSON parsing/retry semantics shared by baseline and registry."""
 
-    raw = generator(prompt)
-    obj = extract_json(raw)
-    if obj is None:
-        raw = generator(prompt)  # retry once
+    attempts = raw_attempt_counter if raw_attempt_counter is not None else [0]
+    parsed_but_rejected = False
+    for _ in range(2):
+        attempts[0] += 1
+        raw = generator(prompt)
         obj = extract_json(raw)
-    if obj is None:
-        raise GenerationUnparseable(
-            "Gemma output was not parseable JSON after one retry."
-        )
+        if obj is not None:
+            activities = _activities_from_parsed(obj)
+            if activities is not None:
+                if retain_all:
+                    return activities
+                return [activity for activity in activities if isinstance(activity, dict)]
+            parsed_but_rejected = True
+        _persist_raw_parse_failure(raw, out_dir, attempts[0])
 
-    activities = obj.get("activities")
-    if not isinstance(activities, list):
-        # A bare single activity object is tolerated.
-        if obj.get("type"):
-            return [obj]
+    if parsed_but_rejected:
         raise GenerationUnparseable(
             "Parsed JSON has no 'activities' array and is not a single activity."
         )
-    if retain_all:
-        return activities
-    return [activity for activity in activities if isinstance(activity, dict)]
+    raise GenerationUnparseable("Gemma output was not parseable JSON after one retry.")
 
 
 def generate(
@@ -158,6 +195,8 @@ def generate(
     generator: Callable[[str], str] = call_gemma,
     grounding_pack: str = "",
     prompt_builder: Callable[..., str] | None = None,
+    out_dir: str | Path | None = None,
+    _raw_attempt_counter: list[int] | None = None,
 ) -> list[object]:
     """Registry-planned typed candidate generation.
 
@@ -195,11 +234,20 @@ def generate(
         prompt_groups.setdefault((prompt, count_signature), []).append(entry.activity_type)
 
     candidates: list[object] = []
+    raw_attempt_counter = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
     for prompt, _count_signature in prompt_groups:
         # Preserve every emitted member, including primitives and types outside
         # the target bank.  The pipeline turns each into a visible rejection
         # when appropriate; generation must never silently discard evidence.
-        candidates.extend(_generate_from_prompt(prompt, generator, retain_all=True))
+        candidates.extend(
+            _generate_from_prompt(
+                prompt,
+                generator,
+                retain_all=True,
+                out_dir=out_dir,
+                raw_attempt_counter=raw_attempt_counter,
+            )
+        )
     return candidates
 
 

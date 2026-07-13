@@ -689,6 +689,25 @@ def test_generator_unavailable_does_not_crash_pipeline(tmp_path):
     assert (tmp_path / "out" / "lesson.b1.json").exists()
 
 
+def test_parse_failures_persist_truncated_raw_output_in_phase_directory(tmp_path):
+    rejected_json = '{"unexpected": true}'
+    raw_outputs = iter([rejected_json, "x" * (64 * 1024 + 1)])
+
+    res = pipeline.run(
+        _anchor(),
+        generator=lambda _p: next(raw_outputs),
+        out_dir=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+        use_cache=False,
+    )
+
+    assert res.generation_error is not None
+    assert "GenerationUnparseable" in res.generation_error
+    first_raw = tmp_path / "out" / "generation-raw-attempt1.txt"
+    assert first_raw.read_text(encoding="utf-8") == rejected_json
+    assert len((tmp_path / "out" / "generation-raw-attempt2.txt").read_bytes()) == 64 * 1024
+
+
 def test_no_cache_run_never_writes_the_cache_dir(tmp_path, monkeypatch):
     # Regression (pilot host 2026-07-13, PR #88 review): with use_cache=False
     # (the API baker), _run still mkdir'ed the cache path — on a deploy host

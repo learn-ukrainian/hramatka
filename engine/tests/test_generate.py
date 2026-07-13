@@ -47,6 +47,53 @@ def test_generate_returns_activities_list():
     assert acts == [{"type": "cloze"}, {"type": "true-false"}]
 
 
+def test_generate_accepts_fenced_json_from_live_openrouter_probe():
+    raw = '```json\n{"activities": [{"type": "quiz", "instruction": "тест"}]}\n```'
+
+    activities = G.generate("anchor", generator=lambda _p: raw, prompt_builder=_pb)
+
+    assert activities == [{"type": "quiz", "instruction": "тест"}]
+
+
+def test_generate_accepts_top_level_activity_array():
+    activities = G.generate(
+        "anchor",
+        generator=lambda _p: json.dumps([{"type": "cloze"}, {"type": "quiz"}]),
+        prompt_builder=_pb,
+    )
+
+    assert activities == [{"type": "cloze"}, {"type": "quiz"}]
+
+
+def test_generate_accepts_activity_dict_values():
+    activities = G.generate(
+        "anchor",
+        generator=lambda _p: json.dumps(
+            {"activities": {"first": {"type": "cloze"}, "second": {"type": "quiz"}}}
+        ),
+        prompt_builder=_pb,
+    )
+
+    assert activities == [{"type": "cloze"}, {"type": "quiz"}]
+
+
+def test_generate_descends_one_single_key_response_wrapper():
+    activities = G.generate(
+        "anchor",
+        generator=lambda _p: json.dumps({"response": {"activities": [{"type": "quiz"}]}}),
+        prompt_builder=_pb,
+    )
+
+    assert activities == [{"type": "quiz"}]
+
+
+def test_generate_rejects_more_than_one_wrapper_level():
+    raw = json.dumps({"response": {"json": {"activities": [{"type": "quiz"}]}}})
+
+    with pytest.raises(G.GenerationUnparseable):
+        G.generate("anchor", generator=lambda _p: raw, prompt_builder=_pb)
+
+
 def test_generate_retries_once_then_succeeds():
     calls = {"n": 0}
 

@@ -537,6 +537,7 @@ def _run(
     result = PipelineResult(
         anchor=snap, fingerprint=fingerprint, fingerprint_inputs=fp_inputs
     )
+    raw_attempt_counter = [0]
 
     # ---- generate typed candidates (cache-first) ---------------------
     raw_batches: list[tuple[list[str], list[object]]] = []
@@ -561,6 +562,8 @@ def _run(
                 counts=plan,
                 generator=generator,
                 grounding_pack=grounding["text"],
+                out_dir=out_dir,
+                _raw_attempt_counter=raw_attempt_counter,
             ))]
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
@@ -679,6 +682,8 @@ def _run(
                 counts=deficits,
                 generator=generator,
                 grounding_pack=grounding["text"],
+                out_dir=out_dir,
+                _raw_attempt_counter=raw_attempt_counter,
             )
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
