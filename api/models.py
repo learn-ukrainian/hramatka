@@ -1,42 +1,42 @@
-"""HTTP input models for the intentionally small, poll-first API."""
+"""Strict HTTP input models for the frozen teacher-pilot wire contract."""
 
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class AnchorInput(BaseModel):
+class FrozenModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class InviteRedeem(FrozenModel):
+    token: str = Field(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+
+
+class AnchorInput(FrozenModel):
     text: str = Field(min_length=1, max_length=100_000)
-    source: Literal["teacher-paste", "teacher-url"] = "teacher-paste"
+    source: Literal["teacher-paste"]
 
-    @model_validator(mode="before")
+    @field_validator("text")
     @classmethod
-    def accept_plain_text(cls, value: object) -> object:
-        if isinstance(value, str):
-            return {"text": value, "source": "teacher-paste"}
+    def reject_whitespace_only(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Paste text must not be whitespace only.")
         return value
 
 
-class LessonCreate(BaseModel):
-    """``id`` is both the lesson id and the HTTP idempotency key."""
+class LessonCreate(FrozenModel):
+    """The browser UUID is the owner-scoped durable idempotency key."""
 
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+    id: UUID
     anchor: AnchorInput
-    # The API seam is deliberately explicit: v1 is a B1 pilot, not a
-    # level-neutral generator that happens to default to B1.  Pydantic emits a
-    # structured 422/literal_error for C1, A2, etc. before any durable job or
-    # generator call is made.
-    level: Literal["B1"] = "B1"
+    level: Literal["B1"]
     duration: Literal[45, 60, 90]
     focus: str | None = Field(default=None, max_length=500)
 
 
-class StatusResponse(BaseModel):
-    id: str
-    status: Literal["draft", "baking", "ready", "failed"]
-    step: Literal["текст отримано", "завдання складено", "перевірка", "готово"]
-    last_error: str | None
+class RevisionMutation(FrozenModel):
+    expected_revision: int = Field(ge=1)

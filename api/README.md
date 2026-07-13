@@ -1,37 +1,56 @@
-# Hramatka bake API
+# Hramatka teacher-pilot API
 
-The frozen teacher-pilot implementation contract is checked in alongside the current
-mock-first skeleton:
+This package implements the frozen, pasted-text-only teacher pilot. The browser
+contract is [`openapi.yaml`](openapi.yaml); access, privacy, cookie, CSRF, and
+operator lifecycle requirements are frozen in
+[`teacher-access-contract.md`](teacher-access-contract.md); SQLite durability and
+aggregate rules are frozen in
+[`persistence-contract.md`](persistence-contract.md).
 
-- `openapi.yaml` — exact same-origin `/api/*` wire contract
-- `teacher-access-contract.md` — invite, cookie, CSRF, ownership, and privacy rules
-- `persistence-contract.md` — SQLite aggregate, transaction, catalog, and revision rules
+The browser uses only the `__Host-hramatka_session` cookie issued through a one-use
+invite exchange. There is no browser bearer-token path, no CORS, no public/admin HTTP
+route for lifecycle operations, and no alternate auth path for frozen `/api/*` routes.
+Every browser mutation requires the configured exact `Origin` and the current
+session-derived CSRF token.
 
-The code below still describes the pre-pilot skeleton. Implementations must migrate it
-to the frozen contract above; they must not infer the pilot interface from current route
-behavior.
+## Configuration
 
-This private API is a thin local skeleton for the Step 5 asynchronous bake
-workflow. It is poll-first and requires one `Authorization: Bearer` teacher
-token from `HRAMATKA_TEACHER_TOKEN`; it stores no student records.
+The API process requires these environment variables; keep their values in a
+root-owned host secret file or another deployment secret store, never in this
+repository:
 
-`POST /lessons` requires `{id, anchor, duration, focus}`. The caller-supplied
-`id` is the lesson ID and idempotency key: identical inputs return the existing
-job; different inputs with the same ID return `409`.
+| Variable | Meaning |
+| --- | --- |
+| `HRAMATKA_DB_PATH` | SQLite file on the persistent volume, outside the release directory. |
+| `HRAMATKA_PILOT_ORIGIN` | Exact HTTPS pilot origin, without a path or trailing slash. |
+| `HRAMATKA_CSRF_HMAC_KEY` | Independent canonical unpadded-base64url encoding of 32 random bytes. It is the server-side HMAC key for session-derived CSRF tokens and is never stored in SQLite. |
 
-The available endpoints are:
+The deployed service must use the real `EngineLessonBaker` and leave mock mode off.
+Its selected engine/provider configuration is deployment secret material. The service
+is ready only when the database is writable with current migrations and the real baker
+is wired; see `/api/readyz` and the persistence contract.
 
-- `POST /lessons`
-- `GET /lessons/{id}/status`
-- `GET /lessons/{id}`
-- `POST /lessons/{id}/blocks/{block_id}/accept` (explicitly acknowledge a visible warning)
-- `POST /lessons/{id}/accept`
-- `POST /lessons/{id}/draft` (clear final acceptance while retaining the ready artifact)
+## Operator lifecycle
 
-Status reports only actual stages: `текст отримано`, `завдання складено`,
-`перевірка`, and `готово`. A new process marks an unfinished bake failed rather
-than pretending to resume or leaving it eternally `baking`. The service runs
-one bake worker; if an in-process adapter exceeds the hard timeout, its watchdog
-quarantines that worker and fails queued/new bakes honestly until the API is
-restarted. This avoids claiming that Python can safely cancel a blocked engine
-thread.
+These local/SSH commands use `HRAMATKA_DB_PATH` and have no web equivalent:
+
+```sh
+python -m hramatka.api.teachers create --display-name <label>
+python -m hramatka.api.invites create --teacher-id <uuid> [--expires-in-hours 72]
+python -m hramatka.api.invites revoke --invite-id <uuid>
+python -m hramatka.api.sessions revoke --session-id <uuid>
+python -m hramatka.api.teachers deactivate --teacher-id <uuid>
+```
+
+Invite creation needs `HRAMATKA_PILOT_ORIGIN` as well. It prints the fragment link
+once; SQLite stores only a domain-separated digest, so later commands expose only
+identifiers, timestamps, and state. Deactivating a teacher atomically revokes every
+unredeemed invite and active session for that teacher.
+
+## Deployment
+
+[`deploy/`](deploy/) contains the Caddy configuration, single-Uvicorn-worker systemd
+unit, secret-name-only environment template, and Hetzner CX23 deployment runbook. The
+runbook makes a SQLite-consistent encrypted off-host daily backup and clean restore
+drill a launch gate. It is configuration and procedure only: it does not provision a
+server, DNS record, secret, volume, certificate, or backup destination.

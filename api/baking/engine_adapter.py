@@ -46,15 +46,13 @@ def _answer_key(activity: dict) -> dict:
     if a_type == "cloze":
         return {
             "blanks": [
-                {"id": b.get("id"), "answer": b.get("answer")}
-                for b in activity.get("blanks", [])
+                {"id": b.get("id"), "answer": b.get("answer")} for b in activity.get("blanks", [])
             ]
         }
     if a_type == "match-up":
         return {
             "pairs": [
-                {"left_index": i, "right_index": i}
-                for i in range(len(activity.get("pairs", [])))
+                {"left_index": i, "right_index": i} for i in range(len(activity.get("pairs", [])))
             ]
         }
     return {"note": "answer key unavailable"}
@@ -141,8 +139,9 @@ class EngineLessonBaker:
                     f"for the TTT plan ({len(blocks)} of {len(plan)})."
                 )
             blocks.append(self._block(available.pop(selected_index), slot, phase))
-        # Pipeline carries these diagnostics in IR.  The fallback keeps direct
-        # adapter callers honest while older cached results are still readable.
+        # These diagnostics are required by the digest-pinned public lesson
+        # schema.  The API resource projection omits them from the narrower
+        # frozen browser wire representation.
         anchor_body = result.anchor["body_uk"]
         anchor_diagnostics = result.anchor.get("diagnostics")
         if anchor_diagnostics is None:
@@ -242,12 +241,12 @@ def rejected_entries(activities: list) -> list[dict]:
     with a `gate-failed:<gate>` reason. Never all-or-nothing, never silent — a
     good sibling ships as a block while its bad twin is disclosed here."""
     out: list[dict] = []
-    for ir in activities:
+    for index, ir in enumerate(activities, start=1):
         if ir.gate_result.status == schema.GATE_FAILED:
             out.append(
                 {
                     "type": "gate-failed",
-                    "activity": ir.activity,
+                    "activity": _rejected_activity_document(ir.activity, index),
                     "reason": f"gate-failed:{_failed_gate(ir)}",
                 }
             )
@@ -265,11 +264,34 @@ def rejected_entries(activities: list) -> list[dict]:
             out.append(
                 {
                     "type": "gate-failed",
-                    "activity": flag["item"],
+                    "activity": _rejected_activity_document(ir.activity, index),
                     "reason": f"gate-failed:{gate}",
                 }
             )
     return out
+
+
+def _rejected_activity_document(activity: dict, index: int) -> dict:
+    """Wrap rejected pipeline activity data in the frozen activity document.
+
+    The pipeline's activity is a payload, not the browser-facing
+    ``ActivityDocument`` required by OpenAPI.  Rejections must remain viewable
+    without emitting a private IR fragment or an unsupported synthetic type.
+    """
+    activity_type = activity["type"]
+    return {
+        "id": f"rejected-{activity_type}-{index}",
+        "type": activity_type,
+        "title": _TITLES.get(activity_type, "Завдання"),
+        "level": "b1",
+        "payload": activity,
+        "answer_key": _answer_key(activity),
+        "provenance": {
+            "source": "generated",
+            "generator": GEMMA_MODEL,
+            "gates": ["gated"],
+        },
+    }
 
 
 def bake_accounting(result) -> dict[str, int]:

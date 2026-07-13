@@ -1,35 +1,175 @@
-"""Thin FastAPI surface for durable, poll-first Hramatka lesson bakes."""
+"""Frozen same-origin FastAPI surface for the private teacher pilot."""
+# ruff: noqa: B008
 
 from __future__ import annotations
 
-import secrets
+import base64
+import binascii
+import copy
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Any
+from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, Path, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .baking.mock import MockLessonBaker
+from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
-from .models import LessonCreate, StatusResponse
+from .models import InviteRedeem, LessonCreate, RevisionMutation
 from .runner import BakeRunner
-from .store import IdempotencyConflict, JobRecord, JobStore, WarningBlocksUnacknowledged
+from .security import csrf_matches, csrf_token
+from .store import (
+    IdempotencyConflict,
+    InviteUnavailable,
+    JobRecord,
+    JobStore,
+    LessonNotFound,
+    LessonStateConflict,
+    PersistenceUnavailable,
+    RevisionConflict,
+    SessionUnavailable,
+    TokenFormatError,
+    WarningAcknowledgementsRequired,
+    WarningBlockNotFound,
+)
+
+_SESSION_COOKIE = "__Host-hramatka_session"
+_OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+
+
+class PilotError(Exception):
+    """A deliberately small error envelope with no implementation detail."""
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        lesson_id: str | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.lesson_id = lesson_id
+
+    def payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "code": self.code,
+            "message": self.message,
+            "retryable": self.retryable,
+        }
+        if self.lesson_id is not None:
+            payload["lesson_id"] = self.lesson_id
+        return payload
+
+
+@dataclass(frozen=True)
+class AuthenticatedSession:
+    record: Any
+    raw_secret: bytes
+
+    @property
+    def teacher_id(self) -> str:
+        return self.record.teacher_id
+
+
+def _encode_opaque(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_opaque(value: str | None) -> bytes | None:
+    """Return only a canonical 32-byte base64url browser credential."""
+    if value is None or not _OPAQUE_TOKEN_RE.fullmatch(value):
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(value + "=")
+    except (ValueError, binascii.Error):
+        return None
+    if len(raw) != 32 or _encode_opaque(raw) != value:
+        return None
+    return raw
+
+
+def _status_payload(job: JobRecord) -> dict[str, object]:
+    return {
+        "id": job.id,
+        "status": job.status,
+        "step": job.step,
+        "revision": job.revision,
+        "failure_code": job.failure_code,
+        "failure_message": job.failure_message,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
+
+
+def _resource_payload(job: JobRecord) -> dict[str, object]:
+    if job.lesson is None:  # pragma: no cover - enforced by the ready-state check
+        raise RuntimeError("A ready lesson aggregate must have a lesson document.")
+    lesson = copy.deepcopy(job.lesson)
+    # The stored document is valid against the digest-pinned public schema,
+    # which requires these anchor provenance fields.  The frozen OpenAPI
+    # browser contract deliberately narrows LessonAnchor to pasted text,
+    # source, and character count.
+    lesson.get("anchor", {}).pop("fingerprint", None)
+    lesson.get("anchor", {}).pop("diagnostics", None)
+    return {
+        "lesson_id": job.id,
+        "revision": job.revision,
+        "accepted_at": job.accepted_at,
+        "accepted_revision": job.accepted_revision,
+        "warning_acknowledgements": sorted(job.warning_acknowledgements),
+        "lesson": lesson,
+    }
+
+
+def _catalog_payload(jobs: list[Any]) -> dict[str, object]:
+    items: list[dict[str, object]] = []
+    for job in jobs:
+        items.append(
+            {
+                "id": job.id,
+                "title": job.title,
+                "status": job.status,
+                "duration": job.duration,
+                "focus": job.focus,
+                "revision": job.revision,
+                "accepted": job.accepted,
+                "accepted_at": job.accepted_at,
+                "accepted_revision": job.accepted_revision,
+                "failure_code": job.failure_code,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+            }
+        )
+    return {"lessons": items}
+
+
+def _lesson_id(value: UUID) -> str:
+    return str(value)
 
 
 def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = None) -> FastAPI:
+    """Create the one-process application; it deliberately exposes no bearer path."""
     settings = settings or Settings.from_env()
     store = JobStore(settings.database_path)
     store.initialize()
-    baker = baker or MockLessonBaker(
-        delay_seconds=settings.mock_delay_seconds,
-        fail=settings.mock_fail,
-    )
+    baker = baker or EngineLessonBaker()
     runner = BakeRunner(store, baker, settings.bake_hard_timeout_seconds)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # A fresh process cannot safely claim an in-flight in-memory worker; fail honestly.
+        # In-process engine work is not resumable after a process exit.  Mark it
+        # durably failed before this process claims any new aggregate.
         store.recover_baking_jobs(settings.bake_hard_timeout_seconds)
         runner.start()
         try:
@@ -37,120 +177,327 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         finally:
             runner.stop()
 
-    app = FastAPI(title="Hramatka bake API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Hramatka teacher pilot API",
+        version="1.0.0-pilot-frozen",
+        lifespan=lifespan,
+    )
     app.state.settings = settings
     app.state.store = store
     app.state.runner = runner
+    app.state.baker = baker
 
-    def require_teacher(
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
-        supplied = authorization.removeprefix("Bearer ") if authorization else ""
-        if not secrets.compare_digest(supplied, settings.teacher_token):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    @app.exception_handler(PilotError)
+    async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
+        return JSONResponse(status_code=error.status_code, content=error.payload())
 
-    def get_job_or_404(lesson_id: str) -> JobRecord:
-        job = store.get(lesson_id)
-        if job is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
-        return job
-
-    @app.post("/lessons", status_code=status.HTTP_202_ACCEPTED)
-    def create_lesson(request: LessonCreate, _: None = Depends(require_teacher)) -> dict[str, str]:
-        try:
-            job, created = store.create_or_get(
-                id=request.id,
-                anchor_text=request.anchor.text,
-                anchor_source=request.anchor.source,
-                duration=request.duration,
-                focus=request.focus,
-            )
-        except IdempotencyConflict as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        if created and not runner.submit(job.id):
-            store.fail_queued_drafts(
-                "Bake worker is unavailable after a hard timeout; restart the API before retrying."
-            )
-            job = get_job_or_404(job.id)
-        return {"id": job.id, "status": job.status}
-
-    @app.get("/lessons/{lesson_id}/status", response_model=StatusResponse)
-    def lesson_status(lesson_id: str, _: None = Depends(require_teacher)) -> StatusResponse:
-        runner.expire_and_quarantine()
-        job = get_job_or_404(lesson_id)
-        return StatusResponse(
-            id=job.id,
-            status=job.status,
-            step=job.step,
-            last_error=job.last_error,
+    @app.exception_handler(PersistenceUnavailable)
+    async def persistence_error(_: Request, __: PersistenceUnavailable) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "code": "persistence_unavailable",
+                "message": "The service could not persist this request. Try again.",
+                "retryable": True,
+            },
         )
 
-    @app.get("/lessons/{lesson_id}")
-    def get_lesson(lesson_id: str, _: None = Depends(require_teacher)) -> dict:
-        job = get_job_or_404(lesson_id)
-        if job.status != "ready" or job.lesson is None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lesson is not ready")
-        return job.lesson
+    @app.exception_handler(RequestValidationError)
+    async def invalid_input(_: Request, __: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "code": "invalid_input",
+                "message": "The request is invalid.",
+                "retryable": False,
+            },
+        )
 
-    @app.post("/lessons/{lesson_id}/blocks/{block_id}/accept")
-    def accept_warning_block(
-        lesson_id: str,
-        block_id: str,
-        _: None = Depends(require_teacher),
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(_: Request, __: StarletteHTTPException) -> JSONResponse:
+        # The frozen API never returns FastAPI's default ``detail`` envelope.
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "code": "lesson_not_found",
+                "message": "Lesson not found.",
+                "retryable": False,
+            },
+        )
+
+    @app.middleware("http")
+    async def sensitive_no_store(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        if request.url.path.startswith("/api/session") or request.url.path.startswith(
+            "/api/lessons"
+        ):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def require_json(request: Request) -> None:
+        content_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
+        if content_type != "application/json":
+            raise PilotError(422, "invalid_input", "The request is invalid.")
+
+    def require_origin(origin: Annotated[str | None, Header()] = None) -> None:
+        if origin != settings.pilot_origin:
+            raise PilotError(
+                403, "csrf_rejected", "This request did not pass same-origin validation."
+            )
+
+    def require_session(request: Request) -> AuthenticatedSession:
+        raw_secret = _decode_opaque(request.cookies.get(_SESSION_COOKIE))
+        if raw_secret is None:
+            raise PilotError(401, "session_required", "A valid teacher session is required.")
+        record = store.lookup_session(raw_secret)
+        if record is None:
+            raise PilotError(401, "session_required", "A valid teacher session is required.")
+        return AuthenticatedSession(record=record, raw_secret=raw_secret)
+
+    def require_mutation_session(
+        _: None = Depends(require_origin),
+        session: AuthenticatedSession = Depends(require_session),
+        supplied_csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+    ) -> AuthenticatedSession:
+        if not csrf_matches(settings.csrf_hmac_key, session.raw_secret, supplied_csrf):
+            raise PilotError(
+                403, "csrf_rejected", "This request did not pass same-origin validation."
+            )
+        return session
+
+    def session_payload(session: AuthenticatedSession) -> dict[str, object]:
+        return {
+            "teacher": {
+                "id": session.record.teacher_id,
+                "display_name": session.record.teacher_display_name,
+            },
+            "expires_at": session.record.expires_at,
+            "csrf_token": csrf_token(settings.csrf_hmac_key, session.raw_secret),
+        }
+
+    def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
+        job = store.get(teacher_id, lesson_id)
+        if job is None:
+            raise PilotError(404, "lesson_not_found", "Lesson not found.")
+        return job
+
+    @app.post("/api/session/redeem")
+    def redeem_invite(
+        request_body: InviteRedeem,
+        _: None = Depends(require_json),
+        __: None = Depends(require_origin),
+    ) -> Response:
+        try:
+            redeemed = store.redeem_invite(request_body.token)
+        except TokenFormatError as error:
+            raise PilotError(422, "invalid_input", "The request is invalid.") from error
+        except InviteUnavailable as error:
+            raise PilotError(
+                410, "invite_unavailable", "This invite is no longer available."
+            ) from error
+        session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
+        response = JSONResponse(content=session_payload(session))
+        response.headers.append(
+            "Set-Cookie",
+            f"{_SESSION_COOKIE}={_encode_opaque(redeemed.raw_secret)}; Path=/; Max-Age=604800; "
+            "HttpOnly; Secure; SameSite=Lax",
+        )
+        return response
+
+    @app.get("/api/session")
+    def get_session(session: AuthenticatedSession = Depends(require_session)) -> dict[str, object]:
+        return session_payload(session)
+
+    @app.delete("/api/session", status_code=status.HTTP_204_NO_CONTENT)
+    def logout(session: AuthenticatedSession = Depends(require_mutation_session)) -> Response:
+        store.logout_session(session.raw_secret)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.headers.append(
+            "Set-Cookie", f"{_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+        )
+        return response
+
+    @app.post("/api/lessons", status_code=status.HTTP_202_ACCEPTED)
+    def create_lesson(
+        request_body: LessonCreate,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        lesson_id = _lesson_id(request_body.id)
         try:
-            job = store.acknowledge_warning(lesson_id, block_id)
-        except KeyError as error:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lesson not found",
+            job, created = store.create_or_get(
+                session.teacher_id,
+                lesson_id,
+                anchor_text=request_body.anchor.text,
+                anchor_source=request_body.anchor.source,
+                level=request_body.level,
+                duration=request_body.duration,
+                focus=request_body.focus,
+            )
+        except IdempotencyConflict as error:
+            raise PilotError(
+                409,
+                "idempotency_conflict",
+                "This lesson ID is already bound to different inputs.",
+                lesson_id=lesson_id,
             ) from error
-        except RuntimeError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        return {"id": job.id, "acknowledged_warning_blocks": sorted(job.warning_acknowledgements)}
+        except SessionUnavailable as error:
+            raise PilotError(
+                401, "session_required", "A valid teacher session is required."
+            ) from error
+        if created and not runner.submit(job.id):
+            store.fail_queued_drafts(
+                "The bake worker is unavailable. Create a new lesson to retry.",
+                failure_code="engine_unavailable",
+            )
+            job = owner_job(session.teacher_id, lesson_id)
+        return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
 
-    @app.post("/lessons/{lesson_id}/accept")
-    def accept_lesson(lesson_id: str, _: None = Depends(require_teacher)) -> dict:
-        try:
-            job = store.accept_lesson(lesson_id)
-        except KeyError as error:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lesson not found",
-            ) from error
-        except WarningBlocksUnacknowledged as error:
-            # Machine-readable 409 (Sol defect 1): the client can drive the
-            # teacher straight to the offending blocks, not parse a prose string.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "warning_blocks_unacknowledged",
-                    "blocks": error.block_ids,
-                    "message": str(error),
-                },
-            ) from error
-        except RuntimeError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        assert job.lesson is not None  # established by the ready-state check above
-        return job.lesson
+    @app.get("/api/lessons")
+    def list_lessons(session: AuthenticatedSession = Depends(require_session)) -> dict[str, object]:
+        return _catalog_payload(store.list_catalog(session.teacher_id))
 
-    @app.post("/lessons/{lesson_id}/draft")
-    def return_to_draft(lesson_id: str, _: None = Depends(require_teacher)) -> dict:
+    @app.get("/api/lessons/{lesson_id}/status")
+    def lesson_status(
+        lesson_id: UUID,
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        return _status_payload(owner_job(session.teacher_id, _lesson_id(lesson_id)))
+
+    @app.get("/api/lessons/{lesson_id}")
+    def get_lesson(
+        lesson_id: UUID,
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        job = owner_job(session.teacher_id, _lesson_id(lesson_id))
+        if job.status != "ready" or job.lesson is None:
+            raise PilotError(409, "lesson_not_ready", "The lesson is not ready.")
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/accept")
+    def acknowledge_warning(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
         try:
-            job = store.return_to_draft(lesson_id)
-        except KeyError as error:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lesson not found",
+            job = store.acknowledge_warning(
+                session.teacher_id,
+                lesson_key,
+                block_id=block_id,
+                expected_revision=request_body.expected_revision,
+            )
+        except LessonNotFound as error:
+            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+        except RevisionConflict as error:
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "The lesson changed; reload it before trying again.",
+                lesson_id=lesson_key,
             ) from error
-        except RuntimeError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        assert job.lesson is not None
-        return job.lesson
+        except LessonStateConflict as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "The lesson is not in a state that allows this change.",
+                lesson_id=lesson_key,
+            ) from error
+        except WarningBlockNotFound as error:
+            raise PilotError(404, "warning_block_not_found", "Warning block not found.") from error
+        return {
+            "lesson_id": job.id,
+            "revision": job.revision,
+            "warning_acknowledgements": sorted(job.warning_acknowledgements),
+        }
+
+    @app.post("/api/lessons/{lesson_id}/accept")
+    def accept_lesson(
+        lesson_id: UUID,
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.accept_lesson(
+                session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
+            )
+        except LessonNotFound as error:
+            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+        except RevisionConflict as error:
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "The lesson changed; reload it before trying again.",
+                lesson_id=lesson_key,
+            ) from error
+        except LessonStateConflict as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "The lesson is not in a state that allows acceptance.",
+                lesson_id=lesson_key,
+            ) from error
+        except WarningAcknowledgementsRequired as error:
+            raise PilotError(
+                409,
+                "warning_acknowledgements_required",
+                "Acknowledge every visible warning before accepting this lesson.",
+                lesson_id=lesson_key,
+            ) from error
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/draft")
+    def return_to_draft(
+        lesson_id: UUID,
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.return_to_draft(
+                session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
+            )
+        except LessonNotFound as error:
+            raise PilotError(404, "lesson_not_found", "Lesson not found.") from error
+        except RevisionConflict as error:
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "The lesson changed; reload it before trying again.",
+                lesson_id=lesson_key,
+            ) from error
+        except LessonStateConflict as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "The lesson is not in a state that allows this change.",
+                lesson_id=lesson_key,
+            ) from error
+        return _resource_payload(job)
+
+    @app.get("/api/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/api/readyz")
+    def readyz() -> dict[str, str]:
+        if settings.mock_mode or not isinstance(baker, EngineLessonBaker) or not store.is_ready():
+            raise PilotError(
+                503,
+                "service_not_ready",
+                "The service is not ready.",
+                retryable=True,
+            )
+        return {"status": "ready"}
 
     return app
 

@@ -1,0 +1,50 @@
+# Copy this file to the Caddy configuration only after replacing the placeholder
+# hostname in the host environment.  Do not put a production hostname, API key,
+# cookie secret, or private IP address in this repository.
+#
+# Caddy obtains and renews the certificate for the configured HTTPS host.  The
+# teacher bundle and /api are deliberately served from that one origin: the API
+# must not enable CORS.
+
+{$HRAMATKA_PILOT_HOST} {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			# Defense in depth: frozen browser routes never emit CORS headers.
+			header_down -Access-Control-Allow-Origin
+			header_down -Access-Control-Allow-Credentials
+		}
+	}
+
+	# Keep the canonical static application URL trailing-slash form.  Invite
+	# fragments remain client-side and therefore never reach Caddy.
+	handle /teacher {
+		redir /teacher/ permanent
+	}
+
+	# handle_path strips /teacher before resolving static files.  An unknown
+	# teacher route falls back to the SPA entry point, while assets resolve as
+	# normal files beneath the deployed teacher bundle.
+	handle_path /teacher/* {
+		root * /srv/hramatka/teacher
+		try_files {path} /index.html
+		file_server
+	}
+
+	respond "not found" 404
+}

@@ -13,6 +13,7 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
     """Bind an engine template to its durable job without changing block content."""
     lesson = copy.deepcopy(template)
     anchor_diagnostics = lesson.pop("anchor_diagnostics", [])
+    _normalize_rejected_entries(lesson)
     timestamp = now_iso()
     lesson.update(
         {
@@ -26,10 +27,10 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
                 "text": job.anchor_text,
                 "source": job.anchor_source,
                 "chars": len(job.anchor_text),
+                # These fields are required by the digest-pinned public lesson
+                # schema.  The FastAPI resource projection removes them to meet
+                # the narrower frozen OpenAPI browser wire shape.
                 "fingerprint": anchor_fingerprint(job.anchor_text),
-                # Never call a pasted/linked quotation linguistically clean by
-                # default.  The real engine supplies baseline diagnostics; the
-                # mock keeps this empty rather than fabricating verification.
                 "diagnostics": anchor_diagnostics,
             },
             "duration": job.duration,
@@ -54,8 +55,19 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
     return lesson
 
 
+def _normalize_rejected_entries(lesson: dict[str, Any]) -> None:
+    """Convert engine-template rejection markers into frozen lesson entries."""
+    normalized = []
+    for entry in lesson.get("rejected", []):
+        activity = entry.get("activity") or {}
+        activity_type = activity.get("type")
+        entry_type = activity_type if entry.get("type") == "gate-failed" else entry.get("type")
+        normalized.append({"type": entry_type, "activity": activity, "reason": entry["reason"]})
+    lesson["rejected"] = normalized
+
+
 def anchor_fingerprint(anchor: str) -> str:
-    """A content-only, stable anchor identity safe to emit in the private lesson."""
+    """A content-only, stable anchor identity required by the public schema."""
     return hashlib.sha256(anchor.encode("utf-8")).hexdigest()
 
 
