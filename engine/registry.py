@@ -17,9 +17,9 @@ from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
 
 REGISTRY_VERSION = "wave1b.registry.v1"
-EXTRACTIVE_PROMPT_VERSION = "extractive-v4:e5fa64ff1a28"
+EXTRACTIVE_PROMPT_VERSION = "extractive-v5:89b97c528e30"
 
-PromptBuilder = Callable[[str, str, list[str], str], str]
+PromptBuilder = Callable[..., str]
 EvidenceLocator = Callable[[dict[str, Any]], tuple[str, ...]]
 RawValidator = Callable[[object], list[str]]
 ActivityGate = Callable[
@@ -33,10 +33,19 @@ _OPEN_STEM_MAX_TOKENS = 18
 
 
 def build_extractive_v1_prompt(
-    anchor: str, level: str, types: list[str], grounding_pack: str
+    anchor: str,
+    level: str,
+    types: list[str],
+    grounding_pack: str,
+    *,
+    counts: dict[str, int] | None = None,
 ) -> str:
-    """Build the one-shot extractive prompt shared by registered types."""
-    template = load_extractive_template().replace("{{REQUESTED_ACTIVITY_TYPES}}", ", ".join(types))
+    """Build the count-aware extractive prompt shared by registered types."""
+    requested_counts = counts or {activity_type: 1 for activity_type in types}
+    request_lines = "\n".join(
+        f"- {activity_type}: {requested_counts[activity_type]}" for activity_type in types
+    )
+    template = load_extractive_template().replace("{{REQUESTED_ACTIVITY_COUNTS}}", request_lines)
     return (
         f"{template}\n\n"
         f"=== GROUNDING PACK ===\n{grounding_pack}\n\n"

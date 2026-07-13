@@ -9,8 +9,13 @@ Proves the full private path with NO network and NO public checkout:
 
 from __future__ import annotations
 
+import json
+import re
+from collections import Counter
+
 import pytest
 
+from hramatka.api.baking import engine_adapter
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError
 from hramatka.engine import fixtures
@@ -22,6 +27,146 @@ def test_e2e_bake_refuses_to_repeat_thin_candidate_bank(tmp_path):
 
     with pytest.raises(BakeError, match="too few distinct"):
         baker.bake(anchor, duration=45, focus=None)
+
+
+def _ready_true_false(index: int) -> dict:
+    evidence = [
+        "Третина українців за рік не прочитує жодної книжки",
+        "На думку вчених, читання є одним з найскладніших завдань для мозку",
+    ][index % 2]
+    return {
+        "type": "true-false",
+        "instruction": "Познач правильне твердження за текстом.",
+        "items": [{"statement": evidence, "correct": True, "evidence": evidence}],
+    }
+
+
+def _ready_quiz(_index: int) -> dict:
+    return {
+        "type": "quiz",
+        "instruction": "Обери правильну відповідь за текстом.",
+        "items": [
+            {
+                "question": "Що активізується під час читання?",
+                "options": ["ділянок", "книжки", "телевізор"],
+                "correct": 0,
+                "evidence": "активізуються одразу 17 ділянок головного мозку",
+            }
+        ],
+    }
+
+
+def _ready_error_correction(_index: int) -> dict:
+    return {
+        "type": "error-correction",
+        "instruction": "Виправ помилку.",
+        "items": [
+            {
+                "sentence": "Під час читання активізуються одразу 17 ділянки головного мозку.",
+                "error": "ділянки",
+                "correction": "ділянок",
+                "options": ["ділянки", "ділянок", "книжки"],
+                "explanation": "Після 17 потрібна форма родового множини.",
+                "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+            }
+        ],
+    }
+
+
+def _ready_fill_in(_index: int) -> dict:
+    return {
+        "type": "fill-in",
+        "instruction": "Обери правильну форму.",
+        "items": [
+            {
+                "sentence": "На думку вчених, читання є одним з найскладніших ____ для мозку.",
+                "answer": "завдань",
+                "options": ["завдань", "вправ", "задач", "питань"],
+                "explanation": "Вибери форму з речення опори.",
+                "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку.",
+            }
+        ],
+    }
+
+
+def _ready_cloze(_index: int) -> dict:
+    return json.loads(json.dumps(next(a for a in fixtures.GOOD_ACTIVITIES if a["type"] == "cloze")))
+
+
+def _ready_mark_the_words(_index: int) -> dict:
+    evidence = "Під час читання активізуються одразу 17 ділянок головного мозку."
+    return {
+        "type": "mark-the-words",
+        "instruction": "Познач усі дієслова.",
+        "text": evidence,
+        "target_words": ["активізуються"],
+        "criteria": "pos=verb",
+        "evidence": evidence,
+    }
+
+
+def _ready_text_questions(_index: int) -> dict:
+    return {
+        "type": "text-questions",
+        "instruction": "Обговоріть запитання за текстом.",
+        "source_ref": "Текст-опора",
+        "items": [
+            {
+                "question": "Що активізується під час читання?",
+                "model_answer": "17 ділянок головного мозку.",
+                "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
+            },
+            {
+                "question": "Що знижує ризик хвороби Альцгеймера?",
+                "model_answer": "Регулярне читання.",
+                "evidence": (
+                    "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера."
+                ),
+            },
+        ],
+        "teacher_guidance": "Приймайте змістовні відповіді учнів.",
+    }
+
+
+_READY_CANDIDATES = {
+    "true-false": _ready_true_false,
+    "quiz": _ready_quiz,
+    "error-correction": _ready_error_correction,
+    "fill-in": _ready_fill_in,
+    "cloze": _ready_cloze,
+    "mark-the-words": _ready_mark_the_words,
+    "text-questions": _ready_text_questions,
+}
+
+
+def test_e2e_baker_fills_six_block_plan_from_one_count_aware_generation(tmp_path):
+    requested_counts: list[dict[str, int]] = []
+    generated_counts: Counter[str] = Counter()
+
+    def generator(prompt: str) -> str:
+        counts = {
+            activity_type: int(count)
+            for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
+        }
+        requested_counts.append(counts)
+        activities = [
+            candidate(index)
+            for activity_type, count in counts.items()
+            for index in range(count)
+            for candidate in [_READY_CANDIDATES[activity_type]]
+        ]
+        generated_counts.update(activity["type"] for activity in activities)
+        return json.dumps({"activities": activities}, ensure_ascii=False)
+
+    baker = EngineLessonBaker(generator=generator, cache_dir=tmp_path / "cache")
+    baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+    expected_counts = engine_adapter._candidate_count_plan(engine_adapter._PHASE_PLAN[45])
+    assert requested_counts == [expected_counts]
+    assert generated_counts == Counter(expected_counts)
+    assert len(baked["blocks"]) == 6
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
+    assert len({block["id"] for block in baked["blocks"]}) == 6
 
 
 def test_e2e_bake_raises_bakeerror_when_generator_unavailable(tmp_path):

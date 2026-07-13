@@ -558,6 +558,7 @@ def _run(
                 snap["body_uk"],
                 level,
                 types,
+                counts=plan,
                 generator=generator,
                 grounding_pack=grounding["text"],
             ))]
@@ -653,35 +654,36 @@ def _run(
 
     partition_and_select()
 
-    # Wave 0 keeps retries deliberately simple: callers opt in while later
-    # waves acquire targeted per-type prompts.  Regenerated raw candidates are
-    # still given stable ids, validated, and placed in the same partitions.
+    # Callers opt in to one or more safety retries. Regenerated raw candidates
+    # request the remaining READY-pool quota per type, then receive stable ids,
+    # validation, and the same partitioning as the first batch.
     for attempt in range(len(raw_batches), max_regeneration_attempts + 1):
-        selected_counts = {
+        ready_counts = {
             activity_type: sum(
-                ir.activity.get("type") == activity_type for ir in result.selected
+                ir.activity.get("type") == activity_type for ir in result.ready
             )
             for activity_type in types
         }
-        unmet = [
-            activity_type
+        deficits = {
+            activity_type: count - ready_counts[activity_type]
             for activity_type, count in plan.items()
-            if selected_counts[activity_type] < count
-        ]
-        if not unmet or result.generation_error:
+            if ready_counts[activity_type] < count
+        }
+        if not deficits or result.generation_error:
             break
         try:
             regenerated = _candidate_generator(
                 snap["body_uk"],
                 level,
-                unmet,
+                list(deficits),
+                counts=deficits,
                 generator=generator,
                 grounding_pack=grounding["text"],
             )
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
             break
-        raw_batches.append((unmet, regenerated))
+        raw_batches.append((list(deficits), regenerated))
         retry_dicts = [
             raw
             for _bank, activities in raw_batches
@@ -692,7 +694,7 @@ def _run(
             snap["body_uk"], retry_dicts, grounding["atlas_lookup"], atlas_db=atlas_db
         )
         for index, raw in enumerate(regenerated):
-            append_candidate(raw, f"candidate-{attempt}-{index:03d}", retry_lookup, unmet)
+            append_candidate(raw, f"candidate-{attempt}-{index:03d}", retry_lookup, list(deficits))
         result.regeneration_attempts = attempt
         partition_and_select()
 

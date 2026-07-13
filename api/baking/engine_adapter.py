@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import uuid
 from contextlib import nullcontext
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -35,15 +36,39 @@ _PHASE_PLAN: dict[int, list[int]] = {
     90: [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3],
 }
 
-# Each plan slot consumes one DISTINCT auto-ready item, but a single
-# generation round yields only 4-7 gate-survivors per real-Gemma bake
-# (2026-07-12 measure + two live pilot-host bakes 2026-07-13) — structurally
-# below the 6 items the 45-minute plan needs. One regeneration round
-# re-requests the unmet types and lifted the live ready pool 4 → 7 on the
-# pilot host. PARTIAL FIX: generation is still one-candidate-per-type per
-# round (the frozen prompt has no count awareness); plumbing real per-type
-# counts through prompt construction is the engine follow-up.
+# Real-Gemma measurement and pilot bakes yielded roughly 60–75% gate-ready
+# candidates. Use the conservative measured floor: a plan of N TTT slots asks
+# for ceil(N / 0.60) candidates, so its expected ready pool is at least N.
+# For example, the 45-minute six-slot plan asks for 10 candidates and expects
+# six ready. One regeneration round remains a safety net for variance.
+_READY_SURVIVAL_FLOOR = 0.60
 _MAX_REGENERATION_ATTEMPTS = 1
+
+
+def _candidate_count_plan(phases: list[int]) -> dict[str, int]:
+    """Request enough all-phase candidates to cover a duration's TTT plan.
+
+    Only types that can occupy every phase in the requested plan are used, so
+    any ready candidate can fill any remaining slot. Requests are distributed
+    round-robin across that flexible pool for type variety while preserving the
+    conservative 60% ready-pool calculation above.
+    """
+    if not phases:
+        raise ValueError("TTT phase plan must contain at least one slot")
+    required_phases = set(phases)
+    flexible_types = [
+        activity_type
+        for activity_type, entry in registry.ACTIVITY_REGISTRY.items()
+        if required_phases.issubset(entry.ttt_phases)
+    ]
+    if not flexible_types:
+        raise ValueError(f"No activity type can fill every TTT phase: {sorted(required_phases)}")
+
+    candidate_budget = ceil(len(phases) / _READY_SURVIVAL_FLOOR)
+    counts = {activity_type: 0 for activity_type in flexible_types}
+    for index in range(candidate_budget):
+        counts[flexible_types[index % len(flexible_types)]] += 1
+    return {activity_type: count for activity_type, count in counts.items() if count}
 
 
 def _answer_key(activity: dict) -> dict:
@@ -125,6 +150,7 @@ class EngineLessonBaker:
         """
         del focus  # slice-1 generation does not branch on focus yet
         plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
+        count_plan = _candidate_count_plan(plan)
         ctx = data.use_bundle(self._bundle) if self._bundle is not None else nullcontext()
         out_root = _engine_out_root()
         try:
@@ -133,10 +159,12 @@ class EngineLessonBaker:
                     anchor,
                     level="B1",
                     pedagogy="ttt",
+                    types=list(count_plan),
                     generator=self._generator,
                     use_cache=False,
                     cache_dir=self._cache_dir,
                     out_dir=(out_root / uuid.uuid4().hex) if out_root else None,
+                    count_plan=count_plan,
                     max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
                 )
         except (data.DataConfigError, data.DataDriftError) as exc:

@@ -12,7 +12,7 @@ from hramatka.engine import generate as G
 from hramatka.engine.transport import AISGeneratorPort
 
 
-def _pb(anchor, level, types, grounding):
+def _pb(anchor, level, types, grounding, *, counts=None):
     return "PROMPT"
 
 
@@ -71,6 +71,46 @@ def test_generate_accepts_single_activity_object():
         prompt_builder=_pb,
     )
     assert acts == [{"type": "cloze", "instruction": "x", "text": "{gap}"}]
+
+
+def test_generate_baseline_rejects_counts_that_break_its_frozen_prompt():
+    with pytest.raises(ValueError, match="one candidate per type"):
+        G.generate_baseline_v1("anchor", counts={"cloze": 2})
+
+
+def test_generate_coalesces_count_aware_prompt_and_parses_multiple_candidates_of_one_type():
+    prompts: list[str] = []
+
+    def gen(prompt: str) -> str:
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "activities": [
+                    {"type": "cloze", "instruction": "Перший пропуск."},
+                    {"type": "cloze", "instruction": "Другий пропуск."},
+                    {"type": "quiz", "instruction": "Перевірка розуміння."},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    activities = G.generate(
+        "опора",
+        types=["cloze", "quiz"],
+        counts={"cloze": 2, "quiz": 1},
+        generator=gen,
+        grounding_pack="пакет",
+    )
+
+    assert activities == [
+        {"type": "cloze", "instruction": "Перший пропуск."},
+        {"type": "cloze", "instruction": "Другий пропуск."},
+        {"type": "quiz", "instruction": "Перевірка розуміння."},
+    ]
+    assert len(prompts) == 1  # one prompt covers both types and their quotas
+    assert "- cloze: 2" in prompts[0]
+    assert "- quiz: 1" in prompts[0]
+    assert "різні завдання" in prompts[0]
 
 
 # --- AISGeneratorPort (the private transport) ------------------------------

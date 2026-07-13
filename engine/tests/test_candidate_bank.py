@@ -98,7 +98,7 @@ def test_registry_migrates_all_wave_1b_activity_types():
     ]
     for raw in [*fixtures.GOOD_ACTIVITIES, *wave_1b_examples]:
         entry = registry.ACTIVITY_REGISTRY[raw["type"]]
-        assert entry.prompt_version.startswith("extractive-v4:")
+        assert entry.prompt_version.startswith("extractive-v5:")
         assert entry.assessment_mode in {"auto_gradable", "teacher_assessed"}
         assert entry.gate_chain and entry.gate_version
         assert entry.minimum_survivors >= 1 and entry.item_budget >= 1
@@ -361,40 +361,47 @@ def test_unexpected_and_non_object_outputs_are_rejected_not_silently_dropped(tmp
     )
 
 
-def test_targeted_regeneration_hook_retries_an_unmet_type_quota(tmp_path):
-    calls = {"count": 0}
+def test_targeted_regeneration_requests_ready_pool_deficits(tmp_path, monkeypatch):
+    calls: list[tuple[list[str], dict[str, int]]] = []
+    evidence = [
+        "Третина українців за рік не прочитує жодної книжки",
+        "На думку вчених, читання є одним з найскладніших завдань для мозку",
+    ]
 
-    def generator(_prompt: str) -> str:
-        calls["count"] += 1
-        candidate = json.loads(json.dumps(fixtures.GOOD_ACTIVITIES[0], ensure_ascii=False))
-        if calls["count"] == 2:
-            candidate["items"] = [
-                item for item in candidate["items"] if item["correct"] is True
-            ]
-        return json.dumps({"activities": [candidate]}, ensure_ascii=False)
+    def fake_generate(_anchor, _level, types, *, counts, **_kwargs):
+        calls.append((types, counts))
+        index = len(calls) - 1
+        return [
+            {
+                "type": "true-false",
+                "instruction": "Познач правильне твердження.",
+                "items": [
+                    {
+                        "statement": evidence[index],
+                        "correct": True,
+                        "evidence": evidence[index],
+                    }
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(pipeline, "generate", fake_generate)
 
     result = pipeline.run(
         fixtures.load_anchor(),
         types=["true-false"],
-        generator=generator,
+        count_plan={"true-false": 2},
         out_dir=tmp_path / "out",
         cache_dir=tmp_path / "cache",
+        use_cache=False,
         max_regeneration_attempts=1,
     )
-    assert calls["count"] == 2
+    assert calls == [
+        (["true-false"], {"true-false": 2}),
+        (["true-false"], {"true-false": 1}),
+    ]
     assert result.regeneration_attempts == 1
-    assert len(result.lesson_b1) == 1
-
-    cached = pipeline.run(
-        fixtures.load_anchor(),
-        types=["true-false"],
-        generator=generator,
-        out_dir=tmp_path / "out-cached",
-        cache_dir=tmp_path / "cache",
-        max_regeneration_attempts=1,
-    )
-    assert calls["count"] == 2
-    assert cached.lesson_b1 == result.lesson_b1
+    assert len(result.ready) == 2
 
 
 def test_snapshot_annotation_and_fingerprint_record_wave0_inputs():

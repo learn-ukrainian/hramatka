@@ -97,6 +97,7 @@ def generate_baseline_v1(
     level: str = "B1",
     types: list[str] | None = None,
     *,
+    counts: dict[str, int] | None = None,
     generator: Callable[[str], str] = call_gemma,
     grounding_pack: str = "",
     prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
@@ -108,6 +109,12 @@ def generate_baseline_v1(
     the typed registry, rather than splitting the three legacy types into
     content-drifting model calls.
     """
+    # The measurement baseline retains its original one-of-each prompt.  It
+    # accepts the production call shape solely so `_run` can forward its
+    # normalized plan without special casing the orchestration path, but must
+    # reject a quota that would make its frozen prompt misleading.
+    if counts is not None and any(count != 1 for count in counts.values()):
+        raise ValueError("generate_baseline_v1 only supports one candidate per type")
     types = types or ["true-false", "cloze", "match-up"]
     build = prompt_builder or _default_prompt_builder
     prompt = build(anchor, level, types, grounding_pack)
@@ -147,29 +154,48 @@ def generate(
     level: str = "B1",
     types: list[str] | None = None,
     *,
+    counts: dict[str, int] | None = None,
     generator: Callable[[str], str] = call_gemma,
     grounding_pack: str = "",
-    prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
+    prompt_builder: Callable[..., str] | None = None,
 ) -> list[object]:
     """Registry-planned typed candidate generation.
 
-    Wave 0 entries deliberately resolve to the identical frozen
-    ``extractive-v1`` prompt.  Equal prompts are coalesced into one model call,
-    preserving the generated content while candidates enter distinct typed
-    banks.  Future entries may use different prompts without changing callers.
+    ``counts`` requests the exact number of candidates per type.  The default
+    remains one candidate for every requested type.  Wave 0 entries deliberately
+    resolve to the same count-aware extractive prompt, so equal prompt/count
+    plans coalesce into one model call.  Future entries may use different
+    prompts without changing callers.
     """
     from .registry import ACTIVITY_REGISTRY, entries_for
 
-    requested = list(types or ACTIVITY_REGISTRY)
+    requested = list(types if types is not None else (counts or ACTIVITY_REGISTRY))
     entries = entries_for(requested)
-    prompt_groups: dict[str, list[str]] = {}
+    unknown_counts = sorted(set(counts or {}) - set(requested))
+    if unknown_counts:
+        unsupported = ", ".join(unknown_counts)
+        raise ValueError(f"counts include unsupported requested type(s): {unsupported}")
+    requested_counts = {
+        activity_type: (counts or {}).get(activity_type, 1) for activity_type in requested
+    }
+    if any(isinstance(count, bool) or not isinstance(count, int) or count < 1
+           for count in requested_counts.values()):
+        raise ValueError("counts values must be positive integers")
+
+    # Include the normalized plan in the key as well as the rendered text.  A
+    # custom builder that happens to emit equal text must not cause candidate
+    # requests with distinct quotas to share a model response.
+    count_signature = tuple(
+        (activity_type, requested_counts[activity_type]) for activity_type in requested
+    )
+    prompt_groups: dict[tuple[str, tuple[tuple[str, int], ...]], list[str]] = {}
     for entry in entries:
         builder = prompt_builder or entry.prompt_builder
-        prompt = builder(anchor, level, requested, grounding_pack)
-        prompt_groups.setdefault(prompt, []).append(entry.activity_type)
+        prompt = builder(anchor, level, requested, grounding_pack, counts=requested_counts)
+        prompt_groups.setdefault((prompt, count_signature), []).append(entry.activity_type)
 
     candidates: list[object] = []
-    for prompt in prompt_groups:
+    for prompt, _count_signature in prompt_groups:
         # Preserve every emitted member, including primitives and types outside
         # the target bank.  The pipeline turns each into a visible rejection
         # when appropriate; generation must never silently discard evidence.
@@ -180,12 +206,14 @@ def generate(
 def _default_prompt_builder(
     anchor: str, level: str, types: list[str], grounding_pack: str
 ) -> str:
-    """Assemble the runtime prompt from the extractive template + grounding
-    pack + anchor. The template file is the SSOT for the instruction block.
-    """
-    from .prompts import load_extractive_template
+    """Assemble the pinned pre-count-plumbing prompt for measurement only.
 
-    template = load_extractive_template()
+    This deliberately preserves the v4 baseline's original literal request
+    token and must not be used by the production candidate-bank generator.
+    """
+    from .prompts import load_legacy_extractive_v4_template
+
+    template = load_legacy_extractive_v4_template()
     return (
         f"{template}\n\n"
         f"=== GROUNDING PACK ===\n{grounding_pack}\n\n"
