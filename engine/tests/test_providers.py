@@ -213,6 +213,56 @@ def test_ais_retry_exhaustion_uses_openrouter_once_and_never_logs_key_or_prompt(
     assert all(sentinel_key not in record.getMessage() for record in caplog.records)
 
 
+def test_ais_429_uses_openrouter_once_without_retrying_ais(monkeypatch, caplog):
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
+    primary_handler, _ = _seq([429])
+    fallback_handler, _ = _seq([200])
+    generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
+
+    with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
+        assert generator("prompt") == '{"activities": []}'
+
+    assert primary_calls["n"] == 1  # do not retry a rate-limited host
+    assert fallback_calls["n"] == 1
+    assert "ais 429 model=google-ais/gemma-4-31b-it fallback-eligible" in caplog.text
+    assert caplog.text.count("gemma fallback engaged host=openrouter") == 1
+
+
+def test_ais_401_never_uses_openrouter_or_logs_429_warning(monkeypatch, caplog):
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
+    primary_handler, _ = _seq([401])
+    generator, primary_calls, fallback_calls = _failover(
+        primary_handler, lambda _request: pytest.fail("401 must not use fallback")
+    )
+
+    with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
+        with pytest.raises(GeneratorUnavailable, match="provider returned HTTP 401"):
+            generator("prompt")
+
+    assert primary_calls["n"] == 1
+    assert fallback_calls["n"] == 0
+    assert "429 model=" not in caplog.text
+    assert "gemma fallback engaged host=openrouter" not in caplog.text
+
+
+def test_openrouter_429_after_ais_retry_exhaustion_is_sanitized(monkeypatch, caplog):
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
+    primary_handler, _ = _seq([503, 500])
+    fallback_handler, _ = _seq([429])
+    generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
+
+    with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
+        with pytest.raises(GeneratorUnavailable) as exc:
+            generator("prompt")
+
+    assert str(exc.value) == "provider generation failed"
+    assert not exc.value.retry_exhausted
+    assert primary_calls["n"] == 2
+    assert fallback_calls["n"] == 1  # do not retry a rate-limited fallback host
+    assert "openrouter 429 model=google/gemma-4-31b-it fallback-eligible" in caplog.text
+    assert "ais 429 model=" not in caplog.text
+
+
 def test_ais_and_openrouter_retry_exhaustion_stays_generator_unavailable(monkeypatch):
     monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
     primary_handler, _ = _seq([503, 500])

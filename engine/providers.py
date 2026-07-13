@@ -68,9 +68,11 @@ def _extract_text(body: Any) -> str:
 class HttpChatTransport:
     """A `transport.Transport` over an OpenAI-compatible `/chat/completions` API.
 
-    One retry on 5xx/timeout; any other failure (4xx, connect error, malformed
-    envelope) is an immediate `GeneratorUnavailable`. `client` is injectable so
-    unit tests drive it with an `httpx.MockTransport` and NEVER hit the network.
+    One retry on 5xx/timeout; HTTP 429 is immediately availability-failing so a
+    caller may fail over without retrying the rate-limited host. Other 4xx,
+    connect errors, and malformed envelopes are immediate `GeneratorUnavailable`
+    failures. `client` is injectable so unit tests drive it with an
+    `httpx.MockTransport` and NEVER hit the network.
     """
 
     base_url: str
@@ -128,8 +130,16 @@ class HttpChatTransport:
                 log.warning("%s 5xx model=%s status=%d attempt=%d", self.host, model, code, attempt)
                 last_error = GeneratorUnavailable(f"provider returned HTTP {code}")
                 continue
+            if code == 429:
+                # Rate limiting is an availability failure. Do not retry the
+                # same host, but expose the existing typed outage signal so an
+                # eligible caller can use its configured fallback.
+                log.warning("%s 429 model=%s fallback-eligible", self.host, model)
+                raise GeneratorUnavailable(
+                    f"provider returned HTTP {code} for model {model}", retry_exhausted=True
+                )
             if code >= 400:
-                # auth/quota/bad-request — do not retry, never echo the body
+                # auth/bad-request — do not retry, never echo the body
                 raise GeneratorUnavailable(
                     f"provider returned HTTP {code} for model {model}"
                 )
@@ -160,9 +170,9 @@ class FailoverGeneratorPort(AISGeneratorPort):
         try:
             return super().__call__(prompt)
         except GeneratorUnavailable as primary_error:
-            # Only transport retry exhaustion represents the sanctioned AIS
-            # outage path. Missing keys, 4xx responses, and malformed output
-            # must not spend paid OpenRouter tokens.
+            # Transport retry exhaustion and 429 represent the sanctioned AIS
+            # outage path. Missing keys, other 4xx responses, and malformed
+            # output must not spend paid OpenRouter tokens.
             if not primary_error.retry_exhausted or not self._fallback.is_configured():
                 raise
             log.warning("gemma fallback engaged host=openrouter")
