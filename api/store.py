@@ -9,13 +9,14 @@ record, database row, exception message, or loggable return value.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import re
 import secrets
 import sqlite3
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -28,6 +29,7 @@ from .migrations import (
     apply_migrations,
     current_schema_version,
 )
+from .validation import validate_lesson
 
 _OPAQUE_TOKEN_BYTES = 32
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
@@ -81,6 +83,18 @@ class LessonStateConflict(ValueError):
 
 class WarningBlockNotFound(ValueError):
     """A present ready lesson has no visible warning block with that id."""
+
+
+class LessonBlockNotFound(ValueError):
+    """A present ready lesson has no block with that id."""
+
+
+class RejectedEntryNotFound(ValueError):
+    """A present ready lesson has no rejected entry at the requested index."""
+
+
+class ReviewMutationInvalid(ValueError):
+    """A review mutation would produce an invalid frozen lesson document."""
 
 
 class WarningAcknowledgementsRequired(ValueError):
@@ -700,7 +714,10 @@ class JobStore:
                 """
                 SELECT id,
                        json_extract(lesson_json, '$.title') AS title,
-                       json_extract(request_json, '$.duration') AS duration,
+                       COALESCE(
+                           json_extract(lesson_json, '$.duration'),
+                           json_extract(request_json, '$.duration')
+                       ) AS duration,
                        json_extract(request_json, '$.focus') AS focus,
                        status, revision, accepted, accepted_at, accepted_revision,
                        failure_code, created_at, updated_at
@@ -912,6 +929,181 @@ class JobStore:
 
     # -- Owner-scoped review and acceptance transitions --------------------
 
+    def move_block(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        block_id: str,
+        direction: str,
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], _: set[str]) -> None:
+            try:
+                lesson_tools.move_block(lesson, block_id, direction)
+            except KeyError as error:
+                raise LessonBlockNotFound(block_id) from error
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def remove_block(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        block_id: str,
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], acknowledgements: set[str]) -> None:
+            try:
+                lesson_tools.remove_block_to_rejected(lesson, block_id)
+            except KeyError as error:
+                raise LessonBlockNotFound(block_id) from error
+            acknowledgements.discard(block_id)
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def include_reserve_block(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        block_id: str,
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], _: set[str]) -> None:
+            try:
+                lesson_tools.include_reserve_block(lesson, block_id)
+            except KeyError as error:
+                raise LessonBlockNotFound(block_id) from error
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def replace_block_activity(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        block_id: str,
+        activity: Mapping[str, Any],
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], acknowledgements: set[str]) -> None:
+            try:
+                warning_was_edited = lesson_tools.replace_block_activity(
+                    lesson, block_id, dict(activity)
+                )
+            except KeyError as error:
+                raise LessonBlockNotFound(block_id) from error
+            if warning_was_edited:
+                acknowledgements.discard(block_id)
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def restore_rejected_entry(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        rejected_index: int,
+        phase: int,
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], _: set[str]) -> None:
+            try:
+                lesson_tools.restore_rejected_entry(lesson, rejected_index, phase)
+            except IndexError as error:
+                raise RejectedEntryNotFound(rejected_index) from error
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def select_duration(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        duration: int,
+        expected_revision: int,
+    ) -> JobRecord:
+        from . import lesson as lesson_tools
+
+        def mutation(lesson: dict[str, Any], _: set[str]) -> None:
+            lesson_tools.select_duration(lesson, duration)
+
+        return self._mutate_review_lesson(
+            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
+        )
+
+    def _mutate_review_lesson(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        expected_revision: int,
+        mutation: Callable[[dict[str, Any], set[str]], None],
+    ) -> JobRecord:
+        """Apply one validated review edit in the same revision-guarded transaction."""
+        with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            self._require_expected_revision(job, expected_revision)
+            self._require_ready(job)
+            if job.accepted:
+                raise LessonStateConflict(
+                    "The accepted lesson must return to draft before editing."
+                )
+            lesson = copy.deepcopy(self._require_lesson(job))
+            acknowledgements = set(job.warning_acknowledgements)
+            try:
+                mutation(lesson, acknowledgements)
+                validate_lesson(lesson)
+            except (LessonBlockNotFound, RejectedEntryNotFound):
+                raise
+            except (KeyError, TypeError, ValueError) as error:
+                raise ReviewMutationInvalid("Review mutation is invalid.") from error
+            timestamp = now_iso()
+            lesson["updated_at"] = timestamp
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET lesson_json = ?, warning_acknowledgements_json = ?, updated_at = ?,
+                    revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status = 'ready' AND accepted = 0
+                  AND revision = ?
+                """,
+                (
+                    canonical_json(lesson),
+                    canonical_json(sorted(acknowledgements)),
+                    timestamp,
+                    teacher_id,
+                    lesson_id,
+                    expected_revision,
+                ),
+            )
+            self._resolve_mutation(
+                cursor.rowcount, connection, teacher_id, lesson_id, expected_revision
+            )
+            return self._require_owned(connection, teacher_id, lesson_id)
+
     def acknowledge_warning(
         self, teacher_id: str, lesson_id: str, block_id: str, expected_revision: int
     ) -> JobRecord:
@@ -960,8 +1152,9 @@ class JobStore:
                 block["id"] for block in self._visible_blocks(lesson) if block.get("mark") == "warn"
             }
             acknowledged = set(job.warning_acknowledgements)
-            if acknowledged != required:
-                raise WarningAcknowledgementsRequired(sorted(required - acknowledged))
+            missing_acknowledgements = required - acknowledged
+            if missing_acknowledgements:
+                raise WarningAcknowledgementsRequired(sorted(missing_acknowledgements))
             timestamp = now_iso()
             accepted_lesson = dict(lesson)
             accepted_lesson["accepted"] = True
@@ -1161,28 +1354,13 @@ class JobStore:
 
     @staticmethod
     def _visible_blocks(lesson: Mapping[str, Any]) -> list[dict[str, Any]]:
-        sizes = {
-            45: {1: 2, 2: 3, 3: 1},
-            60: {1: 3, 2: 4, 3: 2},
-            90: {1: 4, 2: 5, 3: 3},
-        }
         try:
-            budget = sizes[lesson["duration"]]
-            blocks = lesson["blocks"]
-        except (KeyError, TypeError) as error:
+            from .lesson import split_review_blocks
+
+            visible, _ = split_review_blocks(dict(lesson))
+            return visible
+        except (KeyError, TypeError, ValueError) as error:
             raise PersistenceUnavailable("SQLite contains an invalid ready lesson.") from error
-        seen = {1: 0, 2: 0, 3: 0}
-        visible: list[dict[str, Any]] = []
-        for block in blocks:
-            if not isinstance(block, dict):
-                raise PersistenceUnavailable("SQLite contains an invalid ready lesson.")
-            phase = block.get("phase")
-            if phase not in seen:
-                raise PersistenceUnavailable("SQLite contains an invalid ready lesson.")
-            if seen[phase] < budget[phase]:
-                visible.append(block)
-                seen[phase] += 1
-        return visible
 
     @staticmethod
     def _require_lesson(job: JobRecord) -> dict[str, Any]:

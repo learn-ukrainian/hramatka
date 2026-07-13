@@ -227,17 +227,233 @@ paths:
         $ref: '#/components/requestBodies/RevisionMutation'
       responses:
         '200':
-          description: Acknowledgement committed and aggregate revision incremented
+          description: Acknowledgement committed and the materialized lesson returned
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WarningAcknowledgement'
+                $ref: '#/components/schemas/LessonResource'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/CsrfRejected'
         '404':
           $ref: '#/components/responses/WarningBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/move:
+    post:
+      tags: [Lessons]
+      operationId: moveLessonBlock
+      summary: Move one block up or down in the review assembly
+      description: |
+        Within a phase, the block swaps with its neighbor. Crossing a phase
+        boundary moves it one phase while preserving the rest of the ordered
+        lesson. Reserve is derived from this order and the selected duration.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/BlockMoveMutation'
+      responses:
+        '200':
+          description: Move committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/remove:
+    post:
+      tags: [Lessons]
+      operationId: removeLessonBlock
+      summary: Move one block to the rejected tray with a teacher-removal reason
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Removal committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/include:
+    post:
+      tags: [Lessons]
+      operationId: includeReserveBlock
+      summary: Include one reserve block in its phase's planned prefix
+      description: The selected block must currently be reserve for the selected duration.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Reserve selection committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/activity:
+    put:
+      tags: [Lessons]
+      operationId: replaceLessonBlockActivity
+      summary: Replace a block activity with a validated pilot activity document
+      description: |
+        A replacement is validated against the digest-pinned `lu.activity.v1`
+        schema and the frozen pilot activity registry. Replacing a warning
+        never acknowledges it: the warning remains visible and any prior
+        acknowledgement is cleared.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/ActivityReplacementMutation'
+      responses:
+        '200':
+          description: Replacement committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/rejected/{rejected_index}/restore:
+    post:
+      tags: [Lessons]
+      operationId: restoreRejectedBlock
+      summary: Restore one rejected entry as a warning block
+      description: |
+        The rejected-tray index is revision-guarded and follows the returned
+        `lesson.rejected[]` order. The restored entry is placed at the start of
+        the selected phase, marked `warn`, and needs explicit acknowledgement
+        before it can support lesson acceptance.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/RejectedIndex'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RestoreRejectedMutation'
+      responses:
+        '200':
+          description: Restoration committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/RejectedEntryNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/duration:
+    post:
+      tags: [Lessons]
+      operationId: selectLessonDuration
+      summary: Select the review duration without discarding reserve blocks
+      description: |
+        The complete `lesson.blocks[]` order is retained. The browser renders
+        the first phase budgets (45: 2/3/1, 60: 3/4/2, 90: 4/5/3) as the plan
+        and the remaining blocks as reserve or homework.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/DurationMutation'
+      responses:
+        '200':
+          description: Duration committed and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
         '409':
           $ref: '#/components/responses/MutationConflict'
         '422':
@@ -361,6 +577,14 @@ components:
         minLength: 1
         maxLength: 128
         pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+    RejectedIndex:
+      name: rejected_index
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+      description: Zero-based index in the `lesson.rejected[]` array at expected_revision.
     OriginHeader:
       name: Origin
       in: header
@@ -398,6 +622,30 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RevisionMutation'
+    BlockMoveMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BlockMoveMutation'
+    ActivityReplacementMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ActivityReplacementMutation'
+    RestoreRejectedMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RestoreRejectedMutation'
+    DurationMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DurationMutation'
   schemas:
     PilotActivityType:
       $ref: ../contracts/pilot_activity_types.schema.json#/$defs/pilotActivityType
@@ -802,22 +1050,51 @@ components:
           type: integer
           minimum: 1
           description: Revision last read by this browser; stale values return 409.
-    WarningAcknowledgement:
+    BlockMoveMutation:
       type: object
       additionalProperties: false
-      required: [lesson_id, revision, warning_acknowledgements]
+      required: [expected_revision, direction]
       properties:
-        lesson_id:
-          type: string
-          format: uuid
-        revision:
+        expected_revision:
           type: integer
           minimum: 1
-        warning_acknowledgements:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
+        direction:
+          type: string
+          enum: [up, down]
+    ActivityReplacementMutation:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, activity]
+      properties:
+        expected_revision:
+          type: integer
+          minimum: 1
+        activity:
+          $ref: '#/components/schemas/ActivityDocument'
+    RestoreRejectedMutation:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision:
+          type: integer
+          minimum: 1
+        phase:
+          type: integer
+          enum: [1, 2, 3]
+          default: 2
+          description: Phase to receive the restored warning; defaults to phase 2.
+    DurationMutation:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, duration]
+      properties:
+        expected_revision:
+          type: integer
+          minimum: 1
+        duration:
+          type: integer
+          enum: [45, 60, 90]
     Error:
       type: object
       additionalProperties: false
@@ -955,6 +1232,45 @@ components:
               value:
                 code: warning_block_not_found
                 message: Warning block not found.
+                retryable: false
+    LessonBlockNotFound:
+      description: |
+        An absent/other-owner lesson returns `lesson_not_found`; a present ready
+        lesson whose block is absent returns `lesson_block_not_found`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            lesson_absent:
+              value:
+                code: lesson_not_found
+                message: Lesson not found.
+                retryable: false
+            block_absent:
+              value:
+                code: lesson_block_not_found
+                message: Lesson block not found.
+                retryable: false
+    RejectedEntryNotFound:
+      description: |
+        An absent/other-owner lesson returns `lesson_not_found`; a present ready
+        lesson whose rejected-tray index is absent returns
+        `rejected_entry_not_found`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            lesson_absent:
+              value:
+                code: lesson_not_found
+                message: Lesson not found.
+                retryable: false
+            rejected_absent:
+              value:
+                code: rejected_entry_not_found
+                message: Rejected entry not found.
                 retryable: false
     LessonNotReady:
       description: Aggregate has not materialized a validated ready lesson

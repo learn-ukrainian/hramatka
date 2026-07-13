@@ -23,7 +23,15 @@ from hramatka.engine import data
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
-from .models import InviteRedeem, LessonCreate, RevisionMutation
+from .models import (
+    ActivityReplacementMutation,
+    BlockMoveMutation,
+    DurationMutation,
+    InviteRedeem,
+    LessonCreate,
+    RestoreRejectedMutation,
+    RevisionMutation,
+)
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
 from .store import (
@@ -31,9 +39,12 @@ from .store import (
     InviteUnavailable,
     JobRecord,
     JobStore,
+    LessonBlockNotFound,
     LessonNotFound,
     LessonStateConflict,
     PersistenceUnavailable,
+    RejectedEntryNotFound,
+    ReviewMutationInvalid,
     RevisionConflict,
     SessionUnavailable,
     TokenFormatError,
@@ -286,6 +297,34 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return job
 
+    def raise_review_mutation_error(error: Exception, lesson_id: str) -> None:
+        """Map every durable review-edit failure to the frozen error envelope."""
+        if isinstance(error, LessonNotFound):
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
+        if isinstance(error, LessonBlockNotFound):
+            raise PilotError(404, "lesson_block_not_found", "Блок уроку не знайдено.") from error
+        if isinstance(error, RejectedEntryNotFound):
+            raise PilotError(
+                404, "rejected_entry_not_found", "Відхилений блок не знайдено."
+            ) from error
+        if isinstance(error, RevisionConflict):
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "Урок змінено; оновіть його перед повторною спробою.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, LessonStateConflict):
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Стан уроку не дозволяє цю зміну.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, ReviewMutationInvalid):
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+        raise error
+
     @app.post("/api/session/redeem")
     def redeem_invite(
         request_body: InviteRedeem,
@@ -347,9 +386,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 lesson_id=lesson_id,
             ) from error
         except SessionUnavailable as error:
-            raise PilotError(
-                401, "session_required", "Потрібна чинна сесія вчителя."
-            ) from error
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
         if created and not runner.submit(job.id):
             store.fail_queued_drafts(
                 "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
@@ -418,11 +455,176 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             raise PilotError(
                 404, "warning_block_not_found", "Блок-попередження не знайдено."
             ) from error
-        return {
-            "lesson_id": job.id,
-            "revision": job.revision,
-            "warning_acknowledgements": sorted(job.warning_acknowledgements),
-        }
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/move")
+    def move_block(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: BlockMoveMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.move_block(
+                session.teacher_id,
+                lesson_key,
+                block_id=block_id,
+                direction=request_body.direction,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            LessonBlockNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/remove")
+    def remove_block(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.remove_block(
+                session.teacher_id,
+                lesson_key,
+                block_id=block_id,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            LessonBlockNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/include")
+    def include_reserve_block(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.include_reserve_block(
+                session.teacher_id,
+                lesson_key,
+                block_id=block_id,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            LessonBlockNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
+
+    @app.put("/api/lessons/{lesson_id}/blocks/{block_id}/activity")
+    def replace_block_activity(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: ActivityReplacementMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.replace_block_activity(
+                session.teacher_id,
+                lesson_key,
+                block_id=block_id,
+                activity=request_body.activity,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            LessonBlockNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/rejected/{rejected_index}/restore")
+    def restore_rejected_entry(
+        lesson_id: UUID,
+        rejected_index: Annotated[int, Path(ge=0)],
+        request_body: RestoreRejectedMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.restore_rejected_entry(
+                session.teacher_id,
+                lesson_key,
+                rejected_index=rejected_index,
+                phase=request_body.phase,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            RejectedEntryNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/duration")
+    def select_duration(
+        lesson_id: UUID,
+        request_body: DurationMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.select_duration(
+                session.teacher_id,
+                lesson_key,
+                duration=request_body.duration,
+                expected_revision=request_body.expected_revision,
+            )
+        except (
+            LessonNotFound,
+            RevisionConflict,
+            LessonStateConflict,
+            ReviewMutationInvalid,
+        ) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return _resource_payload(job)
 
     @app.post("/api/lessons/{lesson_id}/accept")
     def accept_lesson(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -40,3 +40,23 @@ class LessonCreate(FrozenModel):
 
 class RevisionMutation(FrozenModel):
     expected_revision: int = Field(ge=1)
+
+
+class BlockMoveMutation(FrozenModel):
+    expected_revision: int = Field(ge=1)
+    direction: Literal["up", "down"]
+
+
+class ActivityReplacementMutation(FrozenModel):
+    expected_revision: int = Field(ge=1)
+    activity: dict[str, Any]
+
+
+class RestoreRejectedMutation(FrozenModel):
+    expected_revision: int = Field(ge=1)
+    phase: Literal[1, 2, 3] = 2
+
+
+class DurationMutation(FrozenModel):
+    expected_revision: int = Field(ge=1)
+    duration: Literal[45, 60, 90]

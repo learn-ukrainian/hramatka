@@ -50,6 +50,22 @@ class FixtureBaker:
         return copy.deepcopy(_fixture_template())
 
 
+class ReserveFixtureBaker(FixtureBaker):
+    """Fixture baker with one durable phase-two reserve block."""
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        template = super().bake(anchor, duration, focus)
+        reserve = copy.deepcopy(
+            next(block for block in template["blocks"] if block["id"] == "block-4")
+        )
+        reserve["id"] = "block-reserve"
+        reserve["activity"]["id"] = "activity-reserve"
+        template["blocks"].append(reserve)
+        return template
+
+
 class BlockingBaker(FixtureBaker):
     def __init__(self) -> None:
         self.calls = 0
@@ -478,6 +494,7 @@ def test_revision_matrix_warning_ack_accept_and_draft_are_atomic(app, client) ->
     assert first_ack.status_code == 200, first_ack.text
     acknowledged_revision = first_ack.json()["revision"]
     assert acknowledged_revision == revision + 1
+    assert first_ack.json()["lesson"]["id"] == lesson_id
 
     repeated_ack = client.post(
         f"/api/lessons/{lesson_id}/blocks/{warning_ids[0]}/accept",
@@ -545,6 +562,227 @@ def test_revision_matrix_warning_ack_accept_and_draft_are_atomic(app, client) ->
         json={"expected_revision": drafted_resource["revision"]},
     )
     _error(state_draft, 409, "lesson_state_conflict", lesson_id=lesson_id)
+
+
+def test_review_assembly_mutations_are_revision_guarded_owner_scoped_and_csrf_protected(
+    app,
+) -> None:
+    _, _, first_token = _issue_invite(app, display_name="Перша")
+    _, _, second_token = _issue_invite(app, display_name="Друга")
+    lesson_id = str(uuid.uuid4())
+    with TestClient(app, base_url=ORIGIN) as first, TestClient(app, base_url=ORIGIN) as second:
+        first_session = _redeem(first, first_token)
+        second_session = _redeem(second, second_token)
+        headers = _mutation_headers(first_session["csrf_token"])
+        created = first.post(
+            "/api/lessons", headers=headers, json=_lesson_request(lesson_id, duration=45)
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(first, lesson_id, "ready")
+        initial = first.get(f"/api/lessons/{lesson_id}").json()
+        revision = initial["revision"]
+
+        missing_csrf = first.post(
+            f"/api/lessons/{lesson_id}/blocks/block-1/move",
+            json={"expected_revision": revision, "direction": "down"},
+        )
+        _error(missing_csrf, 403, "csrf_rejected")
+
+        foreign = second.post(
+            f"/api/lessons/{lesson_id}/duration",
+            headers=_mutation_headers(second_session["csrf_token"]),
+            json={"expected_revision": revision, "duration": 60},
+        )
+        _error(foreign, 404, "lesson_not_found")
+
+        moved = first.post(
+            f"/api/lessons/{lesson_id}/blocks/block-1/move",
+            headers=headers,
+            json={"expected_revision": revision, "direction": "down"},
+        )
+        assert moved.status_code == 200, moved.text
+        moved_resource = moved.json()
+        assert moved_resource["revision"] == revision + 1
+        assert moved_resource["lesson"]["blocks"][0]["id"] == "block-2"
+        assert moved_resource["lesson"]["blocks"][1]["id"] == "block-1"
+
+        stale = first.post(
+            f"/api/lessons/{lesson_id}/blocks/block-1/remove",
+            headers=headers,
+            json={"expected_revision": revision},
+        )
+        _error(stale, 409, "revision_conflict", lesson_id=lesson_id)
+
+
+def test_removal_restore_requires_fresh_warning_acknowledgement(app, client) -> None:
+    _, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    lesson_id = str(uuid.uuid4())
+    created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+    assert created.status_code == 202, created.text
+    _wait_for_status(client, lesson_id, "ready")
+    initial = client.get(f"/api/lessons/{lesson_id}").json()
+
+    acknowledged = client.post(
+        f"/api/lessons/{lesson_id}/blocks/block-1/accept",
+        headers=headers,
+        json={"expected_revision": initial["revision"]},
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert "block-1" in acknowledged.json()["warning_acknowledgements"]
+
+    removed = client.post(
+        f"/api/lessons/{lesson_id}/blocks/block-1/remove",
+        headers=headers,
+        json={"expected_revision": acknowledged.json()["revision"]},
+    )
+    assert removed.status_code == 200, removed.text
+    removed_resource = removed.json()
+    assert removed_resource["revision"] == acknowledged.json()["revision"] + 1
+    assert "block-1" not in removed_resource["warning_acknowledgements"]
+    assert removed_resource["lesson"]["rejected"] == [
+        {
+            "type": "true-false",
+            "activity": initial["lesson"]["blocks"][0]["activity"],
+            "reason": "вилучено вчителем",
+        }
+    ]
+
+    restored = client.post(
+        f"/api/lessons/{lesson_id}/rejected/0/restore",
+        headers=headers,
+        json={"expected_revision": removed_resource["revision"], "phase": 1},
+    )
+    assert restored.status_code == 200, restored.text
+    restored_resource = restored.json()
+    assert restored_resource["revision"] == removed_resource["revision"] + 1
+    restored_block = next(
+        block
+        for block in restored_resource["lesson"]["blocks"]
+        if block["id"].startswith("restored-")
+    )
+    assert restored_block["mark"] == "warn"
+    assert restored_block["note"] == "повернено з відхилених — погляньте ще раз"
+    assert restored_block["id"] not in restored_resource["warning_acknowledgements"]
+
+    blocked = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": restored_resource["revision"]},
+    )
+    _error(blocked, 409, "warning_acknowledgements_required", lesson_id=lesson_id)
+
+    revision = restored_resource["revision"]
+    for block in restored_resource["lesson"]["blocks"]:
+        if block["mark"] == "warn":
+            response = client.post(
+                f"/api/lessons/{lesson_id}/blocks/{block['id']}/accept",
+                headers=headers,
+                json={"expected_revision": revision},
+            )
+            assert response.status_code == 200, response.text
+            revision = response.json()["revision"]
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+
+
+def test_duration_reserve_include_and_activity_replacement_preserve_review_safety(
+    tmp_path: Path,
+) -> None:
+    app = create_app(settings=_settings(tmp_path), baker=ReserveFixtureBaker())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        headers = _mutation_headers(session["csrf_token"])
+        lesson_id = str(uuid.uuid4())
+        created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, lesson_id, "ready")
+        initial = client.get(f"/api/lessons/{lesson_id}").json()
+        original_ids = {block["id"] for block in initial["lesson"]["blocks"]}
+        assert "block-reserve" in original_ids
+
+        expanded = client.post(
+            f"/api/lessons/{lesson_id}/duration",
+            headers=headers,
+            json={"expected_revision": initial["revision"], "duration": 90},
+        )
+        assert expanded.status_code == 200, expanded.text
+        assert expanded.json()["lesson"]["duration"] == 90
+        assert expanded.json()["revision"] == initial["revision"] + 1
+        assert {block["id"] for block in expanded.json()["lesson"]["blocks"]} == original_ids
+
+        trimmed = client.post(
+            f"/api/lessons/{lesson_id}/duration",
+            headers=headers,
+            json={"expected_revision": expanded.json()["revision"], "duration": 45},
+        )
+        assert trimmed.status_code == 200, trimmed.text
+        trimmed_resource = trimmed.json()
+        assert trimmed_resource["lesson"]["duration"] == 45
+        assert trimmed_resource["revision"] == expanded.json()["revision"] + 1
+        assert {block["id"] for block in trimmed_resource["lesson"]["blocks"]} == original_ids
+
+        included = client.post(
+            f"/api/lessons/{lesson_id}/blocks/block-reserve/include",
+            headers=headers,
+            json={"expected_revision": trimmed_resource["revision"]},
+        )
+        assert included.status_code == 200, included.text
+        included_resource = included.json()
+        assert included_resource["revision"] == trimmed_resource["revision"] + 1
+        phase_two_ids = [
+            block["id"] for block in included_resource["lesson"]["blocks"] if block["phase"] == 2
+        ]
+        assert phase_two_ids[0] == "block-reserve"
+
+        warning = next(
+            block for block in included_resource["lesson"]["blocks"] if block["id"] == "block-1"
+        )
+        acknowledged = client.post(
+            f"/api/lessons/{lesson_id}/blocks/block-1/accept",
+            headers=headers,
+            json={"expected_revision": included_resource["revision"]},
+        )
+        assert acknowledged.status_code == 200, acknowledged.text
+        assert "block-1" in acknowledged.json()["warning_acknowledgements"]
+        replacement = copy.deepcopy(warning["activity"])
+        replacement["title"] = "Оновлена вправа"
+        replaced = client.put(
+            f"/api/lessons/{lesson_id}/blocks/block-1/activity",
+            headers=headers,
+            json={"expected_revision": acknowledged.json()["revision"], "activity": replacement},
+        )
+        assert replaced.status_code == 200, replaced.text
+        replaced_resource = replaced.json()
+        assert replaced_resource["revision"] == acknowledged.json()["revision"] + 1
+        replaced_block = next(
+            block for block in replaced_resource["lesson"]["blocks"] if block["id"] == "block-1"
+        )
+        assert replaced_block["mark"] == "warn"
+        assert replaced_block["edited"] is True
+        assert "block-1" not in replaced_resource["warning_acknowledgements"]
+
+        invalid = client.put(
+            f"/api/lessons/{lesson_id}/blocks/block-1/activity",
+            headers=headers,
+            json={
+                "expected_revision": replaced_resource["revision"],
+                "activity": {**replacement, "type": "roleplay-dialog"},
+            },
+        )
+        _error(invalid, 422, "invalid_input")
+        unchanged = client.get(f"/api/lessons/{lesson_id}").json()
+        assert unchanged["revision"] == replaced_resource["revision"]
+        unchanged_block = next(
+            block for block in unchanged["lesson"]["blocks"] if block["id"] == "block-1"
+        )
+        assert unchanged_block == replaced_block
 
 
 def test_baker_failure_is_durable_sanitized_and_never_exposes_a_partial_lesson(
