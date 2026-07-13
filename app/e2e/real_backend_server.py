@@ -19,7 +19,6 @@ from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.config import Settings
 from hramatka.engine import fixtures
-from hramatka.engine.tests.test_bake_e2e import _READY_CANDIDATES, _bundle_with_matchup_vocabulary
 
 
 class FixtureBaker(EngineLessonBaker):
@@ -43,13 +42,13 @@ class FixtureBaker(EngineLessonBaker):
                 candidate(index)
                 for activity_type, count in counts.items()
                 for index in range(count)
-                for candidate in [_READY_CANDIDATES[activity_type]]
+                for candidate in [fixtures._READY_CANDIDATES[activity_type]]
             ]
             return json.dumps({"activities": activities}, ensure_ascii=False)
 
         super().__init__(
             generator=generator,
-            bundle=_bundle_with_matchup_vocabulary(runtime_dir / "data"),
+            bundle=fixtures._bundle_with_matchup_vocabulary(runtime_dir / "data"),
             cache_dir=runtime_dir / "cache",
         )
 

@@ -14,104 +14,27 @@ regenerate the JSON fixtures.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import sqlite3
 from pathlib import Path
 
 import pytest
 
 from hramatka.engine import data
 
+# Re-export the pytest-free helpers (relocated to hramatka/engine/fixtures.py per #97)
+# so that test modules can continue `from hramatka.engine.tests.conftest import ...`
+# for test-local use. The real definitions live in the non-test fixtures module
+# so runtime entrypoints do not import any test module.
+from hramatka.engine.fixtures import (  # noqa: F401
+    _build_atlas_db,
+    _build_fixture_bundle,
+    _build_vesum_db,
+    _seed,
+    _sha_size,
+)
+
+# Compat alias for tests that import FIXTURES directly from conftest (e.g. drift test).
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-
-
-def _sha_size(path: Path) -> tuple[str, int]:
-    b = path.read_bytes()
-    return hashlib.sha256(b).hexdigest(), len(b)
-
-
-def _seed() -> dict:
-    """Extra rows NOT extracted from the real corpus (e.g. the seeded
-    russianism for the defect-5 e2e), kept in their own file so a
-    `_build_fixtures` regeneration of the extracted JSON never clobbers them."""
-    path = FIXTURES / "seeded_russianism.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _build_vesum_db(path: Path) -> None:
-    rows = json.loads((FIXTURES / "vesum_forms.json").read_text(encoding="utf-8"))
-    rows = [*rows, *_seed().get("vesum_forms", [])]
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(
-            "CREATE TABLE forms (word_form TEXT NOT NULL, lemma TEXT NOT NULL, "
-            "tags TEXT NOT NULL, pos TEXT NOT NULL)"
-        )
-        conn.executemany(
-            "INSERT INTO forms (word_form, lemma, tags, pos) VALUES (?, ?, ?, ?)",
-            [(r["word_form"], r["lemma"], r["tags"], r["pos"]) for r in rows],
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _build_atlas_db(path: Path) -> None:
-    payloads = json.loads((FIXTURES / "atlas_rows.json").read_text(encoding="utf-8"))
-    payloads = [*payloads, *_seed().get("atlas_rows", [])]
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(
-            "CREATE TABLE article_payloads (slug TEXT PRIMARY KEY, "
-            "route_order INTEGER NOT NULL, payload_json TEXT NOT NULL, "
-            "is_public_route INTEGER NOT NULL CHECK (is_public_route IN (0, 1)))"
-        )
-        conn.executemany(
-            "INSERT INTO article_payloads (slug, route_order, payload_json, is_public_route) "
-            "VALUES (?, ?, ?, ?)",
-            [
-                (
-                    p.get("slug") or p["lemma"],
-                    i,
-                    json.dumps(p, ensure_ascii=False),
-                    1,
-                )
-                for i, p in enumerate(payloads)
-            ],
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _build_fixture_bundle(root: Path) -> data.DataBundle:
-    vesum = root / "vesum.db"
-    atlas = root / "atlas.db"
-    _build_vesum_db(vesum)
-    _build_atlas_db(atlas)
-    v_sha, v_size = _sha_size(vesum)
-    a_sha, a_size = _sha_size(atlas)
-    manifest = {
-        "bundle": "lu-runtime-data-fixture",
-        "version": "test",
-        "inputs": {
-            "vesum.db": {"path": "vesum.db", "sha256": v_sha, "size": v_size, "required": True},
-            "atlas.db": {"path": "atlas.db", "sha256": a_sha, "size": a_size, "required": True},
-            # sources.db is not opened by slice-1; absent + optional, but its
-            # pinned digest still contributes to the bake fingerprint identity.
-            "sources.db": {
-                "path": "sources.db",
-                "sha256": "0" * 64,
-                "size": 0,
-                "required": False,
-            },
-        },
-    }
-    return data.resolve_bundle(data_dir=root, manifest=manifest, verify=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
