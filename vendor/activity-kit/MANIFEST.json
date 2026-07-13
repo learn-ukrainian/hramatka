@@ -1,0 +1,19 @@
+{
+  "artifact": "activity-kit",
+  "version": "0.1.0",
+  "kind": "npm-tarball",
+  "description": "Pinned public @learn-ukrainian/activity-kit npm package tarball (source + styles + fixtures) at the Hramatka contract digest. Used by private teacher frontend only.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "package_path": "packages/activity-kit",
+    "commit": "ffd54054d37e40a46dfed3f0a4714df20a3028be"
+  },
+  "adapted": false,
+  "tarball": "learn-ukrainian-activity-kit-0.1.0-ffd54054.tgz",
+  "files": {
+    "learn-ukrainian-activity-kit-0.1.0-ffd54054.tgz": {
+      "sha256": "2273d1fb685e2e25adf1fa445b8c244aee6f6a62189ca02cc80f5d0e8ce7f226",
+      "size": 38805
+    }
+  }
+}

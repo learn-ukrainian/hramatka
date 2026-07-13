@@ -1,0 +1,99 @@
+/* Teacher frontend styles — Ukrainian, clean, print-friendly */
+.teacher-app {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #222;
+  background: #fafafa;
+  min-height: 100vh;
+}
+
+.appbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #111;
+  color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.brand { font-weight: 700; letter-spacing: .5px; }
+.session { display: flex; gap: 12px; align-items: center; font-size: 0.95em; }
+.session .link { color: #9cf; background: none; border: 0; cursor: pointer; }
+
+.banner { padding: 10px 16px; margin: 8px 16px; border-radius: 6px; }
+.banner.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+.hub { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 20px; max-width: 1100px; margin: 0 auto; }
+.paste, .catalog { background: white; border: 1px solid #e5e5e5; border-radius: 8px; padding: 16px; }
+.paste textarea, .paste input, .paste select { width: 100%; padding: 8px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+.disclosure { font-size: 0.85rem; background: #fefce8; padding: 8px; border-radius: 4px; margin-bottom: 12px; border-left: 3px solid #ca8a04; }
+
+.catalog ul { list-style: none; padding: 0; }
+.catalog li { margin: 6px 0; display: flex; gap: 8px; align-items: center; }
+.catalog button { text-align: left; }
+
+.lesson-view { max-width: 980px; margin: 0 auto; padding: 16px; }
+.lesson-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lesson-header h2 { margin: 0 0 0 8px; font-size: 1.35rem; }
+.lesson-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+.meta { background: #f1f5f9; padding: 8px 12px; border-radius: 6px; margin: 12px 0; font-size: 0.9rem; }
+
+.phase { margin: 18px 0; }
+.phase h3 { margin: 0 0 8px; font-size: 1.05rem; color: #334155; }
+
+.block {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: white;
+}
+.block.warn { border-color: #f59e0b; background: #fffbeb; }
+.block.ok { border-color: #86efac; }
+.block.edited { border-style: dashed; }
+
+.block-meta { display: flex; gap: 8px; font-size: 0.8rem; margin-bottom: 6px; color: #475569; }
+.block-meta .warn-badge { color: #b45309; font-weight: 600; }
+.block-meta .prov { color: #64748b; }
+
+.teacher-key { background: #f8fafc; border-left: 3px solid #64748b; padding: 6px 10px; margin: 8px 0; font-size: 0.85rem; }
+.teacher-key pre { margin: 4px 0; white-space: pre-wrap; font-size: 0.8rem; }
+
+.ack-btn {
+  background: #854d0e; color: white; border: 0; padding: 6px 12px; border-radius: 4px; cursor: pointer;
+}
+.ack-btn:disabled { opacity: .6; }
+.acked { color: #166534; font-weight: 600; }
+
+.accept-bar { margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; }
+.accept-bar .warn-note { color: #854d0e; margin-bottom: 8px; }
+
+.activity-wrapper { margin: 8px 0; }
+
+.run-note { font-size: .85rem; color: #475569; margin-top: 12px; font-style: italic; }
+
+.footer { text-align: center; padding: 24px; color: #64748b; font-size: 0.8rem; }
+
+/* Invite */
+.invite { max-width: 520px; margin: 60px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.invite button { padding: 10px 16px; }
+
+/* Print stylesheet — student + teacher copies */
+@media print {
+  .appbar, .banner, .lesson-actions, .accept-bar, .footer, button { display: none !important; }
+  .block { break-inside: avoid; page-break-inside: avoid; border: 1px solid #ccc; margin-bottom: 12pt; }
+  .teacher-key { background: #f9f9f9; border: 1px solid #ddd; }
+  .phase h3 { page-break-after: avoid; }
+  .lesson-view { max-width: 100%; }
+  @page { margin: 1.5cm; }
+  .block.warn { background: #fff; }
+}
+
+/* Minimal polish */
+button { padding: 8px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: white; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: default; }
+button:hover:not(:disabled) { background: #f8fafc; }
+textarea, input, select { font-family: inherit; }
+.small { font-size: 0.8rem; color: #64748b; }

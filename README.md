@@ -34,3 +34,10 @@ the plan was nearly lost to local-only storage.
 - Pedagogy (PPP/TTT/GPPC/TBL) = guardrail driving requested inputs + lesson shape.
 - Voice + image generation = flagged interest, later slice.
 - One server shared with the practice/atlas backend; infra stays private (security).
+
+## Teacher frontend (grok-build dispatch)
+`app/` is the self-contained static Vite/React bundle (see `app/README.md`).
+It lives ONLY here (private). It imports the public `@learn-ukrainian/activity-kit` package
+(ffd54054 pin) as adapter for rendering; never `site/src` internals.
+Parallel Terra backend implements `api/` against the frozen contracts.
+Do not edit api/, engine/, contracts/, or vendored artifacts from this frontend work.
