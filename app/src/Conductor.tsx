@@ -23,6 +23,7 @@ export interface ConductorLessonDoc {
 export interface ConductorProps {
   lessonDoc: ConductorLessonDoc;
   onExit: () => void;
+  onStudentPreviewChange?: (preview: boolean) => void;
 }
 
 // Durations and phase budgets — faithful to demo
@@ -154,7 +155,7 @@ const COND_PROFILE = [
   { k: 'Успішно виправив', v: '«на поверху» → «на поверсі»' },
 ];
 
-export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
+export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }: ConductorProps) {
   const [cond, setCond] = useState<CondState | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -168,7 +169,16 @@ export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
     setCond(c);
     setShowProfile(false);
     setShowHelp(false);
-  }, [lessonDoc]);
+    onStudentPreviewChange?.(false);
+  }, [lessonDoc, onStudentPreviewChange]);
+
+  useEffect(() => {
+    onStudentPreviewChange?.(!!cond?.stud);
+  }, [cond?.stud, onStudentPreviewChange]);
+
+  useEffect(() => {
+    return () => { onStudentPreviewChange?.(false); };
+  }, [onStudentPreviewChange]);
 
   // Live per-second clock — only current phase, only while running
   useEffect(() => {
@@ -462,7 +472,7 @@ export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
         </div>
         {curB.note && <div className="cond-note">⚠ {curB.note}</div>}
         {c.showAns && curB.answer_key != null && (
-          <div className="cond-answer">
+          <div className="cond-answer" data-testid="cond-answer-key">
             <span className="lbl">🔑 Відповідь</span>
             <div className="val">
               {typeof curB.answer_key === 'string' ? curB.answer_key : JSON.stringify(curB.answer_key, null, 2)}
@@ -511,7 +521,7 @@ export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
     if (c.stud) {
       return (
         <div className="cond-ctl">
-          <button className="btn primary" onClick={toggleStud}>✏ Повернутися до панелі</button>
+          <button className="btn primary" data-testid="teacher-return-btn" onClick={toggleStud}>✏ Повернутися до панелі</button>
         </div>
       );
     }
@@ -637,8 +647,8 @@ export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
   // Student preview is clean (banner + shared only + back control)
   if (c.stud) {
     return (
-      <div className="conductor-view">
-        <div className="rolebanner student">👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.</div>
+      <div className="conductor-view" data-testid="conductor-student-preview">
+        <div className="rolebanner student" data-testid="student-banner">👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.</div>
         <div className="cond-card">{renderShared()}</div>
         <div className="cond-ctl">{renderCtl()}</div>
       </div>
@@ -668,7 +678,7 @@ export default function Conductor({ lessonDoc, onExit }: ConductorProps) {
           <button className="btn ghost cond-sm" onClick={exitToLesson}>← Вийти</button>
           <button className="btn ghost cond-sm" onClick={addTime}>＋5 хв ⏱</button>
           <button className="btn ghost cond-sm" onClick={() => setShowProfile(true)}>👤 Профіль учня</button>
-          <button className="btn ghost cond-sm" onClick={toggleStud}>👁 Як бачить учень</button>
+          <button className="btn ghost cond-sm" data-testid="enter-student-preview-btn" onClick={toggleStud}>👁 Як бачить учень</button>
           <button className="btn ghost cond-sm" onClick={() => setShowHelp(true)}>? Довідка</button>
         </div>
       </div>

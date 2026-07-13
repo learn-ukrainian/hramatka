@@ -295,6 +295,85 @@ textarea, input, select {
 .modes { }
 .modes.run .block { /* lighter for student demo */ }
 
+/* student sharing surface (ready-lesson run mode + conduct preview chrome) */
+.modechip {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+  margin-left: 10px;
+}
+.modechip.student {
+  background: var(--ok);
+  color: #fff;
+}
+.teacher-app.studentframe {
+  background: var(--ok-soft);
+}
+.teacher-app.studentframe .lesson-view,
+.teacher-app.studentframe main {
+  background: transparent;
+}
+
+.rolebanner {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 8px 14px;
+  border-radius: 8px;
+  margin: 0 0 12px;
+}
+.rolebanner.student {
+  background: var(--ok-soft);
+  border: 1.5px solid var(--ok);
+  color: var(--ink);
+}
+
+.student-run-view {
+  max-width: 720px;
+}
+.student-toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.student-toolbar-spacer {
+  flex: 1;
+}
+.student-sheet {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 18px 22px 22px;
+  margin: 0 auto;
+}
+.student-sheet .docsheet-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 21px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.student-sheet-sub {
+  margin: 0 0 14px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.student-run-view .block.student-block {
+  border-color: var(--line);
+  background: var(--paper);
+  box-shadow: none;
+}
+.student-run-view .block.student-block .block-meta,
+.student-run-view .teacher-key,
+.student-run-view .ack-btn {
+  display: none !important;
+}
+
 /* extend print from demo (tokens ensure paper bg etc) */
 @media print {
   .appbar, .banner, .lesson-actions, .accept-bar, .footer, button, .noprint { display: none !important; }

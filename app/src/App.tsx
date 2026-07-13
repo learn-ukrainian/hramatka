@@ -205,6 +205,7 @@ export default function TeacherApp() {
   const [restoredTextNotice, setRestoredTextNotice] = useState(false);
   const [anchorOpen, setAnchorOpen] = useState(false);
   const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
+  const [conductStudentPreview, setConductStudentPreview] = useState(false);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -749,6 +750,7 @@ export default function TeacherApp() {
 
   // Render blocks grouped by phase using REAL ActivityPlayer
   const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => {
+    const isStudentView = viewMode === 'run';
     const phases: Record<number, LessonBlock[]> = { 1: [], 2: [], 3: [] };
     l.lesson.blocks.forEach(b => {
       if (phases[b.phase]) phases[b.phase].push(b);
@@ -766,13 +768,19 @@ export default function TeacherApp() {
             const showKey = viewMode === 'review' && showAnswers;
             const typeChip = isWarn ? 'warn' : 'info';
             return (
-              <div key={block.id} className={`block ${isWarn ? 'warn' : 'ok'} ${block.edited ? 'edited' : ''}`}>
-                <div className="block-meta">
-                  <span className={`chip ${typeChip}`}>{block.type}</span>
-                  <span className="mode">{block.mode}</span>
-                  {isWarn && <span className="warn-badge">⚠️ попередження</span>}
-                  {block.provenance?.external_options && <span className="prov">зовнішні варіанти</span>}
-                </div>
+              <div
+                key={block.id}
+                className={`block ${isStudentView ? 'student-block' : ''} ${isWarn && !isStudentView ? 'warn' : 'ok'} ${block.edited && !isStudentView ? 'edited' : ''}`}
+                data-testid={isStudentView ? 'student-block' : undefined}
+              >
+                {!isStudentView && (
+                  <div className="block-meta">
+                    <span className={`chip ${typeChip}`}>{block.type}</span>
+                    <span className="mode">{block.mode}</span>
+                    {isWarn && <span className="warn-badge">⚠️ попередження</span>}
+                    {block.provenance?.external_options && <span className="prov">зовнішні варіанти</span>}
+                  </div>
+                )}
 
                 {/* REAL WIDGET — zero fallback (container styled only; kit kept untouched) */}
                 <div className="activity-wrapper" data-activity-type={block.type}>
@@ -799,6 +807,7 @@ export default function TeacherApp() {
                     className="ack-btn btn"
                     onClick={() => ackWarning(block.id)}
                     disabled={loading}
+                    data-testid="warning-ack-btn"
                   >
                     Підтвердити попередження
                   </button>
@@ -816,12 +825,26 @@ export default function TeacherApp() {
 
   // ===== Render =====
   const currentMode = (route.mode as 'review' | 'run' | 'conduct') || 'review';
+  const isStudentSurface =
+    currentMode === 'run' || (currentMode === 'conduct' && conductStudentPreview);
+  const showTeacherLessonChrome = route.view === 'lesson' && currentMode !== 'conduct' && currentMode !== 'run';
+
+  const returnToTeacherView = () => {
+    if (currentMode === 'run') {
+      openLesson(currentLessonId || route.lessonId!, 'review');
+      return;
+    }
+    setConductStudentPreview(false);
+  };
 
   return (
-    <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}`}>
+    <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}${isStudentSurface ? ' studentframe' : ''}`} data-testid={isStudentSurface ? 'student-surface' : 'teacher-surface'}>
       <header className="appbar">
         <div className="brand">Граматка</div>
-        {session && (
+        {session && isStudentSurface && (
+          <span className="modechip student" data-testid="student-mode-badge">👩‍🎓 УЧЕНЬ</span>
+        )}
+        {session && !isStudentSurface && (
           <div className="session">
             <button
               type="button"
@@ -832,8 +855,8 @@ export default function TeacherApp() {
             >
               ?
             </button>
-            <span>{session.teacher.display_name}</span>
-            <button onClick={logout} className="link">Вийти</button>
+            <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
+            <button onClick={logout} className="link" data-testid="logout-btn">Вийти</button>
           </div>
         )}
       </header>
@@ -989,13 +1012,23 @@ export default function TeacherApp() {
           {/* Lesson view */}
           {/* #93 item1: render on route.lessonId to avoid blank on direct/refresh; set current early via ready effect */}
           {route.view === 'lesson' && route.lessonId && (
-            <main className="lesson-view">
+            <main className={`lesson-view${currentMode === 'run' ? ' student-run-view' : ''}`}>
+              {showTeacherLessonChrome && (
               <div className="lesson-header">
                 <button className="btn ghost" onClick={() => navigate({ view: 'paste' })}>← До списку</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
                 <div className="lesson-actions">
-                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
-                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
+                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>Режим огляду</button>
+                  {lesson && lesson.lesson.status === 'ready' && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      data-testid="enter-student-mode-btn"
+                      onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')}
+                    >
+                      👩‍🎓 Показати як учневі
+                    </button>
+                  )}
                   {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
                     <button
                       type="button"
@@ -1016,7 +1049,7 @@ export default function TeacherApp() {
                     </button>
                   )}
                   {lesson && lesson.lesson.accepted && (
-                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')} disabled={currentMode === 'conduct'}>▶ Провести заняття</button>
+                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')}>▶ Провести заняття</button>
                   )}
                   {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
                   {lesson && lesson.lesson.status === 'ready' && (
@@ -1042,6 +1075,7 @@ export default function TeacherApp() {
                   <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
                 </div>
               </div>
+              )}
 
               {bakeStatus && !lesson && (
                 <div className="baking" data-testid="baking-status-view">
@@ -1106,11 +1140,13 @@ export default function TeacherApp() {
 
               {lesson && (
                 <>
+                  {showTeacherLessonChrome && (
                   <div className="meta">
                     <div>Рівень: {lesson.lesson.level} • Тривалість: {lesson.lesson.duration} хв</div>
                     <div>Ревізія: {lesson.revision} • Прийнято: {lesson.lesson.accepted ? 'так' : 'ні'}</div>
                     {lesson.lesson.focus && <div>Фокус: {lesson.lesson.focus}</div>}
                   </div>
+                  )}
 
                   {currentMode === 'review' && lesson.lesson.anchor?.text && (
                     <details className="anchor-panel noprint-student" data-testid="anchor-panel-review">
@@ -1120,23 +1156,53 @@ export default function TeacherApp() {
                     </details>
                   )}
 
-                  {currentMode === 'run' && lesson.lesson.anchor?.text && (
-                    <div className="anchor-run-bar noprint">
-                      <button
-                        type="button"
-                        className="btn ghost"
-                        data-testid="anchor-toggle-run"
-                        onClick={() => setAnchorOpen((v) => !v)}
-                      >
-                        {anchorOpen ? 'Сховати текст' : 'Текст'}
-                      </button>
-                      {anchorOpen && (
-                        <div className="anchor-panel run-open" data-testid="anchor-panel-run">
-                          <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
-                          {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
+                  {currentMode === 'run' && (
+                    <>
+                      <div className="rolebanner student" data-testid="student-banner">
+                        👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.
+                      </div>
+                      <div className="student-toolbar noprint">
+                        <span className="chip info">
+                          {lesson.lesson.level} · готово · {lesson.lesson.duration} хв
+                        </span>
+                        <span className="student-toolbar-spacer" />
+                        <button
+                          type="button"
+                          className="btn primary"
+                          data-testid="teacher-return-btn"
+                          onClick={returnToTeacherView}
+                        >
+                          👩‍🏫 Назад до екрана вчителя
+                        </button>
+                      </div>
+                      {lesson.lesson.anchor?.text && (
+                        <div className="anchor-run-bar noprint">
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            data-testid="anchor-toggle-run"
+                            onClick={() => setAnchorOpen((v) => !v)}
+                          >
+                            {anchorOpen ? 'Сховати текст' : 'Текст'}
+                          </button>
+                          {anchorOpen && (
+                            <div className="anchor-panel run-open" data-testid="anchor-panel-run">
+                              <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                              {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
+                      <div className="student-sheet paper">
+                        <p className="docsheet-title">{lesson.lesson.title}</p>
+                        <p className="student-sheet-sub">
+                          Тест → Навчання → Тест · ≈ {lesson.lesson.duration} хв
+                        </p>
+                        <div className={`modes run`}>
+                          {renderBlocks(lesson, 'run')}
+                        </div>
+                      </div>
+                    </>
                   )}
 
                   {lesson.lesson.anchor?.text && (
@@ -1146,9 +1212,9 @@ export default function TeacherApp() {
                     </div>
                   )}
 
-                  {currentMode !== 'conduct' && (
+                  {currentMode === 'review' && (
                     <div className={`modes ${currentMode}`}>
-                      {renderBlocks(lesson, currentMode as 'review' | 'run')}
+                      {renderBlocks(lesson, 'review')}
                     </div>
                   )}
 
@@ -1170,14 +1236,14 @@ export default function TeacherApp() {
                     </div>
                   )}
 
-                  {currentMode === 'run' && (
-                    <div className="run-note">Це режим для демонстрації учню — відповіді та ключі приховані (залежно від віджета).</div>
-                  )}
-
                   {currentMode === 'conduct' && lesson && (
                     <Conductor
                       lessonDoc={lesson.lesson}
-                      onExit={() => openLesson(currentLessonId || route.lessonId!, 'review')}
+                      onExit={() => {
+                        setConductStudentPreview(false);
+                        openLesson(currentLessonId || route.lessonId!, 'review');
+                      }}
+                      onStudentPreviewChange={setConductStudentPreview}
                     />
                   )}
                 </>
@@ -1187,9 +1253,11 @@ export default function TeacherApp() {
         </>
       )}
 
+      {!isStudentSurface && (
       <footer className="footer">
         <small>Приватний пілот • Тільки для запрошених викладачів • B1</small>
       </footer>
+      )}
     </div>
   );
 }

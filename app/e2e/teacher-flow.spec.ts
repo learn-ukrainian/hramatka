@@ -374,6 +374,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await conductBtn.click();
 
     // Conductor UI appears (title + rail/clock)
+    await expect(page.locator('.conductor-view .cond-title b')).toContainText('Проведення заняття', { timeout: 5000 });
     await expect(page.locator('.cond-rail').first()).toBeVisible({ timeout: 5000 });
     await expect(page.locator('.cond-clock').first()).toBeVisible({ timeout: 5000 });
 
