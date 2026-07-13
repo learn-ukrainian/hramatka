@@ -397,7 +397,10 @@ export default function TeacherApp() {
     clearPoll();
     setPolling(true);
     let attempts = 0;
-    const max = 120;
+    // Real bakes run ~4 min and provider hiccups stretch them further: poll
+    // fast for the first ~25 s, then back off to 2.5 s ticks for ~10 min
+    // total before surfacing the long-wait hint.
+    const max = 260;
     const schedule = (delay: number) => {
       pollTimerRef.current = window.setTimeout(tick, delay);
     };
@@ -423,7 +426,7 @@ export default function TeacherApp() {
         setBakeStatus((prev) => prev || { status: 'baking', step: 'оновлення…' });
       }
       if (attempts < max) {
-        schedule(800);
+        schedule(attempts < 30 ? 800 : 2500);
       } else {
         clearPoll();
         if (st && st.status !== 'ready' && st.status !== 'failed') {
@@ -789,7 +792,7 @@ export default function TeacherApp() {
 
               {bakeStatus && !lesson && (
                 <div className="baking">
-                  <p>Статус: {statusLabel(bakeStatus.status)} — {bakeStatus.step}</p>
+                  <p>Статус: {statusLabel(bakeStatus.status)}{bakeStatus.status !== 'failed' && bakeStatus.step ? ` — ${bakeStatus.step}` : ''}</p>
                   {bakeStatus.failure && <p className="fail">{bakeStatus.failure}</p>}
                   {polling && <p>Оновлення…</p>}
                   <button onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
