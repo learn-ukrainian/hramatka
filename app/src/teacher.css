@@ -27,6 +27,77 @@
 .session { display: flex; gap: 12px; align-items: center; font-size: 0.95em; }
 .session .link { color: inherit; opacity: .85; background: none; border: 0; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
 .session .link:hover { opacity: 1; background: rgba(255,255,255,.14); }
+.helpbtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.2);
+  color: inherit;
+  font-weight: 700;
+  text-align: center;
+  font-size: 13px;
+  line-height: 22px;
+  padding: 0;
+  flex: none;
+}
+.helpbtn:hover { background: rgba(255,255,255,.35); }
+
+.help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 99;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.help-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 20px 22px;
+  max-width: 520px;
+  width: 92%;
+  font-size: 14px;
+  line-height: 1.55;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+}
+.help-card h2 {
+  margin: 0 0 10px;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 19px;
+  font-weight: 700;
+}
+.help-card p { margin: 0 0 8px; }
+.help-actions {
+  text-align: right;
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.recovery-card {
+  margin-top: 16px;
+  max-width: 560px;
+  flex-direction: row;
+  align-items: flex-start;
+}
+.recovery-body p { margin: 0 0 10px; }
+.recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.recovery-actions .link-back {
+  font-size: 14px;
+  text-decoration: underline;
+  border: 0;
+  background: transparent;
+  padding: 6px 0;
+}
+.recovery-actions .link-back:hover { background: transparent; opacity: .85; }
 
 /* banners now use demo .banner (honest=wheat, fail=bad). .error kept for role=alert */
 .banner { display: flex; gap: 10px; align-items: flex-start; border-radius: 10px; padding: 12px 14px; font-size: 14px; margin: 8px 16px; }

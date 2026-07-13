@@ -3,6 +3,13 @@ import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
 import './teacher.css';
+import {
+  statusLabel,
+  bakeStatusSubline,
+  saveLastBakeRequest,
+  loadLastBakeRequest,
+  type BakeRequestPayload,
+} from './app-helpers';
 
 // ===== Types derived from openapi + lesson contract =====
 type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
@@ -176,14 +183,12 @@ export default function TeacherApp() {
   // Poll ref (prepared; used robust in item 3)
   const pollTimerRef = useRef<number | null>(null);
 
-  // #93 item4: UA-only display for states (key logic on code; messages from server)
-  const statusLabel = (s: LessonState): string => {
-    if (s === 'baking') return 'готується';
-    if (s === 'ready') return 'готовий';
-    if (s === 'failed') return 'помилка';
-    if (s === 'draft') return 'чернетка';
-    return s;
-  };
+  // Last bake request: sessionStorage (+ in-memory fallback when storage unavailable).
+  // Recovery path: API status does not expose anchor on failed lessons — see app-helpers.
+  const lastBakeRef = useRef<BakeRequestPayload | null>(null);
+
+  const [showAnswers, setShowAnswers] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Invite redemption (token only in memory)
   const redeemFromFragment = useCallback(async () => {
@@ -331,19 +336,30 @@ export default function TeacherApp() {
   // ===== Paste + Bake =====
   const disclose = 'Вставлений текст буде надіслано зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.';
 
-  const startBake = async () => {
+  const submitNewLesson = async (source: {
+    text: string;
+    duration: 45 | 60 | 90;
+    focus: string | null;
+  }) => {
     if (!session || !csrf) {
       setError('Потрібна сесія викладача.');
       return;
     }
-    const text = pasteText.trim();
+    const text = source.text.trim();
     if (!text || text.length > 100000) {
       setError('Текст має бути від 1 до 100000 символів.');
       return;
     }
     setError(null);
     setLoading(true);
+    setLesson(null);
     const id = crypto.randomUUID();
+    const payload: BakeRequestPayload = {
+      text,
+      duration: source.duration,
+      focus: source.focus?.trim() || '',
+      lessonId: id,
+    };
     try {
       const res = await apiFetch('/api/lessons', {
         method: 'POST',
@@ -355,29 +371,61 @@ export default function TeacherApp() {
           id,
           anchor: { text, source: 'teacher-paste' },
           level: 'B1',
-          duration,
-          focus: focus.trim() || null,
+          duration: source.duration,
+          focus: source.focus?.trim() || null,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 202) {
+        saveLastBakeRequest(payload);
+        lastBakeRef.current = payload;
+        setPasteText(text);
+        setDuration(source.duration);
+        setFocus(source.focus?.trim() || '');
         setCurrentLessonId(id);
         setBakeStatus({ status: data.status || 'baking', step: 'текст отримано' });
         navigate({ view: 'lesson', lessonId: id, mode: 'review' });
-        // start polling
         pollStatus(id);
       } else {
         const e: ErrorEnvelope = data;
         setError(e.message || 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
-        if (e.code === 'idempotency_conflict') {
-          // rare in stub
-        }
       }
-    } catch (e: any) {
+    } catch {
       setError('Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const startBake = async () => {
+    await submitNewLesson({ text: pasteText, duration, focus: focus || null });
+  };
+
+  const getRetrySource = (lessonId: string | null): BakeRequestPayload | null => {
+    return loadLastBakeRequest(lessonId) ?? lastBakeRef.current;
+  };
+
+  const retryFailedLesson = async () => {
+    const lid = currentLessonId || route.lessonId || null;
+    const stored = getRetrySource(lid);
+    if (!stored) {
+      setError('Текст уроку недоступний. Вставте текст знову на головній сторінці.');
+      return;
+    }
+    await submitNewLesson({
+      text: stored.text,
+      duration: stored.duration,
+      focus: stored.focus || null,
+    });
+  };
+
+  const copyLessonAsNew = async () => {
+    if (!lesson) return;
+    await submitNewLesson({
+      text: lesson.lesson.anchor.text,
+      duration: lesson.lesson.duration,
+      focus: lesson.lesson.focus,
+    });
   };
 
   const clearPoll = () => {
@@ -419,7 +467,6 @@ export default function TeacherApp() {
         }
         if (st.status === 'failed') {
           clearPoll();
-          setError(st.failure_message || 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
           return;
         }
       } catch {
@@ -618,7 +665,7 @@ export default function TeacherApp() {
           {bs.map(block => {
             const isWarn = block.mark === 'warn';
             const acked = (l.warning_acknowledgements || []).includes(block.id) || localAcks.includes(block.id);
-            const showKey = viewMode === 'review';
+            const showKey = viewMode === 'review' && showAnswers;
             const typeChip = isWarn ? 'warn' : 'info';
             return (
               <div key={block.id} className={`block ${isWarn ? 'warn' : 'ok'} ${block.edited ? 'edited' : ''}`}>
@@ -678,11 +725,40 @@ export default function TeacherApp() {
         <div className="brand">Граматка</div>
         {session && (
           <div className="session">
+            <button
+              type="button"
+              className="helpbtn"
+              onClick={() => setHelpOpen(true)}
+              title="Довідка"
+              aria-label="Довідка"
+            >
+              ?
+            </button>
             <span>{session.teacher.display_name}</span>
             <button onClick={logout} className="link">Вийти</button>
           </div>
         )}
       </header>
+
+      {helpOpen && (
+        <div
+          className="help-overlay"
+          role="dialog"
+          aria-labelledby="help-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setHelpOpen(false); }}
+        >
+          <div className="help-card">
+            <h2 id="help-title">Як користуватися «Граматкою»</h2>
+            <p><strong>Створення уроку.</strong> Вставте український текст, оберіть тривалість і натисніть «Згенерувати урок». Рівень B1 фіксований для пілоту.</p>
+            <p><strong>Скільки чекати.</strong> Генерація зазвичай триває кілька хвилин. Можна повернутися до списку — урок з’явиться, коли буде готовий.</p>
+            <p><strong>«Перевірте».</strong> Попередження означає, що завдання варто переглянути. Підтвердіть кожне перед прийняттям уроку.</p>
+            <p><strong>Якщо сталася помилка.</strong> Текст зберігається — натисніть «Створити урок ще раз із цим текстом» або поверніться до списку.</p>
+            <div className="help-actions">
+              <button type="button" className="btn primary" onClick={() => setHelpOpen(false)}>Зрозуміло</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="banner fail error" role="alert">
@@ -804,6 +880,25 @@ export default function TeacherApp() {
                 <div className="lesson-actions">
                   <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
                   <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
+                  {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => setShowAnswers(v => !v)}
+                    >
+                      {showAnswers ? 'Сховати відповіді' : 'Показати відповіді'}
+                    </button>
+                  )}
+                  {lesson && lesson.lesson.status === 'ready' && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={copyLessonAsNew}
+                      disabled={loading}
+                    >
+                      Копіювати урок
+                    </button>
+                  )}
                   {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
                   <button className="btn ghost" onClick={printLesson}>Друк</button>
                   <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
@@ -817,12 +912,39 @@ export default function TeacherApp() {
                       <div className="dot">{bakeStatus.status === 'baking' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
                       <div>
                         <b>Статус: {statusLabel(bakeStatus.status)}</b>
-                        <div className="sd">{bakeStatus.step || ''}{bakeStatus.failure ? ` — ${bakeStatus.failure}` : ''}</div>
+                        <div className="sd">{bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure)}</div>
                       </div>
                     </div>
                   </div>
-                  {polling && <p className="hint" style={{marginTop:6}}>Оновлення…</p>}
-                  <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
+                  {bakeStatus.status === 'failed' && (
+                    <div className="recovery-card banner fail" data-testid="failure-recovery">
+                      <span className="ic">!</span>
+                      <div className="recovery-body">
+                        <p>Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.</p>
+                        <div className="recovery-actions">
+                          <button
+                            type="button"
+                            className="btn primary"
+                            onClick={retryFailedLesson}
+                            disabled={loading || !getRetrySource(currentLessonId || route.lessonId || null)}
+                          >
+                            Створити урок ще раз із цим текстом
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost link-back"
+                            onClick={() => navigate({ view: 'paste' })}
+                          >
+                            Повернутися до списку
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {bakeStatus.status === 'baking' && polling && <p className="hint" style={{marginTop:6}}>Оновлення…</p>}
+                  {bakeStatus.status === 'baking' && (
+                    <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
+                  )}
                 </div>
               )}
 

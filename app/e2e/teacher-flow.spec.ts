@@ -91,7 +91,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
 
     // baking / poll visible
-    await expect(page.getByText(/бакінг|статус|готовий/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/бакінг|статус|готово/i)).toBeVisible({ timeout: 10000 });
 
     // wait for lesson view with blocks
     await page.waitForSelector('[data-activity-player], .block', { timeout: 15000 });
@@ -238,10 +238,72 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
 
-    // use first or specific to avoid strict multi-match; assert UA content present
-    await expect(page.locator('.banner.error')).toContainText(/Постачальник тимчасово недоступний|Не вдалося скласти урок/i, { timeout: 10000 });
+    const recovery = page.getByTestId('failure-recovery');
+    await expect(recovery).toBeVisible({ timeout: 10000 });
+    await expect(recovery).toContainText(/Не вдалося створити урок/);
+    await expect(recovery).toContainText(/Постачальник тимчасово недоступний|текст уже збережено/i);
+    await expect(page.locator('.step.fail .sd')).not.toContainText(/готово|завдання складено/i);
 
     const en = await page.locator('text=The lesson bake could not be completed').count();
     expect(en).toBe(0);
+  });
+
+  test('failure recovery: retry button creates a new lesson from saved text', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'Текст для повторної спроби після збою.';
+    await page.getByPlaceholder(/Вставте/).fill(text);
+
+    await page.evaluate(() => {
+      const BAD = '00000000-0000-0000-0000-000000000bad';
+      // @ts-ignore
+      crypto.randomUUID = () => BAD;
+    });
+
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await expect(page.getByTestId('failure-recovery')).toBeVisible({ timeout: 10000 });
+
+    // restore real UUID for the retry
+    await page.evaluate(() => {
+      // @ts-ignore
+      delete crypto.randomUUID;
+    });
+
+    await page.getByRole('button', { name: /Створити урок ще раз із цим текстом/ }).click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+  });
+
+  test('help overlay opens from header and shows Ukrainian guidance', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByRole('button', { name: 'Довідка' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Як користуватися «Граматкою»/ })).toBeVisible();
+    await expect(page.getByText(/Створення уроку/)).toBeVisible();
+    await expect(page.getByText(/Якщо сталася помилка/)).toBeVisible();
+    await page.getByRole('button', { name: 'Зрозуміло' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('review mode toggles answer keys client-side', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'Текст для перемикача відповідей.';
+    await page.getByPlaceholder(/Вставте/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    await page.getByRole('button', { name: 'Сховати відповіді' }).click();
+    await expect(page.locator('.teacher-key')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Показати відповіді' }).click();
+    await expect(page.locator('.teacher-key').first()).toBeVisible();
   });
 });
