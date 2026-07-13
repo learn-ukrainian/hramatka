@@ -15,7 +15,7 @@ Environment=PYTHONUNBUFFERED=1
 # The pilot owns its runner in-process.  --workers 1 is mandatory: multiple
 # Uvicorn workers would each run a baker and violate the frozen durability
 # contract.  Caddy is the only public listener; Uvicorn stays loopback-only.
-ExecStart=/opt/hramatka/venv/bin/uvicorn hramatka.api.app:create_app --factory --host 127.0.0.1 --port 8080 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+ExecStart=/opt/hramatka/current/.venv/bin/uvicorn hramatka.api.app:create_app --factory --host 127.0.0.1 --port 8080 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45s

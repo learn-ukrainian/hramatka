@@ -26,3 +26,5 @@ dist-ssr
 # Test artifacts
 test-results
 playwright-report
+.real-e2e/
+.smoke-e2e/

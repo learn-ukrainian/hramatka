@@ -12,7 +12,9 @@ public checkout and identified DBs by size/mtime (Sol defect #4).
 
 Config:
   HRAMATKA_DATA_DIR       release dir holding the DB files (required at runtime)
-  HRAMATKA_DATA_MANIFEST  override the pinned manifest (defaults to the committed one)
+  HRAMATKA_DATA_MANIFEST  deployed canonical form: the release-local manifest at
+                          $HRAMATKA_DATA_DIR/data-manifest.json. Without it,
+                          development/tests use the committed fixture fallback.
   HRAMATKA_ALLOW_DATA_DRIFT=1   accept a digest mismatch (drift) instead of refusing
 """
 

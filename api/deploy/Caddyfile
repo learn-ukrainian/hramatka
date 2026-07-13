@@ -37,11 +37,12 @@
 		redir /teacher/ permanent
 	}
 
-	# handle_path strips /teacher before resolving static files.  An unknown
-	# teacher route falls back to the SPA entry point, while assets resolve as
-	# normal files beneath the deployed teacher bundle.
+	# handle_path strips /teacher before resolving static files. The bundle is
+	# beneath current so one release-symlink flip activates API and UI together.
+	# An unknown teacher route falls back to the SPA entry point, while assets
+	# resolve as normal files beneath the deployed teacher bundle.
 	handle_path /teacher/* {
-		root * /srv/hramatka/teacher
+		root * /opt/hramatka/current/hramatka/app/dist
 		try_files {path} /index.html
 		file_server
 	}

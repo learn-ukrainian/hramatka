@@ -29,8 +29,7 @@ from mutable private state:
 
 | Path | Owner and purpose |
 | --- | --- |
-| `/opt/hramatka/current` | Read-only reviewed release checkout and virtual environment. |
-| `/srv/hramatka/teacher` | Current static teacher bundle served by Caddy. |
+| `/opt/hramatka/current` | Read-only reviewed release checkout, including its release-specific virtual environment. |
 | `/var/lib/hramatka/hramatka.sqlite3` | Persistent-volume SQLite database, plus SQLite-managed `-wal` and `-shm` files. |
 | `/etc/hramatka/api.env` | Root-owned service environment file; contains deployment secrets and is never in git. |
 | `/var/lib/hramatka/backups/staging` | Mode-0700 short-lived local backup staging only; no release directory, repository, or web root. |
@@ -42,8 +41,9 @@ files share this directory; do not copy any of the three files as a hand-made ba
 
 ## Service and proxy installation
 
-1. Build the teacher bundle from the separately reviewed frontend release and install
-   its immutable output under `/srv/hramatka/teacher`.
+1. Build the teacher bundle in the reviewed release checkout. Caddy resolves it
+   beneath `/opt/hramatka/current/hramatka/app/dist`, so the same release
+   symlink activates the API and teacher UI together.
 2. Put [`hramatka-api.service`](hramatka-api.service) at
    `/etc/systemd/system/hramatka-api.service`, then run
    `systemctl daemon-reload` and `systemctl enable --now hramatka-api.service`.

@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:real": "playwright test -c playwright.real-backend.config.ts",
     "stub": "node dev/server.js"
   },
   "dependencies": {

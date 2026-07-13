@@ -1,10 +1,10 @@
 {
   "bundle": "lu-runtime-data",
   "version": "2026.07.10",
-  "description": "Digest-pinned corpus inputs for the Hramatka engine. The DB files are NEVER committed; they mount read-only from HRAMATKA_DATA_DIR and are verified against these digests at startup. sources.db is optional for slice-1 (not opened) but pins the bundle identity used in the bake fingerprint.",
+  "description": "Development/test fixture and compatibility fallback only. It does not identify a deployed data release. Production must set HRAMATKA_DATA_MANIFEST to the matching release-local data-manifest.json beneath HRAMATKA_DATA_DIR; verification remains mandatory. The DB files are NEVER committed.",
   "source": {
     "repo": "learn-ukrainian (protected build)",
-    "note": "digests captured from the operator's local protected build 2026-07-10"
+    "note": "fixture metadata retained for development and tests; not a deployment authority"
   },
   "inputs": {
     "vesum.db": {
