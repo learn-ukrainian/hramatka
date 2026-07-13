@@ -117,10 +117,11 @@ def test_russianism_introduced_in_generated_task_language_is_caught(tmp_path):
     warns = _vesum_warns(tf)
     assert warns and RUSSIANISM in warns[0].detail and "russianism" in warns[0].detail
 
-    # 2) adapter: review-required material cannot become an auto-included
-    # block.  With no other ready candidate, the bake safely reports shortfall.
+    # 2) adapter: review-required material may deliberately fill a ready-bank
+    # deficit as a WARN BLOCK, but this one-item bank remains too short for the
+    # phase and safely reports the same shortfall.
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    with pytest.raises(BakeError, match="no automatically includable"):
+    with pytest.raises(BakeError, match="too few distinct automatically includable"):
         baker.bake(anchor, duration=45, focus=None)
 
 

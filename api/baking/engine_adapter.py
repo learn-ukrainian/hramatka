@@ -8,9 +8,11 @@ generator is injectable, so the pipeline runs offline in tests with a fake
 generator and never touches the network here.
 
 Wave 0 consumes the engine selector rather than reimplementing selection here:
-only `ready` candidates become lesson blocks. `review_required` material stays
-in the pipeline IR review tray and never becomes a warning block by accident;
-rejected candidates and per-item salvage remain visible through `rejected[]`.
+`ready` candidates always compose first. `review_required` material stays in
+the pipeline IR review tray unless a phase still has a visible-slot deficit;
+only then can it deliberately fill that deficit as an acknowledged warning
+block. It never becomes a warning block by accident; rejected candidates and
+per-item salvage remain visible through `rejected[]`.
 """
 
 from __future__ import annotations
@@ -44,9 +46,11 @@ _PHASE_PLAN: dict[int, list[int]] = {
 # candidates. Use the conservative measured floor: a plan of N TTT slots asks
 # for ceil(N / 0.60) candidates, so its expected ready pool is at least N.
 # For example, the 45-minute six-slot plan asks for 10 candidates and expects
-# six ready. One regeneration round remains a safety net for variance.
+# six ready. Two targeted regeneration rounds remain a bounded safety net for
+# variance: they improve recovery from a short bank without unbounded provider
+# cost or an open-ended bake.
 _READY_SURVIVAL_FLOOR = 0.60
-_MAX_REGENERATION_ATTEMPTS = 1
+_MAX_REGENERATION_ATTEMPTS = 2
 
 # Keep diagnostics for fourteen days: this covers the daily-backup recovery
 # investigation window while putting a fixed bound on the host's state volume.
@@ -416,7 +420,9 @@ class EngineLessonBaker:
                 raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
             raise BakeError("Bake failed: the lesson generator is unavailable.")
 
-        if not any(result.ready for result in phase_results.values()):
+        if not any(
+            result.ready or result.review_required for result in phase_results.values()
+        ):
             raise BakeError(
                 "Bake produced no automatically includable activities from this anchor."
             )
@@ -445,6 +451,42 @@ class EngineLessonBaker:
                     selected.append(candidate)
                     candidates.remove(candidate)
             selected.extend(candidates[: max(0, slots - len(selected))])
+
+            # The review tray is a deliberate, deficit-only recovery path:
+            # ready candidates above keep their complete priority.  Apply the
+            # same constrained-type preference to the review tray, but never
+            # duplicate an already selected ready activity.
+            if len(selected) < slots:
+                selected_identities = {_activity_identity(candidate) for candidate in selected}
+                review_candidates = [
+                    candidate
+                    for candidate in phase_results[phase].review_required
+                    if _activity_identity(candidate) not in seen_activities
+                    and _activity_identity(candidate) not in selected_identities
+                ]
+                for activity_type in preferred_by_phase[phase]:
+                    if len(selected) >= slots:
+                        break
+                    candidate = next(
+                        (
+                            candidate
+                            for candidate in review_candidates
+                            if candidate.activity["type"] == activity_type
+                        ),
+                        None,
+                    )
+                    if candidate is not None:
+                        selected.append(candidate)
+                        review_candidates.remove(candidate)
+                        selected_identities.add(_activity_identity(candidate))
+                for candidate in review_candidates:
+                    if len(selected) >= slots:
+                        break
+                    identity = _activity_identity(candidate)
+                    if identity in selected_identities:
+                        continue
+                    selected.append(candidate)
+                    selected_identities.add(identity)
             if len(selected) < slots:
                 raise BakeError(
                     "Bake produced too few distinct automatically includable activities "
@@ -529,16 +571,29 @@ def _reason_phrase(gate: str) -> str:
 
 def _teacher_note(ir) -> str:
     """Surface every warn/flag cause in the block the teacher actually sees."""
-    reason_gates: list[str] = []
+    warning_details: list[str] = []
+    fallback_warning_gates: list[str] = []
+    flagged_gates: list[str] = []
     for check in ir.gate_result.checks:
-        if check.status == "warn" and check.gate not in reason_gates:
-            reason_gates.append(check.gate)
+        if check.status == "warn":
+            if check.detail and check.detail not in warning_details:
+                warning_details.append(check.detail)
+            elif check.gate and check.gate not in fallback_warning_gates:
+                fallback_warning_gates.append(check.gate)
     for flag in ir.flagged:
         for reason in flag.get("reasons", []):
             gate = reason.get("gate")
-            if isinstance(gate, str) and gate not in reason_gates:
-                reason_gates.append(gate)
-    phrases = "; ".join(_reason_phrase(gate) for gate in reason_gates)
+            if isinstance(gate, str) and gate not in flagged_gates:
+                flagged_gates.append(gate)
+    # The block note is the only frozen, teacher-visible warning carrier. Keep
+    # pipeline warning details verbatim so deficit-filled review candidates are
+    # explicit about what the teacher is acknowledging.
+    phrases = "; ".join(
+        [
+            *warning_details,
+            *(_reason_phrase(gate) for gate in [*fallback_warning_gates, *flagged_gates]),
+        ]
+    )
     if not phrases:
         phrases = _reason_phrase("partition")
     return f"Згенеровано з опори; перевірте: {phrases} — підтвердьте перед прийняттям."
