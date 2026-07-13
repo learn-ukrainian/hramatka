@@ -124,6 +124,41 @@ def test_build_atlas_lookup_empty_when_no_lemmas():
     assert R.build_atlas_lookup(set()) == {}
 
 
+def test_build_atlas_lookup_opens_write_protected_wal_db_read_only(tmp_path):
+    # Regression (#2528, hit live on the pilot host 2026-07-13): the bundle
+    # atlas.db ships in WAL mode, root-owned 0644, in an unwritable dir. WAL
+    # requires -wal/-shm creation even for SELECTs, so a plain
+    # sqlite3.connect() dies with "attempt to write a readonly database" for
+    # the unprivileged service user. The mode=ro&immutable=1 URI open must
+    # read it fine.
+    import json
+    import sqlite3
+
+    db = tmp_path / "atlas-ro.db"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "CREATE TABLE article_payloads (payload_json TEXT, is_public_route INTEGER)"
+    )
+    payload = {"lemma": "час", "cefr": "A1", "synonyms": []}
+    conn.execute(
+        "INSERT INTO article_payloads VALUES (?, 1)", (json.dumps(payload),)
+    )
+    conn.commit()
+    conn.close()
+    for stray in (tmp_path / "atlas-ro.db-wal", tmp_path / "atlas-ro.db-shm"):
+        stray.unlink(missing_ok=True)
+    db.chmod(0o444)
+    parent_mode = tmp_path.stat().st_mode
+    try:
+        tmp_path.chmod(0o555)  # directory unwritable: no -wal/-shm possible
+        lookup = R.build_atlas_lookup({"час"}, db_path=db)
+    finally:
+        tmp_path.chmod(parent_mode)
+        db.chmod(0o644)
+    assert "час" in lookup and lookup["час"]["lemma"] == "час"
+
+
 def test_grounding_pack_is_compact_and_structured():
     pack = R.build_grounding_pack(load_anchor(), "B1")
     assert "Рівень: B1." in pack["text"]

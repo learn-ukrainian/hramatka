@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import unicodedata
+from urllib.parse import quote
 
 from . import paths
 from .linguistics import verify_words
@@ -230,7 +231,12 @@ def build_atlas_lookup(needed_lemmas: set[str], db_path=None) -> dict[str, dict]
     needed_lower = {lemma.lower() for lemma in needed_lemmas}
     if not needed_lower:
         return {}
-    conn = sqlite3.connect(db)
+    # Read-only URI open. The bundle atlas.db ships in WAL mode and root-owned
+    # 0644 on deploy hosts; WAL needs -wal/-shm creation even for SELECTs, so a
+    # plain connect dies with "attempt to write a readonly database" for the
+    # unprivileged service user. mode=ro&immutable=1 never creates or locks
+    # anything (bug from engine recon #2528; hit live on the pilot host 2026-07-13).
+    conn = sqlite3.connect(f"file:{quote(db)}?mode=ro&immutable=1", uri=True)
     try:
         rows = conn.execute(
             "SELECT payload_json FROM article_payloads WHERE is_public_route=1"
