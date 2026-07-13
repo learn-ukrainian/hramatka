@@ -54,3 +54,12 @@ export function loadLastBakeRequest(lessonId?: string | null): BakeRequestPayloa
     return null;
   }
 }
+
+/** Clear saved bake request (session boundary — no cross-teacher text leak). */
+export function clearLastBakeRequest(): void {
+  try {
+    sessionStorage.removeItem(LAST_BAKE_KEY);
+  } catch {
+    /* private mode / quota */
+  }
+}

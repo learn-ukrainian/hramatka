@@ -8,6 +8,7 @@ import {
   bakeStatusSubline,
   saveLastBakeRequest,
   loadLastBakeRequest,
+  clearLastBakeRequest,
   type BakeRequestPayload,
 } from './app-helpers';
 import Conductor from './Conductor';
@@ -190,6 +191,40 @@ export default function TeacherApp() {
 
   const [showAnswers, setShowAnswers] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [restoredTextNotice, setRestoredTextNotice] = useState(false);
+
+  const clearPoll = useCallback(() => {
+    if (pollTimerRef.current != null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setPolling(false);
+  }, []);
+
+  /** Reset all lesson/session-scoped client state (logout + invite redeem boundaries). */
+  const resetSessionScopedState = useCallback(() => {
+    clearPoll();
+    clearLastBakeRequest();
+    lastBakeRef.current = null;
+    setPasteText('');
+    setDuration(60);
+    setFocus('');
+    setCurrentLessonId(null);
+    setLesson(null);
+    setCatalog([]);
+    setBakeStatus(null);
+    setLocalAcks([]);
+    setShowAnswers(true);
+    setError(null);
+    setRestoredTextNotice(false);
+  }, [clearPoll]);
+
+  const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
+    setPasteText(payload.text);
+    setDuration(payload.duration);
+    setFocus(payload.focus || '');
+    setRestoredTextNotice(true);
+  }, []);
 
   // Invite redemption (token only in memory)
   const redeemFromFragment = useCallback(async () => {
@@ -207,11 +242,13 @@ export default function TeacherApp() {
         body: JSON.stringify({ token }),
       });
       if (res.status === 200) {
+        resetSessionScopedState();
         const data = await res.json();
         const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
         setSession(s);
         setCsrf(data.csrf_token);
         setSessionReady(true);
+        navigate({ view: 'paste' });
         // Fetch full session for display
         await refreshSession();
         // Load catalog so paste view is fully populated (used by some flows)
@@ -233,7 +270,7 @@ export default function TeacherApp() {
       setLoading(false);
     }
     return true;
-  }, []);
+  }, [resetSessionScopedState, navigate]);
 
   const refreshSession = async () => {
     const res = await apiFetch('/api/session');
@@ -248,6 +285,7 @@ export default function TeacherApp() {
       setSession(null);
       setCsrf(null);
       setSessionReady(false);
+      resetSessionScopedState();
     }
     return null;
   };
@@ -315,8 +353,8 @@ export default function TeacherApp() {
   // #93 item 3 cleanup: never orphan poll loops
   useEffect(() => {
     return () => { clearPoll(); };
-  }, []);
-  useEffect(() => { clearPoll(); }, [currentLessonId]);
+  }, [clearPoll]);
+  useEffect(() => { clearPoll(); }, [currentLessonId, clearPoll]);
 
   const logout = async () => {
     if (!csrf) return;
@@ -328,9 +366,7 @@ export default function TeacherApp() {
     setSession(null);
     setCsrf(null);
     setSessionReady(false);
-    setLesson(null);
-    setCurrentLessonId(null);
-    setCatalog([]);
+    resetSessionScopedState();
     navigate({ view: 'invite' });
   };
 
@@ -422,19 +458,13 @@ export default function TeacherApp() {
 
   const copyLessonAsNew = async () => {
     if (!lesson) return;
-    await submitNewLesson({
+    restoreFormFromPayload({
       text: lesson.lesson.anchor.text,
       duration: lesson.lesson.duration,
-      focus: lesson.lesson.focus,
+      focus: lesson.lesson.focus || '',
+      lessonId: lesson.lesson_id,
     });
-  };
-
-  const clearPoll = () => {
-    if (pollTimerRef.current != null) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    setPolling(false);
+    navigate({ view: 'paste' });
   };
 
   // #93 item 3: robust poll
@@ -643,6 +673,8 @@ export default function TeacherApp() {
     if (e.code === 'session_required') {
       setSession(null);
       setCsrf(null);
+      setSessionReady(false);
+      resetSessionScopedState();
       setError('Сесія закінчилась. Увійдіть знову.');
       navigate({ view: 'invite' });
     } else {
@@ -832,6 +864,24 @@ export default function TeacherApp() {
 
                   <div className="field">
                     <label>Текст для уроку (вставте)</label>
+                    {restoredTextNotice && (
+                      <div
+                        className="banner honest restored-notice"
+                        role="status"
+                        data-testid="restored-text-notice"
+                      >
+                        <span className="ic">ℹ︎</span>
+                        <span>Текст попереднього запиту відновлено</span>
+                        <button
+                          type="button"
+                          onClick={() => setRestoredTextNotice(false)}
+                          style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.7 }}
+                          aria-label="Закрити"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
                     <textarea
                       className="inputbox"
                       value={pasteText}
@@ -937,7 +987,14 @@ export default function TeacherApp() {
                           <button
                             type="button"
                             className="btn ghost link-back"
-                            onClick={() => navigate({ view: 'paste' })}
+                            onClick={() => {
+                              const lid = currentLessonId || route.lessonId || null;
+                              const stored = getRetrySource(lid);
+                              if (stored) {
+                                restoreFormFromPayload(stored);
+                              }
+                              navigate({ view: 'paste' });
+                            }}
                           >
                             Повернутися до списку
                           </button>

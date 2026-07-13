@@ -4,6 +4,7 @@ import {
   bakeStatusSubline,
   saveLastBakeRequest,
   loadLastBakeRequest,
+  clearLastBakeRequest,
 } from './app-helpers';
 
 describe('app-helpers', () => {
@@ -37,5 +38,16 @@ describe('app-helpers', () => {
     saveLastBakeRequest(payload);
     expect(loadLastBakeRequest('00000000-0000-0000-0000-000000000bad')).toEqual(payload);
     expect(loadLastBakeRequest('other-id')).toBeNull();
+  });
+
+  it('clearLastBakeRequest removes saved bake request from sessionStorage', () => {
+    saveLastBakeRequest({
+      text: 'Текст',
+      duration: 45,
+      focus: '',
+      lessonId: 'id-1',
+    });
+    clearLastBakeRequest();
+    expect(loadLastBakeRequest()).toBeNull();
   });
 });

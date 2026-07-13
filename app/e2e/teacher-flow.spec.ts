@@ -248,6 +248,35 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(en).toBe(0);
   });
 
+  test('session boundary: logout then new invite clears form and saved request (cross-teacher leak)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const teacherAText = 'Секретний текст викладача А — не повинен з’явитися у наступній сесії.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(teacherAText);
+    await page.locator('.paste select.inputbox').selectOption('90');
+    await page.getByPlaceholder(/вищий ступінь/).fill('майбутній час');
+
+    await page.getByRole('button', { name: 'Вийти' }).click();
+    await expect(page.getByRole('heading', { name: /Вхід для викладача/i })).toBeVisible();
+
+    const tokenB = 'B'.repeat(42) + 'Q';
+    await page.evaluate((tok) => {
+      window.location.hash = `#invite=${tok}`;
+    }, tokenB);
+
+    await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByPlaceholder(/Вставте український текст/)).toHaveValue('');
+    await expect(page.locator('.paste select.inputbox')).toHaveValue('60');
+    await expect(page.getByPlaceholder(/вищий ступінь/)).toHaveValue('');
+
+    const storageCleared = await page.evaluate(() => {
+      return sessionStorage.getItem('hramatka:last-bake-request') === null;
+    });
+    expect(storageCleared).toBe(true);
+  });
+
   test('failure recovery: retry button creates a new lesson from saved text', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
