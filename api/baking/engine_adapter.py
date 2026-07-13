@@ -35,6 +35,16 @@ _PHASE_PLAN: dict[int, list[int]] = {
     90: [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3],
 }
 
+# Each plan slot consumes one DISTINCT auto-ready item, but a single
+# generation round yields only 4-7 gate-survivors per real-Gemma bake
+# (2026-07-12 measure + two live pilot-host bakes 2026-07-13) — structurally
+# below the 6 items the 45-minute plan needs. One regeneration round
+# re-requests the unmet types and lifted the live ready pool 4 → 7 on the
+# pilot host. PARTIAL FIX: generation is still one-candidate-per-type per
+# round (the frozen prompt has no count awareness); plumbing real per-type
+# counts through prompt construction is the engine follow-up.
+_MAX_REGENERATION_ATTEMPTS = 1
+
 
 def _answer_key(activity: dict) -> dict:
     a_type = activity.get("type")
@@ -127,6 +137,7 @@ class EngineLessonBaker:
                     use_cache=False,
                     cache_dir=self._cache_dir,
                     out_dir=(out_root / uuid.uuid4().hex) if out_root else None,
+                    max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
                 )
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,
