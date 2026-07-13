@@ -306,4 +306,85 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: 'Показати відповіді' }).click();
     await expect(page.locator('.teacher-key').first()).toBeVisible();
   });
+
+  test('conductor: accept stub lesson → start conduct → clock present → student screen (no answers) → skip → summary', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    // Create a lesson (stub produces ready blocks quickly)
+    const text = 'Текст для перевірки Проведення заняття.';
+    await page.getByPlaceholder(/Вставте/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    // Wait for lesson content (blocks)
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    // Ack any warnings to enable accept
+    const ackButtons = page.locator('.ack-btn');
+    const nAcks = await ackButtons.count();
+    for (let i = 0; i < nAcks; i++) {
+      if (await ackButtons.first().isVisible()) {
+        await ackButtons.first().click();
+        await page.waitForTimeout(120);
+      }
+    }
+
+    // Accept
+    const acceptBtn = page.getByRole('button', { name: /Прийняти урок/ });
+    if (await acceptBtn.isVisible()) {
+      await acceptBtn.click();
+    }
+    await expect(page.getByText(/Прийнято|accepted/i)).toBeVisible({ timeout: 8000 });
+
+    // The conductor button should now be visible (only for accepted)
+    const conductBtn = page.getByRole('button', { name: /Провести заняття/ });
+    await expect(conductBtn).toBeVisible({ timeout: 5000 });
+
+    // Start conduct
+    await conductBtn.click();
+
+    // Conductor UI appears (title + rail/clock)
+    await expect(page.getByText(/Проведення заняття|▶ Проведення заняття/i)).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.cond-rail').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.cond-clock').first()).toBeVisible({ timeout: 5000 });
+
+    // Shared student screen visible (green border area), ActivityPlayer inside, no teacher keys visible in shared
+    await expect(page.locator('.cond-shared')).toBeVisible({ timeout: 5000 });
+    // Keys/answer panel only in teacher private (wheat) — shared must not leak answers
+    await expect(page.locator('.cond-shared .teacher-key')).toHaveCount(0);
+
+    // Clock element shows initial time form
+    await expect(page.locator('.cond-clock .big')).toBeVisible();
+
+    // Skip current task
+    const skipBtn = page.getByRole('button', { name: /Пропустити/ });
+    if (await skipBtn.count() > 0) {
+      await skipBtn.first().click();
+      await page.waitForTimeout(200);
+    }
+
+    // Force-finish by skipping remaining to reliably reach summary in stub E2E (9 blocks)
+    for (let k = 0; k < 12; k++) {
+      const sk = page.getByRole('button', { name: /Пропустити/ });
+      if (await sk.count() > 0) {
+        await sk.first().click();
+        await page.waitForTimeout(120);
+      } else {
+        break;
+      }
+    }
+
+    // Also try any remaining "Готово"
+    for (let k = 0; k < 4; k++) {
+      const dn = page.getByRole('button', { name: /Готово|✓ Готово/ });
+      if (await dn.count() > 0 && await dn.first().isVisible()) {
+        await dn.first().click();
+        await page.waitForTimeout(120);
+      }
+    }
+
+    // Summary should appear
+    await expect(page.locator('.cond-sum')).toBeVisible({ timeout: 10000 });
+  });
 });

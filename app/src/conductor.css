@@ -1,0 +1,512 @@
+/*
+  Conductor (Проведення заняття) styles — faithful port from demo-reference.html
+  Uses the app's design tokens from index.css (already ported).
+  All Ukrainian; scoped to .conductor-view and .cond-*
+  Client-only, no backend.
+*/
+
+.conductor-view {
+  max-width: 1060px;
+  margin: 0 auto;
+}
+
+/* top bar */
+.cond-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.cond-title {
+  flex: 1;
+  min-width: 170px;
+}
+.cond-title b {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 18px;
+}
+.cond-title .cond-sub {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+.cond-topbtns {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cond-sm {
+  padding: 7px 11px !important;
+  font-size: 13px !important;
+  border-radius: 8px !important;
+}
+.cond-on {
+  background: var(--wheat-soft) !important;
+  border: 1px solid var(--wheat) !important;
+  color: var(--wheat) !important;
+}
+
+/* phase rail */
+.cond-rail {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.cond-seg {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 11px;
+  background: var(--card);
+  opacity: 0.62;
+  transition: 0.2s;
+}
+.cond-seg.active {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.cond-seg.done {
+  opacity: 0.85;
+}
+.cond-seg .nm {
+  font-weight: 600;
+  font-size: 13px;
+}
+.cond-seg .tm {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 3px;
+}
+.cond-seg .bar {
+  height: 5px;
+  border-radius: 4px;
+  background: var(--line);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.cond-seg .fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0;
+  transition: width 0.4s;
+}
+.cond-seg.over .fill {
+  background: var(--wheat);
+}
+.cond-seg.over .tm .el {
+  color: var(--wheat);
+  font-weight: 700;
+}
+
+/* clock */
+.cond-clock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.cond-clock .big {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--ink);
+  font-size: 15px;
+}
+.cond-clock .warnpill {
+  background: var(--wheat-soft);
+  color: var(--wheat);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-weight: 700;
+}
+
+/* preflight */
+.cond-pf {
+  border: 1px solid var(--ok);
+  background: var(--ok-soft);
+  border-radius: 12px;
+  padding: 9px 13px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.cond-pf .ph {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.cond-pf .ph .sp {
+  flex: 1;
+}
+.cond-pf .cond-pfsub {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 6px;
+}
+.cond-pf ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+.cond-pf li {
+  margin: 3px 0;
+}
+
+/* over-budget reb (reserve shorten prompt) */
+.cond-reb {
+  background: var(--wheat-soft);
+  border: 1px solid var(--wheat);
+  border-radius: 12px;
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--wheat);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.cond-reb .sp {
+  flex: 1;
+}
+
+/* held (rejected) */
+.cond-held {
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 9px 13px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: var(--paper);
+}
+.cond-held b {
+  color: var(--ink);
+}
+
+/* shared student screen area */
+.cond-sharedlabel {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+}
+.cond-shared {
+  border: 1.5px solid var(--ok);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--card);
+}
+.cond-shared .cond-taskmeta {
+  margin-bottom: 4px;
+}
+.cond-shared .num {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+/* teacher private panel */
+.cond-panel {
+  border: 1.5px solid var(--wheat);
+  border-radius: 14px;
+  padding: 13px 16px;
+  background: var(--wheat-soft);
+  margin-top: 12px;
+}
+.cond-panellabel {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--wheat);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.cond-panelchips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.cond-note {
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 13px;
+  color: var(--warn);
+  margin-top: 8px;
+}
+.cond-answer {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.cond-answer .lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--wheat);
+  letter-spacing: 0.3px;
+}
+.cond-answer .val {
+  font-size: 14.5px;
+  margin-top: 4px;
+  color: var(--ink);
+}
+.cond-receipt {
+  margin-top: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 12px;
+  padding: 11px 13px;
+  font-size: 13px;
+}
+.cond-receipt .rh {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 11.5px;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+.cond-receipt .row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+.cond-receipt .row .k {
+  color: var(--ink-soft);
+  min-width: 92px;
+}
+.cond-receipt .conf {
+  display: inline-block;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 20px;
+  padding: 0 9px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.cond-receipt .rej {
+  color: var(--warn);
+}
+
+/* controls */
+.cond-ctl {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.cond-ctl .cond-grow {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* summary */
+.cond-sum h2 {
+  font-family: Georgia, serif;
+  font-size: 23px;
+  margin: 0.1em 0 0.2em;
+}
+.cond-lead {
+  color: var(--ink-soft);
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+.cond-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 12px;
+  margin: 12px 0 6px;
+}
+.cond-stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+}
+.cond-stat .n {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.cond-stat .l {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.cond-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 14px;
+}
+.cond-tbl td,
+.cond-tbl th {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.cond-tbl .cond-over {
+  color: var(--wheat);
+  font-weight: 700;
+}
+.cond-flaglist {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.cond-flaglist li {
+  margin: 3px 0;
+  font-size: 14px;
+}
+
+/* rule card (future) */
+.cond-rulecard {
+  margin-top: 18px;
+  border: 1px solid var(--wheat);
+  background: var(--wheat-soft);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.cond-rulecard .rt {
+  font-weight: 700;
+  color: var(--wheat);
+}
+.cond-rulecard .rq {
+  font-size: 16px;
+  margin: 6px 0 4px;
+}
+.cond-rulenote {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 12px;
+}
+.cond-rulecard .btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cond-sumbtns {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+/* overlays / modals */
+.cond-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 28, 0.46);
+  display: grid;
+  place-items: center;
+  z-index: 120;
+  padding: 20px;
+}
+.cond-modal {
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+  max-width: 620px;
+  width: 100%;
+  max-height: 86vh;
+  overflow: auto;
+  padding: 20px 24px;
+  position: relative;
+}
+.cond-modal h2 {
+  font-family: Georgia, serif;
+  font-size: 21px;
+  margin: 0.1em 0 0.4em;
+}
+.cond-modh {
+  margin: 14px 0 3px;
+  font-size: 14.5px;
+  color: var(--accent);
+}
+.cond-modp {
+  font-size: 14px;
+  color: var(--ink);
+  margin: 3px 0;
+}
+.cond-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  border: 0;
+  background: none;
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+.cond-lrow {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.cond-lrow .k {
+  min-width: 140px;
+  color: var(--ink-soft);
+}
+.cond-optin {
+  margin-top: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.cond-newpill {
+  background: var(--wheat-soft);
+  color: var(--wheat);
+  border: 1px solid var(--wheat);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+@media (max-width: 560px) {
+  .cond-rail {
+    flex-direction: column;
+  }
+  .cond-ctl {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cond-ctl .cond-grow {
+    display: none;
+  }
+}
+
+/* role banner reuse for stud in conduct */
+.rolebanner {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 8px 14px;
+  border-radius: 8px;
+  margin: 0 0 12px;
+}
+.rolebanner.student {
+  background: var(--ok-soft);
+  border: 1.5px solid var(--ok);
+  color: var(--ink);
+}

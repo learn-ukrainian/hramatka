@@ -10,6 +10,7 @@ import {
   loadLastBakeRequest,
   type BakeRequestPayload,
 } from './app-helpers';
+import Conductor from './Conductor';
 
 // ===== Types derived from openapi + lesson contract =====
 type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
@@ -119,7 +120,7 @@ type View = 'invite' | 'paste' | 'catalog' | 'lesson';
 interface RouteState {
   view: View;
   lessonId?: string;
-  mode?: 'review' | 'run';
+  mode?: 'review' | 'run' | 'conduct';
 }
 
 function useSimpleRouter() {
@@ -303,7 +304,7 @@ export default function TeacherApp() {
         setCurrentLessonId(route.lessonId);
       }
       if (currentLessonId !== route.lessonId || !lesson) {
-        openLesson(route.lessonId, (route.mode as 'review' | 'run') || 'review').catch(() => {});
+        openLesson(route.lessonId, (route.mode as 'review' | 'run' | 'conduct') || 'review').catch(() => {});
       }
     } else if (route.view !== 'lesson') {
       // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
@@ -485,7 +486,7 @@ export default function TeacherApp() {
   };
 
   // ===== Lesson load + modes =====
-  const openLesson = async (id: string, mode: 'review' | 'run' = 'review') => {
+  const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
       const s = await refreshSession();
@@ -650,7 +651,7 @@ export default function TeacherApp() {
   }
 
   // Render blocks grouped by phase using REAL ActivityPlayer
-  const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run') => {
+  const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => {
     const phases: Record<number, LessonBlock[]> = { 1: [], 2: [], 3: [] };
     l.lesson.blocks.forEach(b => {
       if (phases[b.phase]) phases[b.phase].push(b);
@@ -717,7 +718,7 @@ export default function TeacherApp() {
   };
 
   // ===== Render =====
-  const currentMode = route.mode || 'review';
+  const currentMode = (route.mode as 'review' | 'run' | 'conduct') || 'review';
 
   return (
     <div className="teacher-app">
@@ -899,6 +900,9 @@ export default function TeacherApp() {
                       Копіювати урок
                     </button>
                   )}
+                  {lesson && lesson.lesson.accepted && (
+                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')} disabled={currentMode === 'conduct'}>▶ Провести заняття</button>
+                  )}
                   {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
                   <button className="btn ghost" onClick={printLesson}>Друк</button>
                   <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
@@ -960,9 +964,11 @@ export default function TeacherApp() {
                     {lesson.lesson.focus && <div>Фокус: {lesson.lesson.focus}</div>}
                   </div>
 
-                  <div className={`modes ${currentMode}`}>
-                    {renderBlocks(lesson, currentMode)}
-                  </div>
+                  {currentMode !== 'conduct' && (
+                    <div className={`modes ${currentMode}`}>
+                      {renderBlocks(lesson, currentMode as 'review' | 'run')}
+                    </div>
+                  )}
 
                   {currentMode === 'review' && (
                     <div className="accept-bar">
@@ -984,6 +990,13 @@ export default function TeacherApp() {
 
                   {currentMode === 'run' && (
                     <div className="run-note">Це режим для демонстрації учню — відповіді та ключі приховані (залежно від віджета).</div>
+                  )}
+
+                  {currentMode === 'conduct' && lesson && (
+                    <Conductor
+                      lessonDoc={lesson.lesson}
+                      onExit={() => openLesson(currentLessonId || route.lessonId!, 'review')}
+                    />
                   )}
                 </>
               )}
