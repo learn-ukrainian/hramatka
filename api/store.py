@@ -152,6 +152,7 @@ class JobRecord:
     updated_at: str
     started_at: str | None
     completed_at: str | None
+    progress: dict[str, Any] | None = None
 
     @property
     def request(self) -> dict[str, Any]:
@@ -783,6 +784,23 @@ class JobStore:
             )
         return cursor.rowcount == 1
 
+    def update_progress(self, lesson_id: str, progress: dict[str, Any]) -> bool:
+        """Update progress telemetry for a lesson job."""
+        timestamp = now_iso()
+        progress = dict(progress)
+        if "updated_at" not in progress:
+            progress["updated_at"] = timestamp
+        progress_json = canonical_json(progress)
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs SET progress_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (progress_json, timestamp, lesson_id),
+            )
+        return cursor.rowcount == 1
+
     def fail(
         self,
         teacher_id: str,
@@ -1088,6 +1106,14 @@ class JobStore:
         try:
             lesson = json.loads(row["lesson_json"]) if row["lesson_json"] is not None else None
             acknowledgements = json.loads(row["warning_acknowledgements_json"])
+            progress = (
+                json.loads(row["progress_json"])
+                if (
+                    "progress_json" in row.keys()
+                    and row["progress_json"] is not None
+                )
+                else None
+            )
         except (TypeError, json.JSONDecodeError) as error:
             raise PersistenceUnavailable("SQLite contains unreadable durable data.") from error
         if not isinstance(acknowledgements, list) or any(
@@ -1113,6 +1139,7 @@ class JobStore:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
+            progress=progress,
         )
 
     @staticmethod

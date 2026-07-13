@@ -539,6 +539,26 @@ def _run(
     )
     raw_attempt_counter = [0]
 
+    from .providers import TelemetryContext, telemetry_ctx
+
+    ctx = telemetry_ctx.get()
+    ctx_token = None
+    if ctx is not None:
+        ctx.update_progress_db(
+            phase=int(phase) if isinstance(phase, str) and phase.isdigit() else phase,
+            step="generation",
+        )
+    else:
+        ctx = TelemetryContext(
+            phase=int(phase) if isinstance(phase, str) and phase.isdigit() else phase,
+            phases_total=1,
+            calls_planned=1,
+            calls_done=0,
+            step="generation",
+            trace_dir=out_dir,
+        )
+        ctx_token = telemetry_ctx.set(ctx)
+
     # ---- generate typed candidates (cache-first) ---------------------
     raw_batches: list[tuple[list[str], list[object]]] = []
     if use_cache and cache_file.exists():
@@ -567,6 +587,9 @@ def _run(
             ))]
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
+
+    if ctx is not None:
+        ctx.update_progress_db(step="gates")
 
     # ---- validate raw candidates, gate, and partition ----------------
     # Wire the grounding atlas lookup into every lexical gate (Sol defect 5),
@@ -674,6 +697,11 @@ def _run(
         }
         if not deficits or result.generation_error:
             break
+        if ctx is not None:
+            ctx.update_progress_db(
+                calls_planned=ctx.calls_planned + 1 if ctx.calls_planned is not None else None,
+                step="generation"
+            )
         try:
             regenerated = _candidate_generator(
                 snap["body_uk"],
@@ -688,6 +716,8 @@ def _run(
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
             break
+        if ctx is not None:
+            ctx.update_progress_db(step="gates")
         raw_batches.append((list(deficits), regenerated))
         retry_dicts = [
             raw
@@ -747,6 +777,10 @@ def _run(
         encoding="utf-8",
     )
     result.out_files = {"lesson_b1": str(b1_path), "lesson_ir": str(ir_path)}
+    if ctx is not None:
+        ctx.update_progress_db(step="assembly")
+    if ctx_token is not None:
+        telemetry_ctx.reset(ctx_token)
     return result
 
 

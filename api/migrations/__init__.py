@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable
 
 from .v001_pilot_schema import apply as apply_v001
+from .v002_add_progress_column import apply as apply_v002
 
 
 class MigrationError(RuntimeError):
@@ -14,7 +15,10 @@ class MigrationError(RuntimeError):
 
 Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
 
-MIGRATIONS: tuple[Migration, ...] = ((1, "pilot_schema", apply_v001),)
+MIGRATIONS: tuple[Migration, ...] = (
+    (1, "pilot_schema", apply_v001),
+    (2, "add_progress_column", apply_v002),
+)
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 

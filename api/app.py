@@ -102,7 +102,7 @@ def _decode_opaque(value: str | None) -> bytes | None:
 
 
 def _status_payload(job: JobRecord) -> dict[str, object]:
-    return {
+    payload = {
         "id": job.id,
         "status": job.status,
         "step": job.step,
@@ -112,6 +112,9 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }
+    if job.progress is not None:
+        payload["progress"] = job.progress
+    return payload
 
 
 def _resource_payload(job: JobRecord) -> dict[str, object]:
@@ -165,7 +168,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     settings = settings or Settings.from_env()
     store = JobStore(settings.database_path)
     store.initialize()
-    baker = baker or EngineLessonBaker()
+    baker = baker or EngineLessonBaker(store=store)
     runner = BakeRunner(store, baker, settings.bake_hard_timeout_seconds)
 
     @asynccontextmanager

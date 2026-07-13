@@ -356,10 +356,12 @@ class EngineLessonBaker:
         generator=call_gemma,
         bundle: data.DataBundle | None = None,
         cache_dir: str | Path | None = None,
+        store: Any | None = None,
     ) -> None:
         self._generator = generator
         self._resolved_bundle = bundle
         self._cache_dir = cache_dir
+        self.store = store
 
     def resolve_data_bundle(self) -> data.DataBundle:
         """Resolve the digest-pinned input bundle once for readiness and bakes."""
@@ -381,12 +383,31 @@ class EngineLessonBaker:
         phase_count_plans = _candidate_count_plan(plan)
         ctx = data.use_bundle(self.resolve_data_bundle())
         out_root = _engine_out_root()
+
+        from hramatka.engine.providers import TelemetryContext, telemetry_ctx
+
+        job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
+        phases_total = len(phase_count_plans)
+
+        tel_ctx = TelemetryContext(
+            job_id=job_id,
+            store=self.store,
+            phases_total=phases_total,
+            calls_planned=phases_total,
+            calls_done=0,
+            phase=1,
+            step="generation",
+        )
+        ctx_token = telemetry_ctx.set(tel_ctx)
+        tel_ctx.update_progress_db()
+
         try:
             with ctx:
                 job_out = out_root / str(uuid.uuid4()) if out_root else None
                 if job_out is not None:
                     job_out.mkdir(parents=True)
                     _prune_engine_out(out_root, protected_names={job_out.name})
+                    tel_ctx.trace_dir = job_out
                 phase_results: dict[int, Any] = {}
                 for phase, count_plan in phase_count_plans.items():
                     phase_results[phase] = pipeline.run(
@@ -402,6 +423,113 @@ class EngineLessonBaker:
                         count_plan=count_plan,
                         max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
                     )
+            
+            # pipeline.run degrades transport/parse failures to generation_error
+            # rather than raising, so surface a safe, teacher-visible failure here.
+            if any(result.generation_error for result in phase_results.values()):
+                if any(
+                    (result.generation_error or "").startswith("GeneratorUnavailable:")
+                    for result in phase_results.values()
+                ):
+                    raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
+                raise BakeError("Bake failed: the lesson generator is unavailable.")
+
+            if not any(
+                result.ready or result.review_required for result in phase_results.values()
+            ):
+                raise BakeError(
+                    "Bake produced no automatically includable activities from this anchor."
+                )
+
+            preferred_by_phase = _preferred_phase_types(plan)
+            seen_activities: set[str] = set()
+            blocks = []
+            for phase in phase_count_plans:
+                slots = plan.count(phase)
+                candidates = [
+                    candidate
+                    for candidate in phase_results[phase].ready
+                    if _activity_identity(candidate) not in seen_activities
+                ]
+                selected: list[Any] = []
+                for activity_type in preferred_by_phase[phase]:
+                    candidate = next(
+                        (
+                            candidate
+                            for candidate in candidates
+                            if candidate.activity["type"] == activity_type
+                        ),
+                        None,
+                    )
+                    if candidate is not None:
+                        selected.append(candidate)
+                        candidates.remove(candidate)
+                selected.extend(candidates[: max(0, slots - len(selected))])
+
+                # The review tray is a deliberate, deficit-only recovery path:
+                # ready candidates above keep their complete priority.  Apply the
+                # same constrained-type preference to the review tray, but never
+                # duplicate an already selected ready activity.
+                if len(selected) < slots:
+                    selected_identities = {_activity_identity(candidate) for candidate in selected}
+                    review_candidates = [
+                        candidate
+                        for candidate in phase_results[phase].review_required
+                        if _activity_identity(candidate) not in seen_activities
+                        and _activity_identity(candidate) not in selected_identities
+                    ]
+                    for activity_type in preferred_by_phase[phase]:
+                        if len(selected) >= slots:
+                            break
+                        candidate = next(
+                            (
+                                candidate
+                                for candidate in review_candidates
+                                if candidate.activity["type"] == activity_type
+                            ),
+                            None,
+                        )
+                        if candidate is not None:
+                            selected.append(candidate)
+                            review_candidates.remove(candidate)
+                            selected_identities.add(_activity_identity(candidate))
+                    for candidate in review_candidates:
+                        if len(selected) >= slots:
+                            break
+                        identity = _activity_identity(candidate)
+                        if identity in selected_identities:
+                            continue
+                        selected.append(candidate)
+                        selected_identities.add(identity)
+                if len(selected) < slots:
+                    raise BakeError(
+                        "Bake produced too few distinct automatically includable activities "
+                        f"for TTT phase {phase} ({len(selected)} of {slots} candidates)."
+                    )
+                for candidate in selected:
+                    seen_activities.add(_activity_identity(candidate))
+                    blocks.append(self._block(candidate, len(blocks), phase))
+            # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
+            # lesson schema forbids fingerprint/diagnostics on anchor.
+            first_result = next(iter(phase_results.values()))
+            anchor_body = first_result.anchor["body_uk"]
+            anchor_diagnostics = first_result.anchor.get("diagnostics")
+            if anchor_diagnostics is None:
+                anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
+            
+            tel_ctx.update_progress_db(step="assembly")
+
+            return {
+                "blocks": blocks,
+                "rejected": rejected_entries(
+                    [
+                        activity
+                        for result in phase_results.values()
+                        for activity in result.activities
+                    ]
+                ),
+                "anchor_diagnostics": anchor_diagnostics,
+            }
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,
             # teacher-visible BakeError like any other bake failure — never a
@@ -409,106 +537,8 @@ class EngineLessonBaker:
             raise BakeError(
                 "Bake failed: the lesson data bundle is unavailable or has drifted."
             ) from exc
-
-        # pipeline.run degrades transport/parse failures to generation_error
-        # rather than raising, so surface a safe, teacher-visible failure here.
-        if any(result.generation_error for result in phase_results.values()):
-            if any(
-                (result.generation_error or "").startswith("GeneratorUnavailable:")
-                for result in phase_results.values()
-            ):
-                raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
-            raise BakeError("Bake failed: the lesson generator is unavailable.")
-
-        if not any(
-            result.ready or result.review_required for result in phase_results.values()
-        ):
-            raise BakeError(
-                "Bake produced no automatically includable activities from this anchor."
-            )
-
-        preferred_by_phase = _preferred_phase_types(plan)
-        seen_activities: set[str] = set()
-        blocks = []
-        for phase in phase_count_plans:
-            slots = plan.count(phase)
-            candidates = [
-                candidate
-                for candidate in phase_results[phase].ready
-                if _activity_identity(candidate) not in seen_activities
-            ]
-            selected: list[Any] = []
-            for activity_type in preferred_by_phase[phase]:
-                candidate = next(
-                    (
-                        candidate
-                        for candidate in candidates
-                        if candidate.activity["type"] == activity_type
-                    ),
-                    None,
-                )
-                if candidate is not None:
-                    selected.append(candidate)
-                    candidates.remove(candidate)
-            selected.extend(candidates[: max(0, slots - len(selected))])
-
-            # The review tray is a deliberate, deficit-only recovery path:
-            # ready candidates above keep their complete priority.  Apply the
-            # same constrained-type preference to the review tray, but never
-            # duplicate an already selected ready activity.
-            if len(selected) < slots:
-                selected_identities = {_activity_identity(candidate) for candidate in selected}
-                review_candidates = [
-                    candidate
-                    for candidate in phase_results[phase].review_required
-                    if _activity_identity(candidate) not in seen_activities
-                    and _activity_identity(candidate) not in selected_identities
-                ]
-                for activity_type in preferred_by_phase[phase]:
-                    if len(selected) >= slots:
-                        break
-                    candidate = next(
-                        (
-                            candidate
-                            for candidate in review_candidates
-                            if candidate.activity["type"] == activity_type
-                        ),
-                        None,
-                    )
-                    if candidate is not None:
-                        selected.append(candidate)
-                        review_candidates.remove(candidate)
-                        selected_identities.add(_activity_identity(candidate))
-                for candidate in review_candidates:
-                    if len(selected) >= slots:
-                        break
-                    identity = _activity_identity(candidate)
-                    if identity in selected_identities:
-                        continue
-                    selected.append(candidate)
-                    selected_identities.add(identity)
-            if len(selected) < slots:
-                raise BakeError(
-                    "Bake produced too few distinct automatically includable activities "
-                    f"for TTT phase {phase} ({len(selected)} of {slots} candidates)."
-                )
-            for candidate in selected:
-                seen_activities.add(_activity_identity(candidate))
-                blocks.append(self._block(candidate, len(blocks), phase))
-        # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
-        # lesson schema forbids fingerprint/diagnostics on anchor.
-        first_result = next(iter(phase_results.values()))
-        anchor_body = first_result.anchor["body_uk"]
-        anchor_diagnostics = first_result.anchor.get("diagnostics")
-        if anchor_diagnostics is None:
-            anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
-        return {
-            "blocks": blocks,
-            "rejected": rejected_entries(
-                [activity for result in phase_results.values() for activity in result.activities]
-            ),
-            "anchor_diagnostics": anchor_diagnostics,
-        }
+        finally:
+            telemetry_ctx.reset(ctx_token)
 
     def _block(self, ir, slot: int, phase: int) -> dict:
         activity = ir.activity

@@ -155,6 +155,10 @@ def generate_baseline_v1(
     if counts is not None and any(count != 1 for count in counts.values()):
         raise ValueError("generate_baseline_v1 only supports one candidate per type")
     types = types or ["true-false", "cloze", "match-up"]
+    from .providers import telemetry_ctx
+    ctx = telemetry_ctx.get()
+    if ctx is not None:
+        ctx.activity_types = list(types)
     build = prompt_builder or _default_prompt_builder
     prompt = build(anchor, level, types, grounding_pack)
     return _generate_from_prompt(
@@ -246,7 +250,12 @@ def generate(
 
     candidates: list[object] = []
     raw_attempt_counter = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
+    from .providers import telemetry_ctx
     for prompt, _count_signature in prompt_groups:
+        active_types = prompt_groups[(prompt, _count_signature)]
+        ctx = telemetry_ctx.get()
+        if ctx is not None:
+            ctx.activity_types = list(active_types)
         # Preserve every emitted member, including primitives and types outside
         # the target bank.  The pipeline turns each into a visible rejection
         # when appropriate; generation must never silently discard evidence.
