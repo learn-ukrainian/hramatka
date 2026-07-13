@@ -1,0 +1,233 @@
+<thought>Generator of Ukrainian language learning tasks for a teacher.
+B1.
+A provided text about Lviv and Borscht. (Note: The text provided has a slight glitch where the Borscht section is interleaved/merged with the Lviv section in the prompt's "=== ТЕКСТ-ОПОРА ===" block, specifically: "слухаютБорщ — найвідоміша...". I must treat the text as a coherent whole, but be careful with the "слухаютБорщ" typo. Actually, looking closer, it seems like two separate paragraphs got smashed together. I will treat the text as it is, but handle the "слухаютБорщ" as a typo or separate them logically based on context).
+    *   *Text segments:*
+        1. Lviv description: "Львів — одне з найкрасивіших міст України. Його історичний центр внесено до списку світової спадщини ЮНЕСКО. Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухают[Борщ — найвідоміша українська страва...]"
+        2. Wait, there's a cut-off: "та слухаютБорщ — найвідоміша...". It looks like "слухають вуличних музикантів" was split.
+        3. Let's reconstruct the text based on the provided snippet:
+            *   "Львів — одне з найкрасивіших міст України. Його історичний центр внесено до списку світової спадщини ЮНЕСКО. Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухают[...]" -> Then it jumps to Borscht.
+            *   Then it returns to Lviv at the end: "У місті багато музеїв, театрів і галерей. Площа Ринок — серце Львова, де стоїть ратуша з високою вежею. Хто підніметься на неї, побачить усе місто як на долоні. Львів'яни пишаються своїми традиціями та радо вітають гостей."
+            *   The middle part is about Borscht: "Борщ — найвідоміша українська страва, яку готують у кожному регіоні по-своєму. Основа борщу — буряк, який надає йому насиченого червоного кольору. До каструлі також додають капусту, картоплю, моркву та цибулю. Хтось варить борщ на м'ясному бульйоні, а хтось готує пісний — із квасолею або грибами. Подають борщ гарячим, зі сметаною та свіжим хлібом. Особливо смачно їсти його з пампушками — м'якими булочками з часником. У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО. Для українців ця страва — не просто їжа, а символ дому та родини. Кожна господиня має власний рецепт, який часто передається від покоління до покоління. А в багатьох родинах найсмачніший борщ готують саме бабусі."
+
+    *   *Constraint Checklist:*
+        *   match-up: 1
+        *   mark-the-words: 1
+        *   fill-in: 1
+        *   error-correction: 1
+        *   short-writing: 1
+        *   (Wait, the user's list says these 5, but then describes 9 types of instructions. I must follow the specific count list: match-up 1, mark-the-words 1, fill-in 1, error-correction 1, short-writing 1. Total 5 tasks).
+        *   *Wait*, the user's prompt says: "Створи РІВНО стільки ОКРЕМИХ завдань кожного типу, скільки вказано в цьому списку: - match-up: 1, - mark-the-words: 1, - fill-in: 1, - error-correction: 1, - short-writing: 1".
+        *   *However*, there are instructions for `true-false`, `cloze`, `quiz`, `text-questions` too. But they are NOT in the count list.
+        *   *Rule:* "Не створюй типів, яких немає у списку."
+        *   Therefore, I will ONLY create: match-up, mark-the-words, fill-in, error-correction, short-writing.
+
+    *   **Task 1: match-up (1)**
+        *   4 pairs. Word from text $\rightarrow$ Ukrainian synonym/definition.
+        *   Words: *бруківка* (дорожнє покриття з каменів), *затишний* (тихий/спокійний), *вежа* (башта), *власний* (свій).
+        *   Evidence: "Туристи гуляють бруківкою...", "в затишних кав'ярнях", "високою вежею", "має власний рецепт".
+
+    *   **Task 2: mark-the-words (1)**
+        *   Text from anchor. Morphological category.
+        *   Text: "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+        *   Criteria: `pos=verb`.
+        *   Target words: ["пишаються", "вітають"].
+
+    *   **Task 3: fill-in (1)**
+        *   1-4 sentences with blank. Recover evidence exactly.
+        *   Sentence: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+        *   Answer: "буряк". Options: ["буряк", "картопля", "морква"].
+
+    *   **Task 4: error-correction (1)**
+        *   1-4 sentences. One error: noun after numeral (incorrect government).
+        *   Evidence: "Львів — одне з найкрасивіших міст України."
+        *   Numeral: "одне". Expected noun case: genitive plural (міст).
+        *   Incorrect form: "місто" (nominative/accusative) or "містами" (instrumental). Let's use "місто".
+        *   Sentence: "Львів — одне з найкрасивіших місто України."
+        *   Correction: "міст".
+
+    *   **Task 5: short-writing (1)**
+        *   Prompt: B1, include content word from evidence, specific result (3 sentences).
+        *   Evidence: "Кожна господиня має власний рецепт, який часто передається від покоління до покоління."
+        *   Prompt: "Опишіть, чи є у вашій родині власний рецепт якоїсь страви. Напишіть 3 речення про те, хто його готує та чому він особливий."
+
+    *   `match-up`:
+        - Left: бруківка | Right: дорожнє покриття з каменів (Wait, is it "те саме що"? "Бруківка" $\approx$ "камінне покриття". Maybe "вежа" $\approx$ "башта" is better).
+        - Let's use:
+            1. вежа $\rightarrow$ башта
+            2. затишний $\rightarrow$ спокійний
+            3. власний $\rightarrow$ свій
+            4. вітати $\rightarrow$ поздоровляти
+        - Check grounding pack:
+            - вежа: башта (Yes)
+            - затишний: спокійний (Yes)
+            - власний: свій (Yes)
+            - вітати: поздоровляти (Yes)
+
+    *   `mark-the-words`:
+        - Text: "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+        - Target: ["пишаються", "вітають"].
+        - Criteria: `pos=verb`.
+
+    *   `fill-in`:
+        - Sentence: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+        - Answer: "буряк".
+        - Options: ["буряк", "картопля", "морква"].
+
+    *   `error-correction`:
+        - Evidence: "Львів — одне з найкрасивіших міст України."
+        - Sentence: "Львів — одне з найкрасивіших місто України." (Wrong case after 'одне з').
+        - Error: "місто".
+        - Correction: "міст".
+        - Options: ["міст", "містом", "місту"].
+
+    *   `short-writing`:
+        - Prompt: "Розкажіть, чи має ваша родина власний рецепт якоїсь страви. Напишіть 3 речення про те, хто її зазвичай готує."
+        - Evidence: "Кожна господиня має власний рецепт, який часто передається від покоління до покоління."
+        - Word count: 3 речення (30-40 слів).
+
+    *   Only JSON? Yes.
+    *   No markdown? Yes.
+    *   Correct counts? Match-up 1, Mark-the-words 1, Fill-in 1, Error-correction 1, Short-writing 1. Total 5.
+    *   Evidence included? Yes.
+    *   Extractive (from anchor)? Yes.
+    *   B1 level? Yes.
+    *   Language: Ukrainian? Yes.
+    *   Error-correction rule: Noun after numeral? Yes (одне з міст).
+
+    *Wait*, let me double check the "error-correction" logic: "зміни лише цей іменник так, щоб керування числівника стало неправильним".
+    Evidence: "Львів — одне з найкрасивіших міст України."
+    Numeral part: "одне з". Requires Genitive Plural ("міст").
+    Incorrect: "місто" (Nom Singular).
+    Correction: "міст".
+    Corrected sentence recovers evidence exactly.
+
+    *Double check "fill-in"*:
+    Evidence: "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+    Sentence: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+    Answer: "буряк".
+
+    *Double check "match-up"*:
+    Pairs:
+    1. вежа - башта (Evidence: "ратуша з високою вежею")
+    2. затишний - спокійний (Evidence: "в затишних кав'ярнях")
+    3. власний - свій (Evidence: "має власний рецепт")
+    4. вітати - поздоровляти (Evidence: "радо вітають гостей")
+
+    *Double check "mark-the-words"*:
+    Text: "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+    Criteria: `pos=verb`
+    Targets: ["пишаються", "вітають"]
+
+    *Wait*, check for any typos in the anchor text I should be aware of. "слухаютБорщ". The user provided the text with a glitch. I will avoid using the sentence "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ..." as a source for `mark-the-words` or `fill-in` to avoid the typo. I used other sentences.
+
+    One final check on `short-writing`:
+    - Evidence: "Кожна господиня має власний рецепт, який часто передається від покоління до покоління."
+    - Prompt: "Розкажіть, чи має ваша родина власний рецепт якоїсь страви. Напишіть 3 речення про те, хто її зазвичай готує."
+    - Word count guidance: "3 речення (30–40 слів)".
+    - Source ref: "Текст-опора".
+
+    Ready to generate JSON.
+
+    *Self-correction on `error-correction` options*:
+    Options: ["міст", "містом", "місту"]. "міст" is the answer.
+
+    *Self-correction on `fill-in` options*:
+    Options: ["буряк", "картопля", "морква"]. "буряк" is the answer.
+
+    *Final Activity check*:
+    - match-up: 1
+    - mark-the-words: 1
+    - fill-in: 1
+    - error-correction: 1
+    - short-writing: 1
+    Total 5. Correct.
+
+    *One detail on `mark-the-words`*: Target words must be the full set without repeats.
+    Text: "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+    Verbs: "пишаються", "вітають".</thought>{
+  "activities": [
+    {
+      "type": "match-up",
+      "instruction": "Поєднайте слово з його значенням.",
+      "pairs": [
+        {
+          "left": "вежа",
+          "right": "башта",
+          "evidence": "де стоїть ратуша з високою вежею"
+        },
+        {
+          "left": "затишний",
+          "right": "спокійний",
+          "evidence": "п'ють каву в затишних кав'ярнях"
+        },
+        {
+          "left": "власний",
+          "right": "свій",
+          "evidence": "Кожна господиня має власний рецепт"
+        },
+        {
+          "left": "вітати",
+          "right": "поздоровляти",
+          "evidence": "радо вітають гостей"
+        }
+      ]
+    },
+    {
+      "type": "mark-the-words",
+      "instruction": "Познач усі дієслова.",
+      "text": "Львів'яни пишаються своїми традиціями та радо вітають гостей.",
+      "target_words": [
+        "пишаються",
+        "вітають"
+      ],
+      "criteria": "pos=verb",
+      "evidence": "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+    },
+    {
+      "type": "fill-in",
+      "instruction": "Обери правильне слово для заповнення пропуску.",
+      "items": [
+        {
+          "sentence": "Основа борщу — ____, який надає йому насиченого червоного кольору.",
+          "answer": "буряк",
+          "options": [
+            "буряк",
+            "картопля",
+            "морква"
+          ],
+          "explanation": "У тексті зазначено, що саме буряк надає борщу червоного кольору.",
+          "evidence": "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+        }
+      ]
+    },
+    {
+      "type": "error-correction",
+      "instruction": "Виправ помилку в узгодженні числівника з іменником.",
+      "items": [
+        {
+          "sentence": "Львів — одне з найкрасивіших місто України.",
+          "error": "місто",
+          "correction": "міст",
+          "options": [
+            "міст",
+            "містом",
+            "місту"
+          ],
+          "explanation": "Після конструкції 'одне з' іменник має стояти в родовому відмінку множини.",
+          "evidence": "Львів — одне з найкрасивіших міст України."
+        }
+      ]
+    },
+    {
+      "type": "short-writing",
+      "instruction": "Напиши короткий текст за завданням.",
+      "prompt": "Розкажіть, чи має ваша родина власний рецепт якоїсь страви. Напишіть 3 речення про те, хто її зазвичай готує та чому вона особлива.",
+      "source_ref": "Текст-опора",
+      "word_count_guidance": "3 речення (30–40 слів)",
+      "model_answer": "У моїй родині є власний рецепт сирників. Їх завжди готує моя бабуся за традиційним способом. Ця страва особлива, бо вона нагадує мені про дитинство.",
+      "rubric_hint": "Перевірте використання слова 'власний' та відповідність кількості речень.",
+      "teacher_guidance": "Оцініть здатність учня описати сімейну традицію, використовуючи лексику B1.",
+      "evidence": "Кожна господиня має власний рецепт, який часто передається від покоління до покоління."
+    }
+  ]
+}

@@ -5,6 +5,7 @@ typed failures. NO real Gemma (mock generators only).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,33 @@ def test_extract_json_ignores_braces_in_strings():
 def test_extract_json_returns_none_on_garbage():
     assert G.extract_json("no json here") is None
     assert G.extract_json("") is None
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["generation_raw_thought_list_1.txt", "generation_raw_thought_list_2.txt"],
+)
+def test_generate_skips_json_lists_in_raw_thought_preamble(fixture_name):
+    raw = (Path(__file__).parent / "fixtures" / fixture_name).read_text(encoding="utf-8")
+
+    activities = G.generate("anchor", generator=lambda _p: raw, prompt_builder=_pb)
+
+    assert activities
+    assert "type" in activities[0]
+
+
+def test_extract_json_prefers_activities_dict_over_earlier_all_dicts_list():
+    parsed = G.extract_json(
+        '[{"type": "preamble"}] {"activities": [{"type": "quiz"}]}'
+    )
+
+    assert parsed == {"activities": [{"type": "quiz"}]}
+
+
+def test_extract_json_prefers_any_dict_over_an_all_dicts_list():
+    parsed = G.extract_json('[{"type": "preamble"}] {"metadata": "later"}')
+
+    assert parsed == {"metadata": "later"}
 
 
 # --- generate: injectable + retry ------------------------------------------

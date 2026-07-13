@@ -46,31 +46,42 @@ call_gemma = make_generator("gemma-ais")
 
 
 def extract_json(text: str) -> dict | list | None:
-    """Extract the first top-level JSON object or array from `text`.
+    """Extract the best activity-shaped JSON object or array from `text`.
 
     Tolerates leading prose / a stripped <thought> block / trailing text.
-    Returns the parsed container, or None.
+    Prefers a dict with usable ``activities``, then any dict, then an
+    all-dicts list. Returns None when no candidate has one of those shapes.
     """
     if not text:
         return None
-    stripped = text.strip()
-    try:  # fast path: the whole thing is already a JSON object
-        obj = json.loads(stripped)
-        if isinstance(obj, (dict, list)):
-            return obj
-    except ValueError:
-        pass
 
     decoder = json.JSONDecoder()
-    starts = sorted(index for index, char in enumerate(text) if char in "{[")
-    for start in starts:
+    first_dict: dict | None = None
+    first_dict_list: list | None = None
+    search_from = 0
+    while search_from < len(text):
+        starts = [text.find(char, search_from) for char in "[{"]
+        starts = [start for start in starts if start >= 0]
+        if not starts:
+            break
+        start = min(starts)
         try:
-            obj, _end = decoder.raw_decode(text, start)
+            obj, end = decoder.raw_decode(text, start)
         except ValueError:
+            search_from = start + 1
             continue
-        if isinstance(obj, (dict, list)):
-            return obj
-    return None
+        # Nested containers belong to this candidate; do not bypass the
+        # documented one-level wrapper boundary by treating them as new roots.
+        search_from = end
+        if isinstance(obj, dict):
+            if "activities" in obj and _activities_from_parsed(obj) is not None:
+                return obj
+            if first_dict is None:
+                first_dict = obj
+        elif isinstance(obj, list) and all(isinstance(item, dict) for item in obj):
+            if first_dict_list is None:
+                first_dict_list = obj
+    return first_dict if first_dict is not None else first_dict_list
 
 
 def _persist_raw_parse_failure(raw: str, out_dir: str | Path | None, attempt: int) -> None:

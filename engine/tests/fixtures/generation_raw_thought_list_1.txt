@@ -1,0 +1,314 @@
+<thought>Generator of Ukrainian language teaching tasks for a teacher.
+B1.
+Extractive (based *only* on the provided anchor text).
+Ukrainian.
+
+        *   match-up: 1
+        *   mark-the-words: 1
+        *   fill-in: 1
+        *   error-correction: 1
+        *   short-writing: 1
+A single JSON object. No markdown, no explanations.
+
+        *   *match-up*: 4 pairs (word from text $\rightarrow$ synonym/definition). No prefix/root variants, no hyponyms, no vague translations.
+        *   *mark-the-words*: Verbatim sentence. Morphological category. VESUM criteria. Complete target set.
+        *   *fill-in*: Verbatim sentence with one blank. Options: answer + 2-3 distractors of the same POS.
+        *   *error-correction*: 1-4 sentences. Only ONE word-form error: noun after numeral (wrong government). Restores verbatim evidence.
+        *   *short-writing*: B1 prompt, content word from evidence, specific output (e.g., 3 sentences).
+
+        *   *Text-Opora*: Contains two main themes: Lviv and Borscht.
+        *   *Numbers in text*: "одне з найкрасивіших міст", "2022 році".
+
+    *   *Match-up (1 task):*
+        *   Words to pick: *бруківка*, *вежа*, *затишний*, *вітати*.
+        *   Pair 1: бруківка $\rightarrow$ дорожнє покриття з каменів. (Checking grounding: B2. Meaning: stone pavement).
+        *   Pair 2: вежа $\rightarrow$ башта. (Grounding: B2. Synonym).
+        *   Pair 3: затишний $\rightarrow$ спокійний. (Grounding: A2. Synonym).
+        *   Pair 4: вітати $\rightarrow$ поздоровляти. (Grounding: A1. Synonym).
+
+    *   *Mark-the-words (1 task):*
+        *   Sentence: "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухають вуличних музикантів."
+        *   Category: Verbs.
+        *   Target: гуляють, п'ють, слухають.
+        *   Criteria: `pos=verb`.
+
+    *   *Fill-in (1 task):*
+        *   Sentence: "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+        *   Blank: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+        *   Answer: буряк.
+        *   Options: буряк, помідор, перець, баклажан.
+
+    *   *Error-correction (1 task):*
+        *   Requirement: Noun after numeral, wrong government.
+        *   Source: "У 2022 році культура приготування..."
+        *   Error creation: "У 2022 роками культура приготування..." (Wrong: 'роками' instead of 'році'). Or "У 2022 рік культура..."
+        *   Actually, let's try "У 2022 роках" (plural instead of singular) or "У 2022 роком".
+        *   Wait, the rule says: "зміни лише цей іменник так, щоб керування числівника стало неправильним".
+        *   Sentence: "У 2022 роках культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО." (Incorrect because 2022 is a specific year, should be singular).
+        *   Actually, a better grammatical error for numeral government: "одне з найкрасивіших міст" $\rightarrow$ "одне з найкрасивіших місто".
+        *   Let's use "Львів — одне з найкрасивіших місто України." (Incorrect case after 'з' + numeral/ordinal/quantifier context). No, 'одне' is the numeral here.
+        *   Let's go with "У 2022 роках" (plural) vs "У 2022 році" (singular).
+        *   Wait, the prompt says: "іменник після числівника". 2022 is the numeral.
+        *   Error: "У 2022 року" $\rightarrow$ "У 2022 роками".
+        *   Correct: "році".
+        *   Options: ["році", "роками", "років"].
+        *   Explanation: Після числівника в давальному відмінку (в якому році?) має бути іменник у давальному відмінку однини — «році».
+
+    *   *Short-writing (1 task):*
+        *   Prompt: "Напиши 3 речення про те, чому борщ є символом дому та родини для українців."
+        *   Evidence: "Для українців ця страва — не просто їжа, а символ дому та родини."
+        *   Word count: 3 речення.
+        *   Source_ref: Текст-опора.
+
+    *   Match-up: 1 (Done)
+    *   Mark-the-words: 1 (Done)
+    *   Fill-in: 1 (Done)
+    *   Error-correction: 1 (Done)
+    *   Short-writing: 1 (Done)
+    *   No true-false, cloze, quiz, or text-questions in the provided list.
+    *   Wait, I must check the list provided in the prompt carefully:
+        *   `match-up: 1`
+        *   `mark-the-words: 1`
+        *   `fill-in: 1`
+        *   `error-correction: 1`
+        *   `short-writing: 1`
+    *   The prompt also describes `true-false`, `cloze`, `quiz`, `text-questions` as *types of forms*, but it says "Створи РІВНО стільки ОКРЕМИХ завдань кожного типу, скільки вказано в цьому списку". Since those are 0 in the list, I don't create them.
+
+    *   *Check Match-up:*
+        - бруківка $\rightarrow$ дорожнє покриття з каменів. (Evidence: "Туристи гуляють бруківкою старих вулиць")
+        - вежа $\rightarrow$ башта. (Evidence: "ратуша з високою вежею")
+        - затишний $\rightarrow$ спокійний. (Evidence: "в затишних кав'ярнях")
+        - вітати $\rightarrow$ поздоровляти. (Evidence: "радо вітають гостей")
+        - All are verified synonyms or strict dictionary equivalents.
+
+    *   *Check Mark-the-words:*
+        - Text: "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухають вуличних музикантів."
+        - Target: ["гуляють", "п'ють", "слухають"]
+        - Criteria: `pos=verb`
+        - Evidence: Same as text.
+
+    *   *Check Fill-in:*
+        - Sentence: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+        - Answer: "буряк".
+        - Options: ["буряк", "помідор", "перець", "баклажан"].
+        - Evidence: "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+
+    *   *Check Error-correction:*
+        - Evidence: "У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+        - Error: "роками" (or "роках"). Let's use "роках".
+        - Sentence: "У 2022 роках культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+        - Correction: "році".
+        - Options: ["році", "роках", "роками"].
+        - Explanation: Числівник 2022 вказує на конкретний рік, тому іменник має бути в однині (році), а не в множині.
+
+    *   *Check Short-writing:*
+        - Prompt: "Напиши 3 речення про те, чому борщ є символом дому та родини для українців."
+        - Evidence: "Для українців ця страва — не просто їжа, а символ дому та родини."
+        - Source_ref: "Текст-опора".
+
+    *   Single JSON? Yes.
+    *   No markdown? Yes.
+    *   No explanations outside? Yes.
+    *   Ukrainian language? Yes.
+    *   Extractive? Yes.
+    *   Criterias for `mark-the-words` correct? `pos=verb`.
+    *   Error-correction is specifically numeral + noun? Yes (2022 + рік).
+
+    *Self-Correction during JSON construction:* Ensure `evidence` fields are exactly as in the anchor text.
+
+    Anchor text check:
+    "Львів — одне з найкрасивіших міст України."
+    "Його історичний центр внесено до списку світової спадщини ЮНЕСКО."
+    "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухають вуличних музикантів."
+    "У місті багато музеїв, театрів і галерей."
+    "Площа Ринок — серце Львова, де стоїть ратуша з високою вежею."
+    "Хто підніметься на неї, побачить усе місто як на долоні."
+    "Львів'яни пишаються своїми традиціями та радо вітають гостей."
+    "Борщ — найвідоміша українська страва, яку готують у кожному регіоні по-своєму."
+    "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+    "До каструлі також додають капусту, картоплю, моркву та цибулю."
+    "Хтось варить борщ на м'ясному бульйоні, а хтось готує пісний — із квасолею або грибами."
+    "Подають борщ гарячим, зі сметаною та свіжим хлібом."
+    "Особливо смачно їсти його з пампушками — м'якими булочками з часником."
+    "У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+    "Для українців ця страва — не просто їжа, а символ дому та родини."
+    "Кожна господиня має власний рецепт, який часто передається від покоління до покоління."
+    "А в багатьох родинах найсмачніший борщ готують саме бабусі."
+
+    *Wait*, I noticed a typo in the anchor text provided: "слухаютБорщ".
+    I must treat the text as provided.
+    Wait, the text provided is: "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва..."
+    This looks like a concatenation error in the provided source.
+    "слухаютБорщ" is not a word.
+    However, I must be extractive.
+    Let's look at the sentence: "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва..."
+    Wait, if I use "слухають вуличних музикантів" in `mark-the-words`, but that phrase isn't in the anchor... let me re-read the anchor.
+    Anchor: "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва..."
+    Looking closer at the anchor text block:
+    "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва..."
+    Wait, there is a part after the Borscht section: "...радо вітають гостей."
+    Wait, let me re-examine the anchor block carefully. It seems there are two fragments merged or a typo.
+    "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва..."
+    And at the end of the text: "...радо вітають гостей."
+    Actually, the anchor text looks like this:
+    `Львів — одне з найкрасивіших міст України. Його історичний центр внесено до списку світової спадщини ЮНЕСКО. Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ — найвідоміша українська страва, яку готують у кожному регіоні по-своєму. Основа борщу — буряк, який надає йому насиченого червоного кольору. До каструлі також додають капусту, картоплю, моркву та цибулю. Хтось варить борщ на м'ясному бульйоні, а хтось готує пісний — із квасолею або грибами. Подають борщ гарячим, зі сметаною та свіжим хлібом. Особливо смачно їсти його з пампушками — м'якими булочками з часником. У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО. Для українців ця страва — не просто їжа, а символ дому та родини. Кожна господиня має власний рецепт, який часто передається від покоління до покоління. А в багатьох родинах найсмачніший борщ готують саме бабусі.ь вуличних музикантів. У місті багато музеїв, театрів і галерей. Площа Ринок — серце Львова, де стоїть ратуша з високою вежею. Хто підніметься на неї, побачить усе місто як на долоні. Львів'яни пишаються своїми традиціями та радо вітають гостей.`
+    
+    Okay, there is a glitch: "...слухаютБорщ..." and then later "...бабусі.ь вуличних музикантів."
+    It looks like the sentence "та слухають вуличних музикантів" was split and shifted.
+    "слухают" [some missing letters] and then ".ь вуличних музикантів".
+    Since I must be *extractive* and *not invent facts*, I cannot "fix" the text. I must use exactly what is there.
+    If I use the sentence "Туристи гуляють бруківкою старих вулиць, п'ють каву в затишних кав'ярнях та слухаютБорщ", the word "слухаютБорщ" is a single token.
+    Actually, it's safer to avoid the glitched parts for the extractive tasks.
+
+    *Revised Selection:*
+    - *Match-up:*
+        - бруківка (from "Туристи гуляють бруківкою старих вулиць")
+        - вежа (from "ратуша з високою вежею")
+        - затишний (from "в затишних кав'ярнях")
+        - вітати (from "радо вітають гостей")
+    - *Mark-the-words:*
+        - Sentence: "У місті багато музеїв, театрів і галерей."
+        - Category: Nouns.
+        - Target: ["місті", "музеїв", "театрів", "галерей"].
+        - Criteria: `pos=noun`.
+    - *Fill-in:*
+        - Sentence: "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+        - Blank: "Основа борщу — ____, який надає йому насиченого червоного кольору."
+        - Answer: "буряк".
+    - *Error-correction:*
+        - Sentence: "У 2022 роках культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+        - Error: "роках". Correction: "році".
+    - *Short-writing:*
+        - Prompt: "Напиши 3 речення про те, чому борщ є символом дому та родини для українців."
+        - Evidence: "Для українців ця страва — не просто їжа, а символ дому та родини."
+
+    *Wait*, check the "Mark-the-words" sentence again.
+    "У місті багато музеїв, театрів і галерей."
+    Words: У (prep), місті (noun), багато (adv/numeral), музеїв (noun), театрів (noun), і (conj), галерей (noun).
+    Target: місті, музеїв, театрів, галерей. Correct.
+
+    *One last check on Match-up:*
+    бруківка $\rightarrow$ дорожнє покриття з каменів. (Good)
+    вежа $\rightarrow$ башта. (Good)
+    затишний $\rightarrow$ спокійний. (Good)
+    вітати $\rightarrow$ поздоровляти. (Good)
+
+    *One last check on Fill-in:*
+    "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+    Gap: "Основа борщу — {gap}, який надає йому насиченого червоного кольору."
+    Answer: "буряк".
+
+    Wait, the `fill-in` format requested: `{"sentence":"… ____ …","answer":"…","options":["…","…","…"]}`.
+    The `cloze` format (which I'm not using, but for comparison) uses `{gap}`.
+    I will use `____` for `fill-in`.
+
+    *Wait*, the requested list of activities was:
+    - match-up: 1
+    - mark-the-words: 1
+    - fill-in: 1
+    - error-correction: 1
+    - short-writing: 1
+    I have all five.
+
+    Final structure check:
+    `activities` array containing 5 objects.
+    Fields like `evidence` are mandatory.
+    `criteria` for `mark-the-words` is `pos=noun`.
+
+    *Error correction check:*
+    Sentence: "У 2022 роках культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+    Evidence: "У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+    Error: "роках". Correction: "році".
+    Options: ["році", "роках", "роками"].
+    Explanation: "Після числівника, що позначає конкретний рік, іменник має бути в однині — «році»."
+
+    Let's generate.</thought>{
+  "activities": [
+    {
+      "type": "match-up",
+      "instruction": "Поєднайте слово з його значенням.",
+      "pairs": [
+        {
+          "left": "бруківка",
+          "right": "дорожнє покриття з каменів",
+          "evidence": "Туристи гуляють бруківкою старих вулиць"
+        },
+        {
+          "left": "вежа",
+          "right": "башта",
+          "evidence": "ратуша з високою вежею"
+        },
+        {
+          "left": "затишний",
+          "right": "спокійний",
+          "evidence": "в затишних кав'ярнях"
+        },
+        {
+          "left": "вітати",
+          "right": "поздоровляти",
+          "evidence": "радо вітають гостей"
+        }
+      ]
+    },
+    {
+      "type": "mark-the-words",
+      "instruction": "Познач усі іменники.",
+      "text": "У місті багато музеїв, театрів і галерей.",
+      "target_words": [
+        "місті",
+        "музеїв",
+        "театрів",
+        "галерей"
+      ],
+      "criteria": "pos=noun",
+      "evidence": "У місті багато музеїв, театрів і галерей."
+    },
+    {
+      "type": "fill-in",
+      "instruction": "Обери правильне слово, щоб відновити речення з тексту.",
+      "items": [
+        {
+          "sentence": "Основа борщу — ____, який надає йому насиченого червоного кольору.",
+          "answer": "буряк",
+          "options": [
+            "буряк",
+            "помідор",
+            "перець",
+            "баклажан"
+          ],
+          "explanation": "Згідно з текстом, саме буряк надає борщу червоного кольору.",
+          "evidence": "Основа борщу — буряк, який надає йому насиченого червоного кольору."
+        }
+      ]
+    },
+    {
+      "type": "error-correction",
+      "instruction": "Виправ граматичну помилку в керуванні числівника.",
+      "items": [
+        {
+          "sentence": "У 2022 роках культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО.",
+          "error": "роках",
+          "correction": "році",
+          "options": [
+            "році",
+            "роках",
+            "роками"
+          ],
+          "explanation": "Після числівника, що позначає конкретний рік, іменник має бути в однині в давальному відмінку — «році».",
+          "evidence": "У 2022 році культура приготування українського борщу увійшла до списку нематеріальної культурної спадщини ЮНЕСКО."
+        }
+      ]
+    },
+    {
+      "type": "short-writing",
+      "instruction": "Напиши короткий текст.",
+      "prompt": "Напиши 3 речення про те, чому борщ є символом дому та родини для українців.",
+      "source_ref": "Текст-опора",
+      "word_count_guidance": "3 речення (30–40 слів)",
+      "model_answer": "Борщ є символом дому, бо його готують у кожній родині. Кожна господиня має власний рецепт цієї страви. Найсмачніший борщ часто готують бабусі, що об'єднує покоління.",
+      "rubric_hint": "Перевірте використання слів «символ», «дім», «родина» та правильність граматичних конструкцій B1.",
+      "teacher_guidance": "Учні мають обґрунтувати значення страви, спираючись на ідею спадковості рецептів та сімейних традицій з тексту.",
+      "evidence": "Для українців ця страва — не просто їжа, а символ дому та родини."
+    }
+  ]
+}
