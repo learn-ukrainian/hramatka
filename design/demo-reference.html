@@ -1,0 +1,1506 @@
+<!doctype html><html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><title>Граматка — дизайн POC</title>
+<style>
+:root{
+  --paper:#FBF9F5; --ink:#23241F; --ink-soft:#5A5B53; --line:#E3DFD4;
+  --card:#FFFFFF; --accent:#2F4A7E; --accent-soft:#E7ECF5; --wheat:#C9972B; --wheat-soft:#F7EED8;
+  --ok:#2E7D4F; --ok-soft:#E3F1E8; --warn:#A66A00; --warn-soft:#FBF0DA; --bad:#A63232; --bad-soft:#F7E4E4;
+  --shadow:0 1px 3px rgba(35,36,31,.08),0 4px 16px rgba(35,36,31,.06);
+}
+@media (prefers-color-scheme: dark){:root{
+  --paper:#191A17; --ink:#EAE8DF; --ink-soft:#A5A69B; --line:#33342D;
+  --card:#22231F; --accent:#8FA9D9; --accent-soft:#263043; --wheat:#D8AC4E; --wheat-soft:#3A3122;
+  --ok:#6FBF8F; --ok-soft:#22352A; --warn:#D9A84E; --warn-soft:#3A311D; --bad:#D97C7C; --bad-soft:#3A2424;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}}
+:root[data-theme="dark"]{
+  --paper:#191A17; --ink:#EAE8DF; --ink-soft:#A5A69B; --line:#33342D;
+  --card:#22231F; --accent:#8FA9D9; --accent-soft:#263043; --wheat:#D8AC4E; --wheat-soft:#3A3122;
+  --ok:#6FBF8F; --ok-soft:#22352A; --warn:#D9A84E; --warn-soft:#3A311D; --bad:#D97C7C; --bad-soft:#3A2424;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+:root[data-theme="light"]{
+  --paper:#FBF9F5; --ink:#23241F; --ink-soft:#5A5B53; --line:#E3DFD4;
+  --card:#FFFFFF; --accent:#2F4A7E; --accent-soft:#E7ECF5; --wheat:#C9972B; --wheat-soft:#F7EED8;
+  --ok:#2E7D4F; --ok-soft:#E3F1E8; --warn:#A66A00; --warn-soft:#FBF0DA; --bad:#A63232; --bad-soft:#F7E4E4;
+  --shadow:0 1px 3px rgba(35,36,31,.08),0 4px 16px rgba(35,36,31,.06);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,textarea{font:inherit;color:var(--ink)}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 80px}
+header.intro{border-bottom:2px solid var(--ink);padding-bottom:24px;margin-bottom:28px}
+.brand{font-family:Georgia,'Times New Roman',serif;font-size:44px;font-weight:700;letter-spacing:.5px;margin:0}
+.brand em{font-style:italic;color:var(--accent)}
+.tagline{font-size:18px;color:var(--ink-soft);margin:6px 0 0;max-width:62ch}
+.meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--ink-soft)}
+.meta b{color:var(--ink)}
+.layout{display:grid;grid-template-columns:250px 1fr;gap:28px}
+@media(max-width:860px){.layout{grid-template-columns:1fr}}
+/* demo = the app only (user 2026-07-10): presentation scaffolding hidden on screen */
+header.intro,nav.rail,.screenhead,#notes,footer{display:none!important}
+.layout{display:block}
+main{max-width:1060px;margin:24px auto 40px}
+nav.rail{position:sticky;top:16px;align-self:start;display:flex;flex-direction:column;gap:4px}
+nav.rail .railhead{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--ink-soft);margin:0 0 6px 8px}
+nav.rail button.raillink{display:flex;gap:10px;align-items:baseline;padding:9px 12px;border-radius:8px;color:var(--ink);border:1px solid transparent;width:100%}
+nav.rail button.raillink .n{font-family:Georgia,serif;font-style:italic;color:var(--wheat);min-width:16px}
+nav.rail button.raillink.active{background:var(--accent-soft);border-color:var(--accent);font-weight:600}
+nav.rail button.raillink:hover{background:var(--accent-soft)}
+button:focus-visible,input:focus-visible,[contenteditable]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+nav.rail .deferred{opacity:.55}
+/* presenter demo controls */
+.presenter{margin-top:18px;border:1.5px dashed var(--wheat);border-radius:10px;padding:10px 12px}
+.presenter h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--warn)}
+.presenter button{display:block;width:100%;font-size:13px;padding:6px 8px;border-radius:7px;color:var(--ink)}
+.presenter button:hover{background:var(--wheat-soft)}
+.presenter button.armed{background:var(--bad-soft);color:var(--bad);font-weight:600}
+/* screen chrome around the live app */
+.screenhead h2{font-family:Georgia,serif;font-size:28px;margin:0 0 4px}
+.screenhead .role{color:var(--ink-soft);margin:0 0 14px;max-width:70ch}
+.tags{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap}
+.tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--ink-soft)}
+.tag.v1{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
+.tag.later{background:var(--wheat-soft);color:var(--warn);border-color:transparent;font-weight:600}
+.tag.frozen{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:600}
+.tag.live{background:var(--accent);color:#fff;border-color:transparent;font-weight:700}
+/* live app frame */
+.mock{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:18px}
+.mockbar{display:flex;align-items:center;gap:10px;background:var(--accent);color:#fff;padding:10px 16px}
+:root[data-theme="dark"] .mockbar{color:var(--paper)}
+.mockbar .logo{font-family:Georgia,serif;font-weight:700;font-size:17px;letter-spacing:.4px}
+.mockbar .navlinks{display:flex;gap:6px;font-size:13px;margin-left:18px}
+.mockbar .navlinks button{color:inherit;opacity:.85;padding:3px 9px;border-radius:6px}
+.mockbar .navlinks button:hover{opacity:1;background:rgba(255,255,255,.14)}
+.mockbar .navlinks button.on{opacity:1;background:rgba(255,255,255,.18);font-weight:600}
+.mockbar .who{margin-left:auto;font-size:12px;opacity:.85}
+.mockbody{padding:22px 24px 26px;min-height:340px}
+.mock h3{margin:0 0 4px;font-size:21px;font-family:Georgia,serif}
+.mock .sub{color:var(--ink-soft);font-size:14px;margin:0 0 16px}
+/* atoms */
+.btn{display:inline-block;border:0;border-radius:8px;padding:10px 18px;font-size:15px;font-weight:600;text-align:center}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn.ghost:hover{background:var(--accent-soft)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.chip{display:inline-block;font-size:12.5px;padding:3px 10px;border-radius:99px;font-weight:600}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.info{background:var(--accent-soft);color:var(--accent)}
+.chip.muted{background:var(--paper);color:var(--ink-soft);border:1px solid var(--line)}
+.listrow{display:flex;align-items:center;gap:14px;padding:13px 8px;border-bottom:1px solid var(--line);width:100%;border-radius:6px}
+.listrow:hover{background:var(--accent-soft)}
+.listrow:last-child{border-bottom:0}
+.listrow .title{font-weight:600}
+.listrow .when{color:var(--ink-soft);font-size:13px;margin-left:auto;font-variant-numeric:tabular-nums}
+.formgrid{display:grid;gap:16px;max-width:640px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+.field .hint,.hint{font-size:12.5px;color:var(--ink-soft);margin-top:4px}
+.inputbox{border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:11px 13px;font-size:14.5px;width:100%}
+input.inputbox::placeholder{color:var(--ink-soft)}
+.choices{display:flex;gap:8px;flex-wrap:wrap}
+button.choice{border:1.5px solid var(--line);border-radius:8px;padding:8px 14px;font-size:14px;background:var(--card)}
+button.choice:hover{border-color:var(--accent)}
+button.choice.on{border-color:var(--accent);background:var(--accent-soft);font-weight:600;color:var(--accent)}
+button.choice.off{opacity:.5}
+.pedcards{display:grid;gap:10px}
+button.pedcard{border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card);width:100%}
+button.pedcard:hover{border-color:var(--accent)}
+button.pedcard.on{border-color:var(--accent);background:var(--accent-soft)}
+button.pedcard b{display:block;margin-bottom:3px}
+button.pedcard .d{font-size:12.5px;color:var(--ink-soft)}
+.banner{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:12px 14px;font-size:14px;margin:0 0 16px}
+.banner.honest{background:var(--wheat-soft);border:1px solid var(--wheat);color:var(--ink)}
+.banner.fail{background:var(--bad-soft);border:1px solid var(--bad);color:var(--ink)}
+.banner .ic{font-size:17px;line-height:1.2}
+/* builder */
+.builder{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:20px;align-items:start}
+@media(max-width:760px){.builder{grid-template-columns:1fr}}
+.paper{background:var(--card);border:1px solid var(--line);border-radius:3px;box-shadow:var(--shadow);padding:30px 36px;font-size:15.5px;line-height:1.66}
+.paper.anchorpaper{min-height:320px}
+.paper.anchorpaper:empty::before{content:attr(data-ph);color:var(--ink-soft)}
+.paper[contenteditable="true"]{cursor:text}
+.paper[contenteditable="true"]:focus{outline:2px solid var(--accent);outline-offset:0}
+.sidepanel{display:flex;flex-direction:column;gap:16px}
+.sidepanel .field label{font-size:12.5px}
+.urlrow{display:flex;gap:8px}
+.urlrow .inputbox{flex:1}
+/* document + margins */
+.docwrap{display:grid;grid-template-columns:minmax(0,1fr) 178px;gap:0 16px;align-items:start}
+@media(max-width:760px){.docwrap{grid-template-columns:1fr}}
+.docsheet-title{font-family:Georgia,serif;font-size:24px;font-weight:700;margin:0 0 2px}
+.dochead{font-family:Georgia,serif;font-size:17px;font-weight:700;border-bottom:2px solid var(--accent);padding:16px 0 4px;margin:0;display:flex;align-items:baseline;gap:8px}
+.dochead .pn{font-style:italic;color:var(--wheat)}
+.dochead .pd{margin-left:auto;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-size:12px;color:var(--ink-soft);font-weight:400}
+.dblock{padding:12px 2px;border-bottom:1px solid var(--line)}
+.dblock.editing{outline:2px dashed var(--accent);outline-offset:3px;border-radius:4px}
+.dblock .type{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--accent);font-weight:700;display:block;margin-bottom:4px}
+.dblock p{margin:4px 0;font-size:14.5px}
+.dblock .q{padding:6px 10px;background:var(--paper);border-radius:6px;margin:5px 0;font-size:14px}
+.dblock .bcontent[contenteditable="true"]{outline:none}
+.gap{border-bottom:1.5px solid var(--accent);padding:0 22px;display:inline-block;min-width:44px}
+.dmargin{padding:14px 0 8px;font-size:12.5px;color:var(--ink-soft);border-bottom:1px solid transparent}
+.dmargin .chip{display:block;width:max-content;margin-bottom:6px}
+.mtools{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+.mtools button{border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12.5px;background:var(--card);color:var(--ink)}
+.mtools button:hover{border-color:var(--accent);background:var(--accent-soft)}
+.mtools button.accept{color:var(--ok);border-color:var(--ok)}
+.mnote{display:block;margin-top:5px;line-height:1.45}
+/* baking steps */
+.steps{display:flex;flex-direction:column;gap:0;max-width:560px}
+.step{display:flex;gap:14px;padding:11px 4px;align-items:flex-start}
+.step .dot{width:22px;height:22px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;margin-top:2px}
+.step.done .dot{background:var(--ok-soft);color:var(--ok)}
+.step.now .dot{background:var(--accent);color:#fff}
+.step.wait .dot{background:var(--paper);border:1.5px dashed var(--line);color:var(--ink-soft)}
+.step.fail .dot{background:var(--bad-soft);color:var(--bad)}
+.step b{display:block;font-size:15px}
+.step .sd{font-size:13px;color:var(--ink-soft)}
+@media (prefers-reduced-motion: no-preference){
+  .step.now .dot{animation:pulse 1.4s ease infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
+  .appview{animation:fadein .18s ease}
+  @keyframes fadein{from{opacity:.4;transform:translateY(3px)}to{opacity:1;transform:none}}
+}
+/* notes for the freeze discussion */
+details.notes{border-left:3px solid var(--wheat);padding:4px 0 4px 16px;margin:2px 0 0}
+details.notes summary{cursor:pointer;font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);font-weight:600;list-style:none}
+details.notes summary::before{content:"▸ "}
+details.notes[open] summary::before{content:"▾ "}
+details.notes ul{margin:8px 0 0;padding-left:18px;font-size:14px}
+details.notes li{margin-bottom:6px}
+details.notes .q{font-weight:700;color:var(--accent)}
+/* freeze table */
+table.freeze{width:100%;border-collapse:collapse;font-size:14px}
+table.freeze th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-soft);border-bottom:2px solid var(--ink);padding:8px 10px}
+table.freeze td{border-bottom:1px solid var(--line);padding:9px 10px;vertical-align:top}
+.tablewrap{overflow-x:auto}
+/* role banners, hints, help */
+.rolebanner{font-size:13.5px;font-weight:600;letter-spacing:.03em;padding:8px 14px;border-radius:8px;margin:0 0 12px}
+.rolebanner.teacher{background:var(--wheat-soft);border:1.5px solid var(--wheat);color:var(--ink)}
+.rolebanner.student{background:var(--ok-soft);border:1.5px solid var(--ok);color:var(--ink)}
+.modechip{font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.18);margin-left:10px}
+.modechip.student{background:var(--ok);color:#fff}
+.helpbtn{width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.2);color:inherit;font-weight:700;text-align:center;margin-left:10px;font-size:13px}
+.helpbtn:hover{background:rgba(255,255,255,.35)}
+.hintbar{display:flex;gap:10px;align-items:flex-start;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:8px;padding:8px 12px;font-size:13px;margin:0 0 14px;color:var(--ink)}
+.hintbar button{margin-left:auto;color:var(--ink-soft);font-size:15px;line-height:1}
+.studentframe .mockbody{background:var(--ok-soft)}
+/* student mode + reading text */
+.stopt{border:1.5px solid var(--line);border-radius:7px;padding:4px 12px;font-size:13.5px;background:var(--card);margin:2px 6px 2px 0;color:var(--ink)}
+.stopt:hover{border-color:var(--accent)}
+.stopt.good{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.stopt.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.stopt.show{border-color:var(--ok);color:var(--ok)}
+.stopt.selm{border-color:var(--accent);background:var(--accent-soft)}
+.bankchip{border:1.5px solid var(--wheat);border-radius:99px;padding:3px 12px;font-size:13px;background:var(--wheat-soft);color:var(--ink);margin:2px 6px 2px 0}
+.bankchip.used{opacity:.3}
+.bankchip.bad{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.matchwrap{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;align-items:start;margin-top:6px}
+.matchwrap .stopt{display:block;width:100%;text-align:left}
+.stanswer{width:100%;min-height:54px;border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:8px 10px;font:inherit;font-size:14px;margin-top:6px;color:var(--ink)}
+.anchorbody{font-size:14.5px;line-height:1.7;padding:10px 2px 14px;border-bottom:1px solid var(--line);white-space:pre-line}
+b.good{color:var(--ok)}
+/* toasts */
+.toastwrap{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50;max-width:340px}
+.toast{background:var(--ink);color:var(--paper);border-radius:10px;padding:11px 16px;font-size:14px;box-shadow:var(--shadow)}
+.toast b{color:inherit}
+@media (prefers-reduced-motion: no-preference){.toast{animation:toastin .25s ease}@keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
+/* transient hint bubble */
+.bubble{display:inline-block;background:var(--wheat-soft);border:1px solid var(--wheat);color:var(--ink);border-radius:8px;padding:6px 10px;font-size:13px;margin-top:8px}
+.emptystate{text-align:center;padding:52px 20px}
+.emptystate h3{font-family:Georgia,serif;font-size:24px;margin:0 0 6px}
+.emptystate p{color:var(--ink-soft);max-width:46ch;margin:0 auto 18px}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:var(--ink-soft);font-size:13px}
+/* print: only the final lesson sheet */
+@media print{
+  body{background:#fff}
+  header.intro,nav.rail,.screenhead,.tags,.mockbar,details.notes,footer,.toastwrap,.noprint{display:none!important}
+  .layout{display:block}
+  .wrap{padding:0;max-width:none}
+  .mock{border:0;box-shadow:none;margin:0}
+  .mockbody{padding:0;min-height:0}
+  .paper{border:0;box-shadow:none;max-width:none!important}
+}
+/* ============ ▶ Conductor (Проведення заняття) — Path B ============ */
+/* new components built on the demo's design tokens (auto light/dark) */
+.cond-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.cond-title{flex:1;min-width:170px}
+.cond-title b{font-family:Georgia,'Times New Roman',serif;font-size:18px}
+.cond-title .cond-sub{display:block;font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+.cond-topbtns{display:flex;gap:6px;flex-wrap:wrap}
+.cond-sm{padding:7px 11px!important;font-size:13px!important;border-radius:8px!important}
+.cond-on{background:var(--wheat-soft)!important;border:1px solid var(--wheat)!important;color:var(--wheat)!important}
+.cond-rail{display:flex;gap:8px;margin-bottom:8px}
+.cond-seg{flex:1;border:1px solid var(--line);border-radius:12px;padding:9px 11px;background:var(--card);opacity:.62;transition:.2s}
+.cond-seg.active{opacity:1;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.cond-seg.done{opacity:.85}
+.cond-seg .nm{font-weight:600;font-size:13px}
+.cond-seg .tm{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-top:3px}
+.cond-seg .bar{height:5px;border-radius:4px;background:var(--line);margin-top:6px;overflow:hidden}
+.cond-seg .fill{height:100%;background:var(--accent);width:0;transition:width .4s}
+.cond-seg.over .fill{background:var(--wheat)}
+.cond-seg.over .tm .el{color:var(--wheat);font-weight:700}
+.cond-clock{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-soft);margin-bottom:10px;flex-wrap:wrap}
+.cond-clock .big{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);font-size:15px}
+.cond-clock .warnpill{background:var(--wheat-soft);color:var(--wheat);border-radius:20px;padding:2px 10px;font-weight:700}
+.cond-pf{border:1px solid var(--ok);background:var(--ok-soft);border-radius:12px;padding:9px 13px;font-size:13px;margin-bottom:10px}
+.cond-pf .ph{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--ink);cursor:pointer}
+.cond-pf .ph .sp{flex:1}
+.cond-pf .cond-pfsub{font-size:12px;color:var(--ink-soft);margin-top:6px}
+.cond-pf ul{margin:6px 0 0;padding-left:20px}
+.cond-pf li{margin:3px 0}
+.cond-reb{background:var(--wheat-soft);border:1px solid var(--wheat);border-radius:12px;padding:9px 13px;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--wheat);font-weight:600;margin-bottom:10px}
+.cond-reb .sp{flex:1}
+.cond-held{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:9px 13px;font-size:12.5px;color:var(--ink-soft);background:var(--bg)}
+.cond-held b{color:var(--ink)}
+.cond-sharedlabel{font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--ok);margin-bottom:5px;text-transform:uppercase}
+.cond-shared{border:1.5px solid var(--ok);border-radius:14px;padding:14px 16px;background:var(--card)}
+.cond-shared .cond-taskmeta{margin-bottom:4px}
+.cond-shared .num{font-size:12.5px;color:var(--ink-soft);font-weight:600}
+.cond-panel{border:1.5px solid var(--wheat);border-radius:14px;padding:13px 16px;background:var(--wheat-soft);margin-top:12px}
+.cond-panellabel{font-size:11.5px;font-weight:700;letter-spacing:.03em;color:var(--wheat);margin-bottom:8px;text-transform:uppercase}
+.cond-panelchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px}
+.cond-note{background:var(--warn-soft);border:1px solid var(--warn);border-radius:10px;padding:8px 11px;font-size:13px;color:var(--warn);margin-top:8px}
+.cond-answer{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.cond-answer .lbl{font-size:12px;font-weight:700;color:var(--wheat);letter-spacing:.3px}
+.cond-answer .val{font-size:14.5px;margin-top:4px;color:var(--ink)}
+.cond-receipt{margin-top:12px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:12px;padding:11px 13px;font-size:13px}
+.cond-receipt .rh{font-weight:700;color:var(--accent);font-size:11.5px;letter-spacing:.3px;margin-bottom:6px}
+.cond-receipt .row{display:flex;gap:8px;padding:2px 0}
+.cond-receipt .row .k{color:var(--ink-soft);min-width:92px}
+.cond-receipt .conf{display:inline-block;background:var(--card);border:1px solid var(--accent);color:var(--accent);border-radius:20px;padding:0 9px;font-weight:600;font-size:12px}
+.cond-receipt .rej{color:var(--warn)}
+.cond-ctl{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.cond-ctl .cond-grow{flex:1;min-width:8px}
+.cond-sum h2{font-family:Georgia,serif;font-size:23px;margin:.1em 0 .2em}
+.cond-lead{color:var(--ink-soft);font-size:14px;margin-bottom:14px}
+.cond-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px;margin:12px 0 6px}
+.cond-stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.cond-stat .n{font-size:26px;font-weight:700;color:var(--accent)}
+.cond-stat .l{font-size:12.5px;color:var(--ink-soft)}
+.cond-tbl{width:100%;border-collapse:collapse;margin-top:6px;font-size:14px}
+.cond-tbl td,.cond-tbl th{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+.cond-tbl .cond-over{color:var(--wheat);font-weight:700}
+.cond-flaglist{margin:8px 0 0;padding-left:20px}
+.cond-flaglist li{margin:3px 0;font-size:14px}
+.cond-rulecard{margin-top:18px;border:1px solid var(--wheat);background:var(--wheat-soft);border-radius:14px;padding:14px 16px}
+.cond-rulecard .rt{font-weight:700;color:var(--wheat)}
+.cond-rulecard .rq{font-size:16px;margin:6px 0 4px}
+.cond-rulenote{font-size:12px;color:var(--ink-soft);margin-bottom:12px}
+.cond-rulecard .btns{display:flex;gap:8px;flex-wrap:wrap}
+.cond-sumbtns{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.cond-overlay{position:fixed;inset:0;background:rgba(20,22,28,.46);display:grid;place-items:center;z-index:120;padding:20px}
+.cond-modal{background:var(--card);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.28);max-width:620px;width:100%;max-height:86vh;overflow:auto;padding:20px 24px;position:relative}
+.cond-modal h2{font-family:Georgia,serif;font-size:21px;margin:.1em 0 .4em}
+.cond-modh{margin:14px 0 3px;font-size:14.5px;color:var(--accent)}
+.cond-modp{font-size:14px;color:var(--ink);margin:3px 0}
+.cond-close{position:absolute;top:12px;right:14px;border:0;background:none;font-size:22px;cursor:pointer;color:var(--ink-soft)}
+.cond-lrow{display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.cond-lrow .k{min-width:140px;color:var(--ink-soft)}
+.cond-optin{margin-top:12px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;padding:9px 12px;font-size:13px;color:var(--accent)}
+.cond-newpill{background:var(--wheat-soft);color:var(--wheat);border:1px solid var(--wheat);border-radius:20px;padding:1px 8px;font-size:11px;font-weight:700;vertical-align:middle;margin-left:6px}
+@media(max-width:560px){.cond-rail{flex-direction:column}.cond-ctl{flex-direction:column;align-items:stretch}.cond-ctl .cond-grow{display:none}}
+</style>
+
+<div class="wrap">
+<header class="intro">
+  <h1 class="brand">Грама́тка <em>· дизайн POC</em></h1>
+  <p class="tagline">Помічник учителя: ви даєте текст — «Граматка» будує з нього готове заняття
+  з перевіреними завданнями. Назва — на честь «Граматки» Пантелеймона Куліша (1857), першого
+  україномовного букваря.</p>
+  <div class="meta">
+    <span><b>Для кого:</b> Альона й Тетяна — перші вчительки-пілот</span>
+    <span><b>Версія:</b> чернетка 3 — 2026-07-10 (інтерактивне демо: все клікається, без сервера)</span>
+    <span><b>Мета:</b> заморозити набір сторінок і їхній зміст</span>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="rail" id="rail">
+  <p class="railhead">Шлях учителя</p>
+  <button class="raillink" data-go="dash"><span class="n">1</span> Мої заняття</button>
+  <button class="raillink" data-go="new"><span class="n">2</span> Нове заняття</button>
+  <button class="raillink" data-go="bake"><span class="n">3</span> Приготування</button>
+  <button class="raillink" data-go="review"><span class="n">4</span> Перегляд і збирання</button>
+  <button class="raillink" data-go="final"><span class="n">5</span> Готове заняття</button>
+  <p class="railhead" style="margin-top:14px">Службові</p>
+  <button class="raillink" data-go="settings"><span class="n">6</span> Налаштування</button>
+  <button class="raillink deferred" data-go="login"><span class="n">7</span> Вхід <span class="chip muted" style="margin-left:4px">пізніше</span></button>
+  <p class="railhead" style="margin-top:14px">Рішення</p>
+  <button class="raillink" data-go="freeze"><span class="n">✓</span> Що заморожуємо</button>
+
+</nav>
+
+<main>
+  <div class="screenhead" id="screenhead"></div>
+  <div class="mock" id="appframe">
+    <div class="mockbar noprint">
+      <span class="logo">Грама́тка</span>
+      <span class="navlinks">
+        <button data-go="dash" id="nav-dash">Мої заняття</button>
+        <button data-go="settings" id="nav-settings">Налаштування</button>
+      </span>
+      <span class="who" id="who">Марія</span><span class="modechip" id="modechip">👩‍🏫 вчитель</span><button class="helpbtn" id="langbtn" data-action="ui-lang" title="мова інтерфейсу (вміст занять — завжди українською)" style="width:auto;padding:0 9px;font-size:10.5px;letter-spacing:.04em">EN</button><button class="helpbtn" data-action="help" title="Довідка">?</button>
+    </div>
+    <div class="mockbody"><div class="appview" id="app"></div></div>
+  </div>
+  <div id="notes"></div>
+</main>
+</div>
+
+<footer>Граматка · дизайн-чернетка для обговорення · зроблено з повагою до вчительок, які вчать українську попри все.</footer>
+</div>
+<div class="toastwrap" id="toasts" aria-live="polite"></div>
+
+<script>
+(function(){
+"use strict";
+/* ============ helpers ============ */
+var $=function(s,r){return (r||document).querySelector(s)};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
+function nowLabel(){try{return 'сьогодні, '+new Date().toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}catch(e){return 'сьогодні'}}
+function toast(html){var w=$('#toasts');var t=document.createElement('div');t.className='toast';t.innerHTML=html;w.appendChild(t);try{trNode(t)}catch(e){}setTimeout(function(){t.remove()},5200)}
+function bubble(anchor,text){var old=document.body.querySelector('.bubble[data-float]');if(old)old.remove();var b=document.createElement('span');b.className='bubble';b.setAttribute('data-float','1');b.textContent=(uiLang&&uiLang()==='en')?trStr(text):text;document.body.appendChild(b);var r=anchor.getBoundingClientRect();b.style.position='fixed';b.style.zIndex='60';b.style.maxWidth='300px';b.style.left=Math.max(8,Math.min(r.left,window.innerWidth-320))+'px';b.style.top=(r.bottom+6)+'px';b.style.marginTop='0';setTimeout(function(){b.remove()},3800)}
+
+/* ============ lesson sizing (user decision 2026-07-10): duration → planned tasks + phase minutes Т1·Н·Т2 ============ */
+var DUR={45:{tasks:6,pd:[10,15,15]},60:{tasks:9,pd:[15,25,15]},90:{tasks:12,pd:[20,40,25]}};
+function durInfo(d){return DUR[d]||DUR[45]}
+/* скільки завдань видно у кожній частині Т1·Н·Т2; решта — «у запасі / на домашнє» */
+var PLAN={45:[2,3,1],60:[3,4,2],90:[4,5,3]};
+function planSplit(d){return PLAN[d]||PLAN[45]}
+/* student-screen interface language: uk default, EN toggle (user 2026-07-10).
+   INTERFACE ONLY — the lesson document (paper) is always Ukrainian. */
+var UI={
+ 'banner.student':{uk:'👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.',en:'👩‍🎓 STUDENT SCREEN — no answers, no hints. Safe to share in Zoom.'},
+ 'btn.back':{uk:'👩‍🏫 Назад до екрана вчителя',en:'👩‍🏫 Back to teacher screen'},
+ 'btn.copy':{uk:'⧉ Копіювати (без відповідей)',en:'⧉ Copy (without answers)'},
+ 'chip.ready':{uk:'готово',en:'ready'},'chip.min':{uk:'хв',en:'min'},
+ 'chip.student':{uk:'👩‍🎓 УЧЕНЬ',en:'👩‍🎓 STUDENT'},
+ 'hint.tf':{uk:'Оберіть: правда чи неправда',en:'Choose: true or false'},
+ 'hint.bank':{uk:'Натисніть слово з банку — воно стане в наступний пропуск',en:'Tap a word in the bank — it fills the next gap'},
+ 'hint.match':{uk:'Зʼєднайте пари: клікніть ліворуч, потім праворуч',en:'Match the pairs: click left, then right'},
+ 'ph.answer':{uk:'Ваша відповідь…',en:'Your answer…'},
+ 'btn.lang':{uk:'🌐 English',en:'🌐 Українська'}
+};
+function uiLang(){return S&&S.uiLang==='en'?'en':'uk'}
+function L(k){var e=UI[k];return e?(e[uiLang()]||e.uk):k}
+
+/* ===== WHOLE-INTERFACE translation (user 2026-07-10: dual-language interface, ALL screens).
+   Post-render DOM pass: translates ONLY dictionary-matched interface strings; lesson CONTENT
+   (paper, tasks, anchor, task-type names) is skipped structurally AND absent from the dict —
+   double protection. Demo apparatus (left rail, page intros, discussion notes) stays UA. */
+var T_EXACT={
+ /* header */ 'Мої заняття':'My lessons','Налаштування':'Settings','👩‍🏫 вчитель':'👩‍🏫 teacher','Довідка':'Help',
+ /* dash */ '+ Нове заняття':'+ New lesson','готово':'ready','готується…':'baking…','зупинилося':'stopped','чернетка':'draft',
+ 'Тут житимуть ваші заняття. Дайте «Граматці» текст — і за кілька хвилин отримаєте готове заняття з перевіреними завданнями.':'Your lessons will live here. Give Hramatka a text — and in a few minutes you get a ready lesson with verified tasks.',
+ /* new */ 'Нове заняття':'New lesson','якір — це основа заняття, тому він і є вся сторінка':'the anchor text is the heart of the lesson — so it IS the page',
+ 'Вставити текст':'Paste text','Посилання':'Link','Фото сторінки — скоро':'Page photo — soon','Отримати текст':'Fetch text',
+ 'Завдання будуються лише з цього тексту — нічого вигаданого.':'Tasks are built from this text only — nothing invented.',
+ 'Рівень':'Level','Методика':'Methodology','Граматичний фокус':'Grammar focus','Тривалість заняття':'Lesson duration',
+ 'напр., вищий ступінь прикметників':'e.g., comparative adjectives','https://… адреса статті чи оголошення':'https://… link to an article or listing',
+ '…вставте чи напишіть текст просто тут, як у Word — на весь аркуш, без обмежень і маленьких віконець…':'…paste or write the text right here, like in Word — a full page, no limits, no tiny boxes…',
+ 'Тест → Навчання → Тест':'Test → Teach → Test','перевірити → навчити → перевірити. Радимо для B1.':'test → teach → re-test. Recommended for B1.',
+ 'Занурення (за Огойко)':'Immersion (Ohoiko)','для A1–A2 — скоро':'for A1–A2 — soon','Через зміст (CLIL)':'Content-based (CLIL)','для B2+ — скоро':'for B2+ — soon',
+ 'Власна':'Custom','ваш порядок частин — скоро в пілоті':'your own phase order — coming in the pilot',
+ 'Приготувати заняття':'Bake the lesson','Від 20 секунд до 4 хвилин (у демо — швидше). Можна закрити сторінку — заняття дочекається вас.':'From 20 seconds to 4 minutes (faster in the demo). You can close the page — the lesson will wait for you.',
+ 'Додайте текст (щонайменше кілька речень) — завдання будуються лише з нього.':'Add text (at least a few sentences) — tasks are built from it only.',
+ /* bake */ 'Зараз нічого не готується':'Nothing is baking right now','Створіть заняття — і тут зʼявляться справжні етапи його приготування.':'Create a lesson — and its real baking stages will appear here.',
+ 'Запустити демо-приготування':'Run a demo bake','Текст отримано':'Text received','Завдання складено':'Tasks drafted','Перевірка':'Verification','Готово':'Done',
+ 'кожне слово — за словником, кожен факт — за вашим текстом':'every word — against the dictionary, every fact — against your text',
+ 'повідомимо тут і в «Моїх заняттях»':'we will notify you here and in “My lessons”',
+ 'Щось пішло не так під час перевірки.':'Something went wrong during verification.',
+ 'Ваш текст збережено — нічого не втрачено. Спробуйте ще раз: зазвичай це допомагає.':'Your text is saved — nothing is lost. Try again: it usually helps.',
+ 'Спробувати ще раз':'Try again','Переглянути заняття →':'Open the lesson →',
+ 'Можете повернутися до «Моїх занять» — ми повідомимо, щойно все буде готово.':'You can go back to “My lessons” — we will notify you as soon as it is ready.',
+ /* review */ 'Ще немає що переглядати':'Nothing to review yet','Коли заняття буде готове, тут зʼявиться документ із завданнями й позначками перевірки.':'When a lesson is ready, the document with tasks and verification marks will appear here.',
+ 'Факти перевірте.':'Verify the facts.','Мову й відповідність вашому тексту ми перевірили автоматично; зміст і доречність — за вами. Ви — вчитель, «Граматка» — помічниця.':'Language and fidelity to your text were checked automatically; meaning and fit are yours to judge. You are the teacher — Hramatka is the assistant.',
+ 'Заняття — це документ. Позначки перевірки — на полях. Усе можна редагувати просто тут.':'The lesson is a document. Verification marks live in the margins. Everything is editable right here.',
+ 'Тривалість:':'Duration:','— план ріжеться й росте на очах; зрізане не зникає':'— the plan shrinks and grows live; nothing trimmed is lost',
+ '✓ перевірено':'✓ verified','⚠ погляньте':'⚠ take a look','✎ змінено вами':'✎ edited by you','✕ відхилено':'✕ rejected','прийняти':'accept',
+ 'редагувати':'edit','вгору':'up','вниз':'down','вилучити':'remove','включити в план':'include in the plan','повернути в заняття':'return to the lesson',
+ '· підійде на домашнє або на довше заняття:':'· good as homework or for a longer lesson:',
+ '(нічого не ховаємо).':'(nothing is hidden).','показати':'show','сховати':'hide',
+ 'повернено з відхилених — погляньте ще раз':'restored from rejected — take another look',
+ 'означення в правій колонці — наші, не з тексту; погляньте перед заняттям':'the definitions in the right column are ours, not from the text; review them before the lesson',
+ 'пояснення — наші, не з тексту; перегляньте перед заняттям':'the explanations are ours, not from the text; review them before the lesson',
+ 'частина варіантів — не з вашого тексту; перевірте, чи доречні':'some options are not from your text; check that they fit',
+ '«стежка ↔ вузька дорога для пішоходів» — означення наше, не з тексту; погляньте.':'«стежка ↔ вузька дорога для пішоходів» — the definition is ours, not from the text; take a look.',
+ 'не пройшло перевірку: у тексті про це не сказано — твердження неможливо перевірити':'failed verification: the text does not say this — the statement cannot be verified',
+ 'фото в завданнях — тип із фази 2; це прототип для обговорення':'photos in tasks are a phase-2 type; this is a prototype for discussion',
+ 'пари складено поза текстом — тематичний словник походу; погляньте перед заняттям':'these pairs come from outside the text — a themed hiking vocabulary; review them before the lesson',
+ 'занадто просте: відповідь стоїть у тексті поруч':'too easy: the answer sits right next to it in the text',
+ 'не пройшло перевірку: твердження не випливає з тексту однозначно':'failed verification: the statement does not follow from the text unambiguously',
+ 'вилучено вами':'removed by you','— порожньо; пересуньте сюди завдання (↑↓) —':'— empty; move tasks here (↑↓) —',
+ 'Прийняти заняття':'Accept the lesson','Зберегти як чернетку':'Save as draft',
+ '⚙ Це ':'⚙ This is a ','спрощений демо-генератор':'simplified demo generator',' (4 типи завдань, без перевірки за словником). Справжня «Граматка» будує до 12 типів — як у прикладі «Як ми шукали квартиру у Львові» — з перевіркою кожного слова.':' (4 task types, no dictionary verification). The real Hramatka builds up to 12 types — as in the sample lesson — verifying every word.',
+ /* final */ 'Готових занять ще немає':'No ready lessons yet','Прийміть заняття на сторінці «Перегляд і збирання» — і воно зʼявиться тут як чистий аркуш для класу.':'Accept a lesson on the review page — and it appears here as a clean sheet for class.',
+ 'До перегляду':'Go to review','🔑 Відповіді':'🔑 Answers','Сховати відповіді':'Hide answers','🖨 Друк':'🖨 Print','Редагувати':'Edit','⧉ Копіювати':'⧉ Copy','👩‍🎓 Показати як учневі':'👩‍🎓 Show as student',
+ '👩‍🏫 ЕКРАН УЧИТЕЛЯ — 🔑 відповіді бачите лише ви. Перш ніж ділитися екраном в Zoom, перемкніться на екран учня.':'👩‍🏫 TEACHER SCREEN — only you see the 🔑 answers. Before sharing your screen in Zoom, switch to the student screen.',
+ /* settings */ 'Імʼя (показуємо у шапці)':'Name (shown in the header)','зміниться одразу — погляньте на шапку':'updates instantly — look at the header',
+ 'Типовий рівень':'Default level','у пілоті — лише B1; інші рівні після пілота':'B1 only in the pilot; other levels after',
+ 'Типова методика':'Default methodology','Типова тривалість заняття':'Default lesson duration',
+ 'нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 9 · 90 → 12)':'new lessons start from this value (45 min → 6 tasks · 60 → 9 · 90 → 12)',
+ /* login */ 'Вітаємо!':'Welcome!','Введіть код доступу, який ви отримали від нас.':'Enter the access code you received from us.','код доступу':'access code','Увійти':'Sign in',
+ 'У пілоті входу не буде: посилання + один код. Ця сторінка — запас на майбутнє.':'The pilot has no login: a link + one code. This page is a reserve for later.',
+ /* hint bar + help */ 'сховати підказку':'hide this hint','Повернути підказки':'Restore hints','Зрозуміло':'Got it','Як користуватися «Граматкою»':'How to use Hramatka',
+ 'Приготування':'Baking','Перегляд':'Review','Готове заняття':'Ready lesson',
+ '— усі ваші заняття; натисніть, щоб відкрити.':'— all your lessons; click one to open it.',
+ '— вставте текст, оберіть тривалість, «Приготувати».':'— paste a text, pick a duration, “Bake”.',
+ '— чесні етапи; можна не чекати.':'— honest stages; no need to wait around.',
+ '— редагуйте, пересувайте, ріжте тривалістю; «Прийняти».':'— edit, move, trim with the duration switch; “Accept”.',
+ '— 🔑 відповіді лише вам · ⧉ копіювати · друк · 👩‍🎓 екран учня для Zoom.':'— 🔑 answers for you only · ⧉ copy · print · 👩‍🎓 student screen for Zoom.',
+ 'Натисніть на заняття, щоб відкрити його. «+ Нове заняття» — щоб створити.':'Click a lesson to open it. “+ New lesson” to create one.',
+ 'Вставте чи напишіть текст на аркуші, оберіть тривалість праворуч — і «Приготувати заняття».':'Paste or write the text on the page, pick a duration on the right — then “Bake the lesson”.',
+ 'Це справжні етапи роботи. Можна повернутися до «Моїх занять» — ми повідомимо, коли буде готово.':'These are the real working stages. You can go back to “My lessons” — we will tell you when it is done.',
+ 'Тривалість — перемикач угорі. На полях: ✎ редагувати · ↑↓ пересунути · ✕ вилучити. Наприкінці — «Прийняти заняття».':'Duration — the switch up top. In the margins: ✎ edit · ↑↓ move · ✕ remove. At the end — “Accept the lesson”.',
+ '🔑 відповіді — лише для вас · ⧉ Копіювати у свій документ · 👩‍🎓 «Показати як учневі» перед шерингом у Zoom · 🌐 на екрані учня можна перемкнути мову інтерфейсу (укр/EN) — завдання завжди українською.':'🔑 answers — for you only · ⧉ Copy into your document · 👩‍🎓 “Show as student” before sharing in Zoom · 🌐 the interface language can be switched (укр/EN) — tasks are always in Ukrainian.',
+ /* toasts + bubbles */ 'Зміни збережено у занятті':'Changes saved to the lesson','⧉ Заняття скопійовано — вставте у свій документ':'⧉ Lesson copied — paste into your document','⧉ Заняття скопійовано':'⧉ Lesson copied',
+ '✅ Заняття прийнято — можна друкувати':'✅ Lesson accepted — ready to print','Збережено як чернетку — знайдете в «Моїх заняттях»':'Saved as draft — find it in “My lessons”',
+ 'Текст отримано з посилання ':'Text fetched from the link ','(демо)':'(demo)',' — перегляньте його на аркуші':' — review it on the page','Вхід виконано ':'Signed in ',
+ 'Виділіть і скопіюйте (Ctrl/Cmd+C):':'Select and copy (Ctrl/Cmd+C):','Закрити':'Close',
+ 'Фото сторінки — наступна версія: сфотографували підручник, текст розпізнається сам.':'Page photo — next version: photograph the textbook and the text is recognized automatically.',
+ 'Вставте адресу сторінки — і ми дістанемо з неї текст.':'Paste a page address — and we will extract its text.',
+ 'У пілоті — лише B1. Інші рівні ввімкнемо після пілота (архітектура готова).':'B1 only in the pilot. Other levels come after (the architecture is ready).',
+ 'Ця методика зʼявиться після пілота — у першій версії працює «Тест → Навчання → Тест».':'This methodology arrives after the pilot — v1 runs “Test → Teach → Test”.',
+ 'Посилання для учнів (самостійне проходження в браузері) — наступний крок; місце вже передбачено.':'A student link (self-paced in the browser) is the next step; the place for it is reserved.',
+ 'Демо скинуто до початкового стану':'Demo reset to its initial state','Порожній перший вхід: так сторінку побачить нова вчителька':'Empty first visit: this is what a new teacher sees',
+ ': приготування зупинилося — відкрийте сторінку «Приготування»':': baking stopped — open the “Baking” page',
+ 'готове — перегляньте завдання':'is ready — review the tasks',
+ /* demo wrapper: intro, rail, presenter, footer (user order: ALL UI dual-language) */
+ '· дизайн POC':'· design POC',
+ 'Помічник учителя: ви даєте текст — «Граматка» будує з нього готове заняття з перевіреними завданнями. Назва — на честь «Граматки» Пантелеймона Куліша (1857), першого україномовного букваря.':'A teacher’s assistant: you provide a text — Hramatka builds a ready lesson with verified tasks from it. Named after Panteleimon Kulish’s “Hramatka” (1857), the first Ukrainian-language primer.',
+ 'Для кого:':'For whom:','Альона й Тетяна — перші вчительки-пілот':'Alona and Tetiana — the first pilot teachers',
+ 'Версія:':'Version:','чернетка 3 — 2026-07-10 (інтерактивне демо: все клікається, без сервера)':'draft 3 — 2026-07-10 (interactive demo: everything clickable, no server)',
+ 'Мета:':'Goal:','заморозити набір сторінок і їхній зміст':'freeze the set of pages and their content',
+ 'Шлях учителя':'Teacher journey','Службові':'Service','Рішення':'Decisions','Перегляд і збирання':'Review & assembly','Вхід':'Login','пізніше':'later','Що заморожуємо':'What we freeze',
+ 'Демо':'Demo','Демо для показу':'Demo controls','Скинути демо':'Reset the demo','Порожній перший вхід':'Empty first visit','Симулювати збій':'Simulate a failure',
+ 'Збій увімкнено — наступне приготування впаде':'Failure armed — the next bake will fail',
+ 'Нотатки до обговорення (заморозка)':'Notes for discussion (freeze)',
+ 'мова інтерфейсу (вміст занять — завжди українською)':'interface language (lesson content is always Ukrainian)',
+ 'Граматка · дизайн-чернетка для обговорення · зроблено з повагою до вчительок, які вчать українську попри все.':'Hramatka · a design draft for discussion · made with respect for the teachers who teach Ukrainian against all odds.'
+};
+var T_RX=[
+ [/^(\d+) хв$/,'$1 min'],
+ [/^≈ (\d+) завдань — усі з вашого тексту$/,'≈ $1 tasks — all from your text'],
+ [/^([\d\s.,]+) знаків, українська$/,'$1 characters, Ukrainian'],
+ [/^(\d+) чернеток із вашого тексту$/,'$1 drafts from your text'],
+ [/^сьогодні(.*)$/,'today$1'],[/^вчора(.*)$/,'yesterday$1'],[/^позавчора(.*)$/,'two days ago$1'],[/^щойно$/,'just now'],
+ [/^(.+) · Тест → Навчання → Тест · розпочато щойно$/,'$1 · Test → Teach → Test · started just now'],
+ [/^(.+) · Тест → Навчання → Тест · розпочато сьогодні(.*)$/,'$1 · Test → Teach → Test · started today$2'],
+ [/^Вітаємо, (.+)!$/,'Welcome, $1!'],[/^— вітаємо, (.+)!$/,'— welcome, $1!'],
+ [/^(.+) · готово · (\d+) хв$/,'$1 · ready · $2 min'],
+ [/^(.+) · Тест → Навчання → Тест · розпочато (.+)$/,'$1 · Test → Teach → Test · started $2'],
+ [/^У запасі — не входить у (\d+)-хвилинний план$/,'In reserve — outside the $1-minute plan'],
+ [/^З вашого тексту склалося (\d+) завдань із (\d+) запланованих на (\d+) хв — додайте текст, і «Граматка» складе решту\.$/,'Your text yielded $1 of the $2 tasks planned for $3 min — add more text and Hramatka will draft the rest.'],
+ [/^Ще (\d+) чернет(?:ка|ки|ок) не пройшл[аи] перевірку —\s*$/,'$1 more draft(s) failed verification —'],
+ [/^Збережено: типово (\d+) хв \((\d+) завдань\)$/,'Saved: default $1 min ($2 tasks)'],
+ [/^Наступне приготування $/,'The next bake '],[/^зупиниться на «Перевірці»$/,'will stop at “Verification”'],[/^ — покажіть, як виглядає чесна помилка$/,' — show what an honest failure looks like']
+];
+var T_NORM=null;
+function trStr(s){
+  var t=s.trim(); if(!t)return s;
+  if(!T_NORM){T_NORM={};Object.keys(T_EXACT).forEach(function(k){T_NORM[k.replace(/\s+/g,' ')]=T_EXACT[k]})}
+  var k=t.replace(/\s+/g,' ');
+  if(T_NORM[k]!=null)return s.replace(t,T_NORM[k]);
+  var pref=t.match(/^([💡⚙✅⧉🌐🔑🫖↺◻⚡✓]\s*)([\s\S]+)$/u);
+  if(pref){var pk=pref[2].trim().replace(/\s+/g,' ');if(T_NORM[pk]!=null)return s.replace(t,pref[1]+T_NORM[pk])}
+  for(var i=0;i<T_RX.length;i++){if(T_RX[i][0].test(k))return s.replace(t,k.replace(T_RX[i][0],T_RX[i][1]))}
+  return s;
+}
+/* Translate EVERYTHING except lesson content (user order: ALL UI dual-language).
+   Originals cached on first touch (n._uk) → toggling back restores exactly. */
+var TR_CONTENT='.anchorbody,.anchorpaper,.type,.docsheet-title,.stanswer,.stopt,.bankchip';
+function trNode(root){
+  if(!root)return; var en=uiLang()==='en';
+  var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+    var p=n.parentElement; if(!p)return NodeFilter.FILTER_REJECT;
+    if(p.tagName==='SCRIPT'||p.tagName==='STYLE'||p.tagName==='TEXTAREA')return NodeFilter.FILTER_REJECT;
+    if(p.closest(TR_CONTENT))return NodeFilter.FILTER_REJECT;
+    if(p.closest('.dmargin,.mnote,.mtools,.hintbar'))return NodeFilter.FILTER_ACCEPT;
+    if(p.closest('.paper,.dblock'))return NodeFilter.FILTER_REJECT; /* lesson content */
+    return NodeFilter.FILTER_ACCEPT}});
+  var nodes=[];while(w.nextNode())nodes.push(w.currentNode);
+  nodes.forEach(function(n){if(n._uk==null)n._uk=n.nodeValue;n.nodeValue=en?trStr(n._uk):n._uk});
+  if(root.querySelectorAll)[].slice.call(root.querySelectorAll('[placeholder],[title],[data-ph]')).forEach(function(el){
+    ['placeholder','title','data-ph'].forEach(function(a){var v=el.getAttribute(a);if(!v)return;var key='_uk_'+a;if(el[key]==null)el[key]=v;el.setAttribute(a,en?trStr(el[key]):el[key])});
+  });
+}
+
+/* ============ seed content ============ */
+var RENT_TEXT='Як ми шукали квартиру у Львові\n\nТорік восени ми з дружиною вирішили переїхати до Львова. Ми обоє працюємо з дому, тому нам була потрібна квартира з двома кімнатами: одна для роботи, друга для життя. Наш бюджет був невеликий, але й вимоги прості: тихий район, зупинка поруч і сусіди, які не співають уночі.\n\nПершу квартиру ми подивилися в центрі. Вона була красива, але дорога: власник хотів двадцять тисяч гривень на місяць. Друга квартира була дешевша за першу, проте темна й холодна: вікна виходили на стіну сусіднього будинку, а батареї ледве гріли. Третя була найдивніша з усіх — з рожевими стінами й дзеркалом на стелі. Ми ввічливо подякували й швидко пішли.\n\nЧерез два тижні пошуків ми вже майже втратили надію. Аж раптом подруга надіслала нам оголошення: «Здаємо світлу квартиру в тихому районі, поруч парк і зупинка трамвая. Ціна помірна». Ми зателефонували того ж вечора.\n\nВласниця, пані Оксана, виявилася привітною жінкою. Вона показала нам кухню з новою технікою, теплу спальню і навіть місце для велосипедів у дворі. Будинок цегляний, тому взимку в ньому тепліше, ніж у панельному. Єдиний мінус — четвертий поверх без ліфта. Але ми молоді, а сходи корисні для здоровʼя.\n\nМи погодилися одразу. Тепер щоранку я пʼю каву біля вікна й дивлюся на парк. Нова квартира менша, ніж наша стара, зате світліша, тепліша і вдвічі ближча до центру. Найважливіше ми зрозуміли за ці два тижні: ідеального житла не існує, але існує житло, у якому хочеться жити.';
+var KARP_TEXT='Подорож Карпатами\n\nВосени Карпати особливо гарні. Ми з друзями давно мріяли про гори, тому в пʼятницю ввечері спакували рюкзаки, а в суботу рано-вранці виїхали зі Львова. Дорога до Яремча зайняла майже три години: спочатку ми їхали швидкісною трасою, потім — вузькою дорогою через невеликі села, де продають мед і теплі шкарпетки з овечої вовни.\n\nУ Яремчі ми спершу пішли до водоспаду Пробій. Стежка до нього коротка, але камениста, тому потрібне зручне взуття. Біля водоспаду шумить річка Прут: вода в ній холодна навіть улітку. Потім ми піднялися стежкою на полонину. Підйом тривав годину, і з кожним кроком краєвид ставав ширшим: унизу лишилися дахи села, а навколо — тільки гори й небо.\n\nНа полонині ми зустріли вівчаря, який пригостив нас свіжим сиром. Він розповів, що живе тут із травня до вересня, а взимку повертається в село. Ми купили в нього кілограм сиру й пішли назад — цього разу довшою, але легшою дорогою через ліс.\n\nУвечері ми сиділи біля садиби, пили чай із карпатських трав і слухали, як шумить річка. Господиня, пані Марічка, порадила нам приїхати ще раз узимку: тоді в горах тихо, а сніг лежить до самого березня. Ми пообіцяли повернутися — бо той, хто раз побачив осінні Карпати, обовʼязково приїде знову.';
+var VAR_TEXT='Українська кухня: вареники\n\nВареники — одна з найвідоміших українських страв. Їх ліплять у кожному регіоні, а начинка буває різна: картопля, сир, тушкована капуста, а влітку — вишні чи чорниці.\n\nТісто для вареників просте. Візьміть пів кілограма борошна, склянку теплої води та дрібку солі. Замісіть мʼяке тісто й залиште його на пів години під рушником. Тим часом приготуйте начинку: відваріть картоплю, розімніть її та змішайте зі смаженою цибулею.\n\nДалі розкачайте тісто тонким шаром і виріжте склянкою кружечки. На кожен покладіть ложку начинки, зліпіть краї — і вареник готовий. Варіть вареники в підсоленій воді: коли спливуть, зачекайте ще дві-три хвилини й виймайте.\n\nПодавайте вареники гарячими — зі сметаною або зі шкварками. У багатьох родинах їх ліплять разом: хтось розкачує тісто, хтось кладе начинку, а наймолодші рахують, скільки вареників уже на столі. Саме тому кажуть: вареники смакують найкраще тоді, коли їх ліпила вся родина.';
+var LINK_TEXT='Львівський трамвай — один із найстаріших в Україні: перша електрична лінія відкрилася 1894 року. Сьогодні трамваї сполучають центр міста зі спальними районами. Квиток можна купити в застосунку або у водія. Багато львівʼян обирають трамвай, бо він не стоїть у заторах.';
+
+function rentBlocks(){return [
+ /* ===== Т1 (4) ===== */
+ {id:1,phase:1,type:'Правда чи ні',mode:'усно',itemsTF:[{t:'Автор і його дружина працюють з дому.',k:'П'},{t:'Вони шукали квартиру з трьома кімнатами.',k:'Н'},{t:'Перша квартира коштувала двадцять тисяч гривень на місяць.',k:'П'},{t:'Друга квартира була світла й тепла.',k:'Н'},{t:'Оголошення їм надіслала подруга.',k:'П'},{t:'У будинку пані Оксани є ліфт.',k:'Н'},{t:'Нова квартира більша за стару.',k:'Н'}],ans:'1 П · 2 Н (з двома) · 3 П · 4 Н (темна й холодна) · 5 П · 6 Н (без ліфта) · 7 Н (менша, зате світліша й тепліша)',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Перевірте за текстом. Якщо неправда — виправте.</p><div class="q">1. Автор і його дружина працюють з дому. — <b>П / Н</b></div><div class="q">2. Вони шукали квартиру з трьома кімнатами. — <b>П / Н</b></div><div class="q">3. Перша квартира коштувала двадцять тисяч гривень на місяць. — <b>П / Н</b></div><div class="q">4. Друга квартира була світла й тепла. — <b>П / Н</b></div><div class="q">5. Оголошення їм надіслала подруга. — <b>П / Н</b></div><div class="q">6. У будинку пані Оксани є ліфт. — <b>П / Н</b></div><div class="q">7. Нова квартира більша за стару. — <b>П / Н</b></div>'},
+ {id:2,phase:1,type:'Питання до тексту',mode:'усно',ans:'1 — одна кімната для роботи, друга для життя · 2 — 20 000 грн · 3 — темна й холодна, батареї ледве гріли · 4 — подруга · 5 — четвертий поверх без ліфта · 6 — ідеального житла не існує, але існує житло, у якому хочеться жити',mark:'ok',note:null,html:'<div class="q">1. Чому їм потрібна була квартира з двома кімнатами?</div><div class="q">2. Скільки коштувала перша квартира?</div><div class="q">3. Що було не так із другою квартирою?</div><div class="q">4. Хто надіслав їм оголошення?</div><div class="q">5. Який єдиний мінус нової квартири?</div><div class="q">6. Що автор зрозумів за два тижні пошуків?</div>'},
+ {id:3,phase:1,type:'Знайди пару',mode:'усно',pairs:[['помірна (ціна)','невисока'],['привітна','добра до людей'],['цегляний','з цегли'],['власниця','жінка, якій належить квартира'],['оголошення','текст про те, що здають чи продають'],['зупинка','місце, де стає трамвай']],ans:'помірна↔невисока · привітна↔добра до людей · цегляний↔з цегли · власниця↔жінка, якій належить квартира · оголошення↔текст про те, що здають чи продають · зупинка↔місце, де стає трамвай',mark:'warn',note:'означення в правій колонці — наші, не з тексту; погляньте перед заняттям',html:'<div class="q">помірна (ціна) ↔ невисока</div><div class="q">привітна ↔ добра до людей</div><div class="q">цегляний ↔ з цегли</div><div class="q">власниця ↔ жінка, якій належить квартира</div><div class="q">оголошення ↔ текст про те, що здають чи продають</div><div class="q">зупинка ↔ місце, де стає трамвай</div>'},
+ {id:4,phase:1,type:'Оберіть відповідь',mode:'усно',itemsMC:[{q:'Де була перша квартира?',opts:['у центрі','біля парку','за містом'],k:0},{q:'Якою була третя квартира?',opts:['темною','найдивнішою','найдорожчою'],k:1},{q:'На якому поверсі квартира пані Оксани?',opts:['на третьому','на четвертому','на пʼятому'],k:1},{q:'Що автор робить щоранку?',opts:['пʼє каву біля вікна','їде на роботу трамваєм','бігає в парку'],k:0}],ans:'1 — а · 2 — б · 3 — б · 4 — а',mark:'warn',note:'частина варіантів — не з вашого тексту; перевірте, чи доречні',html:'<div class="q">1. Де була перша квартира? &nbsp;а) у центрі · б) біля парку · в) за містом</div><div class="q">2. Якою була третя квартира? &nbsp;а) темною · б) найдивнішою · в) найдорожчою</div><div class="q">3. На якому поверсі квартира пані Оксани? &nbsp;а) на третьому · б) на четвертому · в) на пʼятому</div><div class="q">4. Що автор робить щоранку? &nbsp;а) пʼє каву біля вікна · б) їде на роботу трамваєм · в) бігає в парку</div>'},
+ /* ===== Навчання (5) — фокус: ступені порівняння ===== */
+ {id:5,phase:2,type:'Словничок',mode:'усно',ans:null,mark:'warn',note:'пояснення — наші, не з тексту; перегляньте перед заняттям',html:'<div class="q">переїхати — почати жити в іншому місті чи домі</div><div class="q">вимоги — те, що для нас обовʼязкове</div><div class="q">надія — віра, що все буде добре</div><div class="q">помірний — не великий і не малий (про ціну)</div><div class="q">привітний — добрий і відкритий до людей</div><div class="q">зате — але натомість</div><div class="q">вдвічі — у два рази</div><div class="q">ледве — майже не</div>'},
+ {id:6,phase:2,type:'Пропущене слово',mode:'письмово',bank:['дешевша','найдивніша','тепліше','менша','світліша','ближча'],gaps:[{t:'1. Друга квартира була ⟪⟫ за першу.',k:'дешевша'},{t:'2. Третя була ⟪⟫ з усіх.',k:'найдивніша'},{t:'3. Узимку в цегляному будинку ⟪⟫, ніж у панельному.',k:'тепліше'},{t:'4. Нова квартира ⟪⟫, ніж стара.',k:'менша'},{t:'5. Зате вона ⟪⟫ і тепліша.',k:'світліша'},{t:'6. Вона вдвічі ⟪⟫ до центру.',k:'ближча'}],ans:'1 дешевша · 2 найдивніша · 3 тепліше · 4 менша · 5 світліша · 6 ближча',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Вставте слова: <i>дешевша · найдивніша · тепліше · менша · світліша · ближча</i></p><div class="q">1. Друга квартира була <span class="gap"></span> за першу.</div><div class="q">2. Третя була <span class="gap"></span> з усіх.</div><div class="q">3. Узимку в цегляному будинку <span class="gap"></span>, ніж у панельному.</div><div class="q">4. Нова квартира <span class="gap"></span>, ніж стара.</div><div class="q">5. Зате вона <span class="gap"></span> і тепліша.</div><div class="q">6. Вона вдвічі <span class="gap"></span> до центру.</div>'},
+ {id:7,phase:2,type:'Утворіть форму',mode:'усно',ans:'тепліший · дорожчий · дешевший · світліший · ближчий · дивніший (найдивніший)',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Утворіть вищий ступінь (останнє — і найвищий):</p><div class="q">теплий → ? &nbsp;·&nbsp; дорогий → ? &nbsp;·&nbsp; дешевий → ?</div><div class="q">світлий → ? &nbsp;·&nbsp; близький → ? &nbsp;·&nbsp; дивний → ? / най…?</div>'},
+ {id:8,phase:2,type:'Знайдіть помилку',mode:'письмово',ans:'1 — дешевша, ніж попередня (або: за попередню) · 2 — найкраща · 3 — тепліше · 4 — на четвертому поверсі · 5 — дякуємо власниці',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">У кожному реченні — одна помилка. Виправте.</p><div class="q">1. Ця квартира дешевіша, чим попередня.</div><div class="q">2. Нова квартира сама краща.</div><div class="q">3. Взимку тут більш тепліше.</div><div class="q">4. Ми живемо на четвертому поверху.</div><div class="q">5. Дякуємо власницю за допомогу.</div>'},
+ {id:9,phase:2,type:'Скажіть інакше',mode:'усно',ans:'помірна · цегляний · вдвічі · ледве гріли · привітна',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Знайдіть у тексті слово чи вислів:</p><div class="q">«невисока ціна» → ? &nbsp;·&nbsp; «будинок із цегли» → ?</div><div class="q">«у два рази» → ? &nbsp;·&nbsp; «майже не гріли» → ?</div><div class="q">«добра й відкрита до людей» → ?</div>'},
+ /* ===== Т2 (3) ===== */
+ {id:10,phase:3,type:'Продовжте речення',mode:'усно',ans:'вільні відповіді — перевірте форми порівняння (ніж… / за…)',mark:'ok',note:null,html:'<div class="q">1. Моя квартира менша, ніж …</div><div class="q">2. Узимку вдома тепліше, ніж …</div><div class="q">3. Мій район зручніший за …</div><div class="q">4. Ідеального житла не існує, але …</div>'},
+ {id:11,phase:3,type:'Розіграйте діалог',mode:'усно',ans:'вільна відповідь (в 1-на-1 учитель — пані Оксана)',mark:'ok',note:null,html:'<div class="q">Ви телефонуєте пані Оксані щодо оголошення. Домовтеся про огляд квартири:</div><div class="q">· запитайте про ціну й комунальні послуги;<br>· уточніть поверх і чи є ліфт;<br>· запитайте про сусідів;<br>· домовтеся про день і час огляду.</div>'},
+ {id:12,phase:3,type:'Коротке письмо',mode:'вдома',ans:'вільна відповідь — щонайменше три порівняння + два слова зі словничка',mark:'ok',note:null,html:'<div class="q">Опишіть квартиру або будинок вашої мрії (7–8 речень). Ужийте щонайменше три порівняння («більший, ніж…», «зручніша за…», «най…») і два слова зі словничка.</div>'}
+]}
+var VAR_SVG='<svg viewBox="0 0 340 210" style="max-width:320px;width:100%;display:block;margin:6px auto 2px" role="img" aria-label="Миска вареників зі сметаною і кропом">'
+ +'<ellipse cx="170" cy="172" rx="140" ry="26" fill="#eee6d6"/>'
+ +'<path d="M48 128 a122 66 0 0 0 244 0 z" fill="#7d8fae"/>'
+ +'<ellipse cx="170" cy="128" rx="122" ry="30" fill="#96a8c6"/>'
+ +'<ellipse cx="170" cy="126" rx="108" ry="24" fill="#f4ecdc"/>'
+ +'<path d="M92 120 a24 24 0 0 1 48 0 q-24 11 -48 0 z" fill="#f8efd6" stroke="#d8c7a4" stroke-width="2"/>'
+ +'<path d="M146 112 a26 26 0 0 1 52 0 q-26 12 -52 0 z" fill="#f8efd6" stroke="#d8c7a4" stroke-width="2"/>'
+ +'<path d="M204 120 a24 24 0 0 1 48 0 q-24 11 -48 0 z" fill="#f8efd6" stroke="#d8c7a4" stroke-width="2"/>'
+ +'<path d="M96 118 q20 -20 40 0 M150 110 q22 -22 44 0 M208 118 q20 -20 40 0" fill="none" stroke="#d8c7a4" stroke-width="2" stroke-dasharray="3 4" stroke-linecap="round"/>'
+ +'<path d="M150 104 q10 -12 24 -6 q14 6 10 16 q-4 10 -20 8 q-16 -2 -14 -18 z" fill="#fffdf6"/>'
+ +'<g fill="#5d7a4a"><circle cx="132" cy="112" r="2"/><circle cx="178" cy="100" r="2"/><circle cx="196" cy="116" r="2"/><circle cx="156" cy="120" r="2"/><circle cx="222" cy="112" r="2"/></g>'
+ +'<path d="M140 74 q6 -12 0 -22 M172 70 q-6 -12 0 -24 M202 74 q6 -12 0 -22" fill="none" stroke="#c9c2b4" stroke-width="3" stroke-linecap="round" opacity=".7"/>'
+ +'</svg>'
+ +'<p style="font-size:11.5px;color:var(--ink-soft);text-align:center;margin:0 0 8px">Ілюстрація-прототип · фаза 2: фото у завданнях</p>';
+function varBlocks(){return [
+ /* ===== Т1 (3) ===== */
+ {id:1,phase:1,type:'Опишіть фото',mode:'усно',ans:'вільні відповіді — лексика: миска, тісто, начинка, сметана, кріп; порівняйте з традиціями родини учня',mark:'warn',note:'фото в завданнях — тип із фази 2; це прототип для обговорення',html:VAR_SVG+'<div class="q">1. Що ви бачите на фото?</div><div class="q">2. Яка начинка може бути всередині цих вареників?</div><div class="q">3. Із чим їх подають на фото?</div><div class="q">4. А як подають вареники у вашій родині?</div>'},
+ {id:2,phase:1,type:'Правда чи ні',mode:'усно',itemsTF:[{t:'Начинка для вареників буває тільки солона.',k:'Н'},{t:'Тісто залишають на пів години під рушником.',k:'П'},{t:'Кружечки з тіста вирізають ножем.',k:'Н'},{t:'Коли вареники спливуть, їх одразу виймають.',k:'Н'},{t:'Кажуть, що вареники смакують найкраще, коли їх ліпила вся родина.',k:'П'}],ans:'1 Н (влітку — вишні чи чорниці) · 2 П · 3 Н (склянкою) · 4 Н (ще дві-три хвилини) · 5 П',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Перевірте за текстом. Якщо неправда — виправте.</p><div class="q">1. Начинка для вареників буває тільки солона. — <b>П / Н</b></div><div class="q">2. Тісто залишають на пів години під рушником. — <b>П / Н</b></div><div class="q">3. Кружечки з тіста вирізають ножем. — <b>П / Н</b></div><div class="q">4. Коли вареники спливуть, їх одразу виймають. — <b>П / Н</b></div><div class="q">5. Кажуть, що вареники смакують найкраще, коли їх ліпила вся родина. — <b>П / Н</b></div>'},
+ {id:3,phase:1,type:'Питання до тексту',mode:'усно',ans:'1 — пів кілограма борошна, склянка теплої води, дрібка солі · 2 — вишні чи чорниці · 3 — на пів години · 4 — коли спливуть, ще дві-три хвилини · 5 — зі сметаною або зі шкварками',mark:'ok',note:null,html:'<div class="q">1. Що потрібно для тіста?</div><div class="q">2. Яка начинка буває влітку?</div><div class="q">3. На скільки часу залишають тісто під рушником?</div><div class="q">4. Коли вареники готові?</div><div class="q">5. Із чим подають вареники?</div>'},
+ /* ===== Навчання (4) — фокус: наказовий спосіб ===== */
+ {id:4,phase:2,type:'Словничок',mode:'усно',ans:null,mark:'warn',note:'пояснення — наші, не з тексту; перегляньте перед заняттям',html:'<div class="q">начинка — те, що кладуть усередину</div><div class="q">дрібка — дуже мала кількість</div><div class="q">замісити — приготувати тісто, змішавши все</div><div class="q">розкачати — зробити тісто тонким</div><div class="q">зліпити — зʼєднати краї пальцями</div><div class="q">шкварки — смажені шматочки сала</div>'},
+ {id:5,phase:2,type:'Пропущене слово',mode:'письмово',bank:['Замісіть','Розкачайте','покладіть','зліпіть','Варіть'],gaps:[{t:'1. ⟪⟫ мʼяке тісто й залиште його під рушником.',k:'Замісіть'},{t:'2. ⟪⟫ тісто тонким шаром.',k:'Розкачайте'},{t:'3. На кожен кружечок ⟪⟫ ложку начинки.',k:'покладіть'},{t:'4. Потім ⟪⟫ краї — і вареник готовий.',k:'зліпіть'},{t:'5. ⟪⟫ вареники в підсоленій воді.',k:'Варіть'}],ans:'1 Замісіть · 2 Розкачайте · 3 покладіть · 4 зліпіть · 5 Варіть',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Вставте дієслова: <i>Замісіть · Розкачайте · покладіть · зліпіть · Варіть</i></p><div class="q">1. <span class="gap"></span> мʼяке тісто й залиште його під рушником.</div><div class="q">2. <span class="gap"></span> тісто тонким шаром.</div><div class="q">3. На кожен кружечок <span class="gap"></span> ложку начинки.</div><div class="q">4. Потім <span class="gap"></span> краї — і вареник готовий.</div><div class="q">5. <span class="gap"></span> вареники в підсоленій воді.</div>'},
+ {id:6,phase:2,type:'Утворіть форму',mode:'усно',ans:'візьміть · залиште · змішайте · зачекайте · подавайте',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Утворіть наказовий спосіб (ви):</p><div class="q">взяти → ? &nbsp;·&nbsp; залишити → ?</div><div class="q">змішати → ? &nbsp;·&nbsp; зачекати → ?</div><div class="q">подавати → ?</div>'},
+ {id:7,phase:2,type:'Знайди пару',mode:'усно',pairs:[['тісто','замісіть і залиште під рушником'],['картопля','відваріть і розімніть'],['кружечки','виріжте склянкою'],['краї','зліпіть — і вареник готовий'],['сметана','подавайте з нею гарячі вареники']],ans:'тісто↔замісіть і залиште · картопля↔відваріть і розімніть · кружечки↔виріжте склянкою · краї↔зліпіть · сметана↔подавайте з нею',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Зʼєднайте продукт і дію (за текстом):</p><div class="q">тісто ↔ замісіть і залиште під рушником</div><div class="q">картопля ↔ відваріть і розімніть</div><div class="q">кружечки ↔ виріжте склянкою</div><div class="q">краї ↔ зліпіть — і вареник готовий</div><div class="q">сметана ↔ подавайте з нею гарячі вареники</div>'},
+ /* ===== Т2 (2) ===== */
+ {id:8,phase:3,type:'Розіграйте діалог',mode:'усно',ans:'вільна відповідь (в 1-на-1 учитель — «учень-кухар») — перевірте наказовий спосіб',mark:'ok',note:null,html:'<div class="q">Навчіть друга ліпити вареники:</div><div class="q">· поясніть, що взяти для тіста;<br>· розкажіть по кроках, що робити (візьміть, замісіть, розкачайте…);<br>· порадьте начинку;<br>· скажіть, із чим подавати.</div>'},
+ {id:9,phase:3,type:'Коротке письмо',mode:'вдома',ans:'вільна відповідь — рецепт із щонайменше пʼятьма дієсловами в наказовому способі',mark:'ok',note:null,html:'<div class="q">Опишіть страву вашої родини як рецепт (7–8 речень). Ужийте щонайменше пʼять дієслів у наказовому способі: <i>візьміть, змішайте, додайте, варіть, подавайте…</i></div>'}
+]}
+function varRejected(){return [
+ {type:'Правда чи ні',html:'<div class="q">Вареники варять рівно десять хвилин. — П / Н</div>',reason:'не пройшло перевірку: твердження не випливає з тексту однозначно'}
+]}
+function rentRejected(){return [
+ {type:'Правда чи ні',html:'<div class="q">Пані Оксана співає вночі. — Правда / Неправда</div>',reason:'не пройшло перевірку: у тексті про це не сказано — твердження неможливо перевірити'},
+ {type:'Пропущене слово',html:'<div class="q">Ми зателефонували того ж <span class="gap"></span>.</div>',reason:'занадто просте: відповідь стоїть у тексті поруч'}
+]}
+function karpBlocks(){return [
+ /* ===== Т1 (4) ===== */
+ {id:1,phase:1,type:'Питання до тексту',mode:'усно',ans:'1 — у суботу рано-вранці · 2 — майже три години · 3 — коротка, але камениста · 4 — вівчаря · 5 — кілограм сиру · 6 — приїхати ще раз узимку',mark:'ok',note:null,html:'<div class="q">1. Коли друзі виїхали зі Львова?</div><div class="q">2. Скільки зайняла дорога до Яремча?</div><div class="q">3. Якою була стежка до водоспаду?</div><div class="q">4. Кого друзі зустріли на полонині?</div><div class="q">5. Що вони в нього купили?</div><div class="q">6. Що порадила пані Марічка?</div>'},
+ {id:2,phase:1,type:'Правда чи ні',mode:'усно',itemsTF:[{t:'Друзі виїхали зі Львова в пʼятницю ввечері.',k:'Н'},{t:'Дорога до Яремча зайняла майже три години.',k:'П'},{t:'Вода в Пруті влітку тепла.',k:'Н'},{t:'Підйом на полонину тривав годину.',k:'П'},{t:'Вівчар живе на полонині цілий рік.',k:'Н'},{t:'Назад друзі йшли тією самою стежкою.',k:'Н'}],ans:'1 Н (виїхали в суботу) · 2 П · 3 Н (холодна навіть улітку) · 4 П · 5 Н (з травня до вересня) · 6 Н (довшою, але легшою дорогою через ліс)',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Перевірте за текстом. Якщо неправда — виправте.</p><div class="q">1. Друзі виїхали зі Львова в пʼятницю ввечері. — <b>П / Н</b></div><div class="q">2. Дорога до Яремча зайняла майже три години. — <b>П / Н</b></div><div class="q">3. Вода в Пруті влітку тепла. — <b>П / Н</b></div><div class="q">4. Підйом на полонину тривав годину. — <b>П / Н</b></div><div class="q">5. Вівчар живе на полонині цілий рік. — <b>П / Н</b></div><div class="q">6. Назад друзі йшли тією самою стежкою. — <b>П / Н</b></div>'},
+ {id:3,phase:1,type:'Знайди пару',mode:'усно',pairs:[['зі Львова','виїхали рано-вранці'],['до водоспаду','пішли каменистою стежкою'],['на полонину','піднялися за годину'],['у вівчаря','купили кілограм сиру'],['біля садиби','пили чай із трав']],ans:'зі Львова↔виїхали рано-вранці · до водоспаду↔пішли каменистою стежкою · на полонину↔піднялися за годину · у вівчаря↔купили кілограм сиру · біля садиби↔пили чай із трав',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Зʼєднайте місце і дію (за текстом):</p><div class="q">зі Львова ↔ виїхали рано-вранці</div><div class="q">до водоспаду ↔ пішли каменистою стежкою</div><div class="q">на полонину ↔ піднялися за годину</div><div class="q">у вівчаря ↔ купили кілограм сиру</div><div class="q">біля садиби ↔ пили чай із трав</div>'},
+ {id:4,phase:1,type:'Пропущене слово',mode:'письмово',bank:['зі','до','через','на','біля','із'],gaps:[{t:'1. Ми виїхали ⟪⟫ Львова рано-вранці.',k:'зі'},{t:'2. Дорога ⟪⟫ Яремча зайняла три години.',k:'до'},{t:'3. Ми їхали ⟪⟫ невеликі села.',k:'через'},{t:'4. Потім ми піднялися ⟪⟫ полонину.',k:'на'},{t:'5. Увечері ми сиділи ⟪⟫ садиби.',k:'біля'},{t:'6. Ми пили чай ⟪⟫ карпатських трав.',k:'із'}],ans:'1 зі · 2 до · 3 через · 4 на · 5 біля · 6 із',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Вставте прийменники: <i>зі · до · через · на · біля · із</i></p><div class="q">1. Ми виїхали <span class="gap"></span> Львова рано-вранці.</div><div class="q">2. Дорога <span class="gap"></span> Яремча зайняла три години.</div><div class="q">3. Ми їхали <span class="gap"></span> невеликі села.</div><div class="q">4. Потім ми піднялися <span class="gap"></span> полонину.</div><div class="q">5. Увечері ми сиділи <span class="gap"></span> садиби.</div><div class="q">6. Ми пили чай <span class="gap"></span> карпатських трав.</div>'},
+ /* ===== Навчання (5) — фокус: дієслова руху з прийменниками ===== */
+ {id:5,phase:2,type:'Словничок',mode:'усно',ans:null,mark:'warn',note:'пояснення — наші, не з тексту; перегляньте перед заняттям',html:'<div class="q">полонина — високе гірське пасовище, де влітку пасуть овець</div><div class="q">стежка — вузька дорога для пішоходів</div><div class="q">каменистий — укритий камінням</div><div class="q">краєвид — те, що видно навколо</div><div class="q">вівчар — людина, яка пасе овець</div><div class="q">садиба — сільський будинок, де приймають гостей</div><div class="q">спакувати — скласти речі в рюкзак чи валізу</div><div class="q">пригостити — дати щось смачне безкоштовно</div>'},
+ {id:6,phase:2,type:'Оберіть відповідь',mode:'усно',itemsMC:[{q:'Що продають у селах по дорозі?',opts:['мед і теплі шкарпетки','сир і хліб','яблука і груші'],k:0},{q:'Яка вода в Пруті?',opts:['тепла','холодна навіть улітку','каламутна'],k:1},{q:'Коли вівчар повертається в село?',opts:['навесні','улітку','узимку'],k:2},{q:'Що радить пані Марічка?',opts:['приїхати взимку','приїхати навесні','залишитися ще на тиждень'],k:0}],ans:'1 — а · 2 — б · 3 — в · 4 — а',mark:'warn',note:'частина варіантів — не з вашого тексту; перевірте, чи доречні',html:'<div class="q">1. Що продають у селах по дорозі? &nbsp;а) мед і теплі шкарпетки · б) сир і хліб · в) яблука і груші</div><div class="q">2. Яка вода в Пруті? &nbsp;а) тепла · б) холодна навіть улітку · в) каламутна</div><div class="q">3. Коли вівчар повертається в село? &nbsp;а) навесні · б) улітку · в) узимку</div><div class="q">4. Що радить пані Марічка? &nbsp;а) приїхати взимку · б) приїхати навесні · в) залишитися ще на тиждень</div>'},
+ {id:7,phase:2,type:'Скажіть інакше',mode:'усно',ans:'рано-вранці · спакували (рюкзаки) · пригостив · стежка · пообіцяли повернутися',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Знайдіть у тексті слово чи вислів:</p><div class="q">«дуже рано» → ? &nbsp;·&nbsp; «склали речі» → ?</div><div class="q">«дав нам скуштувати» → ? &nbsp;·&nbsp; «вузька дорога для пішоходів» → ?</div><div class="q">«сказали, що приїдуть знову» → ?</div>'},
+ {id:8,phase:2,type:'Знайди пару',mode:'усно',pairs:[['рюкзак','речі для походу'],['термос','гарячий чай у дорозі'],['ліхтарик','світло ввечері'],['мапа','щоб не заблукати'],['зручне взуття','для каменистої стежки']],ans:'рюкзак↔речі для походу · термос↔гарячий чай у дорозі · ліхтарик↔світло ввечері · мапа↔щоб не заблукати · зручне взуття↔для каменистої стежки',mark:'warn',note:'пари складено поза текстом — тематичний словник походу; погляньте перед заняттям',html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Що для чого в поході? Зʼєднайте:</p><div class="q">рюкзак ↔ речі для походу</div><div class="q">термос ↔ гарячий чай у дорозі</div><div class="q">ліхтарик ↔ світло ввечері</div><div class="q">мапа ↔ щоб не заблукати</div><div class="q">зручне взуття ↔ для каменистої стежки</div>'},
+ {id:9,phase:2,type:'Продовжте речення',mode:'усно',ans:'вільні відповіді — за текстом: 1 …ширшим · 2 …легшою дорогою через ліс · 3 …лежить до самого березня · 4 …обовʼязково приїде знову',mark:'ok',note:null,html:'<div class="q">1. З кожним кроком краєвид ставав …</div><div class="q">2. Назад ми пішли довшою, але …</div><div class="q">3. Узимку в горах тихо, а сніг …</div><div class="q">4. Той, хто раз побачив осінні Карпати, …</div>'},
+ /* ===== Т2 (3) ===== */
+ {id:10,phase:3,type:'Правда чи ні',mode:'усно',itemsTF:[{t:'Вівчар пригостив друзів свіжим сиром.',k:'П'},{t:'Друзі купили два кілограми сиру.',k:'Н'},{t:'Пані Марічка — господиня садиби.',k:'П'},{t:'Сніг у горах лежить до самого травня.',k:'Н'},{t:'Друзі пообіцяли повернутися.',k:'П'}],ans:'1 П · 2 Н (кілограм) · 3 П · 4 Н (до березня) · 5 П',mark:'ok',note:null,html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Перевіримо ще раз — уже без тексту перед очима:</p><div class="q">1. Вівчар пригостив друзів свіжим сиром. — <b>П / Н</b></div><div class="q">2. Друзі купили два кілограми сиру. — <b>П / Н</b></div><div class="q">3. Пані Марічка — господиня садиби. — <b>П / Н</b></div><div class="q">4. Сніг у горах лежить до самого травня. — <b>П / Н</b></div><div class="q">5. Друзі пообіцяли повернутися. — <b>П / Н</b></div>'},
+ {id:11,phase:3,type:'Розіграйте діалог',mode:'усно',ans:'вільна відповідь (в 1-на-1 учитель — друг) — перевірте прийменники руху: до, через, на, з',mark:'ok',note:null,html:'<div class="q">Ви телефонуєте другові й запрошуєте його в Карпати на вихідні:</div><div class="q">· розкажіть, куди поїдете і як туди дістатися;<br>· домовтеся, хто що бере (рюкзак, термос, мапа);<br>· узгодьте день і час виїзду;<br>· вирішіть, що робитимете, якщо піде дощ.</div>'},
+ {id:12,phase:3,type:'Коротке письмо',mode:'вдома',ans:'вільна відповідь — щонайменше пʼять дієслів руху з прийменниками (поїхати до…, пройти через…, піднятися на…, повернутися з…, приїхати знову)',mark:'ok',note:null,html:'<div class="q">Опишіть подорож, яку ви памʼятаєте (7–8 речень). Ужийте щонайменше пʼять дієслів руху з прийменниками: <i>поїхати до…, пройти через…, піднятися на…, повернутися з…, приїхати знову</i>.</div>'}
+]}
+
+var SEED_V=7; // bump when seed content changes → stored sessions auto-refresh
+function seed(){return {
+  seedV:SEED_V,
+  uiLang:'uk',
+  teacher:'Марія',
+  defaults:{level:'B1',method:'ttt',duration:60},
+  failNext:false, nextId:5,
+  lessons:[
+   {id:1,title:'Як ми шукали квартиру у Львові',level:'B1',focus:'вищий ступінь прикметників',duration:90,count:12,status:'ready',accepted:false,when:'сьогодні, 14:20',anchor:RENT_TEXT,blocks:rentBlocks(),rejected:rentRejected(),showRejected:false,bake:{step:4,failed:false}},
+   {id:2,title:'Подорож Карпатами',level:'B1',focus:'дієслова руху з прийменниками',duration:60,count:9,status:'baking',accepted:false,when:'щойно',anchor:KARP_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:1,failed:false},pending:karpBlocks},
+   {id:3,title:'Українська кухня: вареники',level:'B1',focus:'наказовий спосіб',duration:45,count:6,status:'ready',accepted:false,when:'сьогодні, 11:05',anchor:VAR_TEXT,blocks:varBlocks(),rejected:varRejected(),showRejected:false,bake:{step:4,failed:false}},
+   {id:4,title:'Львівський трамвай',level:'B1',focus:'',duration:45,count:6,status:'draft',accepted:false,when:'вчора',anchor:LINK_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:0,failed:false}}
+  ]};
+}
+
+/* ============ state ============ */
+var S;
+try{S=JSON.parse(sessionStorage.getItem('hramatka-demo')||'null')}catch(e){S=null}
+if(!S||!S.lessons||S.seedV!==SEED_V){S=seed()}
+S.lessons.forEach(function(l){if(l.status==='baking'&&!l.pending){l.pending=karpBlocks}if(!l.duration){l.duration=45}if(!l.count||l.count<6){l.count=durInfo(l.duration).tasks}});
+if(!S.defaults.duration){S.defaults.duration=60}
+function save(){try{var c=Object.assign({},S);c=JSON.parse(JSON.stringify(S,function(k,v){return (k==='pending'||k==='_st')?undefined:v}));sessionStorage.setItem('hramatka-demo',JSON.stringify(c))}catch(e){}}
+function lesson(id){for(var i=0;i<S.lessons.length;i++)if(S.lessons[i].id===+id)return S.lessons[i];return null}
+function lastBy(st){for(var i=0;i<S.lessons.length;i++)if(S.lessons[i].status===st)return S.lessons[i];return null}
+
+/* ============ tiny task generator (from HER text only) ============ */
+function sentences(t){return t.replace(/\s+/g,' ').split(/(?<=[.!?…])\s+/).map(function(s){return s.trim()}).filter(function(s){return s.length>15})}
+function genBlocks(text,count,focus){
+  var ss=sentences(text), bl=[], id=1;
+  /* Тест 1: правда/ні по парах речень — до 2 блоків */
+  for(var i=0;i+1<ss.length&&i<4&&id<=2;i+=2){
+    bl.push({id:id++,phase:1,type:'Правда чи ні',mode:'усно',itemsTF:[{t:ss[i],k:'П'},{t:ss[i+1],k:'П'}],ans:'обидва твердження — правда (речення з вашого тексту)',mark:'ok',note:null,
+      html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Перевірте за текстом: правда чи неправда?</p><div class="q">'+(i+1)+'. '+esc(ss[i])+' — <b>Правда / Неправда</b></div><div class="q">'+(i+2)+'. '+esc(ss[i+1])+' — <b>Правда / Неправда</b></div>'});
+  }
+  /* Навчання: пропущене слово — до 3 різних речень; перший блок ⚠ */
+  var cloze=0;
+  for(var j=1;j<ss.length&&cloze<3;j++){
+    var sent=ss[j];
+    var words=sent.split(' ').filter(function(w){return w.replace(/[^А-Яа-яЇїІіЄєҐґʼ'-]/g,'').length>=6});
+    if(!words.length)continue;
+    var gapw=words.sort(function(a,b){return b.length-a.length})[0];
+    var others=text.split(/\s+/).map(function(w){return w.replace(/[^А-Яа-яЇїІіЄєҐґʼ'-]/g,'')}).filter(function(w){return w.length>=6&&w.toLowerCase()!==gapw.replace(/[^А-Яа-яЇїІіЄєҐґʼ'-]/g,'').toLowerCase()});
+    var uniq=[];others.forEach(function(w){if(uniq.indexOf(w)<0)uniq.push(w)});
+    var opts=[gapw.replace(/[^А-Яа-яЇїІіЄєҐґʼ'-]/g,'')].concat(uniq.slice(0,3));
+    bl.push({id:id++,phase:2,type:'Пропущене слово',mode:'письмово',bank:opts.slice(),gaps:[{t:sent.replace(gapw,'⟪⟫'),k:opts[0]}],ans:opts[0],mark:cloze===0?'warn':'ok',note:cloze===0?'варіанти взято з вашого тексту — перегляньте, чи всі доречні':null,
+      html:'<div class="q">'+esc(sent.replace(gapw,'⟪⟫')).replace('⟪⟫','<span class="gap"></span>')+' <i style="color:var(--ink-soft)">('+opts.map(esc).join(' · ')+')</i></div>'});
+    cloze++;
+  }
+  if(ss.length>=3){
+    var three=[ss[0],ss[1],ss[2]], shuf=[three[2],three[0],three[1]];
+    bl.push({id:id++,phase:2,type:'Порядок речень',mode:'усно',ans:'Б → В → А (як у тексті)',mark:'ok',note:null,
+      html:'<p style="font-size:13px;color:var(--ink-soft);margin:0 0 4px">Розставте речення у правильному порядку (як у тексті).</p>'+shuf.map(function(s,i){return '<div class="q">'+String.fromCharCode(1040+i)+'. '+esc(s)+'</div>'}).join('')});
+  }
+  /* Тест 2: письмо завжди */
+  bl.push({id:id++,phase:3,type:'Коротке письмо',mode:'вдома',ans:'вільна відповідь',mark:'ok',note:null,
+    html:'<div class="q">Напишіть 5–6 речень за темою тексту.'+(focus?' Ужийте: <b>'+esc(focus)+'</b>.':'')+'</div>'});
+  /* понад план нічого не ріжемо — зайве покаже «запас» у перегляді */
+  return bl;
+}
+
+/* ============ bake engine ============ */
+var timers={};
+function startBake(l){
+  stopBake(l.id);
+  l.status='baking'; l.bake={step:0,failed:false}; l.when='щойно'; save(); renderIfVisible(['dash','bake']);
+  function tick(){
+    if(l.bake.failed)return;
+    if(l.bake.step===2&&S.failNext){S.failNext=false;l.bake.failed=true;syncFailBtn();save();renderIfVisible(['bake','dash']);toast('<b>'+esc(l.title)+'</b>: приготування зупинилося — відкрийте сторінку «Приготування»');return}
+    l.bake.step++;
+    if(l.bake.step>=3){
+      l.demoGen=!l.pending;
+      l.blocks=(l.pending?l.pending():genBlocks(l.anchor,l.count,l.focus));
+      delete l.pending;
+      if(!l.rejected.length&&l.id!==1){l.rejected=[{type:'Правда чи ні',html:'<div class="q">(чернетка, що не пройшла перевірку)</div>',reason:'не пройшло перевірку: твердження не випливає з тексту однозначно'}]}
+      l.bake.step=4;l.status='ready';l.accepted=false;l.when=nowLabel();save();
+      renderIfVisible(['bake','dash']);
+      toast('✅ <b>«'+esc(l.title)+'»</b> готове — перегляньте завдання');
+      delete timers[l.id];
+      return;
+    }
+    save();renderIfVisible(['bake']);
+    timers[l.id]=setTimeout(tick,2400);
+  }
+  timers[l.id]=setTimeout(tick,1600);
+}
+function stopBake(id){if(timers[id]){clearTimeout(timers[id]);delete timers[id]}}
+
+/* ============ router ============ */
+var route={name:'dash',id:null};
+var draft=null; /* builder working copy */
+function go(name,id){
+  route={name:name,id:id||null};
+  if(name==='new'){var src=id?lesson(id):null;
+    draft={fromId:src?src.id:null,tab:'text',text:src?src.anchor:'',level:src?src.level:S.defaults.level,method:src?'ttt':S.defaults.method,focus:src?src.focus:'',duration:src?(src.duration||45):(S.defaults.duration||60),url:''};}
+  render();
+  window.scrollTo({top:0});
+}
+function renderIfVisible(names){if(names.indexOf(route.name)>=0){if(document.activeElement&&(document.activeElement.isContentEditable||document.activeElement.tagName==='TEXTAREA'))return;render()}}
+
+/* ============ screen chrome (title + notes per screen) ============ */
+var CHROME={
+ dash:{n:'1 · Мої заняття',role:'Домашня сторінка. Одна відповідь на одне питання: «що з моїми заняттями?» — і одна велика кнопка.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li>Порожній перший вхід: коротке привітання + та сама одна кнопка (кнопка «◻» ліворуч показує це).</li><li>Статуси лише три: <b>готово · готується · чернетка</b>. Без відсотків і прогрес-барів.</li><li>Кожен рядок клікається і веде туди, де заняття зараз «живе».</li><li class="q">Питання до вчительок: чого тут бракує, щоб це була ваша «домашня» сторінка?</li>'},
+ new:{n:'2 · Нове заняття',role:'Головна сторінка продукту. Учителька дає текст-якір, обирає методику — все інше робить «Граматка».',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> якір — основа заняття, він домінує як аркуш документа; налаштування — вузька бічна панель.</li><li><b>Правка 2 (користувач, 2026-07-10):</b> замість лічильника завдань — <b>тривалість 45 / 60 / 90 хв</b>; «Граматка» сама планує <b>6 / 9 / 12</b> завдань (мінімум 6). На 90 хв — свідомо не подвоєння 45-ти: частина завдань довші (письмо, діалог), плюс перерва.</li><li>Пишіть або вставте будь-який текст — завдання буде складено лише з нього (спробуйте!).</li><li>Якір — завжди від учительки (текст або посилання). Фото сторінки — наступна версія.</li><li class="q">Питання до вчительок: чи зручно писати/вставляти текст саме так? Яких полів бракує праворуч?</li>'},
+ bake:{n:'3 · Приготування',role:'Чесне очікування: показуємо справжні етапи, а не вигаданий відсоток. Можна піти — результат нікуди не дінеться.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li>Етапи справжні (так працює система) — не анімація для заспокоєння.</li><li>Перейдіть на іншу сторінку — приготування триває, і ви отримаєте сповіщення (спробуйте).</li><li>Кнопка «⚡» ліворуч показує, як виглядає збій: людське пояснення + «Спробувати ще раз». Без кодів помилок.</li>'},
+ review:{n:'4 · Перегляд і збирання',role:'Серце продукту. Завдання розкладені за частинами методики; біля кожного — чесна позначка перевірки. Учителька пересуває, редагує, викидає — і приймає.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> заняття домінує на екрані як документ (аркуш Word); інструменти й позначки — на полях.</li><li><b>Правка 3 (користувач, 2026-07-10):</b> «Граматка» завжди готує повний 90-хвилинний план; перемикач тривалості просто тут ріже його до 9 чи 6 завдань на очах — і повертає назад. Зрізане не зникає: воно «у запасі» й пропонується на домашнє; кнопка «включити в план» повертає завдання. Покажіть це наживо!</li><li>Кожне завдання має позначку <b>усно / письмово / вдома</b> — для 1-на-1 видно потік заняття; «у парі» = учитель у ролі співрозмовника.</li><li>У прикладі — дванадцять завдань, кожне іншого типу (правда/ні ×7 тверджень · питання ×6 · пари ×6 · вибір ×4 · словничок ×8 · пропущені слова ×6 · утворіть форму ×6 · помилки ×5 · скажіть інакше ×5 · продовжте ×4 · діалог-сценарій · письмо), з відповідями. Повний каталог типів — питання до обох вчительок: яких бракує?</li><li>Три стани позначок: <span class="chip ok">✓ перевірено</span> <span class="chip warn">⚠ погляньте</span> <span class="chip bad">✕ відхилено</span>. «⚠» ніколи не приймається автоматично — натисніть «прийняти» самі.</li><li>✎ — редагувати просто в документі · ↑↓ — пересунути (і між частинами) · ✕ — вилучити (нічого не зникає мовчки).</li><li class="q">Питання до вчительок: чи зручні позначки на полях? Спробуйте відредагувати завдання.</li>'},
+ final:{n:'5 · Готове заняття',role:'Те, що йде в клас: чиста сторінка заняття — на екран або на друк.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> готове заняття — аркуш по центру, як роздруківка; інтерфейс навколо зникає (у друці — буквально: спробуйте «Друк»).</li><li><b>🔑 Відповіді — для вчителя:</b> кнопка вгорі додає блок відповідей до кожного завдання (з `answer_key` у схемі). Сховайте перед друком для учнів.</li><li><b>Домашнє завдання</b> — те, що не влізло в обрану тривалість, автоматично пропонується наприкінці аркуша (за бажанням).</li><li><b>Два способи забрати заняття</b> (обидва в тулбарі — це прототипи для обговорення): <b>«⧉ Копіювати»</b> кладе все заняття чистим текстом для вашого документа (Word/Docs; з відповідями, якщо ввімкнені 🔑), а <b>«👩‍🎓 режим учня»</b> — прототип інтерактивного посилання: правда/ні і вибір клікаються, пропуски заповнюються з банку слів, пари зʼєднуються (готові віджети Learn Ukrainian); відкриті питання — поле відповіді + «показати відповідь».</li><li><b>Екрани вчителя і учня:</b> банер угорі каже, чий це екран; на «екрані учня» немає 🔑 відповідей і жодних підказок — безпечно ділитися в Zoom. Хедер теж показує роль (зелений бейдж УЧЕНЬ).</li><li class="q">Питання до вчительок: як ви насправді користуватиметеся готовим заняттям — друк · копіювання у свій документ · інтерактивне посилання? Що з цього зайве?</li>'},
+ settings:{n:'6 · Налаштування',role:'Мінімум: типові значення, щоб «Нове заняття» щоразу не питало те саме.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії — мінімальні</span>',notes:'<li>Змініть імʼя чи типовий рівень — і подивіться, як зміниться шапка та «Нове заняття».</li><li>Це все. Жодних тарифів, інтеграцій, сповіщень — поки продукт не заслужить на складніше.</li>'},
+ login:{n:'7 · Вхід — відкладено',role:'У пілоті входу немає: посилання + один код доступу. Сторінка спроєктована, щоб потім не перемальовувати, але в POC її не буде.',tags:'<span class="tag later">Пізніше</span>',notes:'<li>Для демо: введіть будь-який код і натисніть «Увійти».</li>'},
+ freeze:{n:'✓ Що заморожуємо',role:'Після ваших правок цей список стає обовʼязковим для збірки — далі змінюємо лише через нову версію дизайну.',tags:'',notes:'<li><b>Сценарій використання (користувач, 2026-07-10):</b> заняття йдуть у Zoom із шерингом екрана — або вчителька ділиться своїм екраном (пасивний учень, найчастіше), або учень своїм (активний). Тому: банер «екран учителя / екран учня» на весь екран, відповіді ЛИШЕ на екрані вчителя, явне перемикання перед шерингом.</li><li class="q">Питання до вчительок: чи потрібна учневі кнопка «показати відповідь» для самоперевірки вдома? У класі/Zoom її немає.</li><li><b>Доступ до справжньої «Граматки» — лише після кроку якості:</b> система спершу складе 8–10 занять зі справжніх текстів, їх оцінить незалежна педагогічна рецензія за пороговими критеріями — і тільки тоді відкриється доступ. Ви отримаєте інструмент, який уже довів якість, а не обіцянку.</li><li>Облік учнів і їхнього поступу — свідомо НЕ в першій версії (жодних персональних даних — принципово).</li><li>Фото-якір, аудіо та картинки в завданнях, диктант — фаза 2.</li><li>Рівні крім B1 (архітектура готова, вмикаємо після пілота).</li>'}
+};
+var CHROME_EN={
+ dash:{n:'1 · My lessons',role:'The home page. One answer to one question — “how are my lessons doing?” — and one big button.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li>Empty first visit: a short greeting + the same single button (the “◻” button on the left shows it).</li><li>Only three statuses: <b>ready · baking · draft</b>. No percentages, no progress bars.</li><li>Every row is clickable and leads to where the lesson currently “lives”.</li><li class="q">Question for the teachers: what is missing for this to feel like your home page?</li>'},
+ new:{n:'2 · New lesson',role:'The product’s main page. The teacher provides an anchor text and picks a methodology — Hramatka does the rest.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the anchor is the heart of the lesson — it dominates as a document sheet; settings are a narrow side panel.</li><li><b>Edit 2 (user, 2026-07-10):</b> instead of a task counter — <b>duration 45 / 60 / 90 min</b>; Hramatka plans <b>6 / 9 / 12</b> tasks itself (minimum 6). 90 min is deliberately not double 45: some tasks are longer (writing, dialogue), plus a break.</li><li>Write or paste any text — tasks are built from it only (try it!).</li><li>The anchor always comes from the teacher (text or link). Page photo — next version.</li><li class="q">Question for the teachers: is writing/pasting text like this convenient? What fields are missing on the right?</li>'},
+ bake:{n:'3 · Baking',role:'Honest waiting: we show the real stages, not an invented percentage. You can leave — the result stays.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li>The stages are real (this is how the system works) — not a calming animation.</li><li>Go to another page — the bake continues and you get a notification (try it).</li><li>The “⚡” button on the left shows what a failure looks like: a human explanation + “Try again”. No error codes.</li>'},
+ review:{n:'4 · Review & assembly',role:'The heart of the product. Tasks are laid out by methodology phases; each carries an honest verification mark. The teacher moves, edits, discards — and accepts.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the lesson dominates the screen as a document (a Word-like sheet); tools and marks live in the margins.</li><li><b>Edit 3 (user, 2026-07-10):</b> Hramatka always bakes the full 90-minute plan; the duration switch trims it to 9 or 6 tasks before your eyes — and brings it back. Nothing trimmed disappears: it goes “to reserve” and is offered as homework; “include in the plan” brings a task back. Show this live!</li><li>Every task carries an <b>oral / written / at home</b> mark — the 1-on-1 lesson flow is visible; “in pairs” = the teacher plays the partner.</li><li>The sample has twelve tasks, each of a different type (true/false ×7 statements · questions ×6 · pairs ×6 · choice ×4 · glossary ×8 · gaps ×6 · form-building ×6 · errors ×5 · paraphrase ×5 · continue ×4 · dialogue scenario · writing), with answer keys. The full type catalogue is a question for both teachers: which are missing?</li><li>Three mark states: <span class="chip ok">✓ verified</span> <span class="chip warn">⚠ take a look</span> <span class="chip bad">✕ rejected</span>. “⚠” is never accepted automatically — you press “accept” yourself.</li><li>✎ — edit right in the document · ↑↓ — move (also across phases) · ✕ — remove (nothing disappears silently).</li><li class="q">Question for the teachers: are the margin marks convenient? Try editing a task.</li>'},
+ final:{n:'5 · Ready lesson',role:'What goes to class: a clean lesson sheet — for the screen or for print.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the ready lesson is a centered sheet, like a printout; the interface around it disappears (in print — literally: try “Print”).</li><li><b>🔑 Answers — for the teacher:</b> the button up top adds an answer block to every task (from the schema’s answer_key). Hide it before printing for students.</li><li><b>Homework</b> — whatever did not fit the chosen duration is offered automatically at the end of the sheet (optional).</li><li><b>Two ways to take the lesson away</b> (both in the toolbar — prototypes for discussion): <b>“⧉ Copy”</b> puts the whole lesson as clean text for your document (Word/Docs; with answers if 🔑 is on), and <b>“👩‍🎓 student mode”</b> — a prototype of the interactive link: true/false and choice are clickable, gaps fill from a word bank, pairs connect (ready Learn Ukrainian widgets); open questions get an answer box + “show the answer”.</li><li><b>Teacher and student screens:</b> the banner up top says whose screen it is; the “student screen” has no 🔑 answers and no hints — safe to share in Zoom. The header shows the role too (green STUDENT badge).</li><li class="q">Question for the teachers: how will you actually use the ready lesson — print · copy into your document · interactive link? Which of these is unnecessary?</li>'},
+ settings:{n:'6 · Settings',role:'The minimum: default values, so “New lesson” stops asking the same things every time.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1 — minimal</span>',notes:'<li>Change the name or the default level — and watch the header and “New lesson” change.</li><li>That is all. No plans, integrations or notifications — until the product earns something more complex.</li>'},
+ login:{n:'7 · Login — deferred',role:'The pilot has no login: a link + one access code. The page is designed so we do not redraw it later, but it is not in the POC.',tags:'<span class="tag later">Later</span>',notes:'<li>For the demo: enter any code and press “Sign in”.</li>'},
+ freeze:{n:'✓ What we freeze',role:'After your edits this list becomes binding for the build — further changes only through a new design version.',tags:'',notes:'<li><b>Usage scenario (user, 2026-07-10):</b> lessons run in Zoom with screen sharing — either the teacher shares her screen (passive student, most common) or the student shares theirs (active). Hence: a full-width “teacher screen / student screen” banner, answers ONLY on the teacher screen, an explicit switch before sharing.</li><li class="q">Question for the teachers: does a student need a “show the answer” button for self-checking at home? In class/Zoom it does not exist.</li><li><b>Access to the real Hramatka — only after the quality step:</b> the system first builds 8–10 lessons from real texts, an independent pedagogical review scores them against threshold criteria — and only then does access open. You get a tool that has already proven its quality, not a promise.</li><li>Student records and progress — deliberately NOT in v1 (no personal data — on principle).</li><li>Photo anchor, audio and pictures in tasks, dictation — phase 2.</li><li>Levels beyond B1 (the architecture is ready; enabled after the pilot).</li>'}
+};
+
+/* ============ views ============ */
+function vDash(){
+  if(!S.lessons.length){
+    return '<div class="emptystate"><h3>Вітаємо, '+esc(S.teacher)+'!</h3><p>Тут житимуть ваші заняття. Дайте «Граматці» текст — і за кілька хвилин отримаєте готове заняття з перевіреними завданнями.</p><button class="btn primary" data-go="new">+ Нове заняття</button></div>';
+  }
+  var rows=S.lessons.map(function(l){
+    var chip=l.status==='ready'?'<span class="chip ok">готово</span>':l.status==='baking'?(l.bake.failed?'<span class="chip bad">зупинилося</span>':'<span class="chip warn">готується…</span>'):'<span class="chip muted">чернетка</span>';
+    return '<button class="listrow" data-action="open-lesson" data-id="'+l.id+'">'+chip+'<span class="title">'+esc(l.title)+'</span><span class="chip info">'+esc(l.level)+'</span><span class="when">'+esc(l.when)+'</span></button>';
+  }).join('');
+  return '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px"><h3 style="margin:0">Мої заняття</h3><span style="margin-left:auto"><button class="btn primary" data-go="new">+ Нове заняття</button></span></div>'+rows;
+}
+function vNew(){
+  var d=draft;
+  var tabs='<div class="choices" style="margin-bottom:10px">'
+    +'<button class="choice'+(d.tab==='text'?' on':'')+'" data-action="tab" data-v="text">Вставити текст</button>'
+    +'<button class="choice'+(d.tab==='url'?' on':'')+'" data-action="tab" data-v="url">Посилання</button>'
+    +'<button class="choice off" data-action="photo-soon">Фото сторінки — скоро</button></div>';
+  var anchor='';
+  if(d.tab==='url'){
+    anchor='<div class="urlrow" style="margin-bottom:10px"><input class="inputbox" id="urlin" placeholder="https://… адреса статті чи оголошення" value="'+esc(d.url)+'"><button class="btn ghost" data-action="fetch-url" style="white-space:nowrap">Отримати текст</button></div>';
+  }
+  anchor+='<div class="paper anchorpaper" id="anchor" contenteditable="true" data-ph="…вставте чи напишіть текст просто тут, як у Word — на весь аркуш, без обмежень і маленьких віконець…">'+esc(d.text).replace(/\n/g,'<br>')+'</div>'
+    +'<p class="hint" style="margin-top:8px">Завдання будуються лише з цього тексту — нічого вигаданого.</p><span id="anchorwarn"></span>';
+  var lv=['A1','A2','B1','B2'].map(function(v){return '<button class="choice'+(v===d.level?' on':(v==='B1'?'':' off'))+'" data-action="level" data-v="'+v+'">'+v+'</button>'}).join('');
+  var methods=[
+    {k:'ttt',b:'Тест → Навчання → Тест',d:'перевірити → навчити → перевірити. Радимо для B1.',on:true},
+    {k:'ohoiko',b:'Занурення (за Огойко)',d:'для A1–A2 — скоро',on:false},
+    {k:'clil',b:'Через зміст (CLIL)',d:'для B2+ — скоро',on:false},
+    {k:'own',b:'Власна',d:'ваш порядок частин — скоро в пілоті',on:false}
+  ].map(function(m){return '<button class="pedcard'+(d.method===m.k?' on':'')+'" data-action="method" data-v="'+m.k+'" data-avail="'+(m.on?'1':'0')+'"><b>'+m.b+'</b><span class="d">'+m.d+'</span></button>'}).join('');
+  var durs=[45,60,90].map(function(v){return '<button class="choice'+(v===+d.duration?' on':'')+'" data-action="duration" data-v="'+v+'">'+v+' хв</button>'}).join('');
+  return '<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px"><h3 style="margin:0">Нове заняття</h3><span class="sub" style="margin:0">якір — це основа заняття, тому він і є вся сторінка</span></div>'
+   +'<div class="builder"><div>'+tabs+anchor+'</div>'
+   +'<div class="sidepanel">'
+   +'<div class="field"><label>Рівень</label><div class="choices">'+lv+'</div></div>'
+   +'<div class="field"><label>Методика</label><div class="pedcards" style="grid-template-columns:1fr">'+methods+'</div></div>'
+   +'<div class="field"><label>Граматичний фокус</label><input class="inputbox" id="focusin" placeholder="напр., вищий ступінь прикметників" value="'+esc(d.focus)+'"></div>'
+   +'<div class="field"><label>Тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">≈ '+durInfo(d.duration).tasks+' завдань — усі з вашого тексту</p></div>'
+   +'<button class="btn primary" data-action="bake-now">Приготувати заняття</button>'
+   +'<p class="hint">Від 20 секунд до 4 хвилин (у демо — швидше). Можна закрити сторінку — заняття дочекається вас.</p>'
+   +'</div></div>';
+}
+function vBake(){
+  var l=route.id?lesson(route.id):lastBy('baking');
+  if(!l){return '<div class="emptystate"><h3>Зараз нічого не готується</h3><p>Створіть заняття — і тут зʼявляться справжні етапи його приготування.</p><button class="btn primary" data-go="new">+ Нове заняття</button> <button class="btn ghost" data-action="demo-bake">Запустити демо-приготування</button></div>'}
+  route.id=l.id;
+  var steps=[
+    {t:'Текст отримано',d:(l.anchor?l.anchor.length.toLocaleString('uk-UA'):'0')+' знаків, українська'},
+    {t:'Завдання складено',d:(+l.count+2)+' чернеток із вашого тексту'},
+    {t:'Перевірка',d:'кожне слово — за словником, кожен факт — за вашим текстом'},
+    {t:'Готово',d:'повідомимо тут і в «Моїх заняттях»'}
+  ];
+  var cur=l.bake.step, failed=l.bake.failed;
+  var body=steps.map(function(s,i){
+    var cls,ic;
+    if(failed&&i===2){cls='fail';ic='!'}
+    else if(i<cur||cur>=4){cls='done';ic='✓'}
+    else if(i===cur){cls='now';ic='…'}
+    else{cls='wait';ic=' '}
+    if(cur>=4&&i===3){cls='done';ic='✓'}
+    return '<div class="step '+cls+'"><span class="dot">'+ic+'</span><span><b>'+s.t+'</b><span class="sd">'+s.d+'</span></span></div>';
+  }).join('');
+  var tail='';
+  if(failed){tail='<div class="banner fail" style="margin-top:16px;max-width:560px"><span class="ic">🫖</span><span><b>Щось пішло не так під час перевірки.</b> Ваш текст збережено — нічого не втрачено. Спробуйте ще раз: зазвичай це допомагає.<br><button class="btn primary" data-action="retry-bake" data-id="'+l.id+'" style="margin-top:10px">Спробувати ще раз</button></span></div>'}
+  else if(l.status==='ready'||cur>=4){tail='<div style="margin-top:16px"><button class="btn primary" data-action="open-review" data-id="'+l.id+'">Переглянути заняття →</button></div>'}
+  else{tail='<p class="hint" style="margin-top:14px">Можете повернутися до «Моїх занять» — ми повідомимо, щойно все буде готово.</p>'}
+  return '<h3>'+esc(l.title)+'</h3><p class="sub">'+esc(l.level)+' · Тест → Навчання → Тест · розпочато '+esc(l.when)+'</p><div class="steps">'+body+'</div>'+tail;
+}
+function copyOverlay(txt){var o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;display:grid;place-items:center';o.innerHTML='<div style="background:var(--card);border-radius:12px;padding:18px;max-width:620px;width:92%"><p style="margin:0 0 8px;font-weight:600">Виділіть і скопіюйте (Ctrl/Cmd+C):</p><textarea style="width:100%;height:260px;font:13px/1.5 monospace;border:1px solid var(--line);border-radius:8px;padding:10px"></textarea><p style="text-align:right;margin:10px 0 0"><button class="btn ghost" data-close="1">Закрити</button></p></div>';o.querySelector('textarea').value=txt;o.addEventListener('click',function(e){if(e.target===o||e.target.getAttribute('data-close'))o.remove()});document.body.appendChild(o);trNode(o);o.querySelector('textarea').select()}
+function stInit(b){if(!b._st)b._st={ch:{},gap:[],sel:null,pairs:{},rev:false,txt:'',wrongChip:null,wrongRight:null};return b._st}
+function stRender(b,num){
+  var st=stInit(b);
+  var head='<span class="type">'+num+' · '+esc(b.type)+'</span>';
+  var body='';
+  if(b.itemsTF||b.itemsMC){
+    var items=b.itemsTF||b.itemsMC;
+    body=(b.itemsTF?'<p class="hint" style="margin:0 0 4px">'+L('hint.tf')+'</p>':'');
+    body+=items.map(function(it,i){
+      var opts=b.itemsTF?['Правда','Неправда']:it.opts;
+      var kIdx=b.itemsTF?(it.k==='П'?0:1):it.k;
+      var chosen=st.ch[i];
+      var btns=opts.map(function(o,oi){
+        var cls='stopt';
+        if(chosen!=null){if(oi===chosen)cls+=(oi===kIdx?' good':' bad');else if(oi===kIdx)cls+=' show'}
+        return '<button class="'+cls+'" data-action="st-choice" data-b="'+b.id+'" data-i="'+i+'" data-o="'+oi+'"'+(chosen!=null?' disabled':'')+'>'+esc(o)+'</button>';
+      }).join('');
+      return '<div class="q">'+(b.itemsTF?(i+1)+'. ':'')+esc(it.t||it.q)+'<br>'+btns+'</div>';
+    }).join('');
+  } else if(b.gaps){
+    body='<p class="hint" style="margin:0 0 4px">'+L('hint.bank')+'</p>'
+      +'<div style="margin:4px 0 8px">'+b.bank.map(function(w){var used=st.gap.indexOf(w)>=0;
+        return '<button class="bankchip'+(used?' used':'')+(st.wrongChip===w?' bad':'')+'" data-action="st-bank" data-b="'+b.id+'" data-w="'+esc(w)+'"'+(used?' disabled':'')+'>'+esc(w)+'</button>'}).join('')+'</div>'
+      +b.gaps.map(function(g,i){var f=st.gap[i];
+        return '<div class="q">'+esc(g.t).replace('⟪⟫',(f?'<b class="good">'+esc(f)+'</b>':'<span class="gap"></span>'))+'</div>'}).join('');
+  } else if(b.pairs){
+    var rights=b.pairs.map(function(pp,i){return {t:pp[1],i:i}}).sort(function(x,y){return x.t<y.t?-1:1});
+    body='<p class="hint" style="margin:0 0 4px">'+L('hint.match')+'</p>'
+      +'<div class="matchwrap"><div>'+b.pairs.map(function(pp,i){var done=st.pairs[i];
+        return '<button class="stopt'+(done?' good':(st.sel===i?' selm':''))+'" data-action="st-left" data-b="'+b.id+'" data-i="'+i+'"'+(done?' disabled':'')+'>'+esc(pp[0])+'</button>'}).join('')
+      +'</div><div>'+rights.map(function(r){var done=st.pairs[r.i];
+        return '<button class="stopt'+(done?' good':(st.wrongRight===r.i?' bad':''))+'" data-action="st-right" data-b="'+b.id+'" data-i="'+r.i+'"'+(done?' disabled':'')+'>'+esc(r.t)+'</button>'}).join('')+'</div></div>';
+  } else {
+    body='<div>'+b.html+'</div>'
+      +'<textarea class="stanswer" data-b="'+b.id+'" placeholder="'+L('ph.answer')+'">'+esc(st.txt||'')+'</textarea>';
+  }
+  return '<div class="dblock" style="border-bottom:0;padding:8px 2px">'+head+body+'</div>';
+}
+function stripHtml(h){var d=document.createElement('div');d.innerHTML=String(h).replace(/<span class="gap"><\/span>/g,'____').replace(/<div class="q">/g,'\n').replace(/<br\s*\/?>/g,'\n');return d.textContent.replace(/\n{3,}/g,'\n\n').trim()}
+function lessonAsText(l,withAns){
+  var split=planSplit(l.duration||45),num=0,reserve=[],out=[l.title,'',l.level+' · Тест → Навчання → Тест · ≈ '+(l.duration||45)+' хв','','ТЕКСТ ДЛЯ ЧИТАННЯ','',l.anchor||'',''];
+  [1,2,3].forEach(function(ph){
+    var blocks=l.blocks.filter(function(b){return b.phase===ph});
+    var vis=blocks.slice(0,split[ph-1]);reserve=reserve.concat(blocks.slice(split[ph-1]));
+    if(!vis.length)return;
+    out.push(PHASES[ph].pn+' '+PHASES[ph].t.toUpperCase());out.push('');
+    vis.forEach(function(b){num++;out.push(num+'. '+b.type+(b.mode?' ('+b.mode+')':''));out.push(stripHtml(b.html));if(withAns&&b.ans)out.push('Відповідь: '+b.ans);out.push('')});
+  });
+  if(reserve.length){out.push('+ ДОМАШНЄ ЗАВДАННЯ (за бажанням)');out.push('');
+    reserve.forEach(function(b){out.push('· '+b.type);out.push(stripHtml(b.html));if(withAns&&b.ans)out.push('Відповідь: '+b.ans);out.push('')})}
+  out.push('Складено з тексту вчителя · мову перевірено за словником · факти перевірте · Граматка');
+  return out.join('\n');
+}
+var PHASES={1:{pn:'І.',t:'Тест 1 — що учні вже знають'},2:{pn:'ІІ.',t:'Навчання — закриваємо прогалину'},3:{pn:'ІІІ.',t:'Тест 2 — перевіряємо ще раз'}};
+function phasePd(l,ph){return '≈ '+durInfo(l.duration||45).pd[ph-1]+' хв'}
+function vReview(){
+  var l=route.id?lesson(route.id):lastBy('ready');
+  if(!l||!l.blocks.length){return '<div class="emptystate"><h3>Ще немає що переглядати</h3><p>Коли заняття буде готове, тут зʼявиться документ із завданнями й позначками перевірки.</p><button class="btn primary" data-go="new">+ Нове заняття</button></div>'}
+  route.id=l.id;
+  var split=planSplit(l.duration||45), reserve=[];
+  var durSel='<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink-soft)">Тривалість:</span>'+[45,60,90].map(function(v){return '<button class="choice'+(v===+(l.duration||45)?' on':'')+'" style="padding:4px 10px;font-size:13px" data-action="review-duration" data-v="'+v+'">'+v+' хв</button>'}).join('')+'<span style="font-size:12px;color:var(--ink-soft)">— план ріжеться й росте на очах; зрізане не зникає</span></span>';
+  var left='<p class="docsheet-title">'+esc(l.title)+'</p><p style="margin:0 0 6px;color:var(--ink-soft);font-size:13px">'+esc(l.level)+' · Тест → Навчання → Тест · ≈ '+(l.duration||45)+' хв</p>';
+  left+='<h4 class="dochead"><span class="pn">☰</span>Текст для читання</h4><div class="anchorbody">'+esc(l.anchor||'')+'</div>';
+  [1,2,3].forEach(function(ph){
+    var blocks=l.blocks.filter(function(b){return b.phase===ph});
+    var vis=blocks.slice(0,split[ph-1]);
+    reserve=reserve.concat(blocks.slice(split[ph-1]));
+    left+='<h4 class="dochead"><span class="pn">'+PHASES[ph].pn+'</span>'+PHASES[ph].t+' <span class="pd">'+phasePd(l,ph)+'</span></h4>';
+    if(!vis.length){left+='<div class="dblock"><p style="color:var(--ink-soft);font-size:13.5px">— порожньо; пересуньте сюди завдання (↑↓) —</p></div>'}
+    vis.forEach(function(b){
+      var chip=b.edited?'<span class="chip ok">✎ змінено вами</span>':b.mark==='warn'?'<span class="chip warn">⚠ погляньте</span>':'<span class="chip ok">✓ перевірено</span>';
+      var tools='<span class="mtools">'
+        +'<button data-action="b-edit" data-id="'+b.id+'" title="редагувати">✎</button>'
+        +'<button data-action="b-up" data-id="'+b.id+'" title="вгору">↑</button>'
+        +'<button data-action="b-down" data-id="'+b.id+'" title="вниз">↓</button>'
+        +'<button data-action="b-del" data-id="'+b.id+'" title="вилучити">✕</button>'
+        +(b.mark==='warn'&&!b.edited?'<button class="accept" data-action="b-accept" data-id="'+b.id+'">прийняти</button>':'')
+        +'</span>';
+      left+='<div class="dblock" id="blk'+b.id+'"><span class="type">'+esc(b.type)+(b.mode?' <span class="chip muted" style="font-size:10.5px;letter-spacing:0;text-transform:none">'+esc(b.mode)+'</span>':'')+'</span><div class="bcontent" data-id="'+b.id+'">'+b.html+'</div>'
+        +'<div class="dmargin noprint" style="border:0;padding:8px 0 0">'+chip+(b.note?'<span class="mnote">'+esc(b.note)+'</span>':'')+tools+'</div></div>';
+    });
+  });
+  var res='';
+  if(reserve.length){
+    res='<div style="margin-top:14px"><p style="font-size:13.5px;color:var(--ink-soft);margin:0 0 6px"><b>У запасі — не входить у '+(l.duration||45)+'-хвилинний план</b> · підійде на домашнє або на довше заняття:</p>'
+      +reserve.map(function(b){return '<div class="dblock" style="opacity:.72"><span class="type">'+esc(b.type)+(b.mode?' <span class="chip muted" style="font-size:10.5px;letter-spacing:0;text-transform:none">'+esc(b.mode)+'</span>':'')+'</span>'+b.html+'<div class="dmargin noprint" style="border:0;padding:6px 0 0"><span class="mtools"><button data-action="b-include" data-id="'+b.id+'">включити в план</button></span></div></div>'}).join('')+'</div>';
+  }
+  var short='';
+  if(l.blocks.length<l.count){short='<p class="hint" style="margin-top:10px">З вашого тексту склалося '+l.blocks.length+' завдань із '+l.count+' запланованих на '+(l.duration||45)+' хв — додайте текст, і «Граматка» складе решту.</p>'}
+  var rej='';
+  if(l.rejected.length){
+    rej='<p style="font-size:13.5px;color:var(--ink-soft);margin-top:12px">Ще '+l.rejected.length+' чернет'+(l.rejected.length===1?'ка':'ки')+' не пройшл'+(l.rejected.length===1?'а':'и')+' перевірку — <button data-action="toggle-rejected" style="text-decoration:underline;color:var(--accent)">'+(l.showRejected?'сховати':'показати')+'</button> (нічого не ховаємо).</p>';
+    if(l.showRejected){
+      rej+=l.rejected.map(function(r,i){return '<div class="dblock" style="opacity:.85"><span class="type" style="color:var(--bad)">✕ '+esc(r.type)+'</span>'+r.html+'<div class="dmargin noprint" style="border:0;padding:6px 0 0"><span class="chip bad">✕ відхилено</span><span class="mnote">'+esc(r.reason)+'</span><span class="mtools"><button data-action="b-restore" data-i="'+i+'">повернути в заняття</button></span></div></div>'}).join('');
+    }
+  }
+  var demoNote=l.demoGen?'<p class="hint noprint" style="margin:0 0 10px">⚙ Це <b>спрощений демо-генератор</b> (4 типи завдань, без перевірки за словником). Справжня «Граматка» будує до 12 типів — як у прикладі «Як ми шукали квартиру у Львові» — з перевіркою кожного слова.</p>':'';
+  return demoNote+'<div class="banner honest noprint"><span class="ic">📖</span><span><b>Факти перевірте.</b> Мову й відповідність вашому тексту ми перевірили автоматично; зміст і доречність — за вами. Ви — вчитель, «Граматка» — помічниця.</span></div>'
+   +'<div class="noprint" style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px"><p class="sub" style="margin:0">Заняття — це документ. Позначки перевірки — на полях. Усе можна редагувати просто тут.</p>'+durSel+'</div>'
+   +'<div class="paper">'+left+'</div>'+res+short+rej
+   +'<div class="noprint" style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap"><button class="btn primary" data-action="accept-lesson">Прийняти заняття</button><button class="btn ghost" data-action="save-draft">Зберегти як чернетку</button></div>';
+}
+function vFinal(){
+  var l=route.id?lesson(route.id):lastBy('ready');
+  if(!l||!l.blocks.length){return '<div class="emptystate"><h3>Готових занять ще немає</h3><p>Прийміть заняття на сторінці «Перегляд і збирання» — і воно зʼявиться тут як чистий аркуш для класу.</p><button class="btn primary" data-go="review">До перегляду</button></div>'}
+  route.id=l.id;
+  var split=planSplit(l.duration||45), reserve=[], num=0, ansList=[], body='';
+  [1,2,3].forEach(function(ph){
+    var blocks=l.blocks.filter(function(b){return b.phase===ph});
+    var vis=blocks.slice(0,split[ph-1]);
+    reserve=reserve.concat(blocks.slice(split[ph-1]));
+    if(!vis.length)return;
+    body+='<h4 class="dochead"><span class="pn">'+PHASES[ph].pn+'</span>'+PHASES[ph].t.split(' — ')[0]+'</h4>';
+    vis.forEach(function(b){num++;
+      if(l.studentMode){body+=stRender(b,num)}
+      else{body+='<div class="dblock" style="border-bottom:0;padding:8px 2px"><span class="type">'+num+' · '+esc(b.type)+(b.mode?' <span class="chip muted" style="font-size:10.5px;letter-spacing:0;text-transform:none">'+esc(b.mode)+'</span>':'')+'</span>'+b.html+'</div>'}
+      if(b.ans)ansList.push(num+'. '+b.ans)});
+  });
+  var hw='';
+  if(reserve.length){
+    hw='<h4 class="dochead"><span class="pn">+</span>Домашнє завдання <span class="pd">за бажанням — із запасу</span></h4>'
+      +reserve.map(function(b){return '<div class="dblock" style="border-bottom:0;padding:8px 2px"><span class="type">'+esc(b.type)+'</span>'+b.html+'</div>'}).join('');
+    reserve.forEach(function(b){if(b.ans)ansList.push('дом. ('+b.type+'). '+b.ans)});
+  }
+  var answers='';
+  if(l.showAns&&!l.studentMode&&ansList.length){
+    answers='<div style="border-top:2px solid var(--wheat);margin-top:20px;padding-top:8px"><span class="type" style="color:var(--warn)">🔑 Відповіді — для вчителя (не друкуйте для учнів)</span>'
+      +ansList.map(function(a){return '<p style="font-size:13px;margin:4px 0">'+esc(a)+'</p>'}).join('')+'</div>';
+  }
+  var sm=!!l.studentMode;
+  var banner=sm
+    ?'<div class="rolebanner student noprint">'+L('banner.student')+'</div>'
+    :'<div class="rolebanner teacher noprint">👩‍🏫 ЕКРАН УЧИТЕЛЯ — 🔑 відповіді бачите лише ви. Перш ніж ділитися екраном в Zoom, перемкніться на екран учня.</div>';
+  var tools=sm
+    ?'<button class="btn primary" data-action="toggle-student">'+L('btn.back')+'</button><button class="btn ghost" data-action="copy-lesson">'+L('btn.copy')+'</button>'
+    :'<button class="btn ghost" data-action="toggle-ans">'+(l.showAns?'Сховати відповіді':'🔑 Відповіді')+'</button><button class="btn ghost" data-action="print">🖨 Друк</button><button class="btn ghost" data-action="open-review" data-id="'+l.id+'">Редагувати</button><button class="btn ghost" data-action="copy-lesson">⧉ Копіювати</button><button class="btn ghost" data-action="toggle-student">👩‍🎓 Показати як учневі</button><button class="btn primary" data-action="start-conduct" data-id="'+l.id+'">▶ Провести заняття</button>';
+  var chip=sm?(esc(l.level)+' · '+L('chip.ready')+' · '+(l.duration||45)+' '+L('chip.min')):(esc(l.level)+' · готово · '+(l.duration||45)+' хв');
+  return banner+'<div class="noprint" style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px"><span class="chip info">'+chip+'</span>'
+   +'<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'+tools+'</span></div>'
+   +'<div class="paper" style="max-width:660px;margin:0 auto">'
+   +'<p class="docsheet-title">'+esc(l.title)+'</p>'
+   +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:13px">Тест → Навчання → Тест · ≈ '+(l.duration||45)+' хв · '+num+' завдан'+(num===1?'ня':(num<5?'ня':'ь'))+(reserve.length?' · + '+reserve.length+' на домашнє':'')+'</p>'
+   +'<h4 class="dochead"><span class="pn">☰</span>Текст для читання</h4><div class="anchorbody">'+esc(l.anchor||'')+'</div>'
+   +body+hw+answers
+   +'<p style="font-size:11.5px;color:var(--ink-soft);border-top:1px solid var(--line);padding-top:8px;margin-top:22px">Складено з тексту вчителя · мову перевірено за словником · факти перевірте · Грама́тка</p></div>';
+}
+function vSettings(){
+  var lv='<button class="choice on">'+esc(S.defaults.level)+'</button>';
+  var durs=[45,60,90].map(function(v){return '<button class="choice'+(v===+(S.defaults.duration||60)?' on':'')+'" data-action="def-duration" data-v="'+v+'">'+v+' хв</button>'}).join('');
+  return '<h3>Налаштування</h3><div class="formgrid">'
+   +'<div class="field"><label>Імʼя (показуємо у шапці)</label><input class="inputbox" id="namein" value="'+esc(S.teacher)+'"><p class="hint">зміниться одразу — погляньте на шапку</p></div>'
+   +'<div class="field"><label>Типовий рівень</label><div class="choices">'+lv+'</div><p class="hint">у пілоті — лише B1; інші рівні після пілота</p></div>'
+   +'<div class="field"><label>Типова методика</label><div class="choices"><button class="choice on">Тест → Навчання → Тест</button></div></div>'
+   +'<div class="field"><label>Типова тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 9 · 90 → 12)</p></div>'
+   +'</div>';
+}
+function vLogin(){
+  return '<div style="max-width:420px"><h3>Вітаємо!</h3><p class="sub">Введіть код доступу, який ви отримали від нас.</p>'
+   +'<div class="formgrid"><div class="field"><input class="inputbox" id="codein" type="password" placeholder="код доступу"></div>'
+   +'<button class="btn primary" data-action="login">Увійти</button>'
+   +'<p class="hint">У пілоті входу не буде: посилання + один код. Ця сторінка — запас на майбутнє.</p></div></div>';
+}
+function vFreeze(){
+  if(uiLang()==='en'){
+  return '<div class="tablewrap"><table class="freeze">'
+   +'<tr><th>№</th><th>Page</th><th>Status</th><th>What we lock</th></tr>'
+   +'<tr><td>1</td><td>My lessons</td><td><span class="chip ok">v1</span></td><td>3 statuses, one main button, an empty state</td></tr>'
+   +'<tr><td>2</td><td>New lesson</td><td><span class="chip ok">v1</span></td><td>anchor = a full-screen sheet (the lesson’s foundation) · settings in a side panel · level B1 · methodology from cards · duration 45/60/90 min → 6/9/12 tasks (minimum 6) · honest waiting</td></tr>'
+   +'<tr><td>3</td><td>Baking</td><td><span class="chip ok">v1</span></td><td>real stages, no percentages · human error messages · you can leave, the result waits</td></tr>'
+   +'<tr><td>4</td><td>Review & assembly</td><td><span class="chip ok">v1</span></td><td>the document dominates, like Word · margin marks · 3 states · “⚠” never auto-accepts · rejected drafts stay visible · a “Verify the facts” banner · the duration switch trims/regrows the plan · trimmed goes “to reserve / homework” · oral/written/home marks</td></tr>'
+   +'<tr><td>5</td><td>Ready lesson</td><td><span class="chip ok">v1</span></td><td>a centered sheet, like a printout · screen + print · teacher answers (🔑) · homework from the reserve · an honest footer · a place for the student link · 🌐 dual-language interface (uk/EN) — lesson content always Ukrainian</td></tr>'
+   +'<tr><td>6</td><td>Settings</td><td><span class="chip ok">v1 min.</span></td><td>defaults only</td></tr>'
+   +'<tr><td>7</td><td>Login</td><td><span class="chip warn">later</span></td><td>pilot = an access code; the page is in reserve</td></tr>'
+   +'</table></div>';
+  }
+  return '<div class="tablewrap"><table class="freeze">'
+   +'<tr><th>№</th><th>Сторінка</th><th>Статус</th><th>Що фіксуємо</th></tr>'
+   +'<tr><td>1</td><td>Мої заняття</td><td><span class="chip ok">v1</span></td><td>3 статуси, одна головна кнопка, порожній стан</td></tr>'
+   +'<tr><td>2</td><td>Нове заняття</td><td><span class="chip ok">v1</span></td><td>якір = аркуш на весь екран (основа заняття) · налаштування бічною панеллю · рівень B1 · методика з карток · тривалість 45/60/90 хв → 6/9/12 завдань (мінімум 6) · чесне очікування</td></tr>'
+   +'<tr><td>3</td><td>Приготування</td><td><span class="chip ok">v1</span></td><td>справжні етапи, без відсотків · людські помилки · можна піти, результат дочекається</td></tr>'
+   +'<tr><td>4</td><td>Перегляд і збирання</td><td><span class="chip ok">v1</span></td><td>документ домінує, як у Word · позначки на полях · 3 стани · «⚠» не приймається сам · відхилене видно · банер «Факти перевірте» · перемикач тривалості ріже/повертає план · зрізане — «у запасі / на домашнє» · позначки усно/письмово/вдома</td></tr>'
+   +'<tr><td>5</td><td>Готове заняття</td><td><span class="chip ok">v1</span></td><td>аркуш по центру, як роздруківка · екран + друк · відповіді для вчителя (🔑) · домашнє з запасу · чесний підпис унизу · місце під учнівське посилання · 🌐 інтерфейс екрана учня укр/EN — перемикається; вміст заняття завжди українською</td></tr>'
+   +'<tr><td>6</td><td>Налаштування</td><td><span class="chip ok">v1 мін.</span></td><td>лише типові значення</td></tr>'
+   +'<tr><td>7</td><td>Вхід</td><td><span class="chip warn">пізніше</span></td><td>пілот = код доступу; сторінка в запасі</td></tr>'
+   +'</table></div>';
+}
+
+/* ============================================================
+   ▶ CONDUCTOR (Проведення заняття) — Path B
+   Reuses stRender() as the shared student screen + the demo design
+   system. Behaviour ported from the verified standalone conductor.
+   i18n = chrome only (CT); lesson content stays Ukrainian.
+   ============================================================ */
+var CONDT={
+ title:{uk:'Проведення заняття',en:'Running the lesson'},
+ ph1:{uk:'Тест 1',en:'Test 1'},ph2:{uk:'Навчання',en:'Teaching'},ph3:{uk:'Тест 2',en:'Test 2'},
+ min:{uk:'хв',en:'min'},budget:{uk:'бюджет',en:'budget'},
+ task:{uk:'Завдання',en:'Task'},of:{uk:'з',en:'of'},
+ shared:{uk:'👩‍🎓 Спільний екран — це бачить учень',en:'👩‍🎓 Shared screen — the student sees this'},
+ panel:{uk:'🔒 Ваша панель — учень цього не бачить',en:'🔒 Your panel — the student does not see this'},
+ back:{uk:'← Назад',en:'← Back'},exit:{uk:'← Вийти',en:'← Exit'},
+ done:{uk:'✓ Готово',en:'✓ Done'},skip:{uk:'⤼ Пропустити',en:'⤼ Skip'},
+ easy:{uk:'🙂 Занадто легко',en:'🙂 Too easy'},gate:{uk:'⚑ Перевірка помилилася',en:'⚑ Check was wrong'},
+ ex:{uk:'приклад',en:'example'},brk:{uk:'перерва',en:'break'},
+ showAns:{uk:'🔑 Відповідь',en:'🔑 Answer'},hideAns:{uk:'🔑 Сховати',en:'🔑 Hide'},
+ why:{uk:'ⓘ Чому це завдання?',en:'ⓘ Why this task?'},answer:{uk:'Відповідь',en:'Answer'},
+ addTime:{uk:'＋5 хв ⏱',en:'＋5 min ⏱'},preview:{uk:'👁 Як бачить учень',en:'👁 Student view'},
+ exitPreview:{uk:'✏ Повернутися до панелі',en:'✏ Back to your panel'},
+ profile:{uk:'👤 Профіль учня',en:'👤 Learner profile'},help:{uk:'? Довідка',en:'? Help'},
+ behind:{uk:'⏱ Відстаємо від часу.',en:'⏱ Running behind.'},shorten:{uk:'Скоротити план',en:'Shorten the plan'},
+ studBanner:{uk:'👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.',en:'👩‍🎓 STUDENT SCREEN — no answers or hints. Safe to share in Zoom.'},
+ held:{uk:'Відкладено на перевірку',en:'Set aside for review'},
+ holdWho:{uk:'завдання, що не пройшли перевірку, — до заняття не ввійшли (їх видно у «Перегляді»).',en:'task(s) that failed verification did not enter the lesson (visible in “Review”).'},
+ reserveTag:{uk:'запас',en:'reserve'},
+ pfTitle:{uk:'🔎 Попередній прогін',en:'🔎 Preflight'},
+ pfSub:{uk:'приклад майбутньої функції: перед заняттям «Граматка» зможе прогнати його з кількома змодельованими учнями рівня B1 — щоб зловити хитрі місця заздалегідь. Тут показано, як це виглядатиме',en:'example of a future feature: before the lesson Hramatka will be able to dry-run it with a few simulated B1 learners — to catch tricky spots in advance. Shown here is how that will look'},
+ pfOk:{uk:'готові',en:'ready'},pfFlag:{uk:'варто глянути',en:'to double-check'},pfHeld:{uk:'відкладено',en:'set aside'},
+ rSrc:{uk:'Джерело',en:'Source'},rWhy:{uk:'Навіщо',en:'Purpose'},rConf:{uk:'Впевненість',en:'Confidence'},rRej:{uk:'Позначено',en:'Flagged'},
+ whyHead:{uk:'ЧОМУ ЦЕ ЗАВДАННЯ ІСНУЄ',en:'WHY THIS TASK EXISTS'},
+ hint:{uk:'Ви проводите вже готове й перевірене заняття, крок за кроком. Смужка вгорі — три частини й час на кожну. «ⓘ Чому це завдання?» показує, звідки воно взялося. «＋5 хв» пришвидшує годинник, щоб побачити, як план підлаштовується під час.',en:'You are running an already-built, verified lesson, step by step. The bar on top is the three phases and the time budget for each. “ⓘ Why this task?” shows where it came from. “＋5 min” fast-forwards the clock so you can see the plan adapt.'},
+ sumTitle:{uk:'Що сталося на занятті',en:'What happened in the lesson'},
+ sumLead:{uk:'Приклад: так виглядатиме запис, який «Граматка» зможе зберігати після кожного заняття (за згодою учня). Персональних даних учня зараз не зберігаємо.',en:'Example: this is how the record will look — Hramatka will be able to keep one after every lesson (with the student’s consent). No personal student data is stored now.'},
+ sDone:{uk:'виконано',en:'done'},sSkip:{uk:'пропущено',en:'skipped'},sEasy:{uk:'легкі',en:'too easy'},sFlag:{uk:'«перевірка помилилася»',en:'“check was wrong” flags'},
+ phaseTime:{uk:'Час за частинами',en:'Time by phase'},phaseC:{uk:'Частина',en:'Phase'},planned:{uk:'план',en:'plan'},actual:{uk:'факт',en:'actual'},
+ flagsHead:{uk:'Позначки для «Граматки»',en:'Flags for Hramatka'},noFlags:{uk:'Позначок немає — усе пройшло гладко.',en:'No flags — everything went smoothly.'},
+ again:{uk:'↺ Провести ще раз',en:'↺ Run again'},toReady:{uk:'До готового заняття',en:'Back to the ready lesson'},
+ ruleTitle:{uk:'💡 Правило для «Граматки» (приклад майбутньої функції)',en:'💡 A rule for Hramatka (example of a future feature)'},
+ ruleText:{uk:'Для цього учня вводьте вищий ступінь прикметників контрастно (більший ↔ менший).',en:'For this learner, introduce comparative adjectives contrastively (bigger ↔ smaller).'},
+ ruleAcc:{uk:'Прийняти правило',en:'Accept rule'},ruleRej:{uk:'Не треба',en:'Dismiss'},ruleOk:{uk:'✓ Приклад: так це правило запамʼяталося б у памʼятці про цього учня (у демо нічого не зберігається).',en:'✓ Example: this is how the rule would be saved to this learner’s memory (nothing is stored in the demo).'},
+ ruleNote:{uk:'Це нотатка про ЦЬОГО учня, а не загальне правило.',en:'This is a note about THIS learner, not a global rule.'},
+ mVer:{uk:'✓ перевірено',en:'✓ verified'},mLook:{uk:'⚠ погляньте',en:'⚠ take a look'},
+ close:{uk:'Закрити',en:'Close'},profFuture:{uk:'МАЙБУТНЄ',en:'FUTURE'},
+ ledgerNote:{uk:'Ця памʼять зʼявиться, коли учень зареєструється — за його згодою. Поки що її бачите тільки ви.',en:'This memory appears once the student registers — with their consent. For now only you see it.'},
+ profLead:{uk:'Памʼять про учня, зібрана з його реальних відповідей — щоб наступні заняття були під нього, а не просто «рівня B1». Зʼявляється лише після реєстрації учня, за згодою.',en:'A memory of the learner, built from their real answers — so future lessons fit them, not just “B1 level”. Appears only after the student registers, with consent.'},
+ helpTitle:{uk:'Довідка — режим «Проведення заняття»',en:'Help — “Running the lesson” mode'}
+};
+function CT(k){var e=CONDT[k];return e?(e[uiLang()]||e.uk):k}
+function condFmt(sec){var m=Math.floor(sec/60),s=sec%60;return m+':'+(s<10?'0':'')+s}
+function condPhaseName(ph){return CT('ph'+ph)}
+var COND_PROFILE=[
+ {k:{uk:'Засвоїв',en:'Mastered'},v:{uk:'вищий ступінь із «ніж» (тепліший, ніж…)',en:'comparative with «ніж» (тепліший, ніж…)'}},
+ {k:{uk:'Часта помилка',en:'Common error'},v:{uk:'«дешевіша» замість «дешевша»; «сама краща» замість «найкраща»',en:'«дешевіша» for «дешевша»; «сама краща» for «найкраща»'}},
+ {k:{uk:'Вагається',en:'Hesitates on'},v:{uk:'найвищий ступінь (най-)',en:'superlative (най-)'}},
+ {k:{uk:'Успішно виправив',en:'Successfully fixed'},v:{uk:'«на поверху» → «на поверсі»',en:'«на поверху» → «на поверсі»'}}
+];
+var COND_RESERVE={4:1,9:1,12:1}; /* droppable-when-over-budget (matches the verified standalone) */
+var COND=null;
+function condLesson(){return lesson(COND.lid)}
+function condBlk(id){var l=condLesson();if(!l)return null;for(var i=0;i<l.blocks.length;i++)if(l.blocks[i].id===+id)return l.blocks[i];return null}
+function condCurBlk(){return condBlk(COND.plan[COND.i])}
+function condCurPhase(){var b=condCurBlk();return b?b.phase:3}
+function condInit(l){
+  var split=planSplit(l.duration||90),plan=[];
+  [1,2,3].forEach(function(ph){
+    l.blocks.filter(function(b){return b.phase===ph}).slice(0,split[ph-1]).forEach(function(b){plan.push(b.id)});
+  });
+  l.blocks.forEach(function(b){if(b._st)delete b._st;}); /* A2: fresh student widget state each run */
+  COND={lid:l.id,dur:(l.duration||90),pd:durInfo(l.duration||90).pd,i:0,plan:plan,
+        done:{},skip:{},easy:{},gate:{},showAns:false,showReceipt:false,stud:false,dropped:[],
+        elapsed:{1:0,2:0,3:0},started:true,ended:false,ruleDone:null,pfOpen:false,hintOff:0};
+}
+function condReserveInPhase(ph){
+  var r=COND.plan.filter(function(id){var b=condBlk(id);return b&&b.phase===ph&&COND_RESERVE[id]&&!COND.done[id]&&!COND.skip[id]&&COND.plan.indexOf(id)>=COND.i});
+  return r.length?r[r.length-1]:null;
+}
+function condShorten(id){var b=condBlk(id);if(b)COND.dropped.push(b.type);COND.plan=COND.plan.filter(function(x){return x!==+id});render();}
+function condReceipt(b){
+  var lang=uiLang(),uk=lang!=='en',warn=b.mark==='warn';
+  var why={1:{uk:'Перевірити розуміння прочитаного (Тест 1)',en:'Check reading comprehension (Test 1)'},2:{uk:'Відпрацювати мовну ціль — ступені порівняння (Навчання)',en:'Practise the language focus — comparison degrees (Teaching)'},3:{uk:'Закріпити й перевірити ще раз (Тест 2)',en:'Consolidate and re-check (Test 2)'}};
+  return {
+    /* A4: don't claim warn tasks are "from the text" — their own note says otherwise */
+    src: warn
+      ? (uk?'Складено навколо тексту вчителя; частину (варіанти чи означення) додала «Граматка» — не з тексту'
+           :'Built around the teacher’s text; some parts (options or definitions) were added by Hramatka — not from the text')
+      : (uk?'Складено з тексту вчителя':'Built from the teacher’s text'),
+    why:(why[b.phase]&&why[b.phase][lang])||why[b.phase].uk,
+    conf:warn?(uk?'середня':'medium'):(uk?'висока':'high'),
+    rej:warn?(b.note?esc(b.note):(uk?'позначено ⚠ на ваш перегляд':'flagged ⚠ for your review')):null
+  };
+}
+function condRepaintTimers(){
+  var r=document.getElementById('cond-rail');if(r)r.innerHTML=condRailHTML();
+  var c=document.getElementById('cond-clock');if(c)c.innerHTML=condClockHTML();
+  var b=document.getElementById('cond-reb');if(b)b.innerHTML=condRebHTML();
+}
+function condRailHTML(){
+  var cp=condCurPhase(),out='';
+  [1,2,3].forEach(function(ph){
+    var used=COND.elapsed[ph],budget=COND.pd[ph-1]*60,over=used>budget,pct=Math.min(100,used/budget*100);
+    out+='<div class="cond-seg'+(ph===cp?' active':'')+(ph<cp?' done':'')+(over?' over':'')+'">'+
+      '<div class="nm">'+(ph===1?'①':ph===2?'②':'③')+' '+condPhaseName(ph)+'</div>'+
+      '<div class="tm"><span class="el">'+condFmt(used)+'</span><span>'+COND.pd[ph-1]+' '+CT('min')+'</span></div>'+
+      '<div class="bar"><div class="fill" style="width:'+pct+'%"></div></div></div>';
+  });
+  return out;
+}
+function condClockHTML(){
+  var ph=condCurPhase(),used=COND.elapsed[ph],budget=COND.pd[ph-1]*60,over=used>budget;
+  var brk=COND.dur-(COND.pd[0]+COND.pd[1]+COND.pd[2]); /* B2: the rest of the lesson time = a break */
+  return '<span>'+(ph===1?'①':ph===2?'②':'③')+' '+condPhaseName(ph)+'</span><span class="big">'+condFmt(used)+'</span>'+
+    '<span>/ '+COND.pd[ph-1]+':00 '+CT('budget')+'</span>'+(over?'<span class="warnpill">+'+condFmt(used-budget)+'</span>':'')+
+    (brk>0?'<span class="sp" style="flex:1"></span><span>＋ '+brk+' '+CT('min')+' '+CT('brk')+'</span>':'');
+}
+function condRebHTML(){
+  if(COND.stud)return '';
+  var ph=condCurPhase(),over=COND.elapsed[ph]>COND.pd[ph-1]*60,rid=condReserveInPhase(ph);
+  if(over&&rid)return '<div class="cond-reb">'+CT('behind')+'<span class="sp"></span><button class="btn ghost cond-sm" data-action="cond-shorten" data-id="'+rid+'">'+CT('shorten')+'</button></div>';
+  return '';
+}
+function condPreflightHTML(){
+  /* A3: everything derived from the real lesson so counts always reconcile
+     (ok+caution = tasks that run; held = tasks that never entered the lesson),
+     and the expanded notes are one-per-caution and survive «скоротити». */
+  var l=condLesson();
+  var vis=COND.plan.map(condBlk).filter(Boolean);
+  var okB=vis.filter(function(b){return b.mark!=='warn'});
+  var cautionB=vis.filter(function(b){return b.mark==='warn'});
+  var held=(l&&l.rejected)?l.rejected.length:0;
+  var h='<div class="cond-pf"><div class="ph" data-action="cond-pf">'+CT('pfTitle')+
+    ' <span class="cond-newpill">'+CT('ex')+'</span> · <span style="color:var(--ok)">'+okB.length+' '+CT('pfOk')+'</span> · <span style="color:var(--warn)">'+cautionB.length+' '+CT('pfFlag')+'</span>'+
+    (held?' · <span style="color:var(--bad)">'+held+' '+CT('pfHeld')+'</span>':'')+'<span class="sp"></span>'+(COND.pfOpen?'▲':'▼')+'</div>';
+  if(COND.pfOpen){
+    var notes=cautionB.map(function(b){return '<li><b>«'+esc(b.type)+'»</b> — '+(b.note?esc(b.note):(uiLang()==='en'?'flagged for your review':'позначено на ваш перегляд'))+'</li>'});
+    h+='<div class="cond-pfsub">'+CT('pfSub')+':</div><ul>'+(notes.length?notes.join(''):'<li>—</li>')+'</ul>';
+  }
+  return h+'</div>';
+}
+function condCardHTML(){
+  var b=condCurBlk();if(!b)return '';
+  var visIndex=COND.i+1,total=COND.plan.length;
+  var shared='<div class="cond-sharedlabel">'+CT('shared')+'</div><div class="cond-shared">'+
+    '<div class="cond-taskmeta"><span class="num">'+CT('task')+' '+visIndex+' '+CT('of')+' '+total+'</span></div>'+
+    stRender(b,visIndex)+'</div>';
+  if(COND.stud)return shared;
+  var markChip=b.mark==='warn'?'<span class="chip warn">'+CT('mLook')+'</span>':'<span class="chip ok">'+CT('mVer')+'</span>';
+  var resTag=COND_RESERVE[b.id]?'<span class="chip muted">＋ '+CT('reserveTag')+'</span>':'';
+  var panel='<div class="cond-panel"><div class="cond-panellabel">'+CT('panel')+'</div>'+
+    '<div class="cond-panelchips"><span class="chip info">'+esc(b.type)+'</span><span class="chip muted">'+esc(b.mode)+'</span>'+resTag+markChip+'</div>';
+  if(b.note)panel+='<div class="cond-note">⚠ '+esc(b.note)+'</div>';
+  if(COND.showAns&&b.ans)panel+='<div class="cond-answer"><span class="lbl">🔑 '+CT('answer')+'</span><div class="val">'+esc(b.ans)+'</div></div>';
+  if(COND.showReceipt){var r=condReceipt(b);
+    panel+='<div class="cond-receipt"><div class="rh">📎 '+CT('whyHead')+'</div>'+
+      '<div class="row"><span class="k">'+CT('rSrc')+':</span><span>'+r.src+'</span></div>'+
+      '<div class="row"><span class="k">'+CT('rWhy')+':</span><span>'+r.why+'</span></div>'+
+      '<div class="row"><span class="k">'+CT('rConf')+':</span><span class="conf">'+r.conf+'</span></div>'+
+      (r.rej?'<div class="row"><span class="k">'+CT('rRej')+':</span><span class="rej">'+r.rej+'</span></div>':'')+'</div>';}
+  return shared+panel+'</div>';
+}
+function condCtlHTML(){
+  var b=condCurBlk();
+  if(COND.stud)return '<button class="btn primary" data-action="cond-preview">'+CT('exitPreview')+'</button>';
+  return '<button class="btn ghost cond-sm" data-action="cond-prev">'+CT('back')+'</button>'+
+    '<button class="btn ghost cond-sm" data-action="cond-ans">'+(COND.showAns?CT('hideAns'):CT('showAns'))+'</button>'+
+    '<button class="btn ghost cond-sm'+(COND.showReceipt?' cond-on':'')+'" data-action="cond-receipt">'+CT('why')+'</button>'+
+    '<span class="cond-grow"></span>'+
+    '<button class="btn ghost cond-sm'+(COND.easy[b.id]?' cond-on':'')+'" data-action="cond-easy">'+CT('easy')+'</button>'+
+    '<button class="btn ghost cond-sm'+(COND.gate[b.id]?' cond-on':'')+'" data-action="cond-gate">'+CT('gate')+'</button>'+
+    '<button class="btn ghost cond-sm" data-action="cond-skip">'+CT('skip')+'</button>'+
+    '<button class="btn primary cond-sm" data-action="cond-next">'+CT('done')+'</button>';
+}
+function condSummaryHTML(){
+  var l=condLesson(),uk=uiLang()!=='en';
+  var done=Object.keys(COND.done).length,skip=Object.keys(COND.skip).length,
+      easy=Object.keys(COND.easy).filter(function(k){return COND.easy[k]}).length,
+      gate=Object.keys(COND.gate).filter(function(k){return COND.gate[k]}).length;
+  var h='<div class="cond-sum"><h2>'+CT('sumTitle')+'</h2><p class="cond-lead">'+CT('sumLead')+'</p>';
+  h+='<div class="cond-grid">'+
+     '<div class="cond-stat"><div class="n">'+done+'</div><div class="l">'+CT('sDone')+'</div></div>'+
+     '<div class="cond-stat"><div class="n">'+skip+'</div><div class="l">'+CT('sSkip')+'</div></div>'+
+     '<div class="cond-stat"><div class="n">'+easy+'</div><div class="l">'+CT('sEasy')+'</div></div>'+
+     '<div class="cond-stat"><div class="n">'+gate+'</div><div class="l">'+CT('sFlag')+'</div></div></div>';
+  h+='<h4 class="dochead"><span class="pn">⏱</span>'+CT('phaseTime')+'</h4><table class="cond-tbl"><tr><th>'+CT('phaseC')+'</th><th>'+CT('planned')+'</th><th>'+CT('actual')+'</th></tr>';
+  [1,2,3].forEach(function(ph){var a=COND.elapsed[ph],over=a>COND.pd[ph-1]*60;h+='<tr><td>'+condPhaseName(ph)+'</td><td>'+COND.pd[ph-1]+':00</td><td class="'+(over?'cond-over':'')+'">'+condFmt(a)+(over?' ⚠':'')+'</td></tr>';});
+  h+='</table>';
+  h+='<h4 class="dochead"><span class="pn">⚑</span>'+CT('flagsHead')+'</h4>';
+  var flags=[];
+  l.blocks.forEach(function(b){
+    if(COND.gate[b.id])flags.push('⚑ «'+esc(b.type)+'» — '+(uk?'перевірка помилилася (перевірити правило)':'the check was wrong (review the rule)'));
+    if(COND.easy[b.id])flags.push('🙂 «'+esc(b.type)+'» — '+(uk?'занадто легко для цього учня':'too easy for this learner'));
+    if(COND.skip[b.id])flags.push('⤼ «'+esc(b.type)+'» — '+(uk?'пропущено на занятті':'skipped in the lesson'));
+  });
+  (COND.dropped||[]).forEach(function(t){flags.push('✂ «'+esc(t)+'» — '+(uk?'прибрано із плану через брак часу (у запас/на домашнє)':'removed from the plan to save time (to reserve/homework)'));});
+  h+=flags.length?'<ul class="cond-flaglist">'+flags.map(function(f){return '<li>'+f+'</li>'}).join('')+'</ul>':'<p class="cond-lead">'+CT('noFlags')+'</p>';
+  if(COND.ruleDone==='acc')h+='<div class="cond-rulecard"><div class="rt">'+CT('ruleOk')+'</div></div>';
+  else if(COND.ruleDone!=='rej')h+='<div class="cond-rulecard"><div class="rt">'+CT('ruleTitle')+'</div><div class="rq">«'+CT('ruleText')+'»</div><div class="cond-rulenote">'+CT('ruleNote')+'</div><div class="btns"><button class="btn primary cond-sm" data-action="cond-rule" data-v="acc">'+CT('ruleAcc')+'</button><button class="btn ghost cond-sm" data-action="cond-rule" data-v="rej">'+CT('ruleRej')+'</button></div></div>';
+  h+='<div class="cond-sumbtns"><button class="btn primary" data-action="cond-again">'+CT('again')+'</button><button class="btn ghost" data-action="cond-exit">'+CT('toReady')+'</button></div>';
+  return h+'</div>';
+}
+function vConductor(){
+  if(!COND)return '<div class="emptystate"><h3>Немає активного заняття</h3><p>Відкрийте готове заняття й натисніть «▶ Провести заняття».</p><button class="btn primary" data-go="dash">До «Моїх занять»</button></div>';
+  if(COND.ended)return condSummaryHTML();
+  var l=condLesson();
+  /* A1: student preview is a CLEAN, share-safe screen — only the student banner,
+     the shared task, and one «back to your panel» control. No teacher toolbar,
+     rail, clock, preflight, hint or held tray. (render() also flips the header
+     badge to «учень» + studentframe for conduct preview.) */
+  if(COND.stud){
+    return '<div class="rolebanner student">'+CT('studBanner')+'</div>'+
+           '<div class="cond-card">'+condCardHTML()+'</div>'+
+           '<div class="cond-ctl">'+condCtlHTML()+'</div>';
+  }
+  var top='<div class="cond-top"><div class="cond-title"><b>▶ '+CT('title')+'</b><span class="cond-sub">'+esc(l.title)+' · '+COND.dur+' '+CT('min')+'</span></div>'+
+    '<div class="cond-topbtns">'+
+      '<button class="btn ghost cond-sm" data-action="cond-exit">'+CT('exit')+'</button>'+
+      '<button class="btn ghost cond-sm" data-action="cond-time">'+CT('addTime')+'</button>'+
+      '<button class="btn ghost cond-sm" data-action="cond-profile">'+CT('profile')+'</button>'+
+      '<button class="btn ghost cond-sm" data-action="cond-preview">'+CT('preview')+'</button>'+
+      '<button class="btn ghost cond-sm" data-action="cond-help">'+CT('help')+'</button>'+
+    '</div></div>';
+  var rail='<div class="cond-rail" id="cond-rail">'+condRailHTML()+'</div>';
+  var clock='<div class="cond-clock" id="cond-clock">'+condClockHTML()+'</div>';
+  var pf=condPreflightHTML();
+  var hint=COND.hintOff?'':'<div class="hintbar"><span>💡 '+CT('hint')+'</span><button data-action="cond-hint-off" title="сховати підказку">×</button></div>';
+  var reb='<div id="cond-reb">'+condRebHTML()+'</div>';
+  var card='<div class="cond-card">'+condCardHTML()+'</div>';
+  var ctl='<div class="cond-ctl">'+condCtlHTML()+'</div>';
+  var heldN=(l.rejected&&l.rejected.length)||0;
+  var held=heldN?'<div class="cond-held">🛑 <b>'+CT('held')+':</b> '+heldN+' '+CT('holdWho')+'</div>':'';
+  return top+rail+clock+pf+hint+reb+card+ctl+held;
+}
+/* live clock — only the current phase ticks, only while in the conduct view */
+var condTimer=setInterval(function(){
+  if(typeof route==='undefined'||!route||route.name!=='conduct'||!COND||!COND.started||COND.ended)return;
+  COND.elapsed[condCurPhase()]++;condRepaintTimers();
+},1000);
+/* overlays live outside #app (render() rebuilds #app) */
+function condOverlay(inner){
+  var o=document.createElement('div');o.className='cond-overlay';
+  o.innerHTML='<div class="cond-modal">'+inner+'</div>';
+  o.addEventListener('click',function(e){if(e.target===o||e.target.getAttribute('data-close'))o.remove()});
+  document.body.appendChild(o);trNode(o);
+}
+function condOpenProfile(){
+  var h='<button class="cond-close" data-close="1">×</button><h2>👤 '+(uiLang()==='en'?'Learner profile':'Профіль учня')+' <span class="cond-newpill">'+CT('profFuture')+'</span></h2>';
+  h+='<p class="cond-modp">'+CT('profLead')+'</p>';
+  COND_PROFILE.forEach(function(it){h+='<div class="cond-lrow"><span class="k">'+it.k[uiLang()]+':</span><span>'+it.v[uiLang()]+'</span></div>';});
+  h+='<div class="cond-optin">🔒 '+CT('ledgerNote')+'</div>';
+  h+='<div style="margin-top:14px;text-align:right"><button class="btn primary" data-close="1">'+CT('close')+'</button></div>';
+  condOverlay(h);
+}
+function condOpenHelp(){
+  var uk=uiLang()!=='en';
+  var body=uk?[
+    ['Що це?','«Проведення заняття» — режим, у якому ви <b>проводите вже готове й перевірене заняття</b> просто на екрані під час уроку (наприклад, у Zoom). Завдання показуються по одному. «Граматка» не звертається до штучного інтелекту наживо — заняття вже складене й заморожене.'],
+    ['Спільний екран','Центральний блок із зеленою рамкою — це те саме, що бачить учень: інтерактивне завдання без відповідей. У Zoom є три способи: ви натискаєте самі (учень відповідає усно); або ділитеся <b>чистим екраном учня</b> — кнопка «👁 Як бачить учень» ховає вашу панель; або даєте учневі посилання, щоб натискав він сам.'],
+    ['Ваша панель','Жовта панель під завданням — приватна, учень її не бачить: 🔑 відповідь, позначка перевірки, ⓘ «чому це завдання», і кнопки керування.'],
+    ['Смужка часу вгорі','Три частини заняття (Тест → Навчання → Тест) і час на кожну. Годинник іде для поточної частини; якщо перевищуєте бюджет — він стає жовтим і зʼявляється підказка «скоротити».'],
+    ['Кнопки під завданням','<b>Готово</b> — далі · <b>Пропустити</b> · <b>Занадто легко</b> — для цього учня · <b>Перевірка помилилася</b> — коли перевірка дарма щось позначила · <b>🔑</b> — відповідь бачите тільки ви · <b>ⓘ Чому це завдання?</b> — звідки воно взялося.'],
+    ['🔎 Попередній прогін · 🛑 Відкладено','<i>Приклад майбутньої функції:</i> перед заняттям система зможе «прогнати» його з кількома змодельованими учнями рівня B1, щоб зловити хитрі місця заздалегідь. А що не пройшло перевірку — не потрапляє в заняття, а чекає на ваш перегляд. Нічого не зникає тихо.'],
+    ['👤 Профіль учня · наприкінці','Памʼять про учня зʼявиться, коли учень зареєструється — за згодою. Наприкінці — «Що сталося на занятті»: короткий запис і одна нотатка про цього учня.']
+  ]:[
+    ['What is this?','“Running the lesson” is a mode where you <b>run an already-built, verified lesson</b> right on screen during class (e.g., on Zoom). Tasks appear one at a time. Hramatka does not call the AI live — the lesson is already made and frozen.'],
+    ['Shared screen','The centre block with the green border is exactly what the student sees: the interactive task with no answers. On Zoom there are three ways: you click yourself (the student answers aloud); or you share the <b>clean student screen</b> — the “👁 Student view” button hides your panel; or you send the student a link so they click themselves.'],
+    ['Your panel','The gold panel under the task is private — the student does not see it: 🔑 answer, verification mark, ⓘ “why this task”, and the control buttons.'],
+    ['The time bar on top','Three phases (Test → Teach → Test) and the time budget for each. The clock runs for the current phase; go over budget and it turns amber with a “shorten” prompt.'],
+    ['Buttons under the task','<b>Done</b> · <b>Skip</b> · <b>Too easy</b> for this learner · <b>Check was wrong</b> when a check flagged something by mistake · <b>🔑</b> answer, only you see it · <b>ⓘ Why this task?</b> where it came from.'],
+    ['🔎 Preflight · 🛑 Set aside','<i>Example of a future feature:</i> before class the system will be able to “dry-run” the lesson with a few simulated B1 learners, to catch tricky spots in advance. Anything that failed verification is not in the lesson — it waits for your review. Nothing disappears silently.'],
+    ['👤 Learner profile · at the end','A memory of the learner appears once the student registers — with consent. At the end: “What happened in the lesson” — a short record and one note about this learner.']
+  ];
+  var h='<button class="cond-close" data-close="1">×</button><h2>'+CT('helpTitle')+'</h2>';
+  body.forEach(function(s){h+='<h3 class="cond-modh">'+s[0]+'</h3><p class="cond-modp">'+s[1]+'</p>';});
+  h+='<div style="margin-top:16px;text-align:right"><button class="btn primary" data-close="1">'+CT('close')+'</button></div>';
+  condOverlay(h);
+}
+CHROME.conduct={n:'▶ Проведення заняття',role:'Ви проводите вже готове й перевірене заняття — крок за кроком, як диригент. Спільний екран бачить учень; відповіді, позначки й керування — лише ви.',tags:'<span class="tag live">живе демо</span><span class="tag v1">напрям продукту</span>',notes:'<li><b>Спільний екран</b> — це той самий інтерактивний екран учня («👩‍🎓 Показати як учневі»): учень бачить завдання без відповідей.</li><li><b>Ваша панель</b> — приватна: 🔑 відповідь, позначка перевірки, ⓘ «чому це завдання», керування (готово / пропустити / занадто легко / перевірка помилилася).</li><li><b>Смужка часу</b> — три частини (Тест → Навчання → Тест) з бюджетом; годинник іде для поточної; над бюджетом — жовтий + «скоротити» (прибирає завдання із запасу).</li><li><b>Ідеї на майбутнє</b> (позначені): 🔎 передпоказ на змодельованих учнях · 👤 памʼять про учня (за згодою після реєстрації) · ⓘ чому кожне завдання · 💡 нотатка про цього учня наприкінці.</li><li class="q">Питання до вчительки: чи так ви уявляєте проведення 1-на-1 у Zoom? Чого бракує на вашій панелі?</li>'};
+CHROME_EN.conduct={n:'▶ Running the lesson',role:'You run an already-built, verified lesson — step by step, like a conductor. The student sees the shared screen; answers, marks and controls are yours alone.',tags:'<span class="tag live">live demo</span><span class="tag v1">product direction</span>',notes:'<li><b>Shared screen</b> — the same interactive student screen (“👩‍🎓 Show as student”): the student sees the task with no answers.</li><li><b>Your panel</b> — private: 🔑 answer, verification mark, ⓘ “why this task”, controls (done / skip / too easy / check was wrong).</li><li><b>Time bar</b> — three phases (Test → Teach → Test) with budgets; the clock runs for the current one; over budget it turns amber with “shorten” (drops a reserve task).</li><li><b>Future ideas</b> (labelled): 🔎 dry-run on simulated learners · 👤 learner memory (with consent after registration) · ⓘ why each task · 💡 a note about this learner at the end.</li><li class="q">Question for the teacher: is this how you picture running 1-on-1 on Zoom? What is missing from your panel?</li>'};
+
+/* ============ render ============ */
+var VIEWS={dash:vDash,new:vNew,bake:vBake,review:vReview,final:vFinal,settings:vSettings,login:vLogin,freeze:vFreeze,conduct:vConductor};
+function render(){
+  var c=(uiLang()==='en'?CHROME_EN:CHROME)[route.name]||CHROME[route.name];
+  $('#screenhead').innerHTML='<h2>'+c.n+'</h2><p class="role">'+c.role+'</p><div class="tags">'+c.tags+'</div>';
+  var HINTS={dash:'Натисніть на заняття, щоб відкрити його. «+ Нове заняття» — щоб створити.',new:'Вставте чи напишіть текст на аркуші, оберіть тривалість праворуч — і «Приготувати заняття».',bake:'Це справжні етапи роботи. Можна повернутися до «Моїх занять» — ми повідомимо, коли буде готово.',review:'Тривалість — перемикач угорі. На полях: ✎ редагувати · ↑↓ пересунути · ✕ вилучити. Наприкінці — «Прийняти заняття».',final:'🔑 відповіді — лише для вас · ⧉ Копіювати у свій документ · 👩‍🎓 «Показати як учневі» перед шерингом у Zoom · 🌐 на екрані учня можна перемкнути мову інтерфейсу (укр/EN) — завдання завжди українською.'};
+  var hint=(HINTS[route.name]&&!(S.hintsOff&&S.hintsOff[route.name]))?'<div class="hintbar noprint"><span>💡 '+HINTS[route.name]+'</span><button data-action="hint-off" title="сховати підказку">×</button></div>':'';
+  $('#app').innerHTML=hint+VIEWS[route.name]();
+  var smNow=false;
+  if(route.name==='final'){var lf=route.id?lesson(route.id):lastBy('ready');smNow=!!(lf&&lf.studentMode)}
+  if(route.name==='conduct'&&COND&&COND.stud)smNow=true; /* A1: student badge + frame in conduct preview */
+  var mc=$('#modechip');if(mc){mc.textContent=smNow?L('chip.student'):'👩‍🏫 вчитель';mc.classList.toggle('student',smNow)}
+  $('#appframe').classList.toggle('studentframe',smNow);
+  $('#notes').innerHTML=c.notes?'<details class="notes"'+(route.name==='freeze'?' open':'')+'><summary>Нотатки до обговорення (заморозка)</summary><ul>'+c.notes+'</ul></details>':'';
+  $('#who').textContent=S.teacher;
+  document.querySelectorAll('nav.rail .raillink').forEach(function(a){a.classList.toggle('active',a.getAttribute('data-go')===route.name)});
+  $('#nav-dash').classList.toggle('on',route.name==='dash');
+  $('#nav-settings').classList.toggle('on',route.name==='settings');
+  var lb=$('#langbtn');if(lb)lb.textContent=uiLang()==='en'?'УКР':'EN';
+  var af=$('#appframe');af.style.display=(route.name==='freeze')?'none':'';
+  if(route.name==='freeze'){$('#notes').insertAdjacentHTML('afterbegin','<div class="mock"><div class="mockbody">'+vFreeze()+'</div></div>')}
+  wireInputs();
+  syncFailBtn();
+  trNode(document.body); /* whole-UI language pass (translate or restore) */
+}
+function syncFailBtn(){var b=$('#failbtn');if(!b)return;b.classList.toggle('armed',!!S.failNext);var x=S.failNext?'⚡ Збій увімкнено — наступне приготування впаде':'⚡ Симулювати збій';b.textContent=uiLang()==='en'?trStr(x):x}
+function wireInputs(){
+  var a=$('#anchor');
+  if(a){a.addEventListener('input',function(){draft.text=a.innerText})}
+  var f=$('#focusin');if(f){f.addEventListener('input',function(){draft.focus=f.value})}
+  var u=$('#urlin');if(u){u.addEventListener('input',function(){draft.url=u.value})}
+  var n=$('#namein');if(n){n.addEventListener('input',function(){S.teacher=n.value||'Марія';$('#who').textContent=S.teacher;save()})}
+}
+
+/* ============ actions ============ */
+document.addEventListener('click',function(e){
+  var go_=e.target.closest('[data-go]');
+  var act=e.target.closest('[data-action]');
+  if(go_&&!act){go(go_.getAttribute('data-go'));return}
+  if(!act)return;
+  var A=act.getAttribute('data-action'), id=act.getAttribute('data-id');
+  var l;
+  switch(A){
+    case 'open-lesson':
+      l=lesson(id);
+      if(l.status==='baking'){go('bake',l.id)}
+      else if(l.status==='draft'){ if(l.blocks.length){go('review',l.id)} else {go('new',l.id)} }
+      else{ if(l.accepted){go('final',l.id)} else {go('review',l.id)} }
+      break;
+    case 'tab':
+      draft.tab=act.getAttribute('data-v');render();break;
+    case 'photo-soon':
+      bubble(act,'Фото сторінки — наступна версія: сфотографували підручник, текст розпізнається сам.');break;
+    case 'fetch-url':
+      var uv=($('#urlin')||{}).value||'';
+      if(!uv.trim()){bubble(act,'Вставте адресу сторінки — і ми дістанемо з неї текст.');break}
+      act.textContent='Отримуємо…';act.disabled=true;
+      setTimeout(function(){draft.text=LINK_TEXT;draft.tab='text';render();toast('Текст отримано з посилання <b>(демо)</b> — перегляньте його на аркуші')},1100);
+      break;
+    case 'level':
+      var v=act.getAttribute('data-v');
+      if(v!=='B1'){bubble(act,'У пілоті — лише B1. Інші рівні ввімкнемо після пілота (архітектура готова).');break}
+      draft.level=v;render();break;
+    case 'method':
+      if(act.getAttribute('data-avail')!=='1'){bubble(act,'Ця методика зʼявиться після пілота — у першій версії працює «Тест → Навчання → Тест».');break}
+      draft.method=act.getAttribute('data-v');render();break;
+    case 'duration':
+      draft.duration=+act.getAttribute('data-v');render();break;
+    case 'def-duration':
+      S.defaults.duration=+act.getAttribute('data-v');save();render();toast('Збережено: типово '+S.defaults.duration+' хв ('+durInfo(S.defaults.duration).tasks+' завдань)');break;
+    case 'bake-now':
+      var txt=(draft.text||'').trim();
+      if(txt.length<120){$('#anchorwarn').innerHTML='<span class="bubble">Додайте текст (щонайменше кілька речень) — завдання будуються лише з нього.</span>';break}
+      var first=(sentences(txt)[0]||txt.split(/\n/)[0]||'').replace(/^Оголошення:\s*/i,'').replace(/[.!?…]+\s*$/,'');
+      var title=first;
+      if(title.length>52){var cut=title.slice(0,52),sp=cut.lastIndexOf(' ');title=(sp>20?cut.slice(0,sp):cut)+'…'}
+      if(!title)title='Нове заняття';
+      if(draft.fromId){l=lesson(draft.fromId);l.anchor=txt;l.title=title;l.focus=draft.focus;l.duration=draft.duration;l.count=durInfo(draft.duration).tasks}
+      else{l={id:S.nextId++,title:title,level:draft.level,focus:draft.focus,duration:draft.duration,count:durInfo(draft.duration).tasks,status:'baking',accepted:false,when:'щойно',anchor:txt,blocks:[],rejected:[],showRejected:false,bake:{step:0,failed:false}};S.lessons.unshift(l)}
+      if(txt===RENT_TEXT.trim()){l.pending=rentBlocks;l.rejected=rentRejected()}
+      startBake(l);go('bake',l.id);break;
+    case 'retry-bake':
+      l=lesson(id);startBake(l);break;
+    case 'demo-bake':
+      l={id:S.nextId++,title:'Українська кухня: вареники (демо)',level:'B1',focus:'',duration:45,count:6,status:'baking',accepted:false,when:'щойно',anchor:VAR_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:0,failed:false}};
+      S.lessons.unshift(l);startBake(l);go('bake',l.id);break;
+    case 'open-review':
+      go('review',id);break;
+    case 'b-edit':
+      l=lesson(route.id);var blk=$('#blk'+id),bc=blk.querySelector('.bcontent');
+      var b=l.blocks.filter(function(x){return x.id===+id})[0];
+      if(bc.isContentEditable){bc.contentEditable='false';blk.classList.remove('editing');b.html=bc.innerHTML;b.edited=true;if(b.mark==='warn'){b.mark='ok';b.note=null}save();render();toast('Зміни збережено у занятті')}
+      else{bc.contentEditable='true';blk.classList.add('editing');bc.focus();act.textContent='зберегти'}
+      break;
+    case 'b-accept':
+      l=lesson(route.id);l.blocks.forEach(function(x){if(x.id===+id){x.mark='ok';x.note=null}});save();render();break;
+    case 'b-up': case 'b-down':
+      l=lesson(route.id);
+      var i=l.blocks.findIndex(function(x){return x.id===+id});var bb=l.blocks[i];
+      var dir=A==='b-up'?-1:1;var j=i+dir;
+      var neigh=l.blocks[j];
+      if(neigh&&neigh.phase===bb.phase){l.blocks[i]=neigh;l.blocks[j]=bb}
+      else{var np=bb.phase+dir;if(np>=1&&np<=3){bb.phase=np}}
+      save();render();break;
+    case 'b-del':
+      l=lesson(route.id);
+      var k=l.blocks.findIndex(function(x){return x.id===+id});
+      if(k>=0){var rm=l.blocks.splice(k,1)[0];l.rejected.push({type:rm.type,html:rm.html,reason:'вилучено вами',phase:rm.phase});l.showRejected=true;save();render()}
+      break;
+    case 'b-restore':
+      l=lesson(route.id);
+      var r=l.rejected.splice(+act.getAttribute('data-i'),1)[0];
+      l.blocks.push({id:Date.now()%100000,phase:r.phase||2,type:r.type,mark:'warn',note:'повернено з відхилених — погляньте ще раз',html:r.html});
+      save();render();break;
+    case 'toggle-rejected':
+      l=lesson(route.id);l.showRejected=!l.showRejected;save();render();break;
+    case 'review-duration':
+      l=lesson(route.id);l.duration=+act.getAttribute('data-v');l.count=durInfo(l.duration).tasks;save();render();break;
+    case 'b-include':
+      l=lesson(route.id);
+      var ii=l.blocks.findIndex(function(x){return x.id===+id});
+      if(ii>=0){var bb2=l.blocks.splice(ii,1)[0];var fi=l.blocks.findIndex(function(x){return x.phase===bb2.phase});
+        if(fi<0){var lastLower=-1;l.blocks.forEach(function(x,z){if(x.phase<bb2.phase)lastLower=z});fi=lastLower+1}
+        l.blocks.splice(fi,0,bb2);save();render()}
+      break;
+    case 'toggle-ans':
+      l=lesson(route.id);l.showAns=!l.showAns;save();render();break;
+    case 'hint-off':
+      S.hintsOff=S.hintsOff||{};S.hintsOff[route.name]=true;save();render();break;
+    case 'hints-reset':
+      S.hintsOff={};save();var ov=document.querySelector('[data-helpov]');if(ov)ov.remove();render();break;
+    case 'help':{
+      var o=document.createElement('div');o.setAttribute('data-helpov','1');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;display:grid;place-items:center';
+      o.innerHTML='<div style="background:var(--card);border-radius:12px;padding:20px 22px;max-width:520px;width:92%;font-size:14px;line-height:1.55"><p style="margin:0 0 10px;font-family:Georgia,serif;font-size:19px;font-weight:700">Як користуватися «Граматкою»</p>'
+        +'<p style="margin:0 0 6px">1 · <b>Мої заняття</b> — усі ваші заняття; натисніть, щоб відкрити.</p>'
+        +'<p style="margin:0 0 6px">2 · <b>Нове заняття</b> — вставте текст, оберіть тривалість, «Приготувати».</p>'
+        +'<p style="margin:0 0 6px">3 · <b>Приготування</b> — чесні етапи; можна не чекати.</p>'
+        +'<p style="margin:0 0 6px">4 · <b>Перегляд</b> — редагуйте, пересувайте, ріжте тривалістю; «Прийняти».</p>'
+        +'<p style="margin:0 0 10px">5 · <b>Готове заняття</b> — 🔑 відповіді лише вам · ⧉ копіювати · друк · 👩‍🎓 екран учня для Zoom.</p>'
+        +'<p style="margin:0 0 6px;font-weight:600;font-size:13px;border-top:1px solid var(--line);padding-top:10px">Демо</p>'
+        +'<p style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px"><button class="btn ghost" data-action="demo-reset">↺ Скинути демо</button><button class="btn ghost" data-action="demo-empty">◻ Порожній перший вхід</button><button class="btn ghost" id="failbtn" data-action="demo-fail">⚡ Симулювати збій</button></p>'
+        +'<p style="text-align:right;margin:0;display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" data-action="hints-reset">Повернути підказки</button><button class="btn primary" data-close="1">Зрозуміло</button></p></div>';
+      o.addEventListener('click',function(e){if(e.target===o||e.target.getAttribute('data-close'))o.remove()});
+      document.body.appendChild(o);syncFailBtn();trNode(o);break}
+    case 'toggle-student':
+      l=lesson(route.id);l.studentMode=!l.studentMode;save();render();break;
+    case 'ui-lang':
+      S.uiLang=(uiLang()==='en')?'uk':'en';save();render();break;
+    case 'copy-lesson':{
+      l=lesson(route.id);var txtOut=lessonAsText(l,!!l.showAns&&!l.studentMode);var ok=false;
+      try{var ta=document.createElement('textarea');ta.value=txtOut;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();ok=document.execCommand('copy');ta.remove()}catch(e){ok=false}
+      if(!ok&&navigator.clipboard){navigator.clipboard.writeText(txtOut).then(function(){toast('⧉ Заняття скопійовано — вставте у свій документ')},function(){copyOverlay(txtOut)});break}
+      if(ok){toast('⧉ Заняття скопійовано'+(l.showAns?' (з відповідями)':'')+' — вставте у свій документ')}else{copyOverlay(txtOut)}
+      break}
+    case 'st-choice':{
+      l=lesson(route.id);var sb=l.blocks.filter(function(x){return x.id===+act.getAttribute('data-b')})[0];
+      var sst=stInit(sb);sst.ch[+act.getAttribute('data-i')]=+act.getAttribute('data-o');render();break}
+    case 'st-bank':{
+      l=lesson(route.id);var sb2=l.blocks.filter(function(x){return x.id===+act.getAttribute('data-b')})[0];
+      var st2=stInit(sb2);var w=act.getAttribute('data-w');var gi=st2.gap.length;
+      if(sb2.gaps[gi]&&w===sb2.gaps[gi].k){st2.gap.push(w);st2.wrongChip=null}else{st2.wrongChip=w}
+      render();break}
+    case 'st-left':{
+      l=lesson(route.id);var sb3=l.blocks.filter(function(x){return x.id===+act.getAttribute('data-b')})[0];
+      var st3=stInit(sb3);st3.sel=+act.getAttribute('data-i');st3.wrongRight=null;render();break}
+    case 'st-right':{
+      l=lesson(route.id);var sb4=l.blocks.filter(function(x){return x.id===+act.getAttribute('data-b')})[0];
+      var st4=stInit(sb4);if(st4.sel==null)break;
+      if(+act.getAttribute('data-i')===st4.sel){st4.pairs[st4.sel]=true;st4.sel=null;st4.wrongRight=null}else{st4.wrongRight=+act.getAttribute('data-i')}
+      render();break}
+    case 'st-reveal':{
+      l=lesson(route.id);var sb5=l.blocks.filter(function(x){return x.id===+act.getAttribute('data-b')})[0];
+      var st5=stInit(sb5);st5.rev=!st5.rev;render();break}
+    case 'accept-lesson':
+      l=lesson(route.id);l.accepted=true;l.status='ready';l.when=nowLabel();save();go('final',l.id);toast('✅ Заняття прийнято — можна друкувати');break;
+    case 'save-draft':
+      l=lesson(route.id);l.status='draft';l.when=nowLabel();save();go('dash');toast('Збережено як чернетку — знайдете в «Моїх заняттях»');break;
+    case 'print':
+      window.print();break;
+    case 'pupils-soon':
+      bubble(act,'Посилання для учнів (самостійне проходження в браузері) — наступний крок; місце вже передбачено.');break;
+    case 'login':
+      toast('Вхід виконано <b>(демо)</b> — вітаємо, '+esc(S.teacher)+'!');go('dash');break;
+    case 'demo-reset':
+      Object.keys(timers).forEach(stopBake);S=seed();S.lessons.forEach(function(x){if(x.status==='baking')startBake(x)});save();go('dash');toast('Демо скинуто до початкового стану');break;
+    case 'demo-empty':
+      Object.keys(timers).forEach(stopBake);S.lessons=[];save();go('dash');toast('Порожній перший вхід: так сторінку побачить нова вчителька');break;
+    case 'demo-fail':
+      S.failNext=!S.failNext;save();syncFailBtn();
+      if(S.failNext)toast('Наступне приготування <b>зупиниться на «Перевірці»</b> — покажіть, як виглядає чесна помилка');
+      break;
+    /* ---- ▶ conductor (Проведення заняття) ---- */
+    case 'start-conduct':
+      condInit(lesson(id));go('conduct',+id);break;
+    case 'cond-exit':
+      go('final',COND?COND.lid:null);break;
+    case 'cond-time':
+      if(COND&&!COND.ended){COND.elapsed[condCurPhase()]+=300;condRepaintTimers();}break;
+    case 'cond-profile': condOpenProfile();break;
+    case 'cond-help': condOpenHelp();break;
+    case 'cond-preview': COND.stud=!COND.stud;if(COND.stud)COND.showAns=false;render();break;
+    case 'cond-pf': COND.pfOpen=!COND.pfOpen;render();break;
+    case 'cond-hint-off': COND.hintOff=1;render();break;
+    case 'cond-shorten': condShorten(id);break;
+    case 'cond-prev':
+      if(COND.i>0){COND.i--;COND.showAns=false;COND.showReceipt=false;}render();break;
+    case 'cond-next': case 'cond-skip': {
+      var condCb=condCurBlk();
+      if(A==='cond-skip')COND.skip[condCb.id]=1;else COND.done[condCb.id]=1;
+      COND.showAns=false;COND.showReceipt=false;
+      if(COND.i>=COND.plan.length-1)COND.ended=true;else COND.i++;
+      render();break;}
+    case 'cond-ans': COND.showAns=!COND.showAns;render();break;
+    case 'cond-receipt': COND.showReceipt=!COND.showReceipt;render();break;
+    case 'cond-easy': {var condEb=condCurBlk();COND.easy[condEb.id]=!COND.easy[condEb.id];render();break;}
+    case 'cond-gate': {var condGb=condCurBlk();COND.gate[condGb.id]=!COND.gate[condGb.id];render();break;}
+    case 'cond-again': condInit(lesson(COND.lid));render();break;
+    case 'cond-rule': COND.ruleDone=act.getAttribute('data-v');render();break;
+  }
+});
+document.addEventListener('input',function(e){
+  if(e.target&&e.target.classList&&e.target.classList.contains('stanswer')){
+    var l=lesson(route.id);if(!l)return;
+    var b=l.blocks.filter(function(x){return x.id===+e.target.getAttribute('data-b')})[0];
+    if(b)stInit(b).txt=e.target.value;
+  }
+});
+/* save contenteditable edits on blur */
+document.addEventListener('blur',function(e){
+  if(e.target&&e.target.classList&&e.target.classList.contains('bcontent')&&e.target.isContentEditable){
+    var l=lesson(route.id);if(!l)return;
+    var b=l.blocks.filter(function(x){return x.id===+e.target.getAttribute('data-id')})[0];
+    if(b){b.html=e.target.innerHTML;b.edited=true;if(b.mark==='warn'){b.mark='ok';b.note=null}save()}
+  }
+},true);
+
+go('dash');
+/* resume any baking lessons (after router init) */
+S.lessons.forEach(function(l){if(l.status==='baking'&&!l.bake.failed){startBake(l)}});
+})();
+</script>
+</body></html>

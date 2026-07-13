@@ -1,116 +1,183 @@
-/* Teacher frontend styles — Ukrainian, clean, print-friendly */
-/* #93 item5: force light (color-scheme + explicit) — OS dark must not break contrast on pilot. */
+/*
+  Teacher app styles ported from demo-reference.html tokens + components.
+  Force-light removed; full dark via tokens in index.css.
+  All buttons, inputs, banners, chips, cards, lists, steps, print now follow demo idiom.
+*/
+
+/* base (tokens live in index.css; here scope + component ports) */
 .teacher-app {
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  color: #222;
-  background: #fafafa;
   min-height: 100vh;
-  color-scheme: light;
+  color-scheme: light dark;
 }
 
+/* chrome: appbar styled after demo .mockbar (accent bar + Georgia brand) */
 .appbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
-  background: #111;
+  padding: 10px 16px;
+  background: var(--accent);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 10;
 }
-.brand { font-weight: 700; letter-spacing: .5px; }
+:root[data-theme="dark"] .appbar { color: var(--paper); }
+.brand { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; letter-spacing: .4px; font-size: 17px; }
 .session { display: flex; gap: 12px; align-items: center; font-size: 0.95em; }
-.session .link { color: #9cf; background: none; border: 0; cursor: pointer; }
+.session .link { color: inherit; opacity: .85; background: none; border: 0; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.session .link:hover { opacity: 1; background: rgba(255,255,255,.14); }
 
-.banner { padding: 10px 16px; margin: 8px 16px; border-radius: 6px; }
-.banner.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+/* banners now use demo .banner (honest=wheat, fail=bad). .error kept for role=alert */
+.banner { display: flex; gap: 10px; align-items: flex-start; border-radius: 10px; padding: 12px 14px; font-size: 14px; margin: 8px 16px; }
+.banner.error { background: var(--bad-soft); border: 1px solid var(--bad); color: var(--ink); }
+.banner .ic { font-size: 17px; line-height: 1.2; }
 
-.hub { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 20px; max-width: 1100px; margin: 0 auto; }
-.paste, .catalog { background: white; border: 1px solid #e5e5e5; border-radius: 8px; padding: 16px; }
-.paste textarea, .paste input, .paste select { width: 100%; padding: 8px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
-.disclosure { font-size: 0.85rem; background: #fefce8; padding: 8px; border-radius: 4px; margin-bottom: 12px; border-left: 3px solid #ca8a04; }
+/* hub + cards: paste + catalog as demo paper/card */
+.hub {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding: 20px;
+  max-width: 1060px;
+  margin: 0 auto;
+}
+@media (max-width: 860px) { .hub { grid-template-columns: 1fr; } }
 
-.catalog ul { list-style: none; padding: 0; }
-.catalog li { margin: 6px 0; display: flex; gap: 8px; align-items: center; }
-.catalog button { text-align: left; }
+.paste, .catalog {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+.paste h2, .catalog h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 18px; margin: 0 0 8px; }
+.disclosure { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 12px; }
 
-.lesson-view { max-width: 980px; margin: 0 auto; padding: 16px; }
-.lesson-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.lesson-header h2 { margin: 0 0 0 8px; font-size: 1.35rem; }
-.lesson-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+/* form controls use demo tokens via .formgrid + .field + .inputbox (added in JSX) */
+.paste .formgrid { max-width: 100%; }
+.paste select, .paste input, .paste textarea { font-size: 14.5px; }
+.paste .field + .field { margin-top: 2px; }
 
-.meta { background: #f1f5f9; padding: 8px 12px; border-radius: 6px; margin: 12px 0; font-size: 0.9rem; }
+/* catalog list rows (demo listrow + chips) */
+.catalog ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.catalog li.listrow, .catalog .listrow { margin: 0; display: flex; align-items: center; gap: 14px; padding: 13px 8px; border-bottom: 1px solid var(--line); border-radius: 6px; width: 100%; }
+.catalog li.listrow:last-child { border-bottom: 0; }
+.catalog li.listrow:hover { background: var(--accent-soft); }
+.catalog li.listrow button { text-align: left; background: none; border: 0; padding: 0; cursor: pointer; flex: 1; display: flex; align-items: center; gap: 8px; }
+.catalog li.listrow .title { font-weight: 600; }
+.catalog li.listrow .when { color: var(--ink-soft); font-size: 12.5px; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* lesson view chrome */
+.lesson-view { max-width: 1060px; margin: 0 auto; padding: 16px 20px; }
+.lesson-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.lesson-header h2 { margin: 0 0 0 4px; font-size: 21px; font-family: Georgia, 'Times New Roman', serif; }
+.lesson-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.lesson-actions button { font-size: 13px; padding: 7px 11px; }
+
+.meta {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--ink);
+}
 
 .phase { margin: 18px 0; }
-.phase h3 { margin: 0 0 8px; font-size: 1.05rem; color: #334155; }
+.phase h3 { margin: 0 0 8px; font-size: 15px; color: var(--ink-soft); font-family: inherit; }
 
+/* blocks as demo-style cards (paper/card tokens) */
 .block {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
   margin-bottom: 14px;
-  background: white;
+  box-shadow: var(--shadow);
 }
-.block.warn { border-color: #f59e0b; background: #fffbeb; }
-.block.ok { border-color: #86efac; }
+.block.warn { border-color: var(--warn); background: var(--warn-soft); }
+.block.ok { border-color: var(--ok); }
 .block.edited { border-style: dashed; }
 
-.block-meta { display: flex; gap: 8px; font-size: 0.8rem; margin-bottom: 6px; color: #475569; }
-.block-meta .warn-badge { color: #b45309; font-weight: 600; }
-.block-meta .prov { color: #64748b; }
+.block-meta { display: flex; gap: 8px; font-size: 12px; margin-bottom: 8px; color: var(--ink-soft); flex-wrap: wrap; }
+.block-meta .type { font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
+.block-meta .mode { font-size: 11px; }
+.block-meta .warn-badge { color: var(--warn); font-weight: 600; }
+.block-meta .prov { color: var(--ink-soft); }
 
-.teacher-key { background: #f8fafc; border-left: 3px solid #64748b; padding: 6px 10px; margin: 8px 0; font-size: 0.85rem; }
-.teacher-key pre { margin: 4px 0; white-space: pre-wrap; font-size: 0.8rem; }
-
-.ack-btn {
-  background: #854d0e; color: white; border: 0; padding: 6px 12px; border-radius: 4px; cursor: pointer;
+.teacher-key {
+  background: var(--paper);
+  border-left: 3px solid var(--line);
+  padding: 8px 10px;
+  margin: 10px 0;
+  font-size: 13px;
+  border-radius: 6px;
 }
+.teacher-key pre { margin: 4px 0; white-space: pre-wrap; font-size: 12px; color: var(--ink); }
+.teacher-key .note, .teacher-key .prov-detail { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+
+.ack-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--ok); color: var(--ok); background: var(--card); cursor: pointer; font-size: 13px; }
 .ack-btn:disabled { opacity: .6; }
-.acked { color: #166534; font-weight: 600; }
+.acked { color: var(--ok); font-weight: 600; font-size: 13px; }
 
-.accept-bar { margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; }
-.accept-bar .warn-note { color: #854d0e; margin-bottom: 8px; }
+.accept-bar {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.accept-bar .warn-note { color: var(--warn); margin-bottom: 8px; font-size: 13px; }
 
-.activity-wrapper { margin: 8px 0; }
+.activity-wrapper { margin: 10px 0; }
 
-.run-note { font-size: .85rem; color: #475569; margin-top: 12px; font-style: italic; }
+.run-note { font-size: 13px; color: var(--ink-soft); margin-top: 12px; font-style: italic; }
 
-.footer { text-align: center; padding: 24px; color: #64748b; font-size: 0.8rem; }
+.footer { text-align: center; padding: 24px 12px; color: var(--ink-soft); font-size: 12px; border-top: 1px solid var(--line); margin-top: 32px; }
 
-/* Invite */
-.invite { max-width: 520px; margin: 60px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+/* Invite (card) */
+.invite {
+  max-width: 520px; margin: 60px auto; padding: 20px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+}
+.invite h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; }
 .invite button { padding: 10px 16px; }
 
-/* Print stylesheet — student + teacher copies */
-@media print {
-  .appbar, .banner, .lesson-actions, .accept-bar, .footer, button { display: none !important; }
-  .block { break-inside: avoid; page-break-inside: avoid; border: 1px solid #ccc; margin-bottom: 12pt; }
-  .teacher-key { background: #f9f9f9; border: 1px solid #ddd; }
-  .phase h3 { page-break-after: avoid; }
-  .lesson-view { max-width: 100%; }
-  @page { margin: 1.5cm; }
-  .block.warn { background: #fff; }
-}
+/* lesson list row buttons etc already covered */
 
-/* Minimal polish */
-button {
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  color: #222;
-  cursor: pointer;
-}
-button:disabled { opacity: 0.6; cursor: default; }
-button:hover:not(:disabled) { background: #f8fafc; }
+/* small / hint */
+.small, .hint { font-size: 12.5px; color: var(--ink-soft); }
+
+/* buttons global polish using demo atoms (primary/ghost set in index) */
+button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-size: 14px; }
+button:disabled { opacity: .55; cursor: default; }
+button:hover:not(:disabled) { background: var(--accent-soft); }
+button.btn.primary, button.btn.ghost { /* explicit */ }
+
+/* inputs use .inputbox from index + inherit */
 textarea, input, select {
   font-family: inherit;
-  background: #fff;
-  color: #222;
-  border: 1px solid #cbd5e1;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
-.small { font-size: 0.8rem; color: #64748b; }
 
-/* Force light controls (pilot safety) */
-.appbar, .paste, .catalog, .lesson-view, .block, .invite { color-scheme: light; }
+/* mode/run chrome minimal */
+.modes { }
+.modes.run .block { /* lighter for student demo */ }
+
+/* extend print from demo (tokens ensure paper bg etc) */
+@media print {
+  .appbar, .banner, .lesson-actions, .accept-bar, .footer, button, .noprint { display: none !important; }
+  .lesson-view { max-width: 100%; padding: 0; }
+  .block { break-inside: avoid; page-break-inside: avoid; border: 1px solid var(--line); margin-bottom: 12pt; background: #fff; box-shadow: none; }
+  .teacher-key { background: var(--paper); border: 1px solid var(--line); }
+  .phase h3 { page-break-after: avoid; }
+  @page { margin: 1.5cm; }
+  .block.warn { background: #fff; border-color: var(--line); }
+  .meta, .accept-bar { background: #fff; border: 1px solid var(--line); }
+}

@@ -619,16 +619,17 @@ export default function TeacherApp() {
             const isWarn = block.mark === 'warn';
             const acked = (l.warning_acknowledgements || []).includes(block.id) || localAcks.includes(block.id);
             const showKey = viewMode === 'review';
+            const typeChip = isWarn ? 'warn' : 'info';
             return (
               <div key={block.id} className={`block ${isWarn ? 'warn' : 'ok'} ${block.edited ? 'edited' : ''}`}>
                 <div className="block-meta">
-                  <span className="type">{block.type}</span>
+                  <span className={`chip ${typeChip}`}>{block.type}</span>
                   <span className="mode">{block.mode}</span>
                   {isWarn && <span className="warn-badge">⚠️ попередження</span>}
                   {block.provenance?.external_options && <span className="prov">зовнішні варіанти</span>}
                 </div>
 
-                {/* REAL WIDGET — zero fallback */}
+                {/* REAL WIDGET — zero fallback (container styled only; kit kept untouched) */}
                 <div className="activity-wrapper" data-activity-type={block.type}>
                   <ActivityPlayer
                     activity={block.activity}
@@ -650,7 +651,7 @@ export default function TeacherApp() {
 
                 {viewMode === 'review' && isWarn && !acked && (
                   <button
-                    className="ack-btn"
+                    className="ack-btn btn"
                     onClick={() => ackWarning(block.id)}
                     disabled={loading}
                   >
@@ -674,7 +675,7 @@ export default function TeacherApp() {
   return (
     <div className="teacher-app">
       <header className="appbar">
-        <div className="brand">Граматика • Пілот</div>
+        <div className="brand">Граматка</div>
         {session && (
           <div className="session">
             <span>{session.teacher.display_name}</span>
@@ -684,14 +685,16 @@ export default function TeacherApp() {
       </header>
 
       {error && (
-        <div className="banner error" role="alert">
-          {error} <button onClick={() => setError(null)}>✕</button>
+        <div className="banner fail error" role="alert">
+          <span className="ic">!</span>
+          <span>{error}</span>
+          <button onClick={() => setError(null)} style={{marginLeft:'auto',fontSize:13,opacity:.7}}>✕</button>
         </div>
       )}
 
       {/* #93 item1: UA loading state (never blank page) */}
       {initLoading && (
-        <main style={{ padding: 40, color: '#475569' }}>Завантаження…</main>
+        <main style={{ padding: 40, color: 'var(--ink-soft)' }}>Завантаження…</main>
       )}
 
       {!session && !initLoading && (
@@ -699,6 +702,7 @@ export default function TeacherApp() {
           <h1>Вхід для викладача</h1>
           <p>Використайте посилання-запрошення. Токен обробляється лише в пам’яті.</p>
           <button
+            className="btn primary"
             onClick={async () => {
               // Dev helper: allow manual redeem with test token
               const t = prompt('Тестовий токен (або залиште порожнім для автоматичного):') || 'TEST' + 'A'.repeat(39) + 'Q';
@@ -721,54 +725,70 @@ export default function TeacherApp() {
             <main className="hub">
               <section className="paste">
                 <h2>Створити новий урок</h2>
-                <div className="disclosure">{disclose}</div>
+                <div className="banner honest"><span className="ic">ℹ︎</span><span>{disclose}</span></div>
 
-                <label>
-                  Рівень: <strong>B1</strong> (фіксовано для пілоту)
-                </label>
+                <div className="formgrid">
+                  <div className="field">
+                    <label>Рівень: <strong>B1</strong> (фіксовано для пілоту)</label>
+                  </div>
 
-                <label>Тривалість (хв)</label>
-                <select value={duration} onChange={e => setDuration(Number(e.target.value) as any)}>
-                  <option value={45}>45</option>
-                  <option value={60}>60</option>
-                  <option value={90}>90</option>
-                </select>
+                  <div className="field">
+                    <label>Тривалість (хв)</label>
+                    <select className="inputbox" value={duration} onChange={e => setDuration(Number(e.target.value) as any)}>
+                      <option value={45}>45</option>
+                      <option value={60}>60</option>
+                      <option value={90}>90</option>
+                    </select>
+                  </div>
 
-                <label>Фокус (необов’язково)</label>
-                <input
-                  type="text"
-                  value={focus}
-                  onChange={e => setFocus(e.target.value)}
-                  placeholder="напр. вищий ступінь прикметників"
-                  maxLength={500}
-                />
+                  <div className="field">
+                    <label>Фокус (необов’язково)</label>
+                    <input
+                      className="inputbox"
+                      type="text"
+                      value={focus}
+                      onChange={e => setFocus(e.target.value)}
+                      placeholder="напр. вищий ступінь прикметників"
+                      maxLength={500}
+                    />
+                  </div>
 
-                <label>Текст для уроку (вставте)</label>
-                <textarea
-                  value={pasteText}
-                  onChange={e => setPasteText(e.target.value)}
-                  rows={8}
-                  placeholder="Вставте український текст..."
-                />
+                  <div className="field">
+                    <label>Текст для уроку (вставте)</label>
+                    <textarea
+                      className="inputbox"
+                      value={pasteText}
+                      onChange={e => setPasteText(e.target.value)}
+                      rows={8}
+                      placeholder="Вставте український текст..."
+                    />
+                  </div>
 
-                <button onClick={startBake} disabled={loading || !pasteText.trim()}>
-                  {loading ? 'Надсилаємо…' : 'Згенерувати урок'}
-                </button>
+                  <button className="btn primary" onClick={startBake} disabled={loading || !pasteText.trim()}>
+                    {loading ? 'Надсилаємо…' : 'Згенерувати урок'}
+                  </button>
+                </div>
               </section>
 
               <section className="catalog">
                 <h2>Ваші уроки</h2>
-                <button onClick={loadCatalog}>Оновити список</button>
-                {catalog.length === 0 && <p>Поки немає уроків.</p>}
+                <button className="btn ghost" onClick={loadCatalog}>Оновити список</button>
+                {catalog.length === 0 && <p className="hint">Поки немає уроків.</p>}
                 <ul>
-                  {catalog.map(item => (
-                    <li key={item.id}>
-                      <button onClick={() => openLesson(item.id, 'review')}>
-                        {item.title || item.id.slice(0, 8)} — {statusLabel(item.status)} {item.accepted ? '✓ прийнято' : ''}
-                      </button>
-                      <small>{new Date(item.updated_at).toLocaleString('uk')}</small>
-                    </li>
-                  ))}
+                  {catalog.map(item => {
+                    const st = item.status;
+                    const chipClass = st === 'ready' ? 'ok' : st === 'baking' ? 'info' : st === 'failed' ? 'bad' : 'muted';
+                    return (
+                      <li key={item.id} className="listrow">
+                        <button onClick={() => openLesson(item.id, 'review')}>
+                          <span className="title">{item.title || item.id.slice(0, 8)}</span>
+                          <span className={`chip ${chipClass}`}>{statusLabel(item.status)}</span>
+                          {item.accepted && <span className="chip ok">Прийнято</span>}
+                        </button>
+                        <span className="when">{new Date(item.updated_at).toLocaleString('uk')}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             </main>
@@ -779,28 +799,35 @@ export default function TeacherApp() {
           {route.view === 'lesson' && route.lessonId && (
             <main className="lesson-view">
               <div className="lesson-header">
-                <button onClick={() => navigate({ view: 'paste' })}>← До списку</button>
+                <button className="btn ghost" onClick={() => navigate({ view: 'paste' })}>← До списку</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
                 <div className="lesson-actions">
-                  <button onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
-                  <button onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
-                  {lesson && lesson.lesson.accepted && <span className="accepted">Прийнято</span>}
-                  <button onClick={printLesson}>Друк</button>
-                  <button onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
+                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled={currentMode === 'review'}>Режим огляду</button>
+                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')} disabled={currentMode === 'run'}>Режим запуску (для учня)</button>
+                  {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
+                  <button className="btn ghost" onClick={printLesson}>Друк</button>
+                  <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
                 </div>
               </div>
 
               {bakeStatus && !lesson && (
                 <div className="baking">
-                  <p>Статус: {statusLabel(bakeStatus.status)}{bakeStatus.status !== 'failed' && bakeStatus.step ? ` — ${bakeStatus.step}` : ''}</p>
-                  {bakeStatus.failure && <p className="fail">{bakeStatus.failure}</p>}
-                  {polling && <p>Оновлення…</p>}
-                  <button onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
+                  <div className="steps">
+                    <div className={`step ${bakeStatus.status === 'baking' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
+                      <div className="dot">{bakeStatus.status === 'baking' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
+                      <div>
+                        <b>Статус: {statusLabel(bakeStatus.status)}</b>
+                        <div className="sd">{bakeStatus.step || ''}{bakeStatus.failure ? ` — ${bakeStatus.failure}` : ''}</div>
+                      </div>
+                    </div>
+                  </div>
+                  {polling && <p className="hint" style={{marginTop:6}}>Оновлення…</p>}
+                  <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
                 </div>
               )}
 
               {!lesson && !bakeStatus && (
-                <p style={{ color: '#475569', padding: '12px 0' }}>Завантаження…</p>
+                <p style={{ color: 'var(--ink-soft)', padding: '12px 0' }}>Завантаження…</p>
               )}
 
               {lesson && (
@@ -821,12 +848,13 @@ export default function TeacherApp() {
                         <div className="warn-note">Потрібно підтвердити всі попередження (⚠️), щоб прийняти урок.</div>
                       )}
                       <button
+                        className="btn primary"
                         onClick={acceptLesson}
                         disabled={loading || !allVisibleWarningsAcked(lesson) || lesson.lesson.accepted}
                       >
                         Прийняти урок (ревізія {lesson.revision})
                       </button>
-                      <button onClick={returnToDraft} disabled={loading || !lesson.lesson.accepted}>
+                      <button className="btn ghost" onClick={returnToDraft} disabled={loading || !lesson.lesson.accepted}>
                         Повернути в чернетку
                       </button>
                     </div>

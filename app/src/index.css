@@ -1,97 +1,117 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light;
-  color: #222;
-  background: #fff;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+/*
+  Design tokens + base from hramatka/design/demo-reference.html
+  Full light + dark palette (via prefers + data-theme). Supersedes prior force-light.
+  color-scheme kept as light dark. All controls use tokens for readability in both themes.
+*/
+:root{
+  --paper:#FBF9F5; --ink:#23241F; --ink-soft:#5A5B53; --line:#E3DFD4;
+  --card:#FFFFFF; --accent:#2F4A7E; --accent-soft:#E7ECF5; --wheat:#C9972B; --wheat-soft:#F7EED8;
+  --ok:#2E7D4F; --ok-soft:#E3F1E8; --warn:#A66A00; --warn-soft:#FBF0DA; --bad:#A63232; --bad-soft:#F7E4E4;
+  --shadow:0 1px 3px rgba(35,36,31,.08),0 4px 16px rgba(35,36,31,.06);
+}
+@media (prefers-color-scheme: dark){:root{
+  --paper:#191A17; --ink:#EAE8DF; --ink-soft:#A5A69B; --line:#33342D;
+  --card:#22231F; --accent:#8FA9D9; --accent-soft:#263043; --wheat:#D8AC4E; --wheat-soft:#3A3122;
+  --ok:#6FBF8F; --ok-soft:#22352A; --warn:#D9A84E; --warn-soft:#3A311D; --bad:#D97C7C; --bad-soft:#3A2424;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}}
+:root[data-theme="dark"]{
+  --paper:#191A17; --ink:#EAE8DF; --ink-soft:#A5A69B; --line:#33342D;
+  --card:#22231F; --accent:#8FA9D9; --accent-soft:#263043; --wheat:#D8AC4E; --wheat-soft:#3A3122;
+  --ok:#6FBF8F; --ok-soft:#22352A; --warn:#D9A84E; --warn-soft:#3A311D; --bad:#D97C7C; --bad-soft:#3A2424;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+:root[data-theme="light"]{
+  --paper:#FBF9F5; --ink:#23241F; --ink-soft:#5A5B53; --line:#E3DFD4;
+  --card:#FFFFFF; --accent:#2F4A7E; --accent-soft:#E7ECF5; --wheat:#C9972B; --wheat-soft:#F7EED8;
+  --ok:#2E7D4F; --ok-soft:#E3F1E8; --warn:#A66A00; --warn-soft:#FBF0DA; --bad:#A63232; --bad-soft:#F7E4E4;
+  --shadow:0 1px 3px rgba(35,36,31,.08),0 4px 16px rgba(35,36,31,.06);
 }
 
-/* #93 item5: force light for pilot (prevents white-on-white buttons, invisible headings under OS dark).
-   color-scheme + explicit bg/fg; real dark palette deferred. */
-@media (prefers-color-scheme: dark) {
-  /* intentionally no-op to guarantee contrast during pilot */
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,textarea,select{font:inherit;color:var(--ink)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* atoms (demo) */
+.btn{display:inline-block;border:0;border-radius:8px;padding:10px 18px;font-size:15px;font-weight:600;text-align:center}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn.ghost:hover{background:var(--accent-soft)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.chip{display:inline-block;font-size:12.5px;padding:3px 10px;border-radius:99px;font-weight:600}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.info{background:var(--accent-soft);color:var(--accent)}
+.chip.muted{background:var(--paper);color:var(--ink-soft);border:1px solid var(--line)}
+
+.banner{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:12px 14px;font-size:14px;margin:0 0 16px}
+.banner.honest{background:var(--wheat-soft);border:1px solid var(--wheat);color:var(--ink)}
+.banner.fail{background:var(--bad-soft);border:1px solid var(--bad);color:var(--ink)}
+.banner .ic{font-size:17px;line-height:1.2}
+
+.inputbox{border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:11px 13px;font-size:14.5px;width:100%}
+input.inputbox::placeholder,textarea.inputbox::placeholder{color:var(--ink-soft)}
+
+.formgrid{display:grid;gap:16px;max-width:640px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+.field .hint,.hint{font-size:12.5px;color:var(--ink-soft);margin-top:4px}
+
+.listrow{display:flex;align-items:center;gap:14px;padding:13px 8px;border-bottom:1px solid var(--line);width:100%;border-radius:6px}
+.listrow:hover{background:var(--accent-soft)}
+.listrow:last-child{border-bottom:0}
+.listrow .title{font-weight:600}
+.listrow .when{color:var(--ink-soft);font-size:13px;margin-left:auto;font-variant-numeric:tabular-nums}
+
+.paper{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:22px 24px}
+.paper.anchorpaper{min-height:320px}
+
+/* baking steps (demo) */
+.steps{display:flex;flex-direction:column;gap:0;max-width:560px}
+.step{display:flex;gap:14px;padding:11px 4px;align-items:flex-start}
+.step .dot{width:22px;height:22px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;margin-top:2px}
+.step.done .dot{background:var(--ok-soft);color:var(--ok)}
+.step.now .dot{background:var(--accent);color:#fff}
+.step.wait .dot{background:var(--paper);border:1.5px dashed var(--line);color:var(--ink-soft)}
+.step.fail .dot{background:var(--bad-soft);color:var(--bad)}
+.step b{display:block;font-size:15px}
+.step .sd{font-size:13px;color:var(--ink-soft)}
+@media (prefers-reduced-motion: no-preference){
+  .step.now .dot{animation:pulse 1.4s ease infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
 }
 
+/* #root adapted for demo width/feel (no forced center border on teacher content) */
 #root {
-  width: 1126px;
-  max-width: 100%;
+  max-width: 1060px;
   margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
   min-height: 100svh;
-  display: flex;
-  flex-direction: column;
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+h1, h2, h3 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  color: var(--ink);
 }
+h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: .5px; }
+h2 { font-size: 21px; margin: 0 0 4px; }
+h3 { font-size: 16px; margin: 12px 0 4px; color: var(--ink-soft); }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
+p { margin: 0; }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
+code, .counter { font-family: ui-monospace, Consolas, monospace; display: inline-flex; border-radius: 4px; color: var(--ink); }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+/* print ported/adapted from demo (core) */
+@media print{
+  body{background:#fff}
+  .appbar,.banner,.lesson-actions,.accept-bar,.footer,button,.noprint{display:none!important}
+  #root,.lesson-view{max-width:none;margin:0;padding:0}
+  .block{border:1px solid var(--line);margin-bottom:12pt;background:#fff}
+  .teacher-key{background:var(--paper);border:1px solid var(--line)}
+  .phase h3{page-break-after:avoid}
+  @page{margin:1.5cm}
 }
