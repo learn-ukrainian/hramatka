@@ -40,6 +40,11 @@ change, provisioning, or disclosure of any secret.
    `HRAMATKA_PILOT_ORIGIN`, `HRAMATKA_CSRF_HMAC_KEY`, `HRAMATKA_DATA_DIR`, and
    `HRAMATKA_DATA_MANIFEST`. The latter two must refer to the same mounted data
    release, with `HRAMATKA_DATA_MANIFEST=$HRAMATKA_DATA_DIR/data-manifest.json`.
+   For the sanctioned AIS-outage fallback, also configure
+   `HRAMATKA_GEMMA_FALLBACK_BASE_URL`, `HRAMATKA_GEMMA_FALLBACK_MODEL`, and one
+   host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
+   `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. The paid OpenRouter route is invoked
+   only after AIS transport retries exhaust; never print the key or its file.
 
 ## Deploy
 

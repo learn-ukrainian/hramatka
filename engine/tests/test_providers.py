@@ -44,6 +44,45 @@ def _transport(handler) -> providers.HttpChatTransport:
     return providers.HttpChatTransport(base_url="https://prov.example/v1", client=_client(handler))
 
 
+def _failover(
+    primary_handler, fallback_handler
+) -> tuple[providers.FailoverGeneratorPort, dict, dict]:
+    """A fully fake two-host Gemma route; no test here uses the network."""
+    primary_calls = {"n": 0}
+    fallback_calls = {"n": 0}
+
+    def counted_primary(request: httpx.Request) -> httpx.Response:
+        primary_calls["n"] += 1
+        return primary_handler(request)
+
+    def counted_fallback(request: httpx.Request) -> httpx.Response:
+        fallback_calls["n"] += 1
+        return fallback_handler(request)
+
+    fallback = AISGeneratorPort(
+        api_key_env=providers.GEMMA_FALLBACK_API_KEY_ENV,
+        api_key_file_env=providers.GEMMA_FALLBACK_API_KEY_FILE_ENV,
+        model=providers.DEFAULT_GEMMA_FALLBACK_MODEL,
+        transport=providers.HttpChatTransport(
+            base_url="https://openrouter.example/v1",
+            client=_client(counted_fallback),
+            host="openrouter",
+            strip_model_prefix=False,
+        ),
+    )
+    return (
+        providers.FailoverGeneratorPort(
+            api_key="AIS-PRIMARY-KEY",
+            fallback=fallback,
+            transport=providers.HttpChatTransport(
+                base_url="https://ais.example/v1", client=_client(counted_primary)
+            ),
+        ),
+        primary_calls,
+        fallback_calls,
+    )
+
+
 # --- request shape ---------------------------------------------------------
 def test_request_is_toolless_openai_shape_with_bearer_auth():
     seen: dict = {}
@@ -134,12 +173,100 @@ def test_logs_sizes_never_content_or_key(caplog):
     assert "SENSITIVE-PROMPT-BODY" not in text  # content never logged
 
 
+# --- AIS -> OpenRouter failover --------------------------------------------
+def test_healthy_ais_never_calls_openrouter(monkeypatch):
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
+    primary_handler, _ = _seq([200])
+    generator, primary_calls, fallback_calls = _failover(
+        primary_handler, lambda _request: pytest.fail("healthy AIS must not use fallback")
+    )
+
+    assert generator("prompt") == '{"activities": []}'
+    assert primary_calls["n"] == 1
+    assert fallback_calls["n"] == 0
+
+
+def test_ais_retry_exhaustion_uses_openrouter_once_and_never_logs_key_or_prompt(
+    monkeypatch, caplog
+):
+    sentinel_key = "OPENROUTER-FALLBACK-SECRET"
+    sentinel_prompt = "SENSITIVE-FALLBACK-PROMPT"
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, sentinel_key)
+    primary_handler, _ = _seq([503, 500])
+    seen: dict = {}
+
+    def fallback_handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
+    with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
+        assert generator(sentinel_prompt) == '{"activities": []}'
+
+    assert primary_calls["n"] == 2  # existing primary retry discipline
+    assert fallback_calls["n"] == 1
+    assert seen["body"]["model"] == providers.DEFAULT_GEMMA_FALLBACK_MODEL
+    assert seen["body"]["messages"] == [{"role": "user", "content": sentinel_prompt}]
+    assert caplog.text.count("gemma fallback engaged host=openrouter") == 1
+    assert sentinel_key not in caplog.text
+    assert sentinel_prompt not in caplog.text
+    assert all(sentinel_key not in record.getMessage() for record in caplog.records)
+
+
+def test_ais_and_openrouter_retry_exhaustion_stays_generator_unavailable(monkeypatch):
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
+    primary_handler, _ = _seq([503, 500])
+    fallback_handler, _ = _seq([503, 500])
+    generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
+
+    with pytest.raises(GeneratorUnavailable):
+        generator("prompt")
+
+    assert primary_calls["n"] == 2
+    assert fallback_calls["n"] == 2  # fallback has the same one-retry discipline
+
+
+def test_ais_retry_exhaustion_without_fallback_key_preserves_existing_failure(monkeypatch):
+    monkeypatch.delenv(providers.GEMMA_FALLBACK_API_KEY_ENV, raising=False)
+    monkeypatch.delenv(providers.GEMMA_FALLBACK_API_KEY_FILE_ENV, raising=False)
+    primary_handler, _ = _seq([503, 500])
+    generator, primary_calls, fallback_calls = _failover(
+        primary_handler, lambda _request: pytest.fail("fallback must stay disabled")
+    )
+
+    with pytest.raises(GeneratorUnavailable):
+        generator("prompt")
+
+    assert primary_calls["n"] == 2
+    assert fallback_calls["n"] == 0
+
+
+def test_fallback_key_file_is_read_at_call_time(monkeypatch, tmp_path):
+    key_file = tmp_path / "openrouter-key"
+    key_file.write_text("file-backed-fallback-key\n", encoding="utf-8")
+    monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_FILE_ENV, str(key_file))
+    primary_handler, _ = _seq([503, 500])
+    seen: dict = {}
+
+    def fallback_handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers["authorization"]
+        return httpx.Response(200, json=OK_BODY)
+
+    generator, _primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
+    assert generator("prompt") == '{"activities": []}'
+    assert fallback_calls["n"] == 1
+    assert seen["authorization"] == "Bearer file-backed-fallback-key"
+
+
 # --- registry --------------------------------------------------------------
 def test_make_generator_gemma_ais_uses_locked_route():
     gen = providers.make_generator("gemma-ais")
     assert isinstance(gen, AISGeneratorPort)
     assert gen._model == GEMMA_MODEL
     assert isinstance(gen._transport, providers.HttpChatTransport)
+    assert isinstance(gen, providers.FailoverGeneratorPort)
+    assert gen._fallback._model == providers.DEFAULT_GEMMA_FALLBACK_MODEL
+    assert gen._fallback._transport.base_url == providers.DEFAULT_GEMMA_FALLBACK_BASE_URL
 
 
 @pytest.mark.parametrize(

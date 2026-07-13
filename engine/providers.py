@@ -35,6 +35,14 @@ log = logging.getLogger(__name__)
 GEMMA_AIS_BASE_URL_ENV = "HRAMATKA_AIS_BASE_URL"
 DEFAULT_GEMMA_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
+GEMMA_FALLBACK_BASE_URL_ENV = "HRAMATKA_GEMMA_FALLBACK_BASE_URL"
+GEMMA_FALLBACK_API_KEY_ENV = "HRAMATKA_GEMMA_FALLBACK_API_KEY"
+GEMMA_FALLBACK_API_KEY_FILE_ENV = "HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE"
+GEMMA_FALLBACK_MODEL_ENV = "HRAMATKA_GEMMA_FALLBACK_MODEL"
+DEFAULT_GEMMA_FALLBACK_BASE_URL = "https://openrouter.ai/api/v1"
+# Verified against GET https://openrouter.ai/api/v1/models on 2026-07-13.
+DEFAULT_GEMMA_FALLBACK_MODEL = "google/gemma-4-31b-it"
+
 DEEPSEEK_API_KEY_ENV = "HRAMATKA_DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL_ENV = "HRAMATKA_DEEPSEEK_BASE_URL"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
@@ -67,6 +75,8 @@ class HttpChatTransport:
 
     base_url: str
     client: Any | None = None  # httpx.Client | None (injected in tests)
+    host: str = "ais"
+    strip_model_prefix: bool = True
 
     def __call__(self, prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
         import httpx
@@ -76,7 +86,7 @@ class HttpChatTransport:
         # the provider API knows only the bare model id. Sending the prefixed id
         # returns HTTP 404 (bake-off 2026-07-10, all gemma cells). Strip at the
         # wire; keep the canonical id in fingerprints/meta.
-        wire_model = model.split("/", 1)[1] if "/" in model else model
+        wire_model = model.split("/", 1)[1] if self.strip_model_prefix and "/" in model else model
         payload = {
             "model": wire_model,
             "messages": [{"role": "user", "content": prompt}],
@@ -91,14 +101,18 @@ class HttpChatTransport:
 
         for attempt in (1, 2):  # single retry on 5xx/timeout
             log.info(
-                "ais request model=%s attempt=%d prompt_bytes=%d", model, attempt, prompt_bytes
+                "%s request model=%s attempt=%d prompt_bytes=%d",
+                self.host,
+                model,
+                attempt,
+                prompt_bytes,
             )
             client = self.client or httpx.Client(timeout=timeout_s)
             owned = self.client is None
             try:
                 response = client.post(url, json=payload, headers=headers)
             except httpx.TimeoutException:
-                log.warning("ais timeout model=%s attempt=%d", model, attempt)
+                log.warning("%s timeout model=%s attempt=%d", self.host, model, attempt)
                 last_error = GeneratorUnavailable(f"provider timed out after {timeout_s}s")
                 continue
             except httpx.HTTPError as exc:  # connect/transport error — not retriable
@@ -111,7 +125,7 @@ class HttpChatTransport:
 
             code = response.status_code
             if code >= 500:
-                log.warning("ais 5xx model=%s status=%d attempt=%d", model, code, attempt)
+                log.warning("%s 5xx model=%s status=%d attempt=%d", self.host, model, code, attempt)
                 last_error = GeneratorUnavailable(f"provider returned HTTP {code}")
                 continue
             if code >= 400:
@@ -121,7 +135,8 @@ class HttpChatTransport:
                 )
             text = _extract_text(response.json())
             log.info(
-                "ais response model=%s status=%d response_bytes=%d attempt=%d",
+                "%s response model=%s status=%d response_bytes=%d attempt=%d",
+                self.host,
                 model,
                 code,
                 len(response.content),
@@ -129,7 +144,34 @@ class HttpChatTransport:
             )
             return text
 
-        raise last_error or GeneratorUnavailable("provider generation failed")
+        if last_error is not None:
+            raise GeneratorUnavailable(str(last_error), retry_exhausted=True) from last_error
+        raise GeneratorUnavailable("provider generation failed")
+
+
+class FailoverGeneratorPort(AISGeneratorPort):
+    """AIS primary with an opt-in OpenRouter Gemma host for AIS outages only."""
+
+    def __init__(self, *, fallback: AISGeneratorPort, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fallback = fallback
+
+    def __call__(self, prompt: str) -> str:
+        try:
+            return super().__call__(prompt)
+        except GeneratorUnavailable as primary_error:
+            # Only transport retry exhaustion represents the sanctioned AIS
+            # outage path. Missing keys, 4xx responses, and malformed output
+            # must not spend paid OpenRouter tokens.
+            if not primary_error.retry_exhausted or not self._fallback.is_configured():
+                raise
+            log.warning("gemma fallback engaged host=openrouter")
+            try:
+                return self._fallback(prompt)
+            except GeneratorUnavailable as fallback_error:
+                # Keep the existing typed boundary and avoid surfacing either
+                # provider's detail in durable job state.
+                raise GeneratorUnavailable("provider generation failed") from fallback_error
 
 
 def make_generator(name: str) -> AISGeneratorPort:
@@ -143,7 +185,23 @@ def make_generator(name: str) -> AISGeneratorPort:
     key = name.lower()
     if key in ("gemma-ais", "gemma", "google-ais"):
         base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
-        return AISGeneratorPort(
+        fallback_base = os.environ.get(
+            GEMMA_FALLBACK_BASE_URL_ENV, DEFAULT_GEMMA_FALLBACK_BASE_URL
+        )
+        fallback_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, DEFAULT_GEMMA_FALLBACK_MODEL)
+        fallback = AISGeneratorPort(
+            api_key_env=GEMMA_FALLBACK_API_KEY_ENV,
+            api_key_file_env=GEMMA_FALLBACK_API_KEY_FILE_ENV,
+            model=fallback_model,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=fallback_base,
+                host="openrouter",
+                strip_model_prefix=False,
+            ),
+        )
+        return FailoverGeneratorPort(
+            fallback=fallback,
             api_key_env=AIS_API_KEY_ENV,
             model=GEMMA_MODEL,
             timeout_s=GEMMA_TIMEOUT_S,

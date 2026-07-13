@@ -15,6 +15,7 @@ Key values are never logged; only the env var NAME appears in messages.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Protocol
 
 GEMMA_MODEL = "google-ais/gemma-4-31b-it"
@@ -25,6 +26,14 @@ AIS_API_KEY_ENV = "HRAMATKA_AIS_API_KEY"
 class GeneratorUnavailable(RuntimeError):
     """Transport/routing/key failure — the pipeline records a generation error
     rather than crashing."""
+
+    def __init__(self, message: str, *, retry_exhausted: bool = False) -> None:
+        super().__init__(message)
+        # A caller may use the existing typed signal to distinguish an upstream
+        # outage after the transport's own retry discipline from configuration,
+        # auth, or malformed-response failures.  The flag is deliberately not
+        # rendered into error text or durable telemetry.
+        self.retry_exhausted = retry_exhausted
 
 
 class GenerationUnparseable(RuntimeError):
@@ -61,24 +70,48 @@ class AISGeneratorPort:
         *,
         api_key: str | None = None,
         api_key_env: str = AIS_API_KEY_ENV,
+        api_key_file_env: str | None = None,
         model: str = GEMMA_MODEL,
         timeout_s: int = GEMMA_TIMEOUT_S,
         transport: Transport | None = None,
     ) -> None:
         self._api_key = api_key
         self._api_key_env = api_key_env
+        self._api_key_file_env = api_key_file_env
         self._model = model
         self._timeout_s = timeout_s
         self._transport: Transport = transport or _unwired_transport
 
     def _resolve_key(self) -> str:
         key = self._api_key if self._api_key is not None else os.environ.get(self._api_key_env)
+        if not key and self._api_key_file_env:
+            key_file = os.environ.get(self._api_key_file_env)
+            if key_file:
+                try:
+                    key = Path(key_file).read_text(encoding="utf-8").strip()
+                except (OSError, UnicodeError) as exc:
+                    raise GeneratorUnavailable(
+                        f"{self._api_key_file_env} could not be read"
+                    ) from exc
         if not key:
+            configured_key = (
+                f"{self._api_key_env} or {self._api_key_file_env}"
+                if self._api_key_file_env
+                else self._api_key_env
+            )
             raise GeneratorUnavailable(
-                f"{self._api_key_env} is not set — the locked route "
+                f"{configured_key} is not set — the locked route "
                 f"({self._model}, toolless) requires the key."
             )
         return key
+
+    def is_configured(self) -> bool:
+        """Whether a key source is configured, without resolving its value."""
+        return bool(
+            self._api_key
+            or os.environ.get(self._api_key_env)
+            or (self._api_key_file_env and os.environ.get(self._api_key_file_env))
+        )
 
     def __call__(self, prompt: str) -> str:
         key = self._resolve_key()
