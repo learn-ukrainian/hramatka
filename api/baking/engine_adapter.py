@@ -15,6 +15,8 @@ rejected candidates and per-item salvage remain visible through `rejected[]`.
 
 from __future__ import annotations
 
+import os
+import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,26 @@ def _mode(phase: int, a_type: str) -> str:
     return "письмово" if a_type == "cloze" else "усно"
 
 
+def _engine_out_root() -> Path | None:
+    """Writable root for pipeline artifacts (lesson.b1/ir.json diagnostics).
+
+    The engine's default is `hramatka/engine/.out` INSIDE the package — fine in
+    dev, but on a deploy host the release checkout is immutable (root-owned +
+    systemd `ReadOnlyPaths`), so the bake dies with EACCES at artifact-write
+    time (hit live on the pilot host 2026-07-13). Resolution order:
+    `HRAMATKA_ENGINE_OUT_DIR` env → systemd `STATE_DIRECTORY`/engine-out →
+    None (dev default, package `.out`).
+    """
+    explicit = os.environ.get("HRAMATKA_ENGINE_OUT_DIR")
+    if explicit:
+        return Path(explicit)
+    state_dir = os.environ.get("STATE_DIRECTORY")
+    if state_dir:
+        # systemd may pass a colon-separated list; the unit declares one.
+        return Path(state_dir.split(":", 1)[0]) / "engine-out"
+    return None
+
+
 class EngineLessonBaker:
     """`LessonBaker` backed by the real engine pipeline (generator injectable)."""
 
@@ -94,6 +116,7 @@ class EngineLessonBaker:
         del focus  # slice-1 generation does not branch on focus yet
         plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
         ctx = data.use_bundle(self._bundle) if self._bundle is not None else nullcontext()
+        out_root = _engine_out_root()
         try:
             with ctx:
                 result = pipeline.run(
@@ -103,6 +126,7 @@ class EngineLessonBaker:
                     generator=self._generator,
                     use_cache=False,
                     cache_dir=self._cache_dir,
+                    out_dir=(out_root / uuid.uuid4().hex) if out_root else None,
                 )
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,

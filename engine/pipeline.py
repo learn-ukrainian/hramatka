@@ -515,7 +515,11 @@ def _run(
     out_dir = Path(out_dir) if out_dir else (paths.DEFAULT_OUT_DIR / snap["anchor_id"])
     out_dir.mkdir(parents=True, exist_ok=True)
     cache_path = Path(cache_dir) if cache_dir else paths.CACHE_DIR
-    cache_path.mkdir(parents=True, exist_ok=True)
+    if use_cache:
+        # Only materialize the cache dir when caching is on: with
+        # use_cache=False (the API baker) this mkdir was the last unconditional
+        # write inside the immutable release checkout on deploy hosts (EACCES).
+        cache_path.mkdir(parents=True, exist_ok=True)
     cache_file = cache_path / f"{fingerprint}.raw.json"
 
     provenance = {

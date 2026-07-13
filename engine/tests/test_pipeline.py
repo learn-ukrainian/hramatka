@@ -687,3 +687,31 @@ def test_generator_unavailable_does_not_crash_pipeline(tmp_path):
     assert res.lesson_b1 == []
     # artifacts still written (empty lesson) — pipeline did not crash
     assert (tmp_path / "out" / "lesson.b1.json").exists()
+
+
+def test_no_cache_run_never_writes_the_cache_dir(tmp_path, monkeypatch):
+    # Regression (pilot host 2026-07-13, PR #88 review): with use_cache=False
+    # (the API baker), _run still mkdir'ed the cache path — on a deploy host
+    # that is hramatka/engine/.cache inside the immutable release checkout
+    # (EACCES before generation on a clean deploy). Point the default cache at
+    # an unwritable location: the run must neither create it nor die.
+    from hramatka.engine import paths as engine_paths
+
+    ro_parent = tmp_path / "ro-parent"
+    ro_parent.mkdir()
+    blocked_cache = ro_parent / "cache"
+    parent_mode = ro_parent.stat().st_mode
+    ro_parent.chmod(0o555)
+    monkeypatch.setattr(engine_paths, "CACHE_DIR", blocked_cache)
+    monkeypatch.setattr(pipeline.paths, "CACHE_DIR", blocked_cache)
+    try:
+        res = pipeline.run(
+            _anchor(),
+            generator=fixtures.mock_generator,
+            use_cache=False,
+            out_dir=tmp_path / "out",
+        )
+    finally:
+        ro_parent.chmod(parent_mode)
+    assert res.generation_error is None
+    assert not blocked_cache.exists()
