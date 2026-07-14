@@ -4,6 +4,8 @@ import {
   validateActivityDocument,
   regenerateAnswerKey,
   REVIEW_PHASE_BUDGETS,
+  blockNeedsReview,
+  marginStateChip,
   type ReviewBlock,
 } from './review-helpers';
 import activityFixtures from '@learn-ukrainian/activity-kit/fixtures';
@@ -21,6 +23,34 @@ function makeBlock(id: string, phase: 1 | 2 | 3): ReviewBlock {
     edited: false,
   };
 }
+
+describe('blockNeedsReview / marginStateChip honesty flags', () => {
+  const baseBlock: ReviewBlock = {
+    id: 'block-cloze',
+    phase: 1,
+    type: 'cloze',
+    mode: 'письмово',
+    activity: {},
+    answer_key: {},
+    mark: 'ok',
+    note: null,
+    edited: false,
+  };
+
+  it('treats external_options as review-required even when mark is stale ok', () => {
+    const block: ReviewBlock = {
+      ...baseBlock,
+      provenance: { source: 'generated', generator: 'gemma', gates: [], external_options: true },
+    };
+    expect(blockNeedsReview(block)).toBe(true);
+    expect(marginStateChip(block, false)).toEqual({ className: 'warn', key: 'chip.look' });
+  });
+
+  it('shows confirmed chip only after acknowledgement', () => {
+    const block: ReviewBlock = { ...baseBlock, mark: 'warn' };
+    expect(marginStateChip(block, true)).toEqual({ className: 'ok', key: 'chip.confirmed' });
+  });
+});
 
 describe('splitReviewBlocks', () => {
   const blocks: ReviewBlock[] = [

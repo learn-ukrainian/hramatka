@@ -165,6 +165,39 @@ def check_tokens(
     return verdicts
 
 
+def is_anchor_verbatim(token: str, anchor_body: str) -> bool:
+    """True when ``token`` appears verbatim in the anchor text."""
+    anchor_lower = _lookup_form(anchor_body).lower()
+    return _is_anchor_verbatim(token, anchor_lower)
+
+
+def external_tokens(text: str, anchor_body: str) -> list[str]:
+    """Content tokens in ``text`` that are not anchor-verbatim."""
+    anchor_lower = _lookup_form(anchor_body).lower()
+    return [
+        token
+        for token in content_tokens(text)
+        if not _is_anchor_verbatim(token, anchor_lower)
+    ]
+
+
+def check_external_options(text: str, anchor_body: str) -> dict:
+    """Warn when ``text`` introduces model content not verbatim in the anchor."""
+    external = sorted(set(external_tokens(text, anchor_body)), key=str.casefold)
+    if not external:
+        return {"status": "pass", "detail": "All tokens are anchor-verbatim."}
+    sample = ", ".join(f"«{token}»" for token in external[:4])
+    if len(external) > 4:
+        sample += "…"
+    return {
+        "status": "warn",
+        "detail": (
+            f"Content not derived from anchor ({sample}) — "
+            "external option; teacher-confirm."
+        ),
+    }
+
+
 def anchor_baseline_diagnostics(
     anchor_body: str,
     *,

@@ -29,11 +29,15 @@ def test_full_pipeline_partitions_ready_and_review_candidates(tmp_path):
     types = [ir.activity["type"] for ir in res.activities]
     assert types == ["true-false", "cloze", "match-up"]
     assert all(ir.gate_result.passed for ir in res.activities)
-    assert [ir.activity["type"] for ir in res.ready] == ["cloze"]
-    assert [ir.activity["type"] for ir in res.review_required] == ["true-false", "match-up"]
+    assert res.ready == []
+    assert {ir.activity["type"] for ir in res.review_required} == {
+        "true-false",
+        "cloze",
+        "match-up",
+    }
     assert res.rejected == []
-    # Review-required candidates are visible in IR but never auto-projected.
-    assert [activity["type"] for activity in res.lesson_b1] == ["cloze"]
+    # Honesty gates block auto-projection until the teacher acknowledges warnings.
+    assert res.lesson_b1 == []
 
 
 def test_persisted_lesson_b1_validates_against_schema(tmp_path):
@@ -44,11 +48,7 @@ def test_persisted_lesson_b1_validates_against_schema(tmp_path):
         cache_dir=tmp_path / "cache",
     )
     b1 = json.loads((tmp_path / "out" / "lesson.b1.json").read_text(encoding="utf-8"))
-    assert len(b1) == 1
-    for item in b1:
-        schema.validate_b1(item)  # every persisted item is schema-valid
-        # evidence must never leak onto the b1 item
-        assert "evidence" not in json.dumps(item)
+    assert len(b1) == 0
 
 
 def test_ir_file_carries_evidence_and_gates(tmp_path):
@@ -122,7 +122,7 @@ def test_hallucinated_item_dropped_by_evidence_span(tmp_path):
         cache_dir=tmp_path / "cache",
     )
     assert len(res.activities) == 4
-    assert len(res.lesson_b1) == 1  # only the clean cloze is auto-selected
+    assert len(res.lesson_b1) == 0
     hallucinated = res.activities[-1]
     assert not hallucinated.gate_result.passed
     assert any(
@@ -763,12 +763,11 @@ def test_per_phase_deadline_wall_clock_bound(tmp_path, monkeypatch):
     assert res_deadline.regeneration_attempts == 0
     assert calls["count"] == 1
 
-    # (b) Shortfall output is honest: counts match clean candidates
-    # The clean candidate from the first call is shipped.
-    assert len(res_deadline.ready) == 1
-    assert [ir.activity["type"] for ir in res_deadline.ready] == ["cloze"]
-    # No silent padding with review_required items.
-    assert len(res_deadline.lesson_b1) == 1
+    # The cloze candidate ships for review, not as an auto-selected clean item.
+    assert len(res_deadline.ready) == 0
+    assert len(res_deadline.review_required) == 1
+    assert res_deadline.review_required[0].activity["type"] == "cloze"
+    assert len(res_deadline.lesson_b1) == 0
 
     # (c) Event telemetry payload is correct:
     trace_path = out_dir_deadline / "trace.json"
@@ -780,7 +779,7 @@ def test_per_phase_deadline_wall_clock_bound(tmp_path, monkeypatch):
     assert event["phase"] == "unknown"
     assert isinstance(event["elapsed_s"], float)
     assert event["elapsed_s"] >= 0.08
-    assert event["candidates_shipped"] == 1
+    assert event["candidates_shipped"] == 0
     assert event["phase_deadline_s"] == 0.05
     assert event["regeneration_attempts_suppressed"] == 2
 
@@ -818,9 +817,9 @@ def test_cloze_blank_removal_drops_entire_activity(tmp_path):
         use_cache=False
     )
 
-    assert len(res_survivor.ready) == 1
-    assert res_survivor.ready[0].gate_result.passed
-    assert len(res_survivor.ready[0].activity["blanks"]) == 2
+    assert len(res_survivor.review_required) == 1
+    assert res_survivor.review_required[0].gate_result.status == schema.GATE_REVIEW
+    assert len(res_survivor.review_required[0].activity["blanks"]) == 2
 
     # Run 2: one blank fails gating (answer 'письмо' is not present in evidence)
     cloze_bad = json.loads(json.dumps(cloze))

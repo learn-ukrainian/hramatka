@@ -8,6 +8,7 @@ import {
   splitReviewBlocks,
   PHASE_LABELS,
   marginStateChip,
+  blockNeedsReview,
   activityTypeLabel,
 } from './review-helpers';
 import { useT, type ChromeKey } from './i18n';
@@ -122,7 +123,7 @@ export default function ReviewWorkbench({
   const renderMargin = (block: ReviewBlock) => {
     const acked = acks.has(block.id);
     const chip = marginStateChip(block, acked);
-    const isWarn = block.mark === 'warn';
+    const isWarn = blockNeedsReview(block);
     // #113 deliberately clears a warning acknowledgement after an edit. An edited
     // visible warning must therefore remain acknowledgeable, not become a dead end.
     const showAck = isWarn && !acked;

@@ -155,7 +155,7 @@ def test_baseline_pipeline_and_candidate_bank_preserve_gated_public_content(tmp_
         "cloze",
         "match-up",
     ]
-    assert [item["type"] for item in candidate_bank.lesson_b1] == ["cloze"]
+    assert candidate_bank.lesson_b1 == []
 
 
 def test_baseline_requires_explicit_measurement_only_guard():

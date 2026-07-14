@@ -117,7 +117,14 @@ def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
     _assert_composed_blocks_are_rich(blocks, anchor=_anchor_snapshot())
     assert 4 <= len(blocks) <= 8
     assert len({block["id"] for block in blocks}) == len(blocks)
-    assert {block["type"] for block in blocks} >= {"match-up", "quiz"}
+    block_types = {block["type"] for block in blocks}
+    assert "quiz" in block_types
+    # Non-anchor match-up synonyms stay in the review tray (Sol audit #3/#4).
+    assert any(
+        entry.get("type") == "match-up"
+        and "review-required" in entry.get("reason", "")
+        for entry in baked["rejected"]
+    )
     if len(blocks) == 8:
         assert [block["phase"] for block in blocks] == [1, 1, 1, 2, 2, 2, 2, 3]
 
@@ -192,7 +199,8 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
 
     assert assigned == ["google-ais", "openrouter", "google-ais", "openrouter"]
     assert set(handled) == {"google-ais", "openrouter"}
-    assert Counter(handled) == Counter({"google-ais": 10, "openrouter": 10})
+    # Extra regeneration rounds when review-only types (e.g. match-up) miss READY quota.
+    assert Counter(handled) == Counter({"google-ais": 14, "openrouter": 14})
 
 
 def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp_path):

@@ -22,7 +22,7 @@ import {
 import Conductor from './Conductor';
 import { useT, statusKey, type ChromeKey } from './i18n';
 import ReviewWorkbench from './ReviewWorkbench';
-import { splitReviewBlocks, type LessonDuration } from './review-helpers';
+import { splitReviewBlocks, blockNeedsReview, type LessonDuration } from './review-helpers';
 
 /**
  * The error banner holds either translated client chrome (`key`) or a raw server
@@ -899,7 +899,7 @@ export default function TeacherApp() {
     if (!l) return true;
     const warns = splitReviewBlocks(l.lesson.blocks, l.lesson.duration)
       .visible
-      .filter((block) => block.mark === 'warn')
+      .filter((block) => blockNeedsReview(block))
       .map((block) => block.id);
     const acks = [...(l.warning_acknowledgements || []), ...localAcks];
     return warns.every(w => acks.includes(w));

@@ -233,9 +233,13 @@ export function activityTypeLabel(type: string): string {
   return keys[type] || type;
 }
 
+export function blockNeedsReview(block: ReviewBlock): boolean {
+  return block.mark === 'warn' || block.provenance?.external_options === true;
+}
+
 export function marginStateChip(block: ReviewBlock, acked: boolean): { className: string; key: string } {
   if (block.edited) return { className: 'ok', key: 'chip.edited' };
-  if (block.mark === 'warn' && !acked) return { className: 'warn', key: 'chip.look' };
-  if (block.mark === 'warn' && acked) return { className: 'ok', key: 'chip.confirmed' };
+  if (blockNeedsReview(block) && !acked) return { className: 'warn', key: 'chip.look' };
+  if (blockNeedsReview(block) && acked) return { className: 'ok', key: 'chip.confirmed' };
   return { className: 'ok', key: 'chip.verified' };
 }

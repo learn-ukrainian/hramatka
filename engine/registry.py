@@ -449,6 +449,33 @@ def _replace_single_word(sentence: str, error: str, correction: str) -> str | No
     return sentence[: match.start()] + correction + sentence[match.end() :]
 
 
+def _warn_external_phrases(
+    phrases: list[str],
+    anchor_body: str,
+    gr: schema.GateResult,
+    locator: str,
+) -> None:
+    """Flag model-introduced options that are valid Ukrainian but not anchor-derived."""
+    external: set[str] = set()
+    for phrase in phrases:
+        if phrase:
+            external.update(vesum_gate.external_tokens(phrase, anchor_body))
+    if not external:
+        return
+    sample = ", ".join(f"«{token}»" for token in sorted(external, key=str.casefold)[:4])
+    if len(external) > 4:
+        sample += "…"
+    gr.add(
+        "external_options",
+        "warn",
+        (
+            f"Content not derived from anchor ({sample}) — "
+            "external option; teacher-confirm."
+        ),
+        locator=locator,
+    )
+
+
 def _add_verified_vesum_tokens(
     tokens: list[str],
     anchor_body: str,
@@ -667,6 +694,8 @@ def _gate_quiz(
                     f"Quiz option token '{token}' has no VESUM form.",
                     locator=loc,
                 )
+        distractors = [option for index, option in enumerate(options) if index != correct_index]
+        _warn_external_phrases(distractors, anchor_body, gr, loc)
         _run_numeral_gate(item.get("question", ""), gr, loc)
         _run_numeral_gate(" ".join(options), gr, loc)
 
@@ -888,6 +917,12 @@ def _gate_fill_in(
                 "Exactly the marked answer must reconstruct the source sentence.",
                 locator=loc,
             )
+        distractors = [
+            option
+            for option in words
+            if _signature_value(option) != _signature_value(answer_word)
+        ]
+        _warn_external_phrases(distractors, anchor_body, gr, loc)
 
 
 def _gate_text_questions(
@@ -979,6 +1014,7 @@ def _gate_cloze(
                 "; ".join(v["detail"] for v in bad),
                 locator=f"blanks[{index}]",
             )
+        _warn_external_phrases(distractors, anchor_body, gr, f"blanks[{index}]")
 
 
 def _gate_mark_the_words(
@@ -1142,6 +1178,20 @@ def _gate_match_up(
             ev.char_start = verdict["char_start"]
             ev.char_end = verdict["char_end"]
             ev.kind = verdict["kind"]
+        if (
+            verdict["status"] == "pass"
+            and left
+            and not vesum_gate.is_anchor_verbatim(left, anchor_body)
+        ):
+            gr.add(
+                "matchup_left",
+                "warn",
+                (
+                    f"Left word '{left}' is not verbatim in the anchor — "
+                    "verify grounding before accepting."
+                ),
+                locator=loc,
+            )
         token_verdicts = vesum_gate.check_tokens(
             vesum_gate.content_tokens(right), anchor_body, atlas_lookup=atlas_lookup
         )
@@ -1149,6 +1199,7 @@ def _gate_match_up(
         if worst != "pass":
             bad = [v for v in token_verdicts if v["status"] == worst]
             gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
+        _warn_external_phrases([right], anchor_body, gr, loc)
         semantic_verdict = matchup_semantics.check_pair(left, right, atlas_lookup=atlas_lookup)
         if semantic_verdict["status"] != "pass":
             gr.add(
@@ -1228,7 +1279,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_quiz_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="quiz.extractive.v1",
-        gate_version="quiz.gates.v1",
+        gate_version="quiz.gates.v2",
         partition_key="items",
         minimum_survivors=3,
         ttt_phases=(1, 2, 3),
@@ -1266,7 +1317,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_fill_in_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="fill-in.extractive.v1",
-        gate_version="fill-in.gates.v1",
+        gate_version="fill-in.gates.v2",
         partition_key="items",
         minimum_survivors=3,
         ttt_phases=(1, 2, 3),
@@ -1285,7 +1336,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_cloze_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="cloze.extractive.v1",
-        gate_version="cloze.gates.v1",
+        gate_version="cloze.gates.v2",
         partition_key="blanks",
         minimum_survivors=1,
         ttt_phases=(1, 2, 3),
@@ -1304,7 +1355,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_match_up_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="match-up.extractive.v1",
-        gate_version="match-up.gates.v2",
+        gate_version="match-up.gates.v3",
         partition_key="pairs",
         minimum_survivors=2,
         ttt_phases=(1, 2),

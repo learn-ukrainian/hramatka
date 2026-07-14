@@ -26,11 +26,11 @@ def test_measure_reports_tri_state_header_and_bake_observability(tmp_path):
 
     counts = report["kpi"]["tri_state_counts"]
     assert sum(counts.values()) == report["kpi"]["total_items"] == 3
-    assert counts[schema.GATE_REVIEW] == 2  # FALSE + semantic review need teacher confirmation
-    assert counts[schema.GATE_CLEAN] == 1
+    assert counts[schema.GATE_REVIEW] == 3  # FALSE + external_options + semantic review
+    assert counts[schema.GATE_CLEAN] == 0
     assert report["anchors"][0]["tri_state_counts"] == counts
-    assert report["kpi"]["mark_distribution"] == {"ok": 1, "warn": 2, "shipped": 3}
-    assert report["anchors"][0]["mark_distribution"] == {"ok": 1, "warn": 2, "shipped": 3}
+    assert report["kpi"]["mark_distribution"] == {"ok": 0, "warn": 3, "shipped": 3}
+    assert report["anchors"][0]["mark_distribution"] == {"ok": 0, "warn": 3, "shipped": 3}
 
     header = report["header"]
     assert {

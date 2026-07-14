@@ -119,6 +119,59 @@ const mockResource: LessonResourceView = {
   }
 };
 
+describe('ReviewWorkbench honesty flags', () => {
+  it('surfaces external_options blocks with warn chip and margin note', () => {
+    const resource: LessonResourceView = {
+      ...mockResource,
+      lesson: {
+        ...mockResource.lesson,
+        blocks: [
+          {
+            id: 'block-cloze-warn',
+            phase: 1,
+            type: 'cloze',
+            mode: 'письмово',
+            activity: mockResource.lesson.blocks[1].activity,
+            answer_key: mockResource.lesson.blocks[1].answer_key,
+            mark: 'warn',
+            note: 'Згенеровано з опори; перевірте: є варіанти поза текстом опори.',
+            edited: false,
+            provenance: {
+              source: 'generated',
+              generator: 'gemma',
+              gates: ['external_options'],
+              external_options: true,
+            },
+          },
+        ],
+      },
+    };
+
+    render(
+      <LangProvider>
+        <ReviewWorkbench
+          resource={resource}
+          showAnswers={false}
+          loading={false}
+          onDurationChange={vi.fn()}
+          onMoveBlock={vi.fn()}
+          onRemoveBlock={vi.fn()}
+          onIncludeReserve={vi.fn()}
+          onRestoreRejected={vi.fn()}
+          onAckWarning={vi.fn()}
+          onSaveActivity={vi.fn()}
+          onAcceptLesson={vi.fn()}
+          onReturnToDraft={vi.fn()}
+          allWarningsAcked={false}
+        />
+      </LangProvider>
+    );
+
+    expect(screen.getByText(/⚠ погляньте/i)).toBeTruthy();
+    expect(screen.getByText(/зовнішні варіанти/i)).toBeTruthy();
+  });
+});
+
 describe('ReviewWorkbench answer key rendering', () => {
   it('renders correct keys and placeholder configurations', () => {
     render(
