@@ -42,13 +42,45 @@ def _assert_composed_blocks_are_rich(blocks: list[dict], *, anchor: dict | None 
         assert _payload_meets_density(block["activity"]["payload"], anchor)
 
 
-def test_e2e_bake_surfaces_thin_candidate_bank_as_a_shortfall(tmp_path):
+def test_e2e_bake_raises_when_candidate_bank_misses_lesson_floor(tmp_path):
     anchor = fixtures.load_anchor()
     baker = EngineLessonBaker(generator=fixtures.mock_generator, cache_dir=tmp_path / "cache")
 
-    baked = baker.bake(anchor, duration=45, focus=None)
-    assert len(baked["blocks"]) < 6
-    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
+    with pytest.raises(BakeError, match="minimum activity density"):
+        baker.bake(anchor, duration=45, focus=None)
+
+
+def test_e2e_bake_raises_on_sub_floor_production_shaped_anchor(tmp_path):
+    """Regression for pilot lesson 0d7f8035: ~680-char anchors must not ship 3 blocks."""
+    base = fixtures.load_anchor()
+    anchor = (
+        f"{base} "
+        "Дослідники наголошують, що регулярне читання формує увагу, памʼять і емпатію. "
+        "Учні, які читають щотижня, легше будують аргументи в дискусіях і письмі. "
+        "Вчителі часто просять короткий уривок доповнити двома прикладами з власного досвіду."
+    )
+    snapshot = pipeline.snapshot_anchor(anchor)
+    assert 640 <= snapshot["char_len"] <= 720
+    assert not content_density.source_lacks_lesson_evidence(snapshot)
+
+    pilot_types = {"short-writing", "match-up", "quiz"}
+    type_counters: Counter[str] = Counter()
+
+    def generator(prompt: str) -> str:
+        activities = [
+            activity
+            for activity in fixtures.activities_for_prompt(prompt, type_counters)
+            if activity["type"] in pilot_types
+        ]
+        return json.dumps({"activities": activities}, ensure_ascii=False)
+
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    with pytest.raises(BakeError, match="minimum activity density"):
+        baker.bake(anchor, duration=45, focus=None)
 
 
 def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
@@ -155,7 +187,7 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
     )
     for _ in range(4):
         baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-        assert len(baked["blocks"]) >= 4
+        assert len(baked["blocks"]) >= 6
         _assert_composed_blocks_are_rich(baked["blocks"], anchor=_anchor_snapshot())
 
     assert assigned == ["google-ais", "openrouter", "google-ais", "openrouter"]
@@ -165,7 +197,7 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
 
 def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp_path):
     """Optional phase-specific variety must never consume the 45-minute fill floor."""
-    constrained = {"match-up", "short-writing"}
+    constrained = {"match-up", "mark-the-words"}
 
     type_counters: Counter[str] = Counter()
 
@@ -265,10 +297,8 @@ def test_e2e_salvage_visibility_generated_equals_shipped_plus_flagged_plus_rejec
     # eight slots. It returns a ready-only partial lesson with an explicit
     # shortfall instead of promoting the warning candidate to a visible block.
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    baked = baker.bake(anchor, duration=45, focus=None)
-    assert len(baked["blocks"]) == 1
-    assert {block["mark"] for block in baked["blocks"]} == {"ok"}
-    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
+    with pytest.raises(BakeError, match="minimum activity density"):
+        baker.bake(anchor, duration=45, focus=None)
 
 
 def test_e2e_bake_wraps_data_bundle_errors_as_bakeerror(tmp_path, monkeypatch):

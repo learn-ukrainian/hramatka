@@ -556,7 +556,6 @@ class EngineLessonBaker:
                     reason="review-required: retained for teacher review; never auto-included",
                 )
             )
-            shortfall = len(blocks) < len(plan)
             if floor is not None and not content_density.meets_lesson_floor(
                 selected,
                 duration=resolved_duration,
@@ -564,10 +563,10 @@ class EngineLessonBaker:
             ):
                 if content_density.source_lacks_lesson_evidence(anchor_snapshot):
                     raise BakeError(content_density.THIN_SOURCE_UA_MESSAGE)
-                if not shortfall:
-                    raise BakeError(
-                        "Bake failed: the lesson could not reach the minimum activity density."
-                    )
+                raise BakeError(
+                    "Bake failed: the lesson could not reach the minimum activity density."
+                )
+            shortfall = len(blocks) < len(plan)
             if shortfall:
                 rejected.extend(
                     reserve_entries(
