@@ -26,17 +26,41 @@ def _candidate(
         activity = {
             "type": activity_type,
             "instruction": "i",
-            "text": "{gap}",
-            "blanks": [{"id": 1, "answer": answer, "options": [answer, "x"]}],
+            "text": "one {gap} and two {gap2} and three {gap3}.",
+            "blanks": [
+                {"id": 1, "answer": answer, "options": [answer, "x", "y", "z"]},
+                {"id": 2, "answer": "y", "options": ["y", "z", "a", "b"]},
+                {"id": 3, "answer": "z", "options": ["z", "a", "b", "c"]},
+            ],
         }
         locator = "text"
     else:
+        pairs = [
+            {"left": f"{candidate_id}-a", "right": answer},
+            {"left": f"{candidate_id}-b", "right": "b"},
+            {"left": f"{candidate_id}-c", "right": "c"},
+            {"left": f"{candidate_id}-d", "right": "d"},
+        ]
         activity = {
             "type": activity_type,
             "instruction": "i",
-            "pairs": [{"left": candidate_id, "right": answer}],
+            "pairs": pairs,
         }
         locator = "pairs[0]"
+        evidence = [
+            schema.Evidence(
+                quote=f"evidence-{start + offset}",
+                locator=f"pairs[{index}]",
+                char_start=start + offset,
+                char_end=start + offset + 1,
+            )
+            for index, offset in enumerate((0, 10, 20, 30))
+        ]
+        return schema.HramatkaActivity(
+            activity=activity,
+            evidence=evidence,
+            candidate_id=candidate_id,
+        )
     return schema.HramatkaActivity(
         activity=activity,
         evidence=[
@@ -66,8 +90,8 @@ def test_selector_honours_phase_coverage_variety_puzzle_and_duplicate_constraint
     )
 
     assert [candidate.candidate_id for candidate in selected] == [
-        "cloze",
         "match",
+        "cloze",
         "tf",
         "z-second",
     ]
@@ -110,7 +134,7 @@ def test_composed_selector_can_select_all_nine_registered_types_without_a_hidden
             activity={"type": activity_type, "fixture": index},
             evidence=[
                 schema.Evidence(
-                    quote=f"evidence-{index}",
+                    quote=f"evidence-{phase}-{index}",
                     locator="fixture",
                     char_start=index,
                     char_end=index + 1,
@@ -135,7 +159,7 @@ def test_composed_selector_can_select_all_nine_registered_types_without_a_hidden
             **{activity_type: 1 for activity_type in PILOT_ACTIVITY_TYPES},
             "true-false": 2,
         },
-        policy=selector.SelectorPolicy(density_target=10),
+        policy=selector.SelectorPolicy(density_target=10, require_content_density=False),
     )
 
     assert {

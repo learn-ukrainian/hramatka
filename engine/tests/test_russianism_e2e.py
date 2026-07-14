@@ -119,8 +119,12 @@ def test_russianism_introduced_in_generated_task_language_is_caught(tmp_path):
     # 2) adapter: review-required material never fills a visible slot. The
     # clean block count remains short and the warning candidate stays in the
     # teacher reserve/rejected tray with an explicit shortfall.
+    baker_anchor = (
+        f"{anchor} Читання залишається важливою звичкою для розвитку мови. "
+        "Багато родин мають домашні бібліотеки з цікавими книжками."
+    )
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    baked = baker.bake(anchor, duration=45, focus=None)
+    baked = baker.bake(baker_anchor, duration=45, focus=None)
     assert baked["blocks"] == []
     assert any(
         entry["reason"].startswith("shortfall: composed 0 of 8")

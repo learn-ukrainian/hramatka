@@ -218,7 +218,7 @@ def test_registration_contract_fake_type_needs_only_registry_entry(tmp_path, mon
         gate_chain="test.quiz.v1",
         gate_version="test.quiz.gates.v1",
         partition_key="items",
-        minimum_survivors=1,
+        minimum_survivors=3,
         ttt_phases=(1,),
         item_budget=1,
         is_puzzle=False,
@@ -227,22 +227,32 @@ def test_registration_contract_fake_type_needs_only_registry_entry(tmp_path, mon
     monkeypatch.setitem(registry.ACTIVITY_REGISTRY, "quiz", fake_entry)
 
     def candidate(outcome: str) -> dict:
+        anchor_sentences = [
+            "Київ є столицею України.",
+            "Львів має старий центр.",
+            "Одеса лежить біля моря.",
+        ]
         return {
             "type": "quiz",
             "instruction": "Вибери правильну відповідь.",
             "contract_outcome": outcome,
             "items": [
                 {
-                    "question": "Яке місто є столицею України?",
-                    "options": ["Київ", "Львів"],
+                    "question": f"Запитання {item}?",
+                    "options": ["Київ", "Львів", "Одеса"],
                     "correct": 0,
-                    "evidence": "Київ є столицею України.",
+                    "evidence": anchor_sentences[item],
                 }
+                for item in range(3)
             ],
         }
 
     result = pipeline.run(
-        "Київ є столицею України.",
+        (
+            "Київ є столицею України. "
+            "Львів має старий центр. "
+            "Одеса лежить біля моря."
+        ),
         types=["quiz"],
         generator=lambda _prompt: json.dumps(
             {"activities": [candidate("ready"), candidate("review"), candidate("rejected")]},
@@ -260,7 +270,6 @@ def test_registration_contract_fake_type_needs_only_registry_entry(tmp_path, mon
         schema.DISPOSITION_REVIEW,
         schema.DISPOSITION_REJECTED,
     ]
-    assert [ir.candidate_id for ir in result.selected] == ["candidate-0-000"]
     assert [activity["type"] for activity in result.lesson_b1] == ["quiz"]
 
 

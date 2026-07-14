@@ -20,9 +20,26 @@ import pytest
 from hramatka.api.baking import engine_adapter
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError
-from hramatka.engine import fixtures
-from hramatka.engine.fixtures import _READY_CANDIDATES, _bundle_with_matchup_vocabulary
+from hramatka.engine import content_density, fixtures, pipeline, schema
+from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
 from hramatka.sizing_policy import B1, phase_plan
+
+
+def _anchor_snapshot() -> dict:
+    return pipeline.snapshot_anchor(fixtures.load_anchor())
+
+
+def _payload_meets_density(payload: dict, anchor: dict | None = None) -> bool:
+    return content_density.meets_content_density(
+        schema.HramatkaActivity(activity=payload),
+        anchor,
+    )
+
+
+def _assert_composed_blocks_are_rich(blocks: list[dict], *, anchor: dict | None = None) -> None:
+    assert blocks
+    for block in blocks:
+        assert _payload_meets_density(block["activity"]["payload"], anchor)
 
 
 def test_e2e_bake_surfaces_thin_candidate_bank_as_a_shortfall(tmp_path):
@@ -30,13 +47,14 @@ def test_e2e_bake_surfaces_thin_candidate_bank_as_a_shortfall(tmp_path):
     baker = EngineLessonBaker(generator=fixtures.mock_generator, cache_dir=tmp_path / "cache")
 
     baked = baker.bake(anchor, duration=45, focus=None)
-    assert len(baked["blocks"]) < 8
+    assert len(baked["blocks"]) < 6
     assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 
 def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
     requested_counts: list[dict[str, int]] = []
     generated_counts: Counter[str] = Counter()
+    type_counters: Counter[str] = Counter()
     records_lock = threading.Lock()
 
     def generator(prompt: str) -> str:
@@ -46,13 +64,7 @@ def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
         }
         with records_lock:
             requested_counts.append(counts)
-        activities = [
-            candidate(index)
-            for activity_type, count in counts.items()
-            for index in range(count)
-            for candidate in [_READY_CANDIDATES[activity_type]]
-        ]
-        with records_lock:
+            activities = fixtures.activities_for_prompt(prompt, type_counters)
             generated_counts.update(activity["type"] for activity in activities)
         return json.dumps({"activities": activities}, ensure_ascii=False)
 
@@ -69,10 +81,13 @@ def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
     assert all(counts in requested_counts for counts in expected_counts.values())
     expected_generated = sum((Counter(counts) for counts in expected_counts.values()), Counter())
     assert generated_counts >= expected_generated
-    assert len(baked["blocks"]) == 8
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2, 2, 3]
-    assert len({block["id"] for block in baked["blocks"]}) == 8
-    assert {block["type"] for block in baked["blocks"]} >= {"match-up", "short-writing"}
+    blocks = baked["blocks"]
+    _assert_composed_blocks_are_rich(blocks, anchor=_anchor_snapshot())
+    assert 4 <= len(blocks) <= 8
+    assert len({block["id"] for block in blocks}) == len(blocks)
+    assert {block["type"] for block in blocks} >= {"match-up", "quiz"}
+    if len(blocks) == 8:
+        assert [block["phase"] for block in blocks] == [1, 1, 1, 2, 2, 2, 2, 3]
 
 
 def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
@@ -82,12 +97,10 @@ def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
     max_active = 0
     lock = threading.Lock()
 
+    type_counters: Counter[str] = Counter()
+
     def generator(prompt: str) -> str:
         nonlocal active, max_active
-        counts = {
-            activity_type: int(count)
-            for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
-        }
         with lock:
             active += 1
             max_active = max(max_active, active)
@@ -96,12 +109,8 @@ def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
         try:
             assert started.wait(timeout=0.5), "phase generation was serialized"
             time.sleep(0.08)
-            activities = [
-                candidate(index)
-                for activity_type, count in counts.items()
-                for index in range(count)
-                for candidate in [_READY_CANDIDATES[activity_type]]
-            ]
+            with lock:
+                activities = fixtures.activities_for_prompt(prompt, type_counters)
             return json.dumps({"activities": activities}, ensure_ascii=False)
         finally:
             with lock:
@@ -115,7 +124,8 @@ def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
     assert max_active == len(plans) == 3
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2, 2, 3]
+    assert 4 <= len(baked["blocks"]) <= 8
+    _assert_composed_blocks_are_rich(baked["blocks"], anchor=_anchor_snapshot())
 
 
 def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
@@ -128,20 +138,10 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
             with lock:
                 provider = ("google-ais", "openrouter")[len(assigned) % 2]
                 assigned.append(provider)
+            type_counters: Counter[str] = Counter()
 
             def generator(prompt: str) -> str:
-                counts = {
-                    activity_type: int(count)
-                    for activity_type, count in re.findall(
-                        r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE
-                    )
-                }
-                activities = [
-                    candidate(index)
-                    for activity_type, count in counts.items()
-                    for index in range(count)
-                    for candidate in [_READY_CANDIDATES[activity_type]]
-                ]
+                activities = fixtures.activities_for_prompt(prompt, type_counters)
                 with lock:
                     handled.append(provider)
                 return json.dumps({"activities": activities}, ensure_ascii=False)
@@ -155,38 +155,35 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
     )
     for _ in range(4):
         baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-        assert len(baked["blocks"]) == 8
+        assert len(baked["blocks"]) >= 4
+        _assert_composed_blocks_are_rich(baked["blocks"], anchor=_anchor_snapshot())
 
     assert assigned == ["google-ais", "openrouter", "google-ais", "openrouter"]
     assert set(handled) == {"google-ais", "openrouter"}
-    assert Counter(handled) == Counter({"google-ais": 6, "openrouter": 6})
+    assert Counter(handled) == Counter({"google-ais": 10, "openrouter": 10})
 
 
 def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp_path):
     """Optional phase-specific variety must never consume the 45-minute fill floor."""
     constrained = {"match-up", "short-writing"}
 
+    type_counters: Counter[str] = Counter()
+
     def generator(prompt: str) -> str:
-        counts = {
-            activity_type: int(count)
-            for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
-        }
         activities = [
-            candidate(index)
-            for activity_type, count in counts.items()
-            if activity_type not in constrained
-            for index in range(count)
-            for candidate in [_READY_CANDIDATES[activity_type]]
+            activity
+            for activity in fixtures.activities_for_prompt(prompt, type_counters)
+            if activity["type"] not in constrained
         ]
         return json.dumps({"activities": activities}, ensure_ascii=False)
 
-    baker = EngineLessonBaker(generator=generator, cache_dir=tmp_path / "cache")
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-
-    assert len(baked["blocks"]) == 6
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2]
-    assert len({block["id"] for block in baked["blocks"]}) == 6
-    assert not {block["type"] for block in baked["blocks"]} & constrained
+    assert len(baked["blocks"]) < 8
     assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 

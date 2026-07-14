@@ -13,7 +13,7 @@ from hramatka.engine import generate as G
 from hramatka.engine.transport import AISGeneratorPort
 
 
-def _pb(anchor, level, types, grounding, *, counts=None):
+def _pb(anchor, level, types, grounding, *, counts=None, anchor_snapshot=None):
     return "PROMPT"
 
 

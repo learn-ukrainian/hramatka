@@ -140,6 +140,7 @@ def generate_baseline_v1(
     prompt_builder: Callable[[str, str, list[str], str], str] | None = None,
     out_dir: str | Path | None = None,
     _raw_attempt_counter: list[int] | None = None,
+    anchor_snapshot: dict | None = None,
 ) -> list[dict]:
     """Frozen pre-Wave-0 one-shot extractive path for measurement.
 
@@ -152,6 +153,7 @@ def generate_baseline_v1(
     # accepts the production call shape solely so `_run` can forward its
     # normalized plan without special casing the orchestration path, but must
     # reject a quota that would make its frozen prompt misleading.
+    del anchor_snapshot  # baseline accepts snapshot for call-shape parity only
     if counts is not None and any(count != 1 for count in counts.values()):
         raise ValueError("generate_baseline_v1 only supports one candidate per type")
     types = types or ["true-false", "cloze", "match-up"]
@@ -212,6 +214,7 @@ def generate(
     prompt_builder: Callable[..., str] | None = None,
     out_dir: str | Path | None = None,
     _raw_attempt_counter: list[int] | None = None,
+    anchor_snapshot: dict | None = None,
 ) -> list[object]:
     """Registry-planned typed candidate generation.
 
@@ -245,7 +248,14 @@ def generate(
     prompt_groups: dict[tuple[str, tuple[tuple[str, int], ...]], list[str]] = {}
     for entry in entries:
         builder = prompt_builder or entry.prompt_builder
-        prompt = builder(anchor, level, requested, grounding_pack, counts=requested_counts)
+        prompt = builder(
+            anchor,
+            level,
+            requested,
+            grounding_pack,
+            counts=requested_counts,
+            anchor_snapshot=anchor_snapshot,
+        )
         prompt_groups.setdefault((prompt, count_signature), []).append(entry.activity_type)
 
     candidates: list[object] = []

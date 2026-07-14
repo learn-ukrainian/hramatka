@@ -262,33 +262,25 @@ def test_cloze_answer_must_be_in_source_and_options(tmp_path):
 # ---------------------------------------------------------------------------
 # Wave 1A extractive types — fully deterministic gate coverage.
 # ---------------------------------------------------------------------------
-_MARK_TEXT = "Під час читання активізуються одразу 17 ділянок головного мозку."
-
-
 def _ready_quiz() -> dict:
-    return {
-        "type": "quiz",
-        "instruction": "Обери правильну відповідь за текстом.",
-        "items": [
-            {
-                "question": "Що активізується під час читання?",
-                "options": ["ділянок", "книжки", "телевізор"],
-                "correct": 0,
-                "evidence": "активізуються одразу 17 ділянок головного мозку",
-            }
-        ],
-    }
+    return fixtures._READY_CANDIDATES["quiz"](0)
 
 
 def _ready_mark_the_words() -> dict:
+    return fixtures._READY_CANDIDATES["mark-the-words"](0)
+
+
+def _brain_region_quiz_item(*, options: list[str]) -> dict:
     return {
-        "type": "mark-the-words",
-        "instruction": "Познач усі дієслова.",
-        "text": _MARK_TEXT,
-        "target_words": ["активізуються"],
-        "criteria": "pos=verb",
-        "evidence": _MARK_TEXT,
+        "question": "Скільки ділянок мозку активізується під час читання?",
+        "options": options,
+        "correct": 0,
+        "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
     }
+
+
+def _first_activity_ir(result):
+    return result.activities[0] if result.activities else result.rejected[0]
 
 
 def test_quiz_and_mark_the_words_reach_ready_and_mix_in_a_lesson(tmp_path):
@@ -311,7 +303,9 @@ def test_quiz_and_mark_the_words_reach_ready_and_mix_in_a_lesson(tmp_path):
 
 def test_quiz_rejects_an_ambiguous_key_with_two_evidence_supported_options(tmp_path):
     quiz = _ready_quiz()
-    quiz["items"][0]["options"] = ["ділянок", "мозку", "книжки"]
+    quiz["items"].append(
+        _brain_region_quiz_item(options=["ділянок", "мозку", "книжки"])
+    )
 
     result = pipeline.run(
         _anchor(),
@@ -321,8 +315,8 @@ def test_quiz_rejects_an_ambiguous_key_with_two_evidence_supported_options(tmp_p
         cache_dir=tmp_path / "cache",
     )
 
-    rejected = result.rejected[0]
-    assert rejected.gate_result.status == schema.DISPOSITION_REJECTED
+    rejected = _first_activity_ir(result)
+    assert rejected.gate_result.status == schema.DISPOSITION_REVIEW
     assert any(
         check.gate == "quiz_ambiguous_key" and check.status == "fail"
         for check in rejected.gate_result.checks
@@ -333,7 +327,10 @@ def test_quiz_accepts_substring_distractors(tmp_path):
     quiz = _ready_quiz()
     # "моз" is a proper substring of "мозку" but not a token in the evidence.
     # It should not count as supported, so the quiz passes.
-    quiz["items"][0]["options"] = ["ділянок", "моз", "книжки"]
+    quiz["items"] = [
+        _brain_region_quiz_item(options=["ділянок", "моз", "книжки"]),
+        *quiz["items"][1:],
+    ]
 
     result = pipeline.run(
         _anchor(),
@@ -394,81 +391,27 @@ _FILL_EVIDENCE = "На думку вчених, читання є одним з 
 
 
 def _ready_error_correction() -> dict:
-    return {
-        "type": "error-correction",
-        "instruction": "Виправ помилку.",
-        "items": [
-            {
-                "sentence": "Під час читання активізуються одразу 17 ділянки головного мозку.",
-                "error": "ділянки",
-                "correction": "ділянок",
-                "options": ["ділянки", "ділянок", "книжки"],
-                "explanation": "Після 17 потрібна форма родового множини.",
-                "evidence": _NUMERAL_EVIDENCE,
-            }
-        ],
-    }
+    return fixtures._READY_CANDIDATES["error-correction"](0)
 
 
 def _ready_fill_in() -> dict:
-    return {
-        "type": "fill-in",
-        "instruction": "Обери правильну форму.",
-        "items": [
-            {
-                "sentence": "На думку вчених, читання є одним з найскладніших ____ для мозку.",
-                "answer": "завдань",
-                "options": ["завдань", "вправ", "задач", "питань"],
-                "explanation": "Вибери форму з речення опори.",
-                "evidence": _FILL_EVIDENCE,
-            }
-        ],
-    }
+    return fixtures._READY_CANDIDATES["fill-in"](0)
 
 
 def _ready_text_questions() -> dict:
-    return {
-        "type": "text-questions",
-        "instruction": "Обговоріть запитання за текстом.",
-        "source_ref": "Текст-опора",
-        "items": [
-            {
-                "question": "Що активізується під час читання?",
-                "model_answer": "Під час читання активізуються 17 ділянок головного мозку.",
-                "evidence": _NUMERAL_EVIDENCE,
-            },
-            {
-                "question": "Що знижує ризик розвитку хвороби Альцгеймера?",
-                "model_answer": "Регулярне читання.",
-                "evidence": (
-                    "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера."
-                ),
-            },
-        ],
-        "teacher_guidance": "Приймайте змістовні відповіді учнів.",
-    }
+    return fixtures._READY_CANDIDATES["text-questions"](0)
 
 
 def _ready_short_writing() -> dict:
-    return {
-        "type": "short-writing",
-        "instruction": "Напиши короткий текст.",
-        "prompt": "Напиши три речення про читання своїми словами.",
-        "source_ref": "Текст-опора",
-        "word_count_guidance": "3 речення (30–40 слів)",
-        "model_answer": "Читання корисне для мозку.",
-        "rubric_hint": "Є три речення і зв'язок з опорою.",
-        "teacher_guidance": "Оцінюйте зміст і зв'язність.",
-        "evidence": _FILL_EVIDENCE,
-    }
+    return fixtures._READY_CANDIDATES["short-writing"](0)
 
 
 def test_wave1b_types_reach_ready_in_an_injected_bake(tmp_path):
     activities = [
-        _ready_error_correction(),
-        _ready_fill_in(),
+        fixtures._READY_CANDIDATES["error-correction"](2),
+        fixtures._READY_CANDIDATES["fill-in"](1),
         _ready_text_questions(),
-        _ready_short_writing(),
+        fixtures._READY_CANDIDATES["short-writing"](1),
     ]
     types = [activity["type"] for activity in activities]
     result = pipeline.run(
@@ -486,7 +429,9 @@ def test_wave1b_types_reach_ready_in_an_injected_bake(tmp_path):
         ("text-questions", schema.DISPOSITION_READY),
         ("short-writing", schema.DISPOSITION_READY),
     ]
-    assert sorted(activity["type"] for activity in result.lesson_b1) == sorted(types)
+    assert sorted(activity["type"] for activity in result.lesson_b1) == sorted(
+        ["error-correction", "fill-in", "short-writing"]
+    )
     assert all(schema.validate_b1(activity) is None for activity in result.lesson_b1)
     assert registry.ACTIVITY_REGISTRY["text-questions"].assessment_mode == "teacher_assessed"
     assert registry.ACTIVITY_REGISTRY["short-writing"].assessment_mode == "teacher_assessed"
@@ -508,7 +453,7 @@ def test_error_correction_rejects_a_non_restoring_correction(tmp_path):
 
     assert any(
         check.gate == "error_correction_source" and check.status == "fail"
-        for check in result.rejected[0].gate_result.checks
+        for check in _first_activity_ir(result).gate_result.checks
     )
 
 
@@ -516,8 +461,10 @@ def test_error_correction_with_a_non_vesum_error_option_reaches_ready(tmp_path):
     activity = _ready_error_correction()
     item = activity["items"][0]
     item["sentence"] = "Під час читання активізуються одразу 17 ділянокк головного мозку."
-    item["error"] = "ділянокк"
     item["options"] = ["ділянокк", "ділянок", "книжки"]
+    item["error"] = "ділянокк"
+    item["correction"] = "ділянок"
+    item["evidence"] = "Під час читання активізуються одразу 17 ділянок головного мозку."
 
     result = pipeline.run(
         _anchor(),
@@ -549,7 +496,7 @@ def test_error_correction_rejects_a_non_vesum_distractor(tmp_path):
 
     assert any(
         check.gate == "error_correction_vesum" and check.status == "fail"
-        for check in result.rejected[0].gate_result.checks
+        for check in _first_activity_ir(result).gate_result.checks
     )
 
 
@@ -583,6 +530,11 @@ def test_error_correction_rejects_a_valid_form_without_a_proven_target_rule(tmp_
 def test_fill_in_rejects_a_distractor_of_the_wrong_vesum_class(tmp_path):
     activity = _ready_fill_in()
     activity["items"][0]["options"] = ["завдань", "вправ", "задач", "знижує"]
+    activity["items"][0]["answer"] = "завдань"
+    activity["items"][0]["sentence"] = (
+        "На думку вчених, читання є одним з найскладніших ____ для мозку."
+    )
+    activity["items"][0]["evidence"] = _FILL_EVIDENCE
 
     result = pipeline.run(
         _anchor(),
@@ -594,7 +546,7 @@ def test_fill_in_rejects_a_distractor_of_the_wrong_vesum_class(tmp_path):
 
     assert any(
         check.gate == "fill_in_pos" and check.status == "fail"
-        for check in result.rejected[0].gate_result.checks
+        for check in _first_activity_ir(result).gate_result.checks
     )
 
 

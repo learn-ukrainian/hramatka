@@ -27,7 +27,17 @@ from importlib import metadata
 from pathlib import Path
 from typing import Literal
 
-from . import ENGINE_VERSION, data, paths, registry, retrieval, schema, selector, vendoring
+from . import (
+    ENGINE_VERSION,
+    content_density,
+    data,
+    paths,
+    registry,
+    retrieval,
+    schema,
+    selector,
+    vendoring,
+)
 from .gates import vesum as vesum_gate
 from .generate import (
     GEMMA_MODEL,
@@ -611,6 +621,7 @@ def _run(
                 grounding_pack=grounding["text"],
                 out_dir=out_dir,
                 _raw_attempt_counter=raw_attempt_counter,
+                anchor_snapshot=snap,
             ))]
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
@@ -741,6 +752,7 @@ def _run(
             count_plan=plan,
             phase=selector_phase if isinstance(selector_phase, int) else None,
             policy=selection_policy,
+            anchor=snap,
         )
         result.lesson_b1 = [ir.activity for ir in result.selected]
 
@@ -749,10 +761,16 @@ def _run(
     # Callers opt in to one or more safety retries. Regenerated raw candidates
     # request the remaining READY-pool quota per type, then receive stable ids,
     # validation, and the same partitioning as the first batch.
+    def _density_ready_pool(ir: schema.HramatkaActivity) -> bool:
+        return content_density.meets_content_density(
+            ir, snap
+        ) and content_density.itemized_sentence_ids_are_distinct(ir, snap)
+
     for attempt in range(len(raw_batches), max_regeneration_attempts + 1):
         ready_counts = {
             activity_type: sum(
-                ir.activity.get("type") == activity_type for ir in result.ready
+                ir.activity.get("type") == activity_type and _density_ready_pool(ir)
+                for ir in result.ready
             )
             for activity_type in types
         }
@@ -794,6 +812,7 @@ def _run(
                 grounding_pack=grounding["text"],
                 out_dir=out_dir,
                 _raw_attempt_counter=raw_attempt_counter,
+                anchor_snapshot=snap,
             )
         except (GeneratorUnavailable, GenerationUnparseable) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"

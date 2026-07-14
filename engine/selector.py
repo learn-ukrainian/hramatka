@@ -14,10 +14,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import schema
+from . import content_density, schema
 from .registry import ACTIVITY_REGISTRY
 
-SELECTOR_POLICY_VERSION = "wave0.selector.v1"
+SELECTOR_POLICY_VERSION = "wave0.selector.v3"
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,8 @@ class SelectorPolicy:
     max_puzzle_types: int = 1
     forbid_adjacent_repeated_type: bool = True
     forbid_duplicate_evidence_answer: bool = True
+    require_content_density: bool = True
+    require_productive: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -44,6 +46,9 @@ class _SelectionState:
     evidence_answers: set[tuple[str, str]] = field(default_factory=set)
     puzzle_types: set[str] = field(default_factory=set)
     activity_identities: set[str] = field(default_factory=set)
+    sentence_reuse: content_density.SentenceReuseState = field(
+        default_factory=content_density.SentenceReuseState
+    )
     last_type: str | None = None
 
 
@@ -68,6 +73,7 @@ def _select(
     phase: int | None,
     policy: SelectorPolicy,
     state: _SelectionState,
+    anchor: dict | None = None,
 ) -> list[schema.HramatkaActivity]:
     """Select one slot group while retaining any supplied whole-lesson state."""
     phase_candidates = [
@@ -102,15 +108,33 @@ def _select(
             ):
                 continue
             pairs = entry.evidence_answer_pairs(candidate)
-            pair_set = set(pairs)
-            if policy.forbid_duplicate_evidence_answer and (
-                len(pair_set) != len(pairs) or pair_set & state.evidence_answers
+            if policy.require_content_density and not content_density.composition_eligible(
+                candidate,
+                anchor=anchor,
+                phase=phase,
+                state=state.sentence_reuse,
+                forbid_duplicate_evidence_answer=policy.forbid_duplicate_evidence_answer,
+                evidence_answers=state.evidence_answers,
+                evidence_answer_pairs=pairs,
             ):
                 continue
             new_coverage = len(_coverage(candidate) - state.covered)
             variety = int(activity_type not in state.selected_types)
+            productive_boost = int(
+                policy.require_productive
+                and activity_type in content_density.PRODUCTIVE_TYPES
+                and not (
+                    state.selected_types.keys() & content_density.PRODUCTIVE_TYPES
+                )
+            )
             tie_break = candidate.candidate_id or f"{original_index:06d}"
-            ranked.append(((-new_coverage, -variety, tie_break), original_index, candidate))
+            ranked.append(
+                (
+                    (-productive_boost, -new_coverage, -variety, tie_break),
+                    original_index,
+                    candidate,
+                )
+            )
 
         if not ranked:
             break
@@ -123,6 +147,14 @@ def _select(
             ACTIVITY_REGISTRY[activity_type].evidence_answer_pairs(winner)
         )
         state.activity_identities.add(_activity_identity(winner))
+        primary = content_density.primary_sentence_id(winner, anchor)
+        content_density.register_sentence_use(
+            sentence_ids=frozenset({primary}) if primary else frozenset(),
+            primary=primary,
+            phase=phase,
+            operation=content_density.COGNITIVE_OPERATION.get(activity_type, activity_type),
+            state=state.sentence_reuse,
+        )
         state.last_type = activity_type
         if ACTIVITY_REGISTRY[activity_type].is_puzzle:
             state.puzzle_types.add(activity_type)
@@ -136,13 +168,9 @@ def select_lesson(
     count_plan: dict[str, int],
     phase: int | None = None,
     policy: SelectorPolicy = DEFAULT_POLICY,
+    anchor: dict | None = None,
 ) -> list[schema.HramatkaActivity]:
-    """Greedily select the strongest ready candidates under Wave-0 rules.
-
-    Ranking favours new anchor coverage, then type variety, then stable source
-    order.  The deterministic tie-break is candidate id (falling back to input
-    order), which keeps fixture and cache comparisons reproducible.
-    """
+    """Greedily select the strongest ready candidates under Wave-0 rules."""
     return _select(
         candidates,
         count_plan=count_plan,
@@ -150,6 +178,7 @@ def select_lesson(
         phase=phase,
         policy=policy,
         state=_SelectionState(),
+        anchor=anchor,
     )
 
 
@@ -159,18 +188,14 @@ def select_composed_lesson(
     slots_by_phase: Mapping[int, int],
     count_plan: Mapping[str, int],
     policy: SelectorPolicy = DEFAULT_POLICY,
+    anchor: dict | None = None,
 ) -> dict[int, list[schema.HramatkaActivity]]:
-    """Select a TTT lesson under one global composition policy.
-
-    Pipeline runs remain phase-local for independent generation, gates, and
-    artifacts.  The assembler uses this helper afterwards: it fills each phase
-    quota in pedagogical order while retaining one selection state for the
-    whole lesson.  Diversity, duplicate-evidence, puzzle, and adjacency rules
-    therefore cannot reset at a phase boundary.
-    """
+    """Select a TTT lesson under one global composition policy."""
     state = _SelectionState()
     selected_by_phase: dict[int, list[schema.HramatkaActivity]] = {}
     for phase, slots in sorted(slots_by_phase.items()):
+        state.sentence_reuse.last_primary = None
+        state.last_type = None
         selected_by_phase[phase] = _select(
             candidates_by_phase.get(phase, ()),
             count_plan=count_plan,
@@ -178,5 +203,6 @@ def select_composed_lesson(
             phase=phase,
             policy=policy,
             state=state,
+            anchor=anchor,
         )
     return selected_by_phase

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.config import Settings
 from hramatka.engine import fixtures
+from hramatka.engine.providers import telemetry_ctx
 
 
 class FixtureBaker(EngineLessonBaker):
@@ -32,18 +32,9 @@ class FixtureBaker(EngineLessonBaker):
 
     def __init__(self, runtime_dir: Path) -> None:
         def generator(prompt: str) -> str:
-            counts = {
-                activity_type: int(count)
-                for activity_type, count in re.findall(
-                    r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE
-                )
-            }
-            activities = [
-                candidate(index)
-                for activity_type, count in counts.items()
-                for index in range(count)
-                for candidate in [fixtures._READY_CANDIDATES[activity_type]]
-            ]
+            ctx = telemetry_ctx.get()
+            phase = int(ctx.phase) if ctx is not None and ctx.phase else 1
+            activities = fixtures.e2e_activities_for_prompt(prompt, phase=phase)
             return json.dumps({"activities": activities}, ensure_ascii=False)
 
         super().__init__(

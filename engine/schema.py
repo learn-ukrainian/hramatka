@@ -18,7 +18,7 @@ import jsonschema
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
-from . import vendoring
+from . import instruction_bank, vendoring
 
 # activities-b1 `type` const → its self-contained def name in the schema.
 _TYPE_TO_DEF = {activity_type: f"{activity_type}-b1" for activity_type in PILOT_ACTIVITY_TYPES}
@@ -189,7 +189,7 @@ def project_to_b1(ir: HramatkaActivity) -> dict:
     deep copy of `ir.activity` with any stray 'evidence' keys stripped.
     """
     clean, _ = parse_raw_activity(ir.activity)
-    return clean
+    return instruction_bank.apply_instruction_bank(clean)
 
 
 def validate_b1(obj: dict) -> None:

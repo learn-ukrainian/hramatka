@@ -11,7 +11,7 @@ from typing import Any
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
-from . import retrieval, schema
+from . import content_density, retrieval, schema
 from .gates import evidence_span, matchup_semantics, numeral, vesum_tags
 from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
@@ -39,15 +39,29 @@ def build_extractive_v1_prompt(
     grounding_pack: str,
     *,
     counts: dict[str, int] | None = None,
+    anchor_snapshot: dict | None = None,
 ) -> str:
     """Build the count-aware extractive prompt shared by registered types."""
     requested_counts = counts or {activity_type: 1 for activity_type in types}
     request_lines = "\n".join(
         f"- {activity_type}: {requested_counts[activity_type]}" for activity_type in types
     )
+    density_lines = []
+    for activity_type in types:
+        entry = ACTIVITY_REGISTRY[activity_type]
+        target = content_density.scaled_generation_target(entry, anchor_snapshot)
+        if target > entry.minimum_survivors:
+            density_lines.append(
+                f"- {activity_type}: орієнтир {target} пунктів/пар/пропусків на одне завдання"
+            )
     template = load_extractive_template().replace("{{REQUESTED_ACTIVITY_COUNTS}}", request_lines)
+    density_block = ""
+    if density_lines:
+        density_block = (
+            "\n\nЩільність (орієнтири генерації, не мінімум):\n" + "\n".join(density_lines)
+        )
     return (
-        f"{template}\n\n"
+        f"{template}{density_block}\n\n"
         f"=== GROUNDING PACK ===\n{grounding_pack}\n\n"
         f"=== ТЕКСТ-ОПОРА (anchor, рівень {level}) ===\n{anchor}\n"
     )
@@ -1216,7 +1230,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         gate_chain="quiz.extractive.v1",
         gate_version="quiz.gates.v1",
         partition_key="items",
-        minimum_survivors=1,
+        minimum_survivors=3,
         ttt_phases=(1, 2, 3),
         item_budget=4,
         is_puzzle=False,
@@ -1235,7 +1249,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         gate_chain="error-correction.extractive.v1",
         gate_version="error-correction.gates.v1",
         partition_key="items",
-        minimum_survivors=1,
+        minimum_survivors=2,
         ttt_phases=(1, 2, 3),
         item_budget=4,
         is_puzzle=False,
@@ -1254,7 +1268,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         gate_chain="fill-in.extractive.v1",
         gate_version="fill-in.gates.v1",
         partition_key="items",
-        minimum_survivors=1,
+        minimum_survivors=3,
         ttt_phases=(1, 2, 3),
         item_budget=4,
         is_puzzle=False,
@@ -1275,7 +1289,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         partition_key="blanks",
         minimum_survivors=1,
         ttt_phases=(1, 2, 3),
-        item_budget=1,
+        item_budget=3,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
     ),
@@ -1313,7 +1327,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         partition_key=None,
         minimum_survivors=1,
         ttt_phases=(1, 2, 3),
-        item_budget=1,
+        item_budget=4,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
     ),
@@ -1330,7 +1344,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         gate_chain="text-questions.open.v1",
         gate_version="text-questions.gates.v1",
         partition_key="items",
-        minimum_survivors=2,
+        minimum_survivors=3,
         ttt_phases=(1, 2, 3),
         item_budget=3,
         is_puzzle=False,

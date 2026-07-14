@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
-from hramatka.engine import data, pipeline, registry, schema, selector
+from hramatka.engine import content_density, data, pipeline, registry, schema, selector
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
@@ -175,8 +175,14 @@ def _answer_key(ir) -> dict:
             evidence = item.get("evidence")
             if isinstance(evidence, str) and evidence.strip():
                 corrected.append(evidence)
-            elif isinstance(item.get("sentence"), str):
-                corrected.append(item["sentence"])
+                continue
+            sentence = item.get("sentence")
+            error = item.get("error")
+            correction = item.get("correction")
+            if isinstance(sentence, str) and isinstance(error, str) and isinstance(correction, str):
+                corrected.append(sentence.replace(error, correction, 1))
+            elif isinstance(sentence, str):
+                corrected.append(sentence)
         return {"items": corrected}
     if a_type == "text-questions":
         key: dict[str, Any] = {
@@ -207,6 +213,27 @@ def _answer_key(ir) -> dict:
             key["rubric"] = rubric
         return key
     return {"guidance": "Підтвердьте ключ разом з учителем."}
+
+
+def _strip_internal_item_fields(payload: dict) -> dict:
+    """Remove engine-only per-item fields before pilot schema validation."""
+    items = payload.get("items")
+    if isinstance(items, list):
+        payload["items"] = [
+            {key: value for key, value in item.items() if key != "evidence"}
+            if isinstance(item, dict)
+            else item
+            for item in items
+        ]
+    pairs = payload.get("pairs")
+    if isinstance(pairs, list):
+        payload["pairs"] = [
+            {key: value for key, value in pair.items() if key != "evidence"}
+            if isinstance(pair, dict)
+            else pair
+            for pair in pairs
+        ]
+    return payload
 
 
 def _pilot_payload(activity: dict) -> dict:
@@ -240,6 +267,14 @@ def _pilot_payload(activity: dict) -> dict:
         if isinstance(source_ref, str) and source_ref.strip():
             payload["source_ref"] = source_ref
         return payload
+    if a_type == "quiz":
+        return _strip_internal_item_fields(
+            {
+                "type": "quiz",
+                "instruction": activity["instruction"],
+                "items": activity.get("items", []),
+            }
+        )
     payload = {key: value for key, value in activity.items() if key not in {"id", "title", "notes"}}
     if a_type == "cloze":
         # The engine's internal gap convention is {gap} / {{N}}; the frozen
@@ -247,12 +282,17 @@ def _pilot_payload(activity: dict) -> dict:
         # to blank ids. Without this conversion the player shows a literal
         # "{gap}" to the learner (deployed launch-gate find, 2026-07-13).
         text = payload.get("text", "")
-        blank_ids = [b.get("id") for b in payload.get("blanks", [])]
-        first_id = blank_ids[0] if blank_ids else 1
-        text = text.replace("{gap}", f"[___:{first_id}]")
+        blanks = payload.get("blanks", [])
+        gap_tokens = ["{gap}", "{gap2}", "{gap3}", "{gap4}"]
+        for token, blank in zip(gap_tokens, blanks, strict=False):
+            if not isinstance(blank, dict):
+                continue
+            blank_id = blank.get("id")
+            if blank_id is not None:
+                text = text.replace(token, f"[___:{blank_id}]")
         text = re.sub(r"\{\{(\d+)\}\}", r"[___:\1]", text)
         payload["text"] = text
-    return payload
+    return _strip_internal_item_fields(payload)
 
 
 _TITLES = {
@@ -466,11 +506,18 @@ class EngineLessonBaker:
             total_count_plan = sum(
                 (Counter(count_plan) for count_plan in phase_count_plans.values()), Counter()
             )
+            first_result = next(iter(phase_results.values()))
+            anchor_snapshot = first_result.anchor
+            floor = content_density.LESSON_FLOORS.get(resolved_duration)
             selected_by_phase = selector.select_composed_lesson(
                 {phase: result.ready for phase, result in phase_results.items()},
                 slots_by_phase=slots_by_phase,
                 count_plan=total_count_plan,
-                policy=selector.SelectorPolicy(density_target=len(plan)),
+                policy=selector.SelectorPolicy(
+                    density_target=len(plan),
+                    require_productive=bool(floor and floor.require_productive),
+                ),
+                anchor=anchor_snapshot,
             )
             selected = [
                 candidate
@@ -510,6 +557,17 @@ class EngineLessonBaker:
                 )
             )
             shortfall = len(blocks) < len(plan)
+            if floor is not None and not content_density.meets_lesson_floor(
+                selected,
+                duration=resolved_duration,
+                selected_by_phase=selected_by_phase,
+            ):
+                if content_density.source_lacks_lesson_evidence(anchor_snapshot):
+                    raise BakeError(content_density.THIN_SOURCE_UA_MESSAGE)
+                if not shortfall:
+                    raise BakeError(
+                        "Bake failed: the lesson could not reach the minimum activity density."
+                    )
             if shortfall:
                 rejected.extend(
                     reserve_entries(
@@ -520,9 +578,8 @@ class EngineLessonBaker:
                 _annotate_shortfall(rejected, blocks=blocks, planned=len(plan))
             # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
             # lesson schema forbids fingerprint/diagnostics on anchor.
-            first_result = next(iter(phase_results.values()))
-            anchor_body = first_result.anchor["body_uk"]
-            anchor_diagnostics = first_result.anchor.get("diagnostics")
+            anchor_body = anchor_snapshot["body_uk"]
+            anchor_diagnostics = anchor_snapshot.get("diagnostics")
             if anchor_diagnostics is None:
                 anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
 

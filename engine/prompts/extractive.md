@@ -62,20 +62,20 @@
        {"id":1,"answer":"…","options":["…","…","…","…"]}],"evidence":"<речення-опора без пропуску>"},
     {"type":"match-up","instruction":"…","pairs":[
        {"left":"…","right":"…","evidence":"<цитата, де left трапляється в опорі>"}, …]},
-    {"type":"quiz","instruction":"Обери правильну відповідь.","items":[
+    {"type":"quiz","instruction":"Оберіть правильну відповідь за текстом.","items":[
        {"question":"…","options":["…","…","…"],"correct":0,"evidence":"<дослівна цитата з опори>"}, …]},
-    {"type":"mark-the-words","instruction":"Познач усі дієслова.","text":"<дослівне речення опори>",
+    {"type":"mark-the-words","instruction":"Позначте всі дієслова.","text":"<дослівне речення опори>",
        "target_words":["…"],"criteria":"pos=verb","evidence":"<той самий дослівний текст>"},
-    {"type":"error-correction","instruction":"Виправ помилку.","items":[
+    {"type":"error-correction","instruction":"Знайдіть навмисну помилку й оберіть правильну форму.","items":[
        {"sentence":"…","error":"…","correction":"…","options":["…","…","…"],
         "explanation":"…","evidence":"<дослівне речення опори>"}]},
-    {"type":"fill-in","instruction":"Обери правильну форму.","items":[
+    {"type":"fill-in","instruction":"Оберіть правильну форму.","items":[
        {"sentence":"… ____ …","answer":"…","options":["…","…","…"],
         "explanation":"…","evidence":"<дослівне речення опори>"}]},
     {"type":"text-questions","instruction":"Обговоріть запитання за текстом.","source_ref":"Текст-опора",
        "items":[{"question":"…?","model_answer":"…","evidence":"<дослівна цитата опори>"}],
        "teacher_guidance":"…"},
-    {"type":"short-writing","instruction":"Напиши короткий текст.","prompt":"…","source_ref":"Текст-опора",
+    {"type":"short-writing","instruction":"Напишіть короткий текст за опорою.","prompt":"…","source_ref":"Текст-опора",
        "word_count_guidance":"3 речення (30–40 слів)","model_answer":"…","rubric_hint":"…",
        "teacher_guidance":"…","evidence":"<дослівна цитата опори>"}
   ]
