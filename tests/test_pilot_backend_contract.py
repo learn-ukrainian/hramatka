@@ -1150,3 +1150,160 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
     assert store.get_teacher_default_duration("t-pop-1") == 60
     store.set_teacher_default_duration("t-pop-1", 90)
     assert store.get_teacher_default_duration("t-pop-1") == 90
+
+
+def test_recreate_from_failed_starts_a_new_job(app) -> None:
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        failed_id = str(uuid.uuid4())
+        created = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(failed_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, failed_id, "ready")
+        with sqlite3.connect(app.state.store.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET status = 'failed', step = 'готово', failure_code = 'engine_unavailable',
+                    failure_message = 'Сервіс недоступний.', lesson_json = NULL
+                WHERE id = ?
+                """,
+                (failed_id,),
+            )
+            connection.commit()
+        response = client.post(
+            f"/api/lessons/{failed_id}/recreate",
+            headers=_mutation_headers(session["csrf_token"]),
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["id"] != failed_id
+        assert body["status"] in {"draft", "baking"}
+        assert body["reused"] is False
+        new_id = body["id"]
+        ready = _wait_for_status(client, new_id, "ready")
+        assert ready["status"] == "ready"
+        failed_status = client.get(f"/api/lessons/{failed_id}/status").json()
+        assert failed_status["status"] == "failed"
+
+
+def test_recreate_without_stored_request_returns_422(tmp_path: Path) -> None:
+    app = create_app(settings=_settings(tmp_path), baker=FixtureBaker())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        _wait_for_status(client, lesson_id, "ready")
+        with sqlite3.connect(app.state.store.database_path) as connection:
+            connection.execute(
+                "UPDATE lesson_jobs SET request_json = '{}' WHERE id = ?",
+                (lesson_id,),
+            )
+            connection.commit()
+        recreate = client.post(
+            f"/api/lessons/{lesson_id}/recreate",
+            headers=_mutation_headers(session["csrf_token"]),
+        )
+        _error(recreate, 422, "invalid_input")
+
+
+def test_delete_lesson_returns_204_and_removes_row(app) -> None:
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        created = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, lesson_id, "ready")
+        deleted = client.delete(
+            f"/api/lessons/{lesson_id}",
+            headers=_mutation_headers(session["csrf_token"]),
+        )
+        assert deleted.status_code == 204, deleted.text
+        assert deleted.content == b""
+        _error(client.get(f"/api/lessons/{lesson_id}/status"), 404, "lesson_not_found")
+        with sqlite3.connect(app.state.store.database_path) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM lesson_jobs WHERE id = ?", (lesson_id,)
+            ).fetchone()
+        assert row is None
+
+
+def test_delete_foreign_teacher_lesson_returns_404(app) -> None:
+    _, _, first_token = _issue_invite(app, display_name="Перша")
+    _, _, second_token = _issue_invite(app, display_name="Друга")
+    lesson_id = str(uuid.uuid4())
+    with TestClient(app, base_url=ORIGIN) as first, TestClient(app, base_url=ORIGIN) as second:
+        first_session = _redeem(first, first_token)
+        second_session = _redeem(second, second_token)
+        created = first.post(
+            "/api/lessons",
+            headers=_mutation_headers(first_session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(first, lesson_id, "ready")
+        foreign = second.delete(
+            f"/api/lessons/{lesson_id}",
+            headers=_mutation_headers(second_session["csrf_token"]),
+        )
+        _error(foreign, 404, "lesson_not_found")
+        # The foreign delete must NOT remove the owner's row (review #127).
+        owner_status = first.get(f"/api/lessons/{lesson_id}/status")
+        assert owner_status.status_code == 200, owner_status.text
+        assert owner_status.json()["status"] == "ready"
+
+
+def test_recreate_foreign_teacher_lesson_returns_404(app) -> None:
+    _, _, first_token = _issue_invite(app, display_name="Перша")
+    _, _, second_token = _issue_invite(app, display_name="Друга")
+    lesson_id = str(uuid.uuid4())
+    with TestClient(app, base_url=ORIGIN) as first, TestClient(app, base_url=ORIGIN) as second:
+        first_session = _redeem(first, first_token)
+        second_session = _redeem(second, second_token)
+        created = first.post(
+            "/api/lessons",
+            headers=_mutation_headers(first_session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(first, lesson_id, "ready")
+        foreign = second.post(
+            f"/api/lessons/{lesson_id}/recreate",
+            headers=_mutation_headers(second_session["csrf_token"]),
+        )
+        _error(foreign, 404, "lesson_not_found")
+        # No new job was created for the foreign teacher.
+        assert second.get("/api/lessons").json()["lessons"] == []
+
+
+def test_delete_and_recreate_require_csrf(app) -> None:
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        created = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, lesson_id, "ready")
+        missing_recreate = client.post(f"/api/lessons/{lesson_id}/recreate")
+        _error(missing_recreate, 403, "csrf_rejected")
+        missing_delete = client.delete(f"/api/lessons/{lesson_id}")
+        _error(missing_delete, 403, "csrf_rejected")

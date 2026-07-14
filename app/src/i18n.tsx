@@ -197,6 +197,19 @@ const DICT = {
     en: 'Create the lesson again from this text',
   },
   'recovery.back': { uk: 'Повернутися до списку', en: 'Back to the list' },
+  'recovery.delete': { uk: 'Видалити урок', en: 'Delete lesson' },
+  'recovery.deleteConfirm': {
+    uk: 'Видалити цей урок зі списку? Дію не можна скасувати.',
+    en: 'Delete this lesson from the list? This cannot be undone.',
+  },
+  'recovery.deleteConfirmBtn': { uk: 'Так, видалити', en: 'Yes, delete' },
+  'recovery.deleteCancelBtn': { uk: 'Скасувати', en: 'Cancel' },
+  'catalog.delete': { uk: 'Видалити', en: 'Delete' },
+  'catalog.deleteAria': { uk: 'Видалити урок', en: 'Delete lesson' },
+  'err.deleteFailed': {
+    uk: 'Не вдалося видалити урок. Спробуйте, будь ласка, ще раз.',
+    en: 'Could not delete the lesson. Please try again.',
+  },
   'bake.updating': { uk: 'Оновлення…', en: 'Updating…' },
   'bake.checkNow': { uk: 'Перевірити зараз', en: 'Check now' },
   'bake.elapsed': { uk: 'Минуло {clock}', en: 'Elapsed {clock}' }, // #112 honest live wait clock (no demo equivalent)

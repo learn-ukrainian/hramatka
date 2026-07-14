@@ -318,6 +318,55 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+    delete:
+      tags: [Lessons]
+      operationId: deleteLesson
+      summary: Delete one owner-scoped lesson job
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Lesson job deleted
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/recreate:
+    post:
+      tags: [Lessons]
+      operationId: recreateLesson
+      summary: Start a fresh bake from the stored request of an existing lesson
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '202':
+          description: A new lesson job was queued from the stored request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonCreateAccepted'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons/{lesson_id}/blocks/{block_id}/accept:
     post:
       tags: [Lessons]

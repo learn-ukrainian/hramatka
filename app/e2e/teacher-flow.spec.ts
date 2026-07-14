@@ -574,7 +574,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     // target a ready row by chip label (titles are not unique); click proves openLesson 200 path from catalog
     const row = page.locator('.catalog li').filter({ hasText: /готово/ }).first();
-    await row.locator('button').click();
+    await row.getByTestId('catalog-open-btn').click();
 
     // lands in review with 9 blocks (real 200)
     await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 10000 });
@@ -604,7 +604,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     // target the baking row via chip (reliable, independent of title/id text); no blind first()
     const row = page.locator('.catalog li').filter({ hasText: /готується/ }).first();
     await expect(row).toBeVisible({ timeout: 3000 });
-    await row.locator('button').click();
+    await row.getByTestId('catalog-open-btn').click();
 
     // must land on baking UI (not ready blocks), via 409 path + bakeStatus && !lesson
     await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
@@ -641,21 +641,24 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Оновити список/i }).click();
 
     // the failed row exists (chip bad or помилка)
-    await expect(page.locator('.catalog li').filter({ hasText: /помилка|bad|00000000/ })).toBeVisible({ timeout: 3000 });
+    const failedRow = page.locator('.catalog li').filter({ hasText: /помилка|bad|00000000/ });
+    await expect(failedRow).toBeVisible({ timeout: 3000 });
 
-    // click the failed catalog row -> must land on failure card (not "not found", not blank)
-    await page.locator('.catalog li').filter({ hasText: /помилка|00000000/ }).locator('button').click();
+    // click the failed catalog row -> must land on failure card directly (not baking spinner)
+    await failedRow.getByTestId('catalog-open-btn').click();
 
     const recovery2 = page.getByTestId('failure-recovery');
     await expect(recovery2).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-polling')).toHaveCount(0);
     await expect(recovery2).toContainText('Створити урок ще раз із цим текстом');
 
-    // button visible and enabled (wired to retryFailedLesson using stored request)
-    const retryBtn = recovery2.getByRole('button', { name: /Створити урок ще раз із цим текстом/i });
+    // retry via server recreate with EMPTY localStorage (no client-side source)
+    await page.evaluate(() => localStorage.clear());
+    const retryBtn = recovery2.getByTestId('failure-retry-btn');
     await expect(retryBtn).toBeVisible();
     await expect(retryBtn).toBeEnabled();
 
-    // restore real uuid; click re-submit -> should produce a new ready lesson (proves wired + stored text used)
+    // restore real uuid; click re-submit -> should produce a new ready lesson from server request
     await page.evaluate(() => {
       // @ts-ignore
       delete crypto.randomUUID;
@@ -663,6 +666,28 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await retryBtn.click();
     await page.waitForSelector('.block', { timeout: 15000 });
     await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+  });
+
+  test('delete failed lesson from failure card removes it from catalog', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте український текст/).fill('Текст для видалення failed-уроку.');
+    await page.evaluate(() => {
+      // @ts-ignore
+      crypto.randomUUID = () => '00000000-0000-0000-0000-000000000bad';
+    });
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await expect(page.getByTestId('failure-recovery')).toBeVisible({ timeout: 10000 });
+
+    await page.getByTestId('failure-delete-btn').click();
+    await expect(page.getByTestId('failure-delete-confirm')).toBeVisible();
+    await page.getByTestId('delete-confirm-btn').click();
+
+    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /Оновити список/i }).click();
+    await expect(page.locator('.catalog li').filter({ hasText: /00000000/ })).toHaveCount(0);
   });
 
   // Sol P1-5: clipboard lesson export — student variant never includes answers/«Ключ відповіді».

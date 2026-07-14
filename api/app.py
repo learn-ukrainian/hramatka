@@ -7,6 +7,7 @@ import base64
 import binascii
 import copy
 import re
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -462,6 +463,78 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         if job.status != "ready" or job.lesson is None:
             raise PilotError(409, "lesson_not_ready", "Урок ще не готовий.")
         return _resource_payload(job)
+
+    @app.delete("/api/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_lesson(
+        lesson_id: UUID,
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> Response:
+        lesson_key = _lesson_id(lesson_id)
+        if not store.delete_lesson(session.teacher_id, lesson_key):
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post("/api/lessons/{lesson_id}/recreate", status_code=status.HTTP_202_ACCEPTED)
+    def recreate_lesson(
+        lesson_id: UUID,
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        source_job = owner_job(session.teacher_id, _lesson_id(lesson_id))
+        if not source_job.request_json.strip():
+            raise PilotError(
+                422,
+                "invalid_input",
+                "Немає збереженого запиту для повторного створення уроку.",
+            )
+        try:
+            request = source_job.request
+            anchor = request["anchor"]
+            anchor_text = anchor["text"]
+            anchor_source = anchor["source"]
+            anchor_source_url = anchor.get("source_url")
+            level = request["level"]
+            duration = request["duration"]
+            focus = request["focus"]
+        except (KeyError, TypeError, ValueError):
+            raise PilotError(
+                422,
+                "invalid_input",
+                "Немає збереженого запиту для повторного створення уроку.",
+            ) from None
+        if not isinstance(anchor_text, str) or not anchor_text.strip():
+            raise PilotError(
+                422,
+                "invalid_input",
+                "Немає збереженого запиту для повторного створення уроку.",
+            )
+        new_lesson_id = str(uuid.uuid4())
+        try:
+            job, created = store.create_or_get(
+                session.teacher_id,
+                new_lesson_id,
+                anchor_text=anchor_text,
+                anchor_source=anchor_source,
+                anchor_source_url=anchor_source_url,
+                level=level,
+                duration=duration,
+                focus=focus,
+            )
+        except IdempotencyConflict as error:
+            raise PilotError(
+                409,
+                "idempotency_conflict",
+                "Цей ідентифікатор уроку вже пов’язаний з іншими даними.",
+                lesson_id=new_lesson_id,
+            ) from error
+        except SessionUnavailable as error:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
+        if created and not runner.submit(job.id):
+            store.fail_queued_drafts(
+                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
+                failure_code="engine_unavailable",
+            )
+            job = owner_job(session.teacher_id, new_lesson_id)
+        return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/accept")
     def acknowledge_warning(

@@ -571,8 +571,52 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, payload);
   }
 
-  // Get lesson (ready only)
+  // Recreate from stored request
+  const recreateMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/recreate$/);
+  if (recreateMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = recreateMatch[1];
+    const source = state.lessons[lid];
+    if (!source) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    if (!source._anchor || !source._anchor.text || !source._anchor.text.trim()) {
+      return sendJSON(res, 422, errorBody('invalid_input', 'Немає збереженого запиту для повторного створення уроку.'));
+    }
+    const newId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    state.lessons[newId] = {
+      id: newId,
+      status: 'baking',
+      revision: 1,
+      lesson: null,
+      acks: [],
+      accepted: false,
+      accepted_at: null,
+      accepted_revision: null,
+      created_at: now,
+      updated_at: now,
+      failure_code: null,
+      failure_message: null,
+      _bakeCounter: 0,
+      _anchor: source._anchor,
+      _duration: source._duration || 60,
+      _focus: source._focus || null,
+    };
+    return sendJSON(res, 202, { id: newId, status: 'baking', revision: 1, reused: false });
+  }
+
+  // Get lesson (ready only) / delete lesson
   const lessonMatch = pathname.match(/^\/api\/lessons\/([^/]+)$/);
+  if (lessonMatch && method === 'DELETE') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = lessonMatch[1];
+    if (!state.lessons[lid]) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    delete state.lessons[lid];
+    res.writeHead(204);
+    return res.end();
+  }
+
   if (lessonMatch && method === 'GET') {
     if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
     const lid = lessonMatch[1];

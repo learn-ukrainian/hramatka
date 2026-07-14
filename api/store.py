@@ -754,6 +754,15 @@ class JobStore:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def delete_lesson(self, teacher_id: str, lesson_id: str) -> bool:
+        """Delete one owner-scoped lesson job row regardless of status."""
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                "DELETE FROM lesson_jobs WHERE teacher_id = ? AND id = ?",
+                (teacher_id, lesson_id),
+            )
+        return cursor.rowcount == 1
+
     def list_catalog(self, teacher_id: str) -> list[CatalogRecord]:
         """Return metadata only, using exactly the owner-scoped catalog predicate."""
         with self._read_connection() as connection:

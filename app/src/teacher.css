@@ -147,6 +147,16 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 .catalog li.listrow button { text-align: left; background: none; border: 0; padding: 0; cursor: pointer; flex: 1; display: flex; align-items: center; gap: 8px; }
 .catalog li.listrow .title { font-weight: 600; }
 .catalog li.listrow .when { color: var(--ink-soft); font-size: 12.5px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.catalog li.listrow .catalog-delete { flex: 0 0 auto; padding: 2px 8px; font-size: 14px; opacity: 0.65; }
+.catalog li.listrow .catalog-delete:hover { opacity: 1; }
+.catalog li.listrow .inline-confirm,
+.recovery-actions .inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.btn.ghost.bad { color: var(--bad, #b42318); }
 
 /* lesson view chrome */
 .lesson-view { max-width: 1060px; margin: 0 auto; padding: 16px 20px; }

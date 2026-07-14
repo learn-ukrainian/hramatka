@@ -231,6 +231,7 @@ export default function TeacherApp() {
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -257,6 +258,7 @@ export default function TeacherApp() {
     setShowAnswers(true);
     setError(null);
     setRestoredTextNotice(false);
+    setPendingDeleteId(null);
     setAnchorOpen(false);
     setPrintVariant(null);
     setBakeElapsedMs(0);
@@ -574,20 +576,94 @@ export default function TeacherApp() {
     return loadLastBakeRequest(lessonId) ?? lastBakeRef.current;
   };
 
+  const beginRecreateFromServer = async (sourceLessonId: string, data: { id: string; status?: string }) => {
+    const newId = data.id;
+    setCurrentLessonId(newId);
+    const startedAt = new Date().toISOString();
+    setBakeStatus({
+      status: (data.status as LessonState) || 'baking',
+      step: 'текст отримано',
+      startedAt,
+    });
+    setBakeElapsedMs(0);
+    setLesson(null);
+    navigate({ view: 'lesson', lessonId: newId, mode: 'review' });
+    pollStatus(newId);
+    void sourceLessonId;
+  };
+
   const retryFailedLesson = async () => {
     const lid = currentLessonId || route.lessonId || null;
-    const stored = getRetrySource(lid);
-    if (!stored) {
-      setError(errKey('err.noRetrySource'));
+    if (!lid) return;
+    if (!session || !csrf) {
+      setError(errKey('err.sessionRequired'));
       return;
     }
-    await submitNewLesson({
-      text: stored.text,
-      duration: stored.duration,
-      focus: stored.focus || null,
-      anchorSource: stored.anchorSource || (stored.sourceUrl ? 'teacher-url' : 'teacher-paste'),
-      sourceUrl: stored.sourceUrl || null,
-    });
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/lessons/${lid}/recreate`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrf },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 202) {
+        await beginRecreateFromServer(lid, data);
+        return;
+      }
+      if (res.status === 422) {
+        // Server is the source of truth for the stored request. If it has none,
+        // surface the server's Ukrainian error — do NOT recreate from client cache
+        // (that would bypass the missing-request_json contract). (review #127)
+        const e: ErrorEnvelope = data;
+        setError(errOr(e.message, 'err.noRetrySource'));
+        return;
+      }
+      const e: ErrorEnvelope = data;
+      handleApiError(e);
+    } catch {
+      setError(errKey('err.bakeFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteLesson = async (lessonId: string) => {
+    if (!session || !csrf) {
+      setError(errKey('err.sessionRequired'));
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/lessons/${lessonId}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': csrf },
+      });
+      if (res.status === 204) {
+        setPendingDeleteId(null);
+        if (currentLessonId === lessonId || route.lessonId === lessonId) {
+          clearPoll();
+          setLesson(null);
+          setBakeStatus(null);
+          setCurrentLessonId(null);
+          navigate({ view: 'paste' });
+        }
+        await loadCatalog();
+        return;
+      }
+      if (res.status === 404) {
+        setError(errKey('err.lessonNotFound'));
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const e: ErrorEnvelope = data;
+      handleApiError(e);
+    } catch {
+      setError(errKey('err.deleteFailed'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const copyLessonAsNew = async () => {
@@ -735,13 +811,42 @@ export default function TeacherApp() {
         setAnchorOpen(false);
         navigate({ view: 'lesson', lessonId: id, mode });
       } else if (res.status === 409) {
-        const e: ErrorEnvelope = await res.json();
+        await res.json().catch(() => ({}));
         setLesson(null);
-        const startedAt = new Date().toISOString();
-        setBakeStatus({ status: 'baking', step: e.message || 'завдання складено', startedAt });
-        setBakeElapsedMs(0);
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
+        try {
+          const statusRes = await apiFetch(`/api/lessons/${id}/status`);
+          if (statusRes.ok) {
+            const st = await statusRes.json();
+            if (st.status === 'failed') {
+              setBakeStatus({
+                status: 'failed',
+                step: st.step || '',
+                failure: st.failure_message || undefined,
+                progress: st.progress || undefined,
+                startedAt: st.created_at,
+              });
+              setBakeElapsedMs(0);
+              return;
+            }
+            const startedAt = st.created_at || new Date().toISOString();
+            setBakeStatus({
+              status: st.status === 'ready' ? 'baking' : (st.status as LessonState),
+              step: st.step || 'завдання складено',
+              progress: st.progress || undefined,
+              startedAt,
+            });
+            setBakeElapsedMs(0);
+            pollStatus(id);
+            return;
+          }
+        } catch {
+          // fall through to generic baking poll
+        }
+        const startedAt = new Date().toISOString();
+        setBakeStatus({ status: 'baking', step: 'завдання складено', startedAt });
+        setBakeElapsedMs(0);
         pollStatus(id);
       } else if (res.status === 404) {
         setError(errKey('err.lessonNotFound'));
@@ -1331,11 +1436,45 @@ export default function TeacherApp() {
                     const chipClass = st === 'ready' ? 'ok' : st === 'baking' ? 'info' : st === 'failed' ? 'bad' : 'muted';
                     return (
                       <li key={item.id} className="listrow">
-                        <button onClick={() => openLesson(item.id, 'review')}>
+                        <button data-testid="catalog-open-btn" onClick={() => openLesson(item.id, 'review')}>
                           <span className="title">{item.title || item.id.slice(0, 8)}</span>
                           <span className={`chip ${chipClass}`}>{t(statusKey(item.status))}</span>
                           {item.accepted && <span className="chip ok">{t('accepted')}</span>}
                         </button>
+                        {pendingDeleteId === item.id ? (
+                          <div className="inline-confirm" data-testid="catalog-delete-confirm">
+                            <span className="hint">{t('recovery.deleteConfirm')}</span>
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              data-testid="delete-cancel-btn"
+                              onClick={() => setPendingDeleteId(null)}
+                              disabled={loading}
+                            >
+                              {t('recovery.deleteCancelBtn')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn ghost bad"
+                              data-testid="delete-confirm-btn"
+                              onClick={() => deleteLesson(item.id)}
+                              disabled={loading}
+                            >
+                              {t('recovery.deleteConfirmBtn')}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn ghost catalog-delete"
+                            data-testid="catalog-delete-btn"
+                            aria-label={t('catalog.deleteAria')}
+                            onClick={() => setPendingDeleteId(item.id)}
+                            disabled={loading}
+                          >
+                            ✕
+                          </button>
+                        )}
                         <span className="when">{new Date(item.updated_at).toLocaleString(lang === 'en' ? 'en' : 'uk')}</span>
                       </li>
                     );
@@ -1462,10 +1601,44 @@ export default function TeacherApp() {
                             type="button"
                             className="btn primary"
                             onClick={retryFailedLesson}
-                            disabled={loading || !getRetrySource(currentLessonId || route.lessonId || null)}
+                            disabled={loading}
+                            data-testid="failure-retry-btn"
                           >
                             {t('recovery.retry')}
                           </button>
+                          {pendingDeleteId === (currentLessonId || route.lessonId) ? (
+                            <div className="inline-confirm" data-testid="failure-delete-confirm">
+                              <span className="hint">{t('recovery.deleteConfirm')}</span>
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                data-testid="delete-cancel-btn"
+                                onClick={() => setPendingDeleteId(null)}
+                                disabled={loading}
+                              >
+                                {t('recovery.deleteCancelBtn')}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn ghost bad"
+                                data-testid="delete-confirm-btn"
+                                onClick={() => deleteLesson(currentLessonId || route.lessonId!)}
+                                disabled={loading}
+                              >
+                                {t('recovery.deleteConfirmBtn')}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              data-testid="failure-delete-btn"
+                              onClick={() => setPendingDeleteId(currentLessonId || route.lessonId || null)}
+                              disabled={loading}
+                            >
+                              {t('recovery.delete')}
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="btn ghost link-back"
