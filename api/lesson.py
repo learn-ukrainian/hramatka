@@ -243,9 +243,33 @@ def anchor_fingerprint(anchor: str) -> str:
 
 
 def title_from_anchor(anchor: str) -> str:
-    """Use the first sentence, cut at a word boundary to the contract's 52 chars."""
-    first_sentence = anchor.split(".", maxsplit=1)[0].strip() or "Урок української мови"
-    if len(first_sentence) <= 52:
-        return first_sentence
-    cut = first_sentence[:52].rsplit(" ", maxsplit=1)[0].strip()
-    return cut or first_sentence[:52]
+    """Derive a clean lesson title from the first non-empty line of the anchor text.
+
+    If the derived line exceeds 52 characters, trim it at a word boundary and
+    append a single ellipsis char (…).
+    """
+    lines = anchor.splitlines()
+    first_non_empty = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            first_non_empty = stripped
+            break
+
+    if not first_non_empty:
+        return "Урок української мови"
+
+    collapsed = " ".join(first_non_empty.split())
+
+    if len(collapsed) <= 52:
+        return collapsed
+
+    sliced = collapsed[:51]
+    if collapsed[51] == " ":
+        cut = sliced
+    else:
+        if " " in sliced:
+            cut = sliced.rsplit(" ", 1)[0].rstrip()
+        else:
+            cut = sliced
+    return cut + "…"
