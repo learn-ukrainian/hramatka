@@ -44,6 +44,11 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
                 "text": job.anchor_text,
                 "source": job.anchor_source,
                 "chars": len(job.anchor_text),
+                **(
+                    {"source_url": job.anchor_source_url}
+                    if job.anchor_source_url is not None
+                    else {}
+                ),
             },
             "duration": job.duration,
             "version": 1,

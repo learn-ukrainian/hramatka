@@ -67,7 +67,7 @@ interface LessonDocument {
   level: 'B1';
   method: 'ttt';
   focus: string | null;
-  anchor: { text: string; source: 'teacher-paste'; chars: number };
+  anchor: { text: string; source: 'teacher-paste' | 'teacher-url'; chars: number; source_url?: string };
   duration: 45 | 60 | 90;
   version: 1;
   status: LessonState;
@@ -179,7 +179,11 @@ export default function TeacherApp() {
   const [error, setError] = useState<AppError>(null);
 
   // Paste form state (level fixed B1)
+  const [anchorTab, setAnchorTab] = useState<'text' | 'url'>('text');
   const [pasteText, setPasteText] = useState('');
+  const [urlInput, setUrlInput] = useState('');
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [fetchingUrl, setFetchingUrl] = useState(false);
   const [duration, setDuration] = useState<45 | 60 | 90>(60);
   const [focus, setFocus] = useState('');
 
@@ -257,6 +261,8 @@ export default function TeacherApp() {
     setPasteText(payload.text);
     setDuration(payload.duration);
     setFocus(payload.focus || '');
+    setSourceUrl(payload.sourceUrl || null);
+    setAnchorTab(payload.anchorSource === 'teacher-url' ? 'text' : 'text');
     setRestoredTextNotice(true);
   }, []);
 
@@ -437,6 +443,8 @@ export default function TeacherApp() {
     text: string;
     duration: 45 | 60 | 90;
     focus: string | null;
+    anchorSource: 'teacher-paste' | 'teacher-url';
+    sourceUrl?: string | null;
   }) => {
     if (!session || !csrf) {
       setError(errKey('err.sessionRequired'));
@@ -445,6 +453,10 @@ export default function TeacherApp() {
     const text = source.text.trim();
     if (!text || text.length > 100000) {
       setError(errKey('err.badTextLen'));
+      return;
+    }
+    if (source.anchorSource === 'teacher-url' && !source.sourceUrl) {
+      setError(errKey('err.urlSourceRequired'));
       return;
     }
     setError(null);
@@ -456,6 +468,8 @@ export default function TeacherApp() {
       duration: source.duration,
       focus: source.focus?.trim() || '',
       lessonId: id,
+      anchorSource: source.anchorSource,
+      ...(source.sourceUrl ? { sourceUrl: source.sourceUrl } : {}),
     };
     try {
       const res = await apiFetch('/api/lessons', {
@@ -466,7 +480,13 @@ export default function TeacherApp() {
         },
         body: JSON.stringify({
           id,
-          anchor: { text, source: 'teacher-paste' },
+          anchor: {
+            text,
+            source: source.anchorSource,
+            ...(source.anchorSource === 'teacher-url' && source.sourceUrl
+              ? { source_url: source.sourceUrl }
+              : {}),
+          },
           level: 'B1',
           duration: source.duration,
           focus: source.focus?.trim() || null,
@@ -497,7 +517,50 @@ export default function TeacherApp() {
   };
 
   const startBake = async () => {
-    await submitNewLesson({ text: pasteText, duration, focus: focus || null });
+    await submitNewLesson({
+      text: pasteText,
+      duration,
+      focus: focus || null,
+      anchorSource: sourceUrl ? 'teacher-url' : 'teacher-paste',
+      sourceUrl,
+    });
+  };
+
+  const fetchAnchorUrl = async () => {
+    if (!session || !csrf) {
+      setError(errKey('err.sessionRequired'));
+      return;
+    }
+    const url = urlInput.trim();
+    if (!url) {
+      setError(errKey('err.urlNeedAddress'));
+      return;
+    }
+    setError(null);
+    setFetchingUrl(true);
+    try {
+      const res = await apiFetch('/api/anchor/import-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setPasteText(data.text || '');
+        setSourceUrl(data.source_url || url);
+        setAnchorTab('text');
+      } else {
+        const e: ErrorEnvelope = data;
+        setError(errOr(e.message, 'err.urlFetchFailed'));
+      }
+    } catch {
+      setError(errKey('err.urlFetchFailed'));
+    } finally {
+      setFetchingUrl(false);
+    }
   };
 
   const getRetrySource = (lessonId: string | null): BakeRequestPayload | null => {
@@ -515,6 +578,8 @@ export default function TeacherApp() {
       text: stored.text,
       duration: stored.duration,
       focus: stored.focus || null,
+      anchorSource: stored.anchorSource || (stored.sourceUrl ? 'teacher-url' : 'teacher-paste'),
+      sourceUrl: stored.sourceUrl || null,
     });
   };
 
@@ -525,6 +590,8 @@ export default function TeacherApp() {
       duration: lesson.lesson.duration,
       focus: lesson.lesson.focus || '',
       lessonId: lesson.lesson_id,
+      anchorSource: lesson.lesson.anchor.source,
+      ...(lesson.lesson.anchor.source_url ? { sourceUrl: lesson.lesson.anchor.source_url } : {}),
     });
     navigate({ view: 'paste' });
   };
@@ -1002,7 +1069,50 @@ export default function TeacherApp() {
             <main className="hub">
               <section className="paste">
                 <h2>{t('paste.title')}</h2>
-                <div className="banner honest"><span className="ic">ℹ︎</span><span>{t('paste.disclose')}</span></div>
+                <div className="banner honest"><span className="ic">ℹ︎</span><span>{t(anchorTab === 'url' ? 'paste.discloseUrl' : 'paste.disclose')}</span></div>
+
+                <div className="choices" role="tablist" aria-label={t('anchor.sourceAria')}>
+                  <button
+                    type="button"
+                    className={`choice${anchorTab === 'text' ? ' on' : ''}`}
+                    role="tab"
+                    aria-selected={anchorTab === 'text'}
+                    onClick={() => setAnchorTab('text')}
+                  >
+                    {t('anchor.tabText')}
+                  </button>
+                  <button
+                    type="button"
+                    className={`choice${anchorTab === 'url' ? ' on' : ''}`}
+                    role="tab"
+                    aria-selected={anchorTab === 'url'}
+                    onClick={() => setAnchorTab('url')}
+                  >
+                    {t('anchor.tabUrl')}
+                  </button>
+                </div>
+
+                {anchorTab === 'url' && (
+                  <div className="urlrow">
+                    <input
+                      className="inputbox"
+                      type="url"
+                      value={urlInput}
+                      onChange={e => setUrlInput(e.target.value)}
+                      placeholder={t('anchor.urlPh')}
+                      data-testid="anchor-url-input"
+                    />
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={fetchAnchorUrl}
+                      disabled={fetchingUrl || loading}
+                      data-testid="fetch-anchor-url-btn"
+                    >
+                      {fetchingUrl ? t('anchor.fetching') : t('anchor.fetchBtn')}
+                    </button>
+                  </div>
+                )}
 
                 <div className="formgrid">
                   {/* B1 and TTT are fixed-pilot constraints and remain clearly labelled (no port of demo editing). */}
@@ -1043,7 +1153,7 @@ export default function TeacherApp() {
                   </div>
 
                   <div className="field">
-                    <label>{t('paste.textLabel')}</label>
+                    <label>{t(anchorTab === 'url' ? 'paste.textLabelReview' : 'paste.textLabel')}</label>
                     {restoredTextNotice && (
                       <div
                         className="banner honest restored-notice"
@@ -1065,9 +1175,13 @@ export default function TeacherApp() {
                     <textarea
                       className="inputbox"
                       value={pasteText}
-                      onChange={e => setPasteText(e.target.value)}
+                      onChange={e => {
+                        setPasteText(e.target.value);
+                        if (!e.target.value.trim()) setSourceUrl(null);
+                      }}
                       rows={8}
                       placeholder={t('paste.textPh')}
+                      data-testid="anchor-text-input"
                     />
                   </div>
 

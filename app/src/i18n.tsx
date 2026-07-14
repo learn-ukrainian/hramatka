@@ -124,12 +124,17 @@ const DICT = {
     uk: 'Вставлений текст буде надіслано зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.',
     en: 'The pasted text will be sent to an external provider (Gemma). Do not use sensitive or personal data.',
   },
+  'paste.discloseUrl': {
+    uk: 'Текст із посилання та згенеровані завдання будуть надіслані зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.',
+    en: 'The text from the link and the generated tasks will be sent to an external provider (Gemma). Do not use sensitive or personal data.',
+  },
   'paste.levelPre': { uk: 'Рівень: ', en: 'Level: ' }, // T_EXACT «Рівень»
   'paste.levelPost': { uk: ' (фіксовано для пілоту)', en: ' (fixed for the pilot)' },
   'paste.duration': { uk: 'Тривалість (хв)', en: 'Duration (min)' },
   'paste.focus': { uk: 'Фокус (необов’язково)', en: 'Focus (optional)' },
   'paste.focusPh': { uk: 'напр. вищий ступінь прикметників', en: 'e.g. comparative adjectives' }, // T_EXACT
   'paste.textLabel': { uk: 'Текст для уроку (вставте)', en: 'Text for the lesson (paste)' },
+  'paste.textLabelReview': { uk: 'Текст для уроку (перегляньте)', en: 'Text for the lesson (review)' },
   'paste.restored': {
     uk: 'Текст попереднього запиту відновлено',
     en: 'Text from the previous request restored',
@@ -285,6 +290,20 @@ const DICT = {
   'err.acceptFailed': { uk: 'Не вдалося прийняти.', en: 'Could not accept.' },
   'err.draftFailed': { uk: 'Не вдалося повернути в чернетку.', en: 'Could not return to draft.' },
   'err.sessionExpired': { uk: 'Сесія закінчилась. Увійдіть знову.', en: 'Your session has ended. Sign in again.' },
+
+  // ---- URL import (#118) client-set errors (server e.message flows through as raw) ----
+  'err.urlSourceRequired': {
+    uk: 'Потрібна адреса джерела для уроку з посилання.',
+    en: 'A source address is required for a lesson from a link.',
+  },
+  'err.urlNeedAddress': {
+    uk: 'Вставте адресу сторінки — і ми дістанемо з неї текст.',
+    en: 'Paste a page address — and we will extract the text from it.',
+  },
+  'err.urlFetchFailed': {
+    uk: 'Не вдалося отримати текст із посилання.',
+    en: 'Could not fetch text from the link.',
+  },
 
   // =====================================================================
   // Conductor (▶ Проведення заняття) — chrome from demo CONDT (verbatim EN)
@@ -479,6 +498,17 @@ const DICT = {
   'anchor.summary': { uk: 'Текст', en: 'Text' },
   'anchor.hide': { uk: 'Сховати текст', en: 'Hide text' },
   'anchor.readingHead': { uk: 'Текст для читання', en: 'Reading text' },
+
+  // ---- URL import (#118): source tabs + fetch control (fetched anchor TEXT stays UA content) ----
+  'anchor.sourceAria': { uk: 'Джерело тексту', en: 'Text source' },
+  'anchor.tabText': { uk: 'Вставити текст', en: 'Paste text' },
+  'anchor.tabUrl': { uk: 'З посилання', en: 'From a link' },
+  'anchor.urlPh': {
+    uk: 'https://… адреса статті чи оголошення',
+    en: 'https://… article or listing address',
+  },
+  'anchor.fetchBtn': { uk: 'Отримати текст', en: 'Fetch text' },
+  'anchor.fetching': { uk: 'Отримуємо…', en: 'Fetching…' },
 } satisfies Record<string, Entry>;
 
 export type ChromeKey = keyof typeof DICT;

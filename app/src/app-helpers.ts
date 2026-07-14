@@ -17,6 +17,8 @@ export interface BakeRequestPayload {
   duration: 45 | 60 | 90;
   focus: string;
   lessonId: string;
+  anchorSource?: 'teacher-paste' | 'teacher-url';
+  sourceUrl?: string;
 }
 
 const LAST_BAKE_KEY = 'hramatka:last-bake-request';

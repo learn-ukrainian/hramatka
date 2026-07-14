@@ -159,16 +159,67 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/anchor/import-url:
+    post:
+      tags: [Lessons]
+      operationId: importAnchorUrl
+      summary: Fetch readable text from an HTTPS page for teacher review
+      description: |
+        Server-side only URL import with SSRF defenses. The browser posts an
+        HTTPS URL, receives extracted text plus the normalized source URL, and
+        places the text into the same anchor textarea for teacher review before
+        lesson creation. Private, loopback, link-local, and metadata targets
+        are rejected, as are unsafe redirects, oversized responses, and
+        non-text content types.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UrlImportRequest'
+      responses:
+        '200':
+          description: Readable text extracted for teacher review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UrlImportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '429':
+          description: Per-teacher URL import rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Upstream fetch failed without losing browser form state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons:
     post:
       tags: [Lessons]
       operationId: createLesson
-      summary: Create or recover an idempotent pasted-text bake
+      summary: Create or recover an idempotent anchor bake
       description: |
         The browser creates a UUID and reuses it for network retries. The
-        request hash covers `anchor`, `level`, `duration`, and normalized
-        `focus` (`null` when omitted). Same UUID and same request returns the
-        existing aggregate with `reused: true`; different input returns `409`.
+        request hash covers `anchor` (including `source_url` for teacher-url),
+        `level`, `duration`, and normalized `focus` (`null` when omitted). Same
+        UUID and same request returns the existing aggregate with `reused: true`;
+        different input returns `409`.
       security:
         - PilotSession: []
       parameters:
@@ -761,8 +812,51 @@ components:
           description: 1–100000 Unicode code points after JSON decoding; whitespace-only is invalid.
         source:
           type: string
-          const: teacher-paste
-          description: teacher-url is not accepted by this pilot.
+          enum: [teacher-paste, teacher-url]
+        source_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2048
+          description: Required when source is teacher-url; omitted for teacher-paste.
+      allOf:
+        - if:
+            properties:
+              source:
+                const: teacher-url
+          then:
+            required: [source_url]
+        - if:
+            properties:
+              source:
+                const: teacher-paste
+          then:
+            not:
+              required: [source_url]
+    UrlImportRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: HTTPS page URL to fetch server-side for readable text extraction.
+    UrlImportResponse:
+      type: object
+      additionalProperties: false
+      required: [text, source_url]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        source_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2048
     LessonCreateRequest:
       type: object
       additionalProperties: false
@@ -926,7 +1020,12 @@ components:
           maxLength: 100000
         source:
           type: string
-          const: teacher-paste
+          enum: [teacher-paste, teacher-url]
+        source_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2048
         chars:
           type: integer
           minimum: 1

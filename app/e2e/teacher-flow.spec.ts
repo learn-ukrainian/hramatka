@@ -501,6 +501,32 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(teacherKeys).toBeGreaterThan(0);
   });
 
+  test('URL import flow creates lesson and failure keeps form state', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByRole('tab', { name: 'З посилання' }).click();
+    await page.getByTestId('anchor-url-input').fill('https://stub.example.test/article');
+    await page.getByTestId('fetch-anchor-url-btn').click();
+
+    const textarea = page.getByTestId('anchor-text-input');
+    await expect(textarea).toHaveValue(/Текст, отриманий із посилання/);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('[data-activity-player], .block', { timeout: 15000 });
+
+    await page.getByRole('button', { name: /До списку/ }).click();
+    await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible();
+
+    await page.getByRole('tab', { name: 'З посилання' }).click();
+    const failUrl = 'https://stub.example.test/fail-fetch';
+    await page.getByTestId('anchor-url-input').fill(failUrl);
+    await page.getByTestId('fetch-anchor-url-btn').click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByTestId('anchor-url-input')).toHaveValue(failUrl);
+    await expect(textarea).toHaveValue(/Текст, отриманий із посилання/);
+  });
+
   test('failed status subline never shows stale «готово» step (regression)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();

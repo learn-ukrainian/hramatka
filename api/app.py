@@ -32,6 +32,7 @@ from .models import (
     RestoreRejectedMutation,
     RevisionMutation,
     TeacherPreferences,
+    UrlImportRequest,
 )
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
@@ -52,6 +53,7 @@ from .store import (
     WarningAcknowledgementsRequired,
     WarningBlockNotFound,
 )
+from .url_import import UrlImportError, fetch_url_text
 
 _SESSION_COOKIE = "__Host-hramatka_session"
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
@@ -247,7 +249,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         response = await call_next(request)
         if request.url.path.startswith("/api/session") or request.url.path.startswith(
             "/api/lessons"
-        ):
+        ) or request.url.path.startswith("/api/anchor"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -382,6 +384,29 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         )
         return {"default_duration": request_body.default_duration}
 
+    @app.post("/api/anchor/import-url")
+    def import_anchor_url(
+        request_body: UrlImportRequest,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        try:
+            result = fetch_url_text(request_body.url, teacher_id=session.teacher_id)
+        except UrlImportError as error:
+            if error.code == "url_rate_limited":
+                status_code = status.HTTP_429_TOO_MANY_REQUESTS
+            elif error.code == "url_fetch_failed":
+                status_code = status.HTTP_502_BAD_GATEWAY
+            else:
+                status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+            raise PilotError(
+                status_code,
+                error.code,
+                error.message,
+                retryable=error.retryable,
+            ) from error
+        return {"text": result.text, "source_url": result.source_url}
+
     @app.post("/api/lessons", status_code=status.HTTP_202_ACCEPTED)
     def create_lesson(
         request_body: LessonCreate,
@@ -395,6 +420,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 lesson_id,
                 anchor_text=request_body.anchor.text,
                 anchor_source=request_body.anchor.source,
+                anchor_source_url=request_body.anchor.source_url,
                 level=request_body.level,
                 duration=request_body.duration,
                 focus=request_body.focus,

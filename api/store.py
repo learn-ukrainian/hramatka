@@ -181,6 +181,11 @@ class JobRecord:
         return self.request["anchor"]["source"]
 
     @property
+    def anchor_source_url(self) -> str | None:
+        value = self.request["anchor"].get("source_url")
+        return value if isinstance(value, str) else None
+
+    @property
     def duration(self) -> int:
         return self.request["duration"]
 
@@ -268,13 +273,18 @@ def canonical_request_json(
     *,
     anchor_text: str,
     anchor_source: str = "teacher-paste",
+    anchor_source_url: str | None = None,
     level: str = "B1",
     duration: int,
     focus: str | None,
 ) -> str:
     """Build the complete canonical request defined by the frozen OpenAPI contract."""
-    if anchor_source != "teacher-paste":
-        raise ValueError("The pilot accepts only teacher-paste anchors.")
+    if anchor_source not in {"teacher-paste", "teacher-url"}:
+        raise ValueError("The pilot accepts only teacher-paste or teacher-url anchors.")
+    if anchor_source == "teacher-url" and not anchor_source_url:
+        raise ValueError("teacher-url anchors require source_url.")
+    if anchor_source == "teacher-paste" and anchor_source_url is not None:
+        raise ValueError("teacher-paste anchors must not include source_url.")
     if level != "B1":
         raise ValueError("The pilot accepts only B1 lessons.")
     if duration not in {45, 60, 90}:
@@ -283,9 +293,12 @@ def canonical_request_json(
         raise ValueError("Anchor text must not be blank.")
     if not isinstance(focus, str | type(None)):
         raise ValueError("Focus must be a string or null.")
+    anchor: dict[str, Any] = {"source": anchor_source, "text": anchor_text}
+    if anchor_source_url is not None:
+        anchor["source_url"] = anchor_source_url
     return canonical_json(
         {
-            "anchor": {"source": anchor_source, "text": anchor_text},
+            "anchor": anchor,
             "duration": duration,
             "focus": focus,
             "level": level,
@@ -297,6 +310,7 @@ def request_hash(
     *,
     anchor_text: str,
     anchor_source: str = "teacher-paste",
+    anchor_source_url: str | None = None,
     level: str = "B1",
     duration: int,
     focus: str | None,
@@ -306,6 +320,7 @@ def request_hash(
         canonical_request_json(
             anchor_text=anchor_text,
             anchor_source=anchor_source,
+            anchor_source_url=anchor_source_url,
             level=level,
             duration=duration,
             focus=focus,
@@ -666,10 +681,12 @@ class JobStore:
         duration: int,
         focus: str | None,
         anchor_source: str = "teacher-paste",
+        anchor_source_url: str | None = None,
     ) -> tuple[JobRecord, bool]:
         request_json = canonical_request_json(
             anchor_text=anchor_text,
             anchor_source=anchor_source,
+            anchor_source_url=anchor_source_url,
             level=level,
             duration=duration,
             focus=focus,

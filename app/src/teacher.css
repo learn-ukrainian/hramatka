@@ -128,7 +128,13 @@
 .paste h2, .catalog h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 18px; margin: 0 0 8px; }
 .disclosure { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 12px; }
 
-/* form controls use demo tokens via .formgrid + .field + .inputbox (added in JSX) */
+/* source tabs (demo-reference parity) */
+.choices { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+button.choice { border: 1.5px solid var(--line); border-radius: 8px; padding: 8px 14px; font-size: 14px; background: var(--card); cursor: pointer; }
+button.choice.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; color: var(--accent); }
+.urlrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.urlrow .inputbox { flex: 1; }
+
 .paste .formgrid { max-width: 100%; }
 .paste select, .paste input, .paste textarea { font-size: 14.5px; }
 .paste .field + .field { margin-top: 2px; }
