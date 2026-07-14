@@ -53,6 +53,15 @@ _HOSTNAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# IPv6 transition formats that embed an IPv4 address (SSRF bypass vectors if unchecked).
+_NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_ALT_NETWORK = ipaddress.ip_network("64:ff9b:1::/48")
+_6TO4_NETWORK = ipaddress.ip_network("2002::/16")
+_IPV4_COMPAT_NETWORK = ipaddress.ip_network("::/96")
+_IPV4_MAPPED_NETWORK = ipaddress.ip_network("::ffff:0:0/96")
+_IPV4_TRANSLATED_NETWORK = ipaddress.ip_network("::ffff:0:0:0/96")
+_ISATAP_NETWORK = ipaddress.ip_network("2001:0:5efe::/96")
+
 
 class UrlImportError(Exception):
     """Raised when a teacher URL import request must be rejected."""
@@ -116,17 +125,67 @@ class _ReadableTextExtractor(HTMLParser):
         return re.sub(r"\s+", " ", joined).strip()
 
 
+def _is_ipv4_blocked(address: ipaddress.IPv4Address) -> bool:
+    return any(
+        address in net for net in _BLOCKED_NETWORKS if isinstance(net, ipaddress.IPv4Network)
+    )
+
+
+def _embedded_ipv4_from_ipv6(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """Extract embedded IPv4 from transition/coexistence IPv6 formats, if present."""
+    # 1. IPv4-Mapped (::ffff:0:0/96)
+    mapped = address.ipv4_mapped
+    if mapped is not None:
+        return mapped
+
+    # 2. IPv4-Translated (::ffff:0:0:0/96)
+    if address in _IPV4_TRANSLATED_NETWORK:
+        return ipaddress.IPv4Address(int(address) & 0xFFFF_FFFF)
+
+    # 3. NAT64 Well-Known Prefix (/96)
+    if address in _NAT64_NETWORK:
+        return ipaddress.IPv4Address(int(address) & 0xFFFF_FFFF)
+
+    # 4. NAT64 Custom / Enterprise Prefix (/48)
+    if address in _NAT64_ALT_NETWORK:
+        # RFC 6052: bits 48-63 (high 16 bits of IPv4) and bits 72-87 (low 16 bits of IPv4)
+        high_16 = (int(address) >> 64) & 0xFFFF
+        low_16 = (int(address) >> 40) & 0xFFFF
+        return ipaddress.IPv4Address((high_16 << 16) | low_16)
+
+    # 5. 6to4 (/16)
+    if address in _6TO4_NETWORK:
+        return ipaddress.IPv4Address(address.packed[2:6])
+
+    # 6. ISATAP (Well-Known /96 or Interface Identifier)
+    if address in _ISATAP_NETWORK:
+        return ipaddress.IPv4Address(int(address) & 0xFFFF_FFFF)
+
+    packed = address.packed
+    if packed[10:12] == b"\x5e\xfe" and packed[8:10] in (b"\x00\x00", b"\x02\x00"):
+        return ipaddress.IPv4Address(packed[12:16])
+
+    # 7. Teredo (2001:0::/32)
+    if address in ipaddress.ip_network("2001:0::/32"):
+        server_v4 = ipaddress.IPv4Address((int(address) >> 64) & 0xFFFF_FFFF)
+        client_v4 = ipaddress.IPv4Address((int(address) & 0xFFFF_FFFF) ^ 0xFFFF_FFFF)
+        # Check both; return the blocked one if either is blocked, otherwise client_v4
+        if _is_ipv4_blocked(server_v4):
+            return server_v4
+        return client_v4
+
+    # 8. IPv4-Compatible (/96)
+    if address in _IPV4_COMPAT_NETWORK:
+        return ipaddress.IPv4Address(int(address) & 0xFFFF_FFFF)
+
+    return None
+
+
 def _is_blocked_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(address, ipaddress.IPv6Address):
-        mapped = getattr(address, "ipv4_mapped", None)
-        if mapped is not None:
-            # Re-check the embedded IPv4 against IPv4 blocked networks (as specified in review)
-            if any(
-                mapped in net
-                for net in _BLOCKED_NETWORKS
-                if isinstance(net, ipaddress.IPv4Network)
-            ):
-                return True
+        embedded = _embedded_ipv4_from_ipv6(address)
+        if embedded is not None and _is_ipv4_blocked(embedded):
+            return True
     return any(address in network for network in _BLOCKED_NETWORKS)
 
 
