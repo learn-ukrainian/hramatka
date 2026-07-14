@@ -445,7 +445,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
     await page.waitForSelector('.block', { timeout: 15000 });
 
-    await page.getByRole('button', { name: /Режим запуску/ }).click();
+    await page.getByRole('button', { name: /Показати як учневі/ }).click();
     await expect(page.getByTestId('anchor-panel-run')).toHaveCount(0);
     await page.getByTestId('anchor-toggle-run').click();
     await expect(page.getByTestId('anchor-panel-run')).toBeVisible();
