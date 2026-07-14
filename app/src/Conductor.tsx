@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import './conductor.css';
+import { useT, type TFn, type ChromeKey } from './i18n';
 
 // Minimal shape for the lesson document (from app contract; no new API)
 export interface ConductorLessonDoc {
@@ -43,11 +44,10 @@ function condFmt(sec: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-const PHASE_NAMES: Record<1 | 2 | 3, string> = {
-  1: 'Тест 1',
-  2: 'Навчання',
-  3: 'Тест 2',
-};
+/** Phase label key (chrome from demo CONDT ph1/ph2/ph3). */
+function phaseKey(ph: 1 | 2 | 3): ChromeKey {
+  return ph === 1 ? 'cond.ph1' : ph === 2 ? 'cond.ph2' : 'cond.ph3';
+}
 
 interface CondState {
   lid: string;
@@ -131,31 +131,33 @@ function getReserveCandidate(cond: CondState, blocks: ConductorLessonDoc['blocks
   return candidates[candidates.length - 1].id;
 }
 
-function getReceipt(b: ConductorLessonDoc['blocks'][number]) {
+function getReceipt(b: ConductorLessonDoc['blocks'][number], t: TFn) {
   const warn = b.mark === 'warn';
-  const why: Record<number, string> = {
-    1: 'Перевірити розуміння прочитаного (Тест 1)',
-    2: 'Відпрацювати мовну ціль (Навчання)',
-    3: 'Закріпити й перевірити ще раз (Тест 2)',
+  const whyKey: Record<number, ChromeKey> = {
+    1: 'cond.rc.why1',
+    2: 'cond.rc.why2',
+    3: 'cond.rc.why3',
   };
   return {
-    src: warn
-      ? 'Складено навколо тексту вчителя; частину (варіанти чи означення) додала «Граматка» — не з тексту'
-      : 'Складено з тексту вчителя',
-    why: why[b.phase] || 'Частина заняття',
-    conf: warn ? 'середня' : 'висока',
-    rej: warn ? (b.note || 'позначено ⚠ на ваш перегляд') : null,
+    src: warn ? t('cond.rc.srcWarn') : t('cond.rc.srcOk'),
+    why: t(whyKey[b.phase] ?? 'cond.rc.whyDefault'),
+    conf: warn ? t('cond.rc.confMedium') : t('cond.rc.confHigh'),
+    rej: warn ? (b.note || t('cond.rc.rejDefault')) : null, // b.note = content, stays UA
   };
 }
 
-const COND_PROFILE = [
-  { k: 'Засвоїв', v: 'вищий ступінь із «ніж» (тепліший, ніж…)' },
-  { k: 'Часта помилка', v: '«дешевіша» замість «дешевша»; «сама краща» замість «найкраща»' },
-  { k: 'Вагається', v: 'найвищий ступінь (най-)' },
-  { k: 'Успішно виправив', v: '«на поверху» → «на поверсі»' },
+// Future-labelled stub content (demo COND_PROFILE): the chrome frame is translated;
+// the illustrative Ukrainian grammar tokens stay Ukrainian in both modes (demo does the same).
+const COND_PROFILE: Array<{ k: { uk: string; en: string }; v: { uk: string; en: string } }> = [
+  { k: { uk: 'Засвоїв', en: 'Mastered' }, v: { uk: 'вищий ступінь із «ніж» (тепліший, ніж…)', en: 'comparative with «ніж» (тепліший, ніж…)' } },
+  { k: { uk: 'Часта помилка', en: 'Common error' }, v: { uk: '«дешевіша» замість «дешевша»; «сама краща» замість «найкраща»', en: '«дешевіша» for «дешевша»; «сама краща» for «найкраща»' } },
+  { k: { uk: 'Вагається', en: 'Hesitates on' }, v: { uk: 'найвищий ступінь (най-)', en: 'superlative (най-)' } },
+  { k: { uk: 'Успішно виправив', en: 'Successfully fixed' }, v: { uk: '«на поверху» → «на поверсі»', en: '«на поверху» → «на поверсі»' } },
 ];
 
 export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }: ConductorProps) {
+  const { t, lang } = useT();
+  const phaseName = (ph: 1 | 2 | 3) => t(phaseKey(ph));
   const [cond, setCond] = useState<CondState | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -197,9 +199,9 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   if (!cond) {
     return (
       <div className="emptystate">
-        <h3>Немає активного заняття</h3>
-        <p>Відкрийте прийняте заняття й натисніть «▶ Провести заняття».</p>
-        <button className="btn primary" onClick={onExit}>До списку</button>
+        <h3>{t('cond.empty.title')}</h3>
+        <p>{t('cond.empty.body')}</p>
+        <button className="btn primary" onClick={onExit}>{t('cond.empty.toList')}</button>
       </div>
     );
   }
@@ -350,12 +352,12 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
           return (
             <div className={cls} key={p}>
               <div className="nm">
-                {p === 1 ? '①' : p === 2 ? '②' : '③'} {PHASE_NAMES[phh]}
+                {p === 1 ? '①' : p === 2 ? '②' : '③'} {phaseName(phh)}
               </div>
               <div className="tm">
                 <span className="el">{condFmt(usedP)}</span>
                 <span>
-                  {c.pd[phh - 1]} хв
+                  {c.pd[phh - 1]} {t('cond.min')}
                 </span>
               </div>
               <div className="bar">
@@ -373,15 +375,15 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     return (
       <div className="cond-clock" id="cond-clock">
         <span>
-          {ph === 1 ? '①' : ph === 2 ? '②' : '③'} {PHASE_NAMES[ph]}
+          {ph === 1 ? '①' : ph === 2 ? '②' : '③'} {phaseName(ph)}
         </span>
         <span className="big">{condFmt(used)}</span>
-        <span>/ {c.pd[ph - 1]}:00 бюджет</span>
+        <span>/ {c.pd[ph - 1]}:00 {t('cond.budget')}</span>
         {over && <span className="warnpill">+{condFmt(used - budgetSec)}</span>}
         {brk > 0 && (
           <span style={{ flex: 1 }} />
         )}
-        {brk > 0 && <span>＋ {brk} хв перерва</span>}
+        {brk > 0 && <span>＋ {brk} {t('cond.min')} {t('cond.break')}</span>}
       </div>
     );
   }
@@ -391,15 +393,15 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     const rb = getBlockById(blocks, reserveId);
     return (
       <div id="cond-reb" className="cond-reb">
-        ⏱ Відстаємо від часу.
+        {t('cond.behind')}
         <span className="sp" />
         <button
           className="btn ghost cond-sm"
           onClick={() => reserveId && doShorten(reserveId)}
         >
-          Скоротити план
+          {t('cond.shorten')}
         </button>
-        {rb && <span style={{ fontSize: 12, opacity: 0.8 }}>(прибрати «{rb.type}»)</span>}
+        {rb && <span style={{ fontSize: 12, opacity: 0.8 }}>{t('cond.removeType', { type: rb.type })}</span>}
       </div>
     );
   }
@@ -412,23 +414,23 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     return (
       <div className="cond-pf">
         <div className="ph" onClick={togglePf}>
-          🔎 Попередній прогін <span className="cond-newpill">приклад</span> ·{' '}
-          <span style={{ color: 'var(--ok)' }}>{okB.length} готові</span> ·{' '}
-          <span style={{ color: 'var(--warn)' }}>{cautionB.length} варто глянути</span>
-          {held ? <span style={{ color: 'var(--bad)' }}> · {held} відкладено</span> : null}
+          {t('cond.pfTitle')} <span className="cond-newpill">{t('cond.example')}</span> ·{' '}
+          <span style={{ color: 'var(--ok)' }}>{t('cond.pfReady', { n: okB.length })}</span> ·{' '}
+          <span style={{ color: 'var(--warn)' }}>{t('cond.pfFlag', { n: cautionB.length })}</span>
+          {held ? <span style={{ color: 'var(--bad)' }}> · {t('cond.pfHeld', { n: held })}</span> : null}
           <span className="sp" />
           {c.pfOpen ? '▲' : '▼'}
         </div>
         {c.pfOpen && (
           <>
             <div className="cond-pfsub">
-              приклад майбутньої функції: перед заняттям «Граматка» зможе прогнати його з кількома змодельованими учнями рівня B1 — щоб зловити хитрі місця заздалегідь. Тут показано, як це виглядатиме
+              {t('cond.pfSub')}
             </div>
             <ul>
               {cautionB.length ? (
                 cautionB.map((b, idx) => (
                   <li key={idx}>
-                    <b>«{b.type}»</b> — {b.note || 'позначено на ваш перегляд'}
+                    <b>«{b.type}»</b> — {b.note || t('cond.pfItemDefault')}
                   </li>
                 ))
               ) : (
@@ -442,11 +444,11 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   }
 
   function renderShared() {
-    if (!curB) return <div>Кінець плану.</div>;
+    if (!curB) return <div>{t('cond.endOfPlan')}</div>;
     return (
       <div className="cond-shared">
         <div className="cond-taskmeta">
-          <span className="num">Завдання {visIndex} з {total}</span>
+          <span className="num">{t('cond.taskCount', { i: visIndex, total })}</span>
         </div>
         <ActivityPlayer activity={curB.activity} isUkrainian />
       </div>
@@ -456,14 +458,14 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   function renderTeacherPanel() {
     if (!curB) return null;
     const markChip = curB.mark === 'warn' ? (
-      <span className="chip warn">⚠ погляньте</span>
+      <span className="chip warn">{t('cond.markLook')}</span>
     ) : (
-      <span className="chip ok">✓ перевірено</span>
+      <span className="chip ok">{t('cond.markVerified')}</span>
     );
     const resTag = ''; // no explicit reserve tag in real data; shorten logic uses last-in-phase
     return (
       <div className="cond-panel">
-        <div className="cond-panellabel">🔒 Ваша панель — учень цього не бачить</div>
+        <div className="cond-panellabel">{t('cond.panelLabel')}</div>
         <div className="cond-panelchips">
           <span className="chip info">{curB.type}</span>
           <span className="chip muted">{curB.mode}</span>
@@ -473,7 +475,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
         {curB.note && <div className="cond-note">⚠ {curB.note}</div>}
         {c.showAns && curB.answer_key != null && (
           <div className="cond-answer" data-testid="cond-answer-key">
-            <span className="lbl">🔑 Відповідь</span>
+            <span className="lbl">{t('cond.answerLabel')}</span>
             <div className="val">
               {typeof curB.answer_key === 'string' ? curB.answer_key : JSON.stringify(curB.answer_key, null, 2)}
             </div>
@@ -481,15 +483,15 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
         )}
         {c.showReceipt && (
           <div className="cond-receipt">
-            <div className="rh">📎 ЧОМУ ЦЕ ЗАВДАННЯ ІСНУЄ</div>
+            <div className="rh">{t('cond.whyHead')}</div>
             {(() => {
-              const r = getReceipt(curB);
+              const r = getReceipt(curB, t);
               return (
                 <>
-                  <div className="row"><span className="k">Джерело:</span><span>{r.src}</span></div>
-                  <div className="row"><span className="k">Навіщо:</span><span>{r.why}</span></div>
-                  <div className="row"><span className="k">Впевненість:</span><span className="conf">{r.conf}</span></div>
-                  {r.rej && <div className="row"><span className="k">Позначено:</span><span className="rej">{r.rej}</span></div>}
+                  <div className="row"><span className="k">{t('cond.rSrc')}</span><span>{r.src}</span></div>
+                  <div className="row"><span className="k">{t('cond.rWhy')}</span><span>{r.why}</span></div>
+                  <div className="row"><span className="k">{t('cond.rConf')}</span><span className="conf">{r.conf}</span></div>
+                  {r.rej && <div className="row"><span className="k">{t('cond.rFlagged')}</span><span className="rej">{r.rej}</span></div>}
                 </>
               );
             })()}
@@ -502,7 +504,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   function renderCard() {
     const shared = (
       <>
-        <div className="cond-sharedlabel">👩‍🎓 Спільний екран — це бачить учень</div>
+        <div className="cond-sharedlabel">{t('cond.sharedLabel')}</div>
         {renderShared()}
       </>
     );
@@ -521,7 +523,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     if (c.stud) {
       return (
         <div className="cond-ctl">
-          <button className="btn primary" data-testid="teacher-return-btn" onClick={toggleStud}>✏ Повернутися до панелі</button>
+          <button className="btn primary" data-testid="teacher-return-btn" onClick={toggleStud}>{t('cond.backToPanel')}</button>
         </div>
       );
     }
@@ -529,35 +531,35 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     return (
       <div className="cond-ctl">
         <button className="btn ghost cond-sm" onClick={goPrev} disabled={c.i === 0}>
-          ← Назад
+          {t('cond.back')}
         </button>
         <button className="btn ghost cond-sm" onClick={toggleAns}>
-          {c.showAns ? '🔑 Сховати' : '🔑 Відповідь'}
+          {c.showAns ? t('cond.hideAnsBtn') : t('cond.showAnsBtn')}
         </button>
         <button
           className={`btn ghost cond-sm${c.showReceipt ? ' cond-on' : ''}`}
           onClick={toggleReceipt}
         >
-          ⓘ Чому це завдання?
+          {t('cond.whyBtn')}
         </button>
         <span className="cond-grow" />
         <button
           className={`btn ghost cond-sm${b && c.easy[b.id] ? ' cond-on' : ''}`}
           onClick={toggleEasy}
         >
-          🙂 Занадто легко
+          {t('cond.tooEasy')}
         </button>
         <button
           className={`btn ghost cond-sm${b && c.gate[b.id] ? ' cond-on' : ''}`}
           onClick={toggleGate}
         >
-          ⚑ Перевірка помилилася
+          {t('cond.checkWrong')}
         </button>
         <button className="btn ghost cond-sm" onClick={() => goNextOrSkip(true)}>
-          ⤼ Пропустити
+          {t('cond.skip')}
         </button>
         <button className="btn primary cond-sm" onClick={() => goNextOrSkip(false)}>
-          ✓ Готово
+          {t('cond.done')}
         </button>
       </div>
     );
@@ -566,31 +568,31 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   function renderSummary() {
     const flags: string[] = [];
     blocks.forEach((b) => {
-      if (c.gate[b.id]) flags.push(`⚑ «${b.type}» — перевірка помилилася (перевірити правило)`);
-      if (c.easy[b.id]) flags.push(`🙂 «${b.type}» — занадто легко для цього учня`);
-      if (c.skip[b.id]) flags.push(`⤼ «${b.type}» — пропущено на занятті`);
+      if (c.gate[b.id]) flags.push(t('cond.flag.gate', { type: b.type }));
+      if (c.easy[b.id]) flags.push(t('cond.flag.easy', { type: b.type }));
+      if (c.skip[b.id]) flags.push(t('cond.flag.skip', { type: b.type }));
     });
-    (c.dropped || []).forEach((t) => {
-      flags.push(`✂ «${t}» — прибрано із плану через брак часу (у запас/на домашнє)`);
+    (c.dropped || []).forEach((dt) => {
+      flags.push(t('cond.flag.dropped', { type: dt }));
     });
 
     return (
       <div className="cond-sum">
-        <h2>Що сталося на занятті</h2>
+        <h2>{t('cond.summary.title')}</h2>
         <p className="cond-lead">
-          Приклад: так виглядатиме запис, який «Граматка» зможе зберігати після кожного заняття (за згодою учня). Персональних даних учня зараз не зберігаємо.
+          {t('cond.summary.lead')}
         </p>
 
         <div className="cond-grid">
-          <div className="cond-stat"><div className="n">{doneCount}</div><div className="l">виконано</div></div>
-          <div className="cond-stat"><div className="n">{skipCount}</div><div className="l">пропущено</div></div>
-          <div className="cond-stat"><div className="n">{easyCount}</div><div className="l">легкі</div></div>
-          <div className="cond-stat"><div className="n">{gateCount}</div><div className="l">«перевірка помилилася»</div></div>
+          <div className="cond-stat"><div className="n">{doneCount}</div><div className="l">{t('cond.sDone')}</div></div>
+          <div className="cond-stat"><div className="n">{skipCount}</div><div className="l">{t('cond.sSkip')}</div></div>
+          <div className="cond-stat"><div className="n">{easyCount}</div><div className="l">{t('cond.sEasy')}</div></div>
+          <div className="cond-stat"><div className="n">{gateCount}</div><div className="l">{t('cond.sFlag')}</div></div>
         </div>
 
-        <h4 className="dochead"><span className="pn">⏱</span>Час за частинами</h4>
+        <h4 className="dochead"><span className="pn">⏱</span>{t('cond.phaseTime')}</h4>
         <table className="cond-tbl">
-          <thead><tr><th>Частина</th><th>план</th><th>факт</th></tr></thead>
+          <thead><tr><th>{t('cond.tblPhase')}</th><th>{t('cond.tblPlan')}</th><th>{t('cond.tblActual')}</th></tr></thead>
           <tbody>
             {[1, 2, 3].map((p) => {
               const phh = p as 1 | 2 | 3;
@@ -598,7 +600,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
               const overP = a > c.pd[phh - 1] * 60;
               return (
                 <tr key={p}>
-                  <td>{PHASE_NAMES[phh]}</td>
+                  <td>{phaseName(phh)}</td>
                   <td>{c.pd[phh - 1]}:00</td>
                   <td className={overP ? 'cond-over' : ''}>{condFmt(a)}{overP ? ' ⚠' : ''}</td>
                 </tr>
@@ -607,33 +609,33 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
           </tbody>
         </table>
 
-        <h4 className="dochead"><span className="pn">⚑</span>Позначки для «Граматки»</h4>
+        <h4 className="dochead"><span className="pn">⚑</span>{t('cond.flagsHead')}</h4>
         {flags.length ? (
           <ul className="cond-flaglist">{flags.map((f, idx) => <li key={idx}>{f}</li>)}</ul>
         ) : (
-          <p className="cond-lead">Позначок немає — усе пройшло гладко.</p>
+          <p className="cond-lead">{t('cond.noFlags')}</p>
         )}
 
         {c.ruleDone === 'acc' && (
           <div className="cond-rulecard">
-            <div className="rt">✓ Приклад: так це правило запамʼяталося б у памʼятці про цього учня (у демо нічого не зберігається).</div>
+            <div className="rt">{t('cond.ruleOk')}</div>
           </div>
         )}
         {c.ruleDone !== 'rej' && c.ruleDone !== 'acc' && (
           <div className="cond-rulecard">
-            <div className="rt">💡 Правило для «Граматки» (приклад майбутньої функції)</div>
-            <div className="rq">«Для цього учня вводьте вищий ступінь прикметників контрастно (більший ↔ менший).»</div>
-            <div className="cond-rulenote">Це нотатка про ЦЬОГО учня, а не загальне правило.</div>
+            <div className="rt">{t('cond.ruleTitle')}</div>
+            <div className="rq">{t('cond.ruleText')}</div>
+            <div className="cond-rulenote">{t('cond.ruleNote')}</div>
             <div className="btns">
-              <button className="btn primary cond-sm" onClick={() => acceptRule('acc')}>Прийняти правило</button>
-              <button className="btn ghost cond-sm" onClick={() => acceptRule('rej')}>Не треба</button>
+              <button className="btn primary cond-sm" onClick={() => acceptRule('acc')}>{t('cond.ruleAcc')}</button>
+              <button className="btn ghost cond-sm" onClick={() => acceptRule('rej')}>{t('cond.ruleRej')}</button>
             </div>
           </div>
         )}
 
         <div className="cond-sumbtns">
-          <button className="btn primary" onClick={restart}>↺ Провести ще раз</button>
-          <button className="btn ghost" onClick={exitToLesson}>До готового заняття</button>
+          <button className="btn primary" onClick={restart}>{t('cond.again')}</button>
+          <button className="btn ghost" onClick={exitToLesson}>{t('cond.toReady')}</button>
         </div>
       </div>
     );
@@ -648,7 +650,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
   if (c.stud) {
     return (
       <div className="conductor-view" data-testid="conductor-student-preview">
-        <div className="rolebanner student" data-testid="student-banner">👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.</div>
+        <div className="rolebanner student" data-testid="student-banner">{t('cond.studBanner')}</div>
         <div className="cond-card">{renderShared()}</div>
         <div className="cond-ctl">{renderCtl()}</div>
       </div>
@@ -657,13 +659,13 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
 
   const heldN = (l.rejected && l.rejected.length) || 0;
   const held = heldN ? (
-    <div className="cond-held">🛑 <b>Відкладено на перевірку:</b> {heldN} завдання, що не пройшли перевірку, — до заняття не ввійшли (їх видно у «Перегляді»).</div>
+    <div className="cond-held">🛑 <b>{t('cond.heldLabel')}</b> {t('cond.heldRest', { n: heldN })}</div>
   ) : null;
 
   const hint = c.hintOff ? null : (
     <div className="hintbar">
-      <span>💡 Ви проводите вже готове й перевірене заняття, крок за кроком. Смужка вгорі — три частини й час на кожну. «ⓘ Чому це завдання?» показує, звідки воно взялося. «＋5 хв» пришвидшує годинник, щоб побачити, як план підлаштовується під час.</span>
-      <button onClick={dismissHint} title="сховати підказку">×</button>
+      <span>{t('cond.hint')}</span>
+      <button onClick={dismissHint} title={t('cond.hideHint')}>×</button>
     </div>
   );
 
@@ -671,15 +673,15 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
     <div className="conductor-view">
       <div className="cond-top">
         <div className="cond-title">
-          <b>▶ Проведення заняття</b>
-          <span className="cond-sub">{l.title} · {c.dur} хв</span>
+          <b>{t('cond.top.title')}</b>
+          <span className="cond-sub">{l.title} · {c.dur} {t('cond.min')}</span>
         </div>
         <div className="cond-topbtns">
-          <button className="btn ghost cond-sm" onClick={exitToLesson}>← Вийти</button>
-          <button className="btn ghost cond-sm" onClick={addTime}>＋5 хв ⏱</button>
-          <button className="btn ghost cond-sm" onClick={() => setShowProfile(true)}>👤 Профіль учня</button>
-          <button className="btn ghost cond-sm" data-testid="enter-student-preview-btn" onClick={toggleStud}>👁 Як бачить учень</button>
-          <button className="btn ghost cond-sm" onClick={() => setShowHelp(true)}>? Довідка</button>
+          <button className="btn ghost cond-sm" onClick={exitToLesson}>{t('cond.exit')}</button>
+          <button className="btn ghost cond-sm" onClick={addTime}>{t('cond.addTime')}</button>
+          <button className="btn ghost cond-sm" onClick={() => setShowProfile(true)}>{t('cond.profileBtn')}</button>
+          <button className="btn ghost cond-sm" data-testid="enter-student-preview-btn" onClick={toggleStud}>{t('cond.studentView')}</button>
+          <button className="btn ghost cond-sm" onClick={() => setShowHelp(true)}>{t('cond.helpBtn')}</button>
         </div>
       </div>
 
@@ -697,42 +699,44 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
         <div className="cond-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowProfile(false); }}>
           <div className="cond-modal">
             <button className="cond-close" onClick={() => setShowProfile(false)}>×</button>
-            <h2>👤 Профіль учня <span className="cond-newpill">МАЙБУТНЄ</span></h2>
-            <p className="cond-modp">Памʼять про учня, зібрана з його реальних відповідей — щоб наступні заняття були під нього, а не просто «рівня B1». Зʼявляється лише після реєстрації учня, за згодою.</p>
+            <h2>{t('cond.profileBtn')} <span className="cond-newpill">{t('cond.future')}</span></h2>
+            <p className="cond-modp">{t('cond.profLead')}</p>
             {COND_PROFILE.map((it, idx) => (
               <div className="cond-lrow" key={idx}>
-                <span className="k">{it.k}:</span>
-                <span>{it.v}</span>
+                <span className="k">{it.k[lang]}:</span>
+                <span>{it.v[lang]}</span>
               </div>
             ))}
-            <div className="cond-optin">🔒 Ця памʼять зʼявиться, коли учень зареєструється — за його згодою. Поки що її бачите тільки ви.</div>
+            <div className="cond-optin">{t('cond.ledgerNote')}</div>
             <div style={{ marginTop: 14, textAlign: 'right' }}>
-              <button className="btn primary" onClick={() => setShowProfile(false)}>Закрити</button>
+              <button className="btn primary" onClick={() => setShowProfile(false)}>{t('cond.close')}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Help modal */}
+      {/* Help modal. Paragraphs use dangerouslySetInnerHTML to keep the demo's inline
+          <b>/<i> emphasis. Safe: the HTML is a static dictionary constant (no user input,
+          no interpolated params) — same trust model as the demo's chrome HTML. */}
       {showHelp && (
         <div className="cond-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowHelp(false); }}>
           <div className="cond-modal">
             <button className="cond-close" onClick={() => setShowHelp(false)}>×</button>
-            <h2>Довідка — режим «Проведення заняття»</h2>
-            <h3 className="cond-modh">Що це?</h3>
-            <p className="cond-modp">«Проведення заняття» — режим, у якому ви <b>проводите вже готове й перевірене заняття</b> просто на екрані під час уроку (наприклад, у Zoom). Завдання показуються по одному. «Граматка» не звертається до штучного інтелекту наживо — заняття вже складене й заморожене.</p>
-            <h3 className="cond-modh">Спільний екран</h3>
-            <p className="cond-modp">Центральний блок із зеленою рамкою — це те саме, що бачить учень: інтерактивне завдання без відповідей. У Zoom є три способи: ви натискаєте самі (учень відповідає усно); або ділитеся <b>чистим екраном учня</b> — кнопка «👁 Як бачить учень» ховає вашу панель; або даєте учневі посилання, щоб натискав він сам.</p>
-            <h3 className="cond-modh">Ваша панель</h3>
-            <p className="cond-modp">Жовта панель під завданням — приватна, учень її не бачить: 🔑 відповідь, позначка перевірки, ⓘ «чому це завдання», і кнопки керування.</p>
-            <h3 className="cond-modh">Смужка часу вгорі</h3>
-            <p className="cond-modp">Три частини заняття (Тест → Навчання → Тест) і час на кожну. Годинник іде для поточної частини; якщо перевищуєте бюджет — він стає жовтим і зʼявляється підказка «скоротити».</p>
-            <h3 className="cond-modh">Кнопки під завданням</h3>
-            <p className="cond-modp"><b>Готово</b> — далі · <b>Пропустити</b> · <b>Занадто легко</b> — для цього учня · <b>Перевірка помилилася</b> — коли перевірка дарма щось позначила · <b>🔑</b> — відповідь бачите тільки ви · <b>ⓘ Чому це завдання?</b> — звідки воно взялося.</p>
-            <h3 className="cond-modh">🔎 Попередній прогін · 🛑 Відкладено</h3>
-            <p className="cond-modp"><i>Приклад майбутньої функції:</i> перед заняттям система зможе «прогнати» його з кількома змодельованими учнями рівня B1, щоб зловити хитрі місця заздалегідь. А що не пройшло перевірку — не потрапляє в заняття, а чекає на ваш перегляд. Нічого не зникає тихо.</p>
+            <h2>{t('cond.help.title')}</h2>
+            <h3 className="cond-modh">{t('cond.help.q1')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a1') }} />
+            <h3 className="cond-modh">{t('cond.help.q2')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a2') }} />
+            <h3 className="cond-modh">{t('cond.help.q3')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a3') }} />
+            <h3 className="cond-modh">{t('cond.help.q4')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a4') }} />
+            <h3 className="cond-modh">{t('cond.help.q5')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a5') }} />
+            <h3 className="cond-modh">{t('cond.help.q6')}</h3>
+            <p className="cond-modp" dangerouslySetInnerHTML={{ __html: t('cond.help.a6') }} />
             <div style={{ marginTop: 16, textAlign: 'right' }}>
-              <button className="btn primary" onClick={() => setShowHelp(false)}>Закрити</button>
+              <button className="btn primary" onClick={() => setShowHelp(false)}>{t('cond.close')}</button>
             </div>
           </div>
         </div>

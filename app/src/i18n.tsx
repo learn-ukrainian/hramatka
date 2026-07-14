@@ -1,0 +1,570 @@
+/**
+ * Dual-language (uk/en) chrome translation layer.
+ *
+ * Ports the BEHAVIOUR of the teacher-approved demo (hramatka/design/demo-reference.html)
+ * — its T_EXACT / CHROME_EN / CONDT dictionaries and header EN/УКР toggle — as a proper
+ * React key-based translation layer, NOT the demo's DOM-walker.
+ *
+ * Rules (user mandate, escalated 3×): EVERYTHING chrome is dual-language — header, views,
+ * buttons, hints, status labels, error banners (client chrome), overlays, conductor
+ * (including its FUTURE-labelled stubs). ONLY lesson CONTENT stays Ukrainian in both modes:
+ * activities, anchor text, generated lesson strings, teacher-entered text, and any
+ * server-provided message (those flow through as `raw`, never through this layer).
+ *
+ * Default language is Ukrainian. The `uk` value of every key is byte-identical to the
+ * string that previously lived in the JSX, so existing UA tests are unaffected. EN wording
+ * reuses the demo's own translations verbatim wherever the demo already has the string.
+ */
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from 'react';
+
+export type Lang = 'uk' | 'en';
+
+const LANG_KEY = 'hramatka:ui-lang';
+
+export function loadLang(): Lang {
+  try {
+    return localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'uk';
+  } catch {
+    return 'uk';
+  }
+}
+
+export function saveLang(lang: Lang): void {
+  try {
+    localStorage.setItem(LANG_KEY, lang);
+  } catch {
+    /* private mode / quota — in-memory state still holds for the session */
+  }
+}
+
+/** Session-boundary reset (#106): back to default UA + drop the persisted choice, like other client state. */
+export function clearLang(): void {
+  try {
+    localStorage.removeItem(LANG_KEY);
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+type Entry = { uk: string; en: string };
+
+/**
+ * The chrome dictionary. `{name}` tokens are replaced from `t(key, params)`.
+ * Comments cite the demo dictionary a value is sourced from (T_EXACT / CHROME_EN / CONDT).
+ */
+const DICT = {
+  // ---- header / document ----
+  brand: { uk: 'Граматка', en: 'Hramatka' },
+  'doc.title': { uk: 'Граматка — Викладач (пілот)', en: 'Hramatka — Teacher (pilot)' },
+  'lang.title': {
+    uk: 'мова інтерфейсу (вміст занять — завжди українською)',
+    en: 'interface language (lesson content is always Ukrainian)',
+  }, // demo langbtn title
+  'help.aria': { uk: 'Довідка', en: 'Help' }, // T_EXACT
+  logout: { uk: 'Вийти', en: 'Sign out' },
+
+  // ---- help overlay ----
+  'help.title': { uk: 'Як користуватися «Граматкою»', en: 'How to use Hramatka' }, // T_EXACT
+  'help.p1.b': { uk: 'Створення уроку.', en: 'Creating a lesson.' },
+  'help.p1.t': {
+    uk: 'Вставте український текст, оберіть тривалість і натисніть «Згенерувати урок». Рівень B1 фіксований для пілоту.',
+    en: 'Paste a Ukrainian text, choose a duration and press “Generate lesson”. Level B1 is fixed for the pilot.',
+  },
+  'help.p2.b': { uk: 'Скільки чекати.', en: 'How long to wait.' },
+  'help.p2.t': {
+    uk: 'Генерація зазвичай триває кілька хвилин. Можна повернутися до списку — урок з’явиться, коли буде готовий.',
+    en: 'Generation usually takes a few minutes. You can go back to the list — the lesson will appear when it is ready.',
+  },
+  'help.p3.b': { uk: '«Перевірте».', en: '“Verify.”' },
+  'help.p3.t': {
+    uk: 'Попередження означає, що завдання варто переглянути. Підтвердіть кожне перед прийняттям уроку.',
+    en: 'A warning means the task is worth reviewing. Confirm each one before accepting the lesson.',
+  },
+  'help.p4.b': { uk: 'Якщо сталася помилка.', en: 'If an error occurs.' },
+  'help.p4.t': {
+    uk: 'Текст зберігається — натисніть «Створити урок ще раз із цим текстом» або поверніться до списку.',
+    en: 'Your text is saved — press “Create the lesson again from this text” or go back to the list.',
+  },
+  'help.gotIt': { uk: 'Зрозуміло', en: 'Got it' }, // T_EXACT
+
+  // ---- invite / login ----
+  'invite.title': { uk: 'Вхід для викладача', en: 'Teacher sign-in' },
+  'invite.lead': {
+    uk: 'Використайте посилання-запрошення. Токен обробляється лише в пам’яті.',
+    en: 'Use the invitation link. The token is processed in memory only.',
+  },
+  'invite.prompt': {
+    uk: 'Тестовий токен (або залиште порожнім для автоматичного):',
+    en: 'Test token (or leave blank for automatic):',
+  },
+  'invite.badToken': { uk: 'Некоректний формат токена.', en: 'Invalid token format.' },
+  'invite.testBtn': {
+    uk: 'Увійти за тестовим запрошенням (тест)',
+    en: 'Sign in with a test invitation (test)',
+  },
+  'invite.small': {
+    uk: 'У реальному сценарії — відкрийте посилання з #invite=...',
+    en: 'In a real scenario — open a link with #invite=...',
+  },
+
+  // ---- loading ----
+  loading: { uk: 'Завантаження…', en: 'Loading…' },
+
+  // ---- paste hub ----
+  'paste.title': { uk: 'Створити новий урок', en: 'Create a new lesson' },
+  'paste.disclose': {
+    uk: 'Вставлений текст буде надіслано зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.',
+    en: 'The pasted text will be sent to an external provider (Gemma). Do not use sensitive or personal data.',
+  },
+  'paste.levelPre': { uk: 'Рівень: ', en: 'Level: ' }, // T_EXACT «Рівень»
+  'paste.levelPost': { uk: ' (фіксовано для пілоту)', en: ' (fixed for the pilot)' },
+  'paste.duration': { uk: 'Тривалість (хв)', en: 'Duration (min)' },
+  'paste.focus': { uk: 'Фокус (необов’язково)', en: 'Focus (optional)' },
+  'paste.focusPh': { uk: 'напр. вищий ступінь прикметників', en: 'e.g. comparative adjectives' }, // T_EXACT
+  'paste.textLabel': { uk: 'Текст для уроку (вставте)', en: 'Text for the lesson (paste)' },
+  'paste.restored': {
+    uk: 'Текст попереднього запиту відновлено',
+    en: 'Text from the previous request restored',
+  },
+  'paste.textPh': { uk: 'Вставте український текст...', en: 'Paste Ukrainian text...' },
+  'paste.submit': { uk: 'Згенерувати урок', en: 'Generate lesson' },
+  'paste.submitting': { uk: 'Надсилаємо…', en: 'Sending…' },
+  'close.aria': { uk: 'Закрити', en: 'Close' }, // T_EXACT
+
+  // ---- catalog ----
+  'catalog.title': { uk: 'Ваші уроки', en: 'Your lessons' }, // cf. T_EXACT «Мої заняття»
+  'catalog.refresh': { uk: 'Оновити список', en: 'Refresh list' },
+  'catalog.empty': { uk: 'Поки немає уроків.', en: 'No lessons yet.' },
+  accepted: { uk: 'Прийнято', en: 'Accepted' },
+
+  // ---- status chips (mirror app-helpers.statusLabel UA) ----
+  'status.baking': { uk: 'готується', en: 'baking' }, // T_EXACT «готується…»
+  'status.ready': { uk: 'готово', en: 'ready' }, // T_EXACT
+  'status.failed': { uk: 'помилка', en: 'error' },
+  'status.draft': { uk: 'чернетка', en: 'draft' }, // T_EXACT
+
+  // ---- lesson view toolbar ----
+  'lesson.back': { uk: '← До списку', en: '← To the list' },
+  'lesson.reviewMode': { uk: 'Режим огляду', en: 'Review mode' },
+  'lesson.runMode': { uk: 'Режим запуску (для учня)', en: 'Run mode (for the student)' },
+  'lesson.showAsStudent': { uk: '👩‍🎓 Показати як учневі', en: '👩‍🎓 Show as student' }, // #112 enter-student-mode; demo UI «Показати як учневі»
+  'lesson.hideAnswers': { uk: 'Сховати відповіді', en: 'Hide answers' }, // T_EXACT
+  'lesson.showAnswers': { uk: 'Показати відповіді', en: 'Show answers' },
+  'lesson.copy': { uk: 'Копіювати урок', en: 'Copy lesson' }, // cf. T_EXACT «⧉ Копіювати»
+  'lesson.conduct': { uk: '▶ Провести заняття', en: '▶ Run the lesson' },
+  'lesson.print': { uk: 'Друк', en: 'Print' }, // T_EXACT «🖨 Друк»
+  'lesson.downloadJson': { uk: 'Завантажити JSON', en: 'Download JSON' },
+
+  // ---- baking card ----
+  'bake.statusPrefix': { uk: 'Статус: ', en: 'Status: ' },
+  'bake.failFallback': { uk: 'Не вдалося створити урок.', en: 'The lesson could not be created.' },
+  'recovery.body': {
+    uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
+  },
+  'recovery.retry': {
+    uk: 'Створити урок ще раз із цим текстом',
+    en: 'Create the lesson again from this text',
+  },
+  'recovery.back': { uk: 'Повернутися до списку', en: 'Back to the list' },
+  'bake.updating': { uk: 'Оновлення…', en: 'Updating…' },
+  'bake.checkNow': { uk: 'Перевірити зараз', en: 'Check now' },
+  'bake.elapsed': { uk: 'Минуло {clock}', en: 'Elapsed {clock}' }, // #112 honest live wait clock (no demo equivalent)
+
+  // ---- lesson meta ----
+  'meta.level': {
+    uk: 'Рівень: {level} • Тривалість: {duration} хв',
+    en: 'Level: {level} • Duration: {duration} min',
+  },
+  'meta.revision': {
+    uk: 'Ревізія: {rev} • Прийнято: {acc}',
+    en: 'Revision: {rev} • Accepted: {acc}',
+  },
+  'meta.yes': { uk: 'так', en: 'yes' },
+  'meta.no': { uk: 'ні', en: 'no' },
+  'meta.focus': { uk: 'Фокус: ', en: 'Focus: ' }, // T_EXACT «Граматичний фокус»
+
+  // ---- accept bar / run note ----
+  'accept.warnNote': {
+    uk: 'Потрібно підтвердити всі попередження (⚠️), щоб прийняти урок.',
+    en: 'You must confirm all warnings (⚠️) to accept the lesson.',
+  },
+  'accept.btn': { uk: 'Прийняти урок (ревізія {rev})', en: 'Accept lesson (revision {rev})' },
+  'accept.draft': { uk: 'Повернути в чернетку', en: 'Return to draft' },
+  'run.note': {
+    uk: 'Це режим для демонстрації учню — відповіді та ключі приховані (залежно від віджета).',
+    en: 'This mode is for showing the student — answers and keys are hidden (depending on the widget).',
+  },
+
+  // ---- student run surface (#112 student-share chrome; EN from demo UI/T_EXACT) ----
+  'chip.student': { uk: '👩‍🎓 УЧЕНЬ', en: '👩‍🎓 STUDENT' }, // demo UI chip.student
+  'run.studentBanner': {
+    uk: '👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.',
+    en: '👩‍🎓 STUDENT SCREEN — no answers, no hints. Safe to share in Zoom.',
+  }, // demo UI banner.student
+  'run.toolbarChip': {
+    uk: '{level} · готово · {duration} хв',
+    en: '{level} · ready · {duration} min',
+  }, // demo UI chip.ready / chip.min
+  'run.backToTeacher': { uk: '👩‍🏫 Назад до екрана вчителя', en: '👩‍🏫 Back to teacher screen' }, // demo UI btn.back
+  'run.sheetSub': {
+    uk: 'Тест → Навчання → Тест · ≈ {duration} хв',
+    en: 'Test → Teach → Test · ≈ {duration} min',
+  }, // demo T_EXACT «Тест → Навчання → Тест»
+
+  // ---- lesson blocks (phase renderer) ----
+  'blocks.phase': { uk: 'Фаза {phase}', en: 'Phase {phase}' },
+  'blocks.warnBadge': { uk: '⚠️ попередження', en: '⚠️ warning' },
+  'blocks.externalOptions': { uk: 'зовнішні варіанти', en: 'external options' },
+  'blocks.answerKey': { uk: 'Ключ відповіді:', en: 'Answer key:' }, // cf. T_EXACT «🔑 Відповіді»
+  'blocks.note': { uk: 'Примітка: ', en: 'Note: ' },
+  'blocks.provenance': {
+    uk: 'Походження: {source} • {generator}',
+    en: 'Origin: {source} • {generator}',
+  },
+  'blocks.ackBtn': { uk: 'Підтвердити попередження', en: 'Confirm warning' },
+  'blocks.acked': { uk: '✓ Підтверджено', en: '✓ Confirmed' },
+
+  // ---- footer ----
+  footer: {
+    uk: 'Приватний пілот • Тільки для запрошених викладачів • B1',
+    en: 'Private pilot • Invited teachers only • B1',
+  },
+
+  // ---- client-set error chrome (server messages flow through as raw, never here) ----
+  'err.sessionRequired': { uk: 'Потрібна сесія викладача.', en: 'A teacher session is required.' },
+  'err.badTextLen': {
+    uk: 'Текст має бути від 1 до 100000 символів.',
+    en: 'The text must be 1 to 100000 characters.',
+  },
+  'err.bakeFailed': {
+    uk: 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.',
+    en: 'Could not build the lesson. Please try again.',
+  },
+  'err.noRetrySource': {
+    uk: 'Текст уроку недоступний. Вставте текст знову на головній сторінці.',
+    en: 'The lesson text is unavailable. Paste the text again on the main page.',
+  },
+  'err.inviteGone': { uk: 'Запрошення більше недоступне.', en: 'The invitation is no longer available.' },
+  'err.inviteBadToken': { uk: 'Некоректний токен запрошення.', en: 'Invalid invitation token.' },
+  'err.loginFailed': { uk: 'Помилка входу', en: 'Sign-in error' },
+  'err.initSession': {
+    uk: 'Помилка ініціалізації сесії. Спробуйте перезавантажити сторінку.',
+    en: 'Session initialization error. Try reloading the page.',
+  },
+  'err.longWait': {
+    uk: 'Тривале очікування. Спробуйте оновити сторінку.',
+    en: 'This is taking a while. Try reloading the page.',
+  },
+  'err.lessonNotFound': { uk: 'Урок не знайдено.', en: 'Lesson not found.' },
+  'err.generic': { uk: 'Помилка', en: 'Error' },
+  'err.genericDot': { uk: 'Помилка.', en: 'Error.' },
+  'err.loadLesson': {
+    uk: 'Не вдалося завантажити урок. Спробуйте, будь ласка, ще раз.',
+    en: 'Could not load the lesson. Please try again.',
+  },
+  'err.lessonChangedReload': { uk: 'Урок змінився. Перезавантажте.', en: 'The lesson has changed. Reload.' },
+  'err.ackFailed': { uk: 'Не вдалося підтвердити.', en: 'Could not confirm.' },
+  'err.ackAllBeforeAccept': {
+    uk: 'Підтвердіть усі попередження перед прийняттям уроку.',
+    en: 'Confirm all warnings before accepting the lesson.',
+  },
+  'err.ackAllBeforeAcceptShort': {
+    uk: 'Підтвердіть усі попередження перед прийняттям.',
+    en: 'Confirm all warnings before accepting.',
+  },
+  'err.lessonChangedReload2': { uk: 'Урок змінився — перезавантажте.', en: 'The lesson has changed — reload.' },
+  'err.acceptFailed': { uk: 'Не вдалося прийняти.', en: 'Could not accept.' },
+  'err.draftFailed': { uk: 'Не вдалося повернути в чернетку.', en: 'Could not return to draft.' },
+  'err.sessionExpired': { uk: 'Сесія закінчилась. Увійдіть знову.', en: 'Your session has ended. Sign in again.' },
+
+  // =====================================================================
+  // Conductor (▶ Проведення заняття) — chrome from demo CONDT (verbatim EN)
+  // =====================================================================
+  'cond.empty.title': { uk: 'Немає активного заняття', en: 'No active lesson' },
+  'cond.empty.body': {
+    uk: 'Відкрийте прийняте заняття й натисніть «▶ Провести заняття».',
+    en: 'Open an accepted lesson and press “▶ Run the lesson”.',
+  },
+  'cond.empty.toList': { uk: 'До списку', en: 'To the list' },
+  'cond.ph1': { uk: 'Тест 1', en: 'Test 1' }, // CONDT
+  'cond.ph2': { uk: 'Навчання', en: 'Teaching' }, // CONDT
+  'cond.ph3': { uk: 'Тест 2', en: 'Test 2' }, // CONDT
+  'cond.min': { uk: 'хв', en: 'min' }, // CONDT
+  'cond.budget': { uk: 'бюджет', en: 'budget' }, // CONDT
+  'cond.break': { uk: 'перерва', en: 'break' }, // CONDT
+  'cond.behind': { uk: '⏱ Відстаємо від часу.', en: '⏱ Running behind.' }, // CONDT
+  'cond.shorten': { uk: 'Скоротити план', en: 'Shorten the plan' }, // CONDT
+  'cond.removeType': { uk: '(прибрати «{type}»)', en: '(remove “{type}”)' },
+  'cond.pfTitle': { uk: '🔎 Попередній прогін', en: '🔎 Preflight' }, // CONDT
+  'cond.example': { uk: 'приклад', en: 'example' }, // CONDT
+  'cond.pfReady': { uk: '{n} готові', en: '{n} ready' }, // CONDT pfOk
+  'cond.pfFlag': { uk: '{n} варто глянути', en: '{n} to double-check' }, // CONDT pfFlag
+  'cond.pfHeld': { uk: '{n} відкладено', en: '{n} set aside' }, // CONDT pfHeld
+  'cond.pfSub': {
+    uk: 'приклад майбутньої функції: перед заняттям «Граматка» зможе прогнати його з кількома змодельованими учнями рівня B1 — щоб зловити хитрі місця заздалегідь. Тут показано, як це виглядатиме',
+    en: 'example of a future feature: before the lesson Hramatka will be able to dry-run it with a few simulated B1 learners — to catch tricky spots in advance. Shown here is how that will look',
+  }, // CONDT
+  'cond.pfItemDefault': { uk: 'позначено на ваш перегляд', en: 'flagged for your review' },
+  'cond.endOfPlan': { uk: 'Кінець плану.', en: 'End of the plan.' },
+  'cond.taskCount': { uk: 'Завдання {i} з {total}', en: 'Task {i} of {total}' }, // CONDT task/of
+  'cond.panelLabel': {
+    uk: '🔒 Ваша панель — учень цього не бачить',
+    en: '🔒 Your panel — the student does not see this',
+  }, // CONDT
+  'cond.markVerified': { uk: '✓ перевірено', en: '✓ verified' }, // CONDT mVer
+  'cond.markLook': { uk: '⚠ погляньте', en: '⚠ take a look' }, // CONDT mLook
+  'cond.answerLabel': { uk: '🔑 Відповідь', en: '🔑 Answer' }, // CONDT answer
+  'cond.whyHead': { uk: '📎 ЧОМУ ЦЕ ЗАВДАННЯ ІСНУЄ', en: '📎 WHY THIS TASK EXISTS' }, // CONDT whyHead
+  'cond.rSrc': { uk: 'Джерело:', en: 'Source:' }, // CONDT rSrc
+  'cond.rWhy': { uk: 'Навіщо:', en: 'Purpose:' }, // CONDT rWhy
+  'cond.rConf': { uk: 'Впевненість:', en: 'Confidence:' }, // CONDT rConf
+  'cond.rFlagged': { uk: 'Позначено:', en: 'Flagged:' }, // CONDT rRej
+  'cond.sharedLabel': {
+    uk: '👩‍🎓 Спільний екран — це бачить учень',
+    en: '👩‍🎓 Shared screen — the student sees this',
+  }, // CONDT shared
+  'cond.backToPanel': { uk: '✏ Повернутися до панелі', en: '✏ Back to your panel' }, // CONDT exitPreview
+  'cond.back': { uk: '← Назад', en: '← Back' }, // CONDT back
+  'cond.showAnsBtn': { uk: '🔑 Відповідь', en: '🔑 Answer' }, // CONDT showAns
+  'cond.hideAnsBtn': { uk: '🔑 Сховати', en: '🔑 Hide' }, // CONDT hideAns
+  'cond.whyBtn': { uk: 'ⓘ Чому це завдання?', en: 'ⓘ Why this task?' }, // CONDT why
+  'cond.tooEasy': { uk: '🙂 Занадто легко', en: '🙂 Too easy' }, // CONDT easy
+  'cond.checkWrong': { uk: '⚑ Перевірка помилилася', en: '⚑ Check was wrong' }, // CONDT gate
+  'cond.skip': { uk: '⤼ Пропустити', en: '⤼ Skip' }, // CONDT skip
+  'cond.done': { uk: '✓ Готово', en: '✓ Done' }, // CONDT done
+  'cond.summary.title': { uk: 'Що сталося на занятті', en: 'What happened in the lesson' }, // CONDT sumTitle
+  'cond.summary.lead': {
+    uk: 'Приклад: так виглядатиме запис, який «Граматка» зможе зберігати після кожного заняття (за згодою учня). Персональних даних учня зараз не зберігаємо.',
+    en: 'Example: this is how the record will look — Hramatka will be able to keep one after every lesson (with the student’s consent). No personal student data is stored now.',
+  }, // CONDT sumLead
+  'cond.sDone': { uk: 'виконано', en: 'done' }, // CONDT sDone
+  'cond.sSkip': { uk: 'пропущено', en: 'skipped' }, // CONDT sSkip
+  'cond.sEasy': { uk: 'легкі', en: 'too easy' }, // CONDT sEasy
+  'cond.sFlag': { uk: '«перевірка помилилася»', en: '“check was wrong” flags' }, // CONDT sFlag
+  'cond.phaseTime': { uk: 'Час за частинами', en: 'Time by phase' }, // CONDT phaseTime
+  'cond.tblPhase': { uk: 'Частина', en: 'Phase' }, // CONDT phaseC
+  'cond.tblPlan': { uk: 'план', en: 'plan' }, // CONDT planned
+  'cond.tblActual': { uk: 'факт', en: 'actual' }, // CONDT actual
+  'cond.flagsHead': { uk: 'Позначки для «Граматки»', en: 'Flags for Hramatka' }, // CONDT flagsHead
+  'cond.noFlags': { uk: 'Позначок немає — усе пройшло гладко.', en: 'No flags — everything went smoothly.' }, // CONDT noFlags
+  'cond.ruleOk': {
+    uk: '✓ Приклад: так це правило запамʼяталося б у памʼятці про цього учня (у демо нічого не зберігається).',
+    en: '✓ Example: this is how the rule would be saved to this learner’s memory (nothing is stored in the demo).',
+  }, // CONDT ruleOk
+  'cond.ruleTitle': {
+    uk: '💡 Правило для «Граматки» (приклад майбутньої функції)',
+    en: '💡 A rule for Hramatka (example of a future feature)',
+  }, // CONDT ruleTitle
+  'cond.ruleText': {
+    uk: '«Для цього учня вводьте вищий ступінь прикметників контрастно (більший ↔ менший).»',
+    en: '“For this learner, introduce comparative adjectives contrastively (bigger ↔ smaller).”',
+  }, // CONDT ruleText
+  'cond.ruleNote': {
+    uk: 'Це нотатка про ЦЬОГО учня, а не загальне правило.',
+    en: 'This is a note about THIS learner, not a global rule.',
+  }, // CONDT ruleNote
+  'cond.ruleAcc': { uk: 'Прийняти правило', en: 'Accept rule' }, // CONDT ruleAcc
+  'cond.ruleRej': { uk: 'Не треба', en: 'Dismiss' }, // CONDT ruleRej
+  'cond.again': { uk: '↺ Провести ще раз', en: '↺ Run again' }, // CONDT again
+  'cond.toReady': { uk: 'До готового заняття', en: 'Back to the ready lesson' }, // CONDT toReady
+  'cond.studBanner': {
+    uk: '👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.',
+    en: '👩‍🎓 STUDENT SCREEN — no answers or hints. Safe to share in Zoom.',
+  }, // CONDT studBanner
+  'cond.heldLabel': { uk: 'Відкладено на перевірку:', en: 'Set aside for review:' }, // CONDT held
+  'cond.heldRest': {
+    uk: '{n} завдання, що не пройшли перевірку, — до заняття не ввійшли (їх видно у «Перегляді»).',
+    en: '{n} task(s) that failed verification did not enter the lesson (visible in “Review”).',
+  }, // CONDT holdWho
+  'cond.hint': {
+    uk: '💡 Ви проводите вже готове й перевірене заняття, крок за кроком. Смужка вгорі — три частини й час на кожну. «ⓘ Чому це завдання?» показує, звідки воно взялося. «＋5 хв» пришвидшує годинник, щоб побачити, як план підлаштовується під час.',
+    en: '💡 You are running an already-built, verified lesson, step by step. The bar on top is the three phases and the time budget for each. “ⓘ Why this task?” shows where it came from. “＋5 min” fast-forwards the clock so you can see the plan adapt.',
+  }, // CONDT hint
+  'cond.hideHint': { uk: 'сховати підказку', en: 'hide this hint' }, // T_EXACT
+  'cond.top.title': { uk: '▶ Проведення заняття', en: '▶ Running the lesson' }, // CONDT title
+  'cond.exit': { uk: '← Вийти', en: '← Exit' }, // CONDT exit
+  'cond.addTime': { uk: '＋5 хв ⏱', en: '＋5 min ⏱' }, // CONDT addTime
+  'cond.profileBtn': { uk: '👤 Профіль учня', en: '👤 Learner profile' }, // CONDT profile
+  'cond.studentView': { uk: '👁 Як бачить учень', en: '👁 Student view' }, // CONDT preview
+  'cond.helpBtn': { uk: '? Довідка', en: '? Help' }, // CONDT help
+  'cond.future': { uk: 'МАЙБУТНЄ', en: 'FUTURE' }, // CONDT profFuture
+  'cond.profLead': {
+    uk: 'Памʼять про учня, зібрана з його реальних відповідей — щоб наступні заняття були під нього, а не просто «рівня B1». Зʼявляється лише після реєстрації учня, за згодою.',
+    en: 'A memory of the learner, built from their real answers — so future lessons fit them, not just “B1 level”. Appears only after the student registers, with consent.',
+  }, // CONDT profLead
+  'cond.ledgerNote': {
+    uk: '🔒 Ця памʼять зʼявиться, коли учень зареєструється — за його згодою. Поки що її бачите тільки ви.',
+    en: '🔒 This memory appears once the student registers — with their consent. For now only you see it.',
+  }, // CONDT ledgerNote
+  'cond.close': { uk: 'Закрити', en: 'Close' }, // CONDT close
+  'cond.help.title': { uk: 'Довідка — режим «Проведення заняття»', en: 'Help — “Running the lesson” mode' }, // CONDT helpTitle
+  'cond.help.q1': { uk: 'Що це?', en: 'What is this?' },
+  'cond.help.a1': {
+    uk: '«Проведення заняття» — режим, у якому ви <b>проводите вже готове й перевірене заняття</b> просто на екрані під час уроку (наприклад, у Zoom). Завдання показуються по одному. «Граматка» не звертається до штучного інтелекту наживо — заняття вже складене й заморожене.',
+    en: '“Running the lesson” is a mode where you <b>run an already-built, verified lesson</b> right on the screen during the class (for example, in Zoom). Tasks are shown one at a time. Hramatka does not call AI live — the lesson is already built and frozen.',
+  },
+  'cond.help.q2': { uk: 'Спільний екран', en: 'Shared screen' },
+  'cond.help.a2': {
+    uk: 'Центральний блок із зеленою рамкою — це те саме, що бачить учень: інтерактивне завдання без відповідей. У Zoom є три способи: ви натискаєте самі (учень відповідає усно); або ділитеся <b>чистим екраном учня</b> — кнопка «👁 Як бачить учень» ховає вашу панель; або даєте учневі посилання, щоб натискав він сам.',
+    en: 'The central block with the green border is exactly what the student sees: an interactive task without answers. In Zoom there are three ways: you click yourself (the student answers aloud); or you share a <b>clean student screen</b> — the “👁 Student view” button hides your panel; or you give the student a link so they click themselves.',
+  },
+  'cond.help.q3': { uk: 'Ваша панель', en: 'Your panel' },
+  'cond.help.a3': {
+    uk: 'Жовта панель під завданням — приватна, учень її не бачить: 🔑 відповідь, позначка перевірки, ⓘ «чому це завдання», і кнопки керування.',
+    en: 'The wheat panel under the task is private — the student does not see it: 🔑 the answer, the verification mark, ⓘ “why this task”, and the control buttons.',
+  },
+  'cond.help.q4': { uk: 'Смужка часу вгорі', en: 'The time bar on top' },
+  'cond.help.a4': {
+    uk: 'Три частини заняття (Тест → Навчання → Тест) і час на кожну. Годинник іде для поточної частини; якщо перевищуєте бюджет — він стає жовтим і зʼявляється підказка «скоротити».',
+    en: 'The three phases of the lesson (Test → Teach → Test) and the time for each. The clock runs for the current phase; if you go over budget it turns amber and a “shorten” hint appears.',
+  },
+  'cond.help.q5': { uk: 'Кнопки під завданням', en: 'The buttons under the task' },
+  'cond.help.a5': {
+    uk: '<b>Готово</b> — далі · <b>Пропустити</b> · <b>Занадто легко</b> — для цього учня · <b>Перевірка помилилася</b> — коли перевірка дарма щось позначила · <b>🔑</b> — відповідь бачите тільки ви · <b>ⓘ Чому це завдання?</b> — звідки воно взялося.',
+    en: '<b>Done</b> — next · <b>Skip</b> · <b>Too easy</b> — for this learner · <b>Check was wrong</b> — when the check flagged something for nothing · <b>🔑</b> — only you see the answer · <b>ⓘ Why this task?</b> — where it came from.',
+  },
+  'cond.help.q6': { uk: '🔎 Попередній прогін · 🛑 Відкладено', en: '🔎 Preflight · 🛑 Set aside' },
+  'cond.help.a6': {
+    uk: '<i>Приклад майбутньої функції:</i> перед заняттям система зможе «прогнати» його з кількома змодельованими учнями рівня B1, щоб зловити хитрі місця заздалегідь. А що не пройшло перевірку — не потрапляє в заняття, а чекає на ваш перегляд. Нічого не зникає тихо.',
+    en: '<i>Example of a future feature:</i> before the lesson the system will be able to “dry-run” it with a few simulated B1 learners to catch tricky spots in advance. And whatever fails verification does not enter the lesson but waits for your review. Nothing disappears silently.',
+  },
+
+  // ---- conductor receipt (getReceipt) ----
+  'cond.rc.srcWarn': {
+    uk: 'Складено навколо тексту вчителя; частину (варіанти чи означення) додала «Граматка» — не з тексту',
+    en: 'Built around the teacher’s text; part (options or definitions) was added by Hramatka — not from the text',
+  },
+  'cond.rc.srcOk': { uk: 'Складено з тексту вчителя', en: 'Built from the teacher’s text' },
+  'cond.rc.why1': {
+    uk: 'Перевірити розуміння прочитаного (Тест 1)',
+    en: 'Check reading comprehension (Test 1)',
+  },
+  'cond.rc.why2': { uk: 'Відпрацювати мовну ціль (Навчання)', en: 'Practice the language target (Teaching)' },
+  'cond.rc.why3': { uk: 'Закріпити й перевірити ще раз (Тест 2)', en: 'Reinforce and re-test (Test 2)' },
+  'cond.rc.whyDefault': { uk: 'Частина заняття', en: 'Part of the lesson' },
+  'cond.rc.confMedium': { uk: 'середня', en: 'medium' },
+  'cond.rc.confHigh': { uk: 'висока', en: 'high' },
+  'cond.rc.rejDefault': { uk: 'позначено ⚠ на ваш перегляд', en: 'flagged ⚠ for your review' },
+
+  // ---- conductor summary flag templates ----
+  'cond.flag.gate': {
+    uk: '⚑ «{type}» — перевірка помилилася (перевірити правило)',
+    en: '⚑ “{type}” — check was wrong (review the rule)',
+  },
+  'cond.flag.easy': {
+    uk: '🙂 «{type}» — занадто легко для цього учня',
+    en: '🙂 “{type}” — too easy for this learner',
+  },
+  'cond.flag.skip': { uk: '⤼ «{type}» — пропущено на занятті', en: '⤼ “{type}” — skipped in the lesson' },
+  'cond.flag.dropped': {
+    uk: '✂ «{type}» — прибрано із плану через брак часу (у запас/на домашнє)',
+    en: '✂ “{type}” — removed from the plan for lack of time (to reserve/homework)',
+  },
+
+  // =====================================================================
+  // Ahead of PR #109 (branch cursor/hramatka-client-gaps) — dictionary
+  // entries folded in early so the merge only swaps literals for t().
+  // =====================================================================
+  'print.teacher': { uk: 'Друк для вчителя', en: 'Print for teacher' },
+  'print.student': { uk: 'Друк для учня', en: 'Print for student' },
+  'anchor.summary': { uk: 'Текст', en: 'Text' },
+  'anchor.hide': { uk: 'Сховати текст', en: 'Hide text' },
+  'anchor.readingHead': { uk: 'Текст для читання', en: 'Reading text' },
+} satisfies Record<string, Entry>;
+
+export type ChromeKey = keyof typeof DICT;
+type Params = Record<string, string | number>;
+
+function interpolate(str: string, params?: Params): string {
+  if (!params) return str;
+  return str.replace(/\{(\w+)\}/g, (_m, k: string) => (k in params ? String(params[k]) : `{${k}}`));
+}
+
+/** Pure translate — resolves `key` in `lang`, falls back to uk then to the key itself. */
+export function translate(lang: Lang, key: ChromeKey, params?: Params): string {
+  const entry = DICT[key] as Entry | undefined;
+  if (!entry) return interpolate(key, params);
+  return interpolate(entry[lang] ?? entry.uk, params);
+}
+
+/** UA status chip label → dictionary key (chip label is chrome; the chip class stays data-driven). */
+export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed'): ChromeKey {
+  switch (status) {
+    case 'baking':
+      return 'status.baking';
+    case 'ready':
+      return 'status.ready';
+    case 'failed':
+      return 'status.failed';
+    default:
+      return 'status.draft';
+  }
+}
+
+export type TFn = (key: ChromeKey, params?: Params) => string;
+
+interface LangValue {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  toggleLang: () => void;
+  /** Session-boundary reset: default UA + clear persisted choice. */
+  resetLang: () => void;
+  t: TFn;
+}
+
+const LangContext = createContext<LangValue | null>(null);
+
+export function LangProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(() => loadLang());
+
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    saveLang(l);
+  }, []);
+
+  const toggleLang = useCallback(() => {
+    setLangState((prev) => {
+      const next: Lang = prev === 'en' ? 'uk' : 'en';
+      saveLang(next);
+      return next;
+    });
+  }, []);
+
+  const resetLang = useCallback(() => {
+    setLangState('uk');
+    clearLang();
+  }, []);
+
+  // Keep the browser tab title in the chosen language (head is chrome too).
+  useEffect(() => {
+    document.title = translate(lang, 'doc.title');
+  }, [lang]);
+
+  const value = useMemo<LangValue>(
+    () => ({
+      lang,
+      setLang,
+      toggleLang,
+      resetLang,
+      t: (key, params) => translate(lang, key, params),
+    }),
+    [lang, setLang, toggleLang, resetLang],
+  );
+
+  return <LangContext.Provider value={value}>{children}</LangContext.Provider>;
+}
+
+export function useT(): LangValue {
+  const ctx = useContext(LangContext);
+  if (!ctx) throw new Error('useT must be used within a LangProvider');
+  return ctx;
+}

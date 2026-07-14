@@ -4,7 +4,6 @@ import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import '@learn-ukrainian/activity-kit/styles.css';
 import './teacher.css';
 import {
-  statusLabel,
   bakeStatusSubline,
   formatBakeProgressLine,
   formatBakeElapsedFallback,
@@ -17,6 +16,17 @@ import {
   type BakeProgress,
 } from './app-helpers';
 import Conductor from './Conductor';
+import { useT, statusKey, type ChromeKey } from './i18n';
+
+/**
+ * The error banner holds either translated client chrome (`key`) or a raw server
+ * message (`raw`, e.g. API `e.message` — content, stays as-is). Storing the key
+ * (not a pre-rendered string) keeps the banner reversible when chrome is toggled.
+ */
+type AppError = { key: ChromeKey } | { raw: string } | null;
+const errKey = (key: ChromeKey): { key: ChromeKey } => ({ key });
+const errOr = (serverMsg: string | null | undefined, key: ChromeKey): AppError =>
+  serverMsg ? { raw: serverMsg } : { key };
 
 // ===== Types derived from openapi + lesson contract =====
 type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
@@ -161,11 +171,12 @@ function useSimpleRouter() {
 // ===== Main App =====
 export default function TeacherApp() {
   const { route, navigate } = useSimpleRouter();
+  const { t, lang, toggleLang, resetLang } = useT();
 
   const [session, setSession] = useState<Session | null>(null);
   const [csrf, setCsrf] = useState<string | null>(null); // kept in memory only
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError>(null);
 
   // Paste form state (level fixed B1)
   const [pasteText, setPasteText] = useState('');
@@ -239,7 +250,8 @@ export default function TeacherApp() {
     setAnchorOpen(false);
     setPrintVariant(null);
     setBakeElapsedMs(0);
-  }, [clearPoll]);
+    resetLang(); // #106 boundary: UI language back to default UA + clear persisted choice
+  }, [clearPoll, resetLang]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
@@ -278,12 +290,12 @@ export default function TeacherApp() {
         try { await loadCatalog(); } catch {}
       } else if (res.status === 410) {
         const e: ErrorEnvelope = await res.json();
-        setError(e.message || 'Запрошення більше недоступне.');
+        setError(errOr(e.message, 'err.inviteGone'));
       } else if (res.status === 422) {
-        setError('Некоректний токен запрошення.');
+        setError(errKey('err.inviteBadToken'));
       } else {
-        const e: ErrorEnvelope = await res.json().catch(() => ({ code: 'error', message: 'Помилка входу', retryable: false }));
-        setError(e.message);
+        const e: ErrorEnvelope = await res.json().catch(() => ({ code: 'error', message: '', retryable: false }));
+        setError(errOr(e.message, 'err.loginFailed'));
       }
     } finally {
       // SCRUB — token never stays in URL (contract)
@@ -353,9 +365,9 @@ export default function TeacherApp() {
             await loadTeacherDefaultDuration();
           }
         }
-      } catch (e) {
+      } catch {
         if (!cancelled) {
-          setError('Помилка ініціалізації сесії. Спробуйте перезавантажити сторінку.');
+          setError(errKey('err.initSession'));
         }
       } finally {
         if (!cancelled) setInitLoading(false);
@@ -421,20 +433,18 @@ export default function TeacherApp() {
   };
 
   // ===== Paste + Bake =====
-  const disclose = 'Вставлений текст буде надіслано зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.';
-
   const submitNewLesson = async (source: {
     text: string;
     duration: 45 | 60 | 90;
     focus: string | null;
   }) => {
     if (!session || !csrf) {
-      setError('Потрібна сесія викладача.');
+      setError(errKey('err.sessionRequired'));
       return;
     }
     const text = source.text.trim();
     if (!text || text.length > 100000) {
-      setError('Текст має бути від 1 до 100000 символів.');
+      setError(errKey('err.badTextLen'));
       return;
     }
     setError(null);
@@ -477,10 +487,10 @@ export default function TeacherApp() {
         pollStatus(id);
       } else {
         const e: ErrorEnvelope = data;
-        setError(e.message || 'Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
+        setError(errOr(e.message, 'err.bakeFailed'));
       }
     } catch {
-      setError('Не вдалося скласти урок. Спробуйте, будь ласка, ще раз.');
+      setError(errKey('err.bakeFailed'));
     } finally {
       setLoading(false);
     }
@@ -498,7 +508,7 @@ export default function TeacherApp() {
     const lid = currentLessonId || route.lessonId || null;
     const stored = getRetrySource(lid);
     if (!stored) {
-      setError('Текст уроку недоступний. Вставте текст знову на головній сторінці.');
+      setError(errKey('err.noRetrySource'));
       return;
     }
     await submitNewLesson({
@@ -580,7 +590,7 @@ export default function TeacherApp() {
       } else {
         clearPoll();
         if (st && st.status !== 'ready' && st.status !== 'failed') {
-          setError('Тривале очікування. Спробуйте оновити сторінку.');
+          setError(errKey('err.longWait'));
         }
       }
     };
@@ -593,7 +603,7 @@ export default function TeacherApp() {
     if (!session || !csrf) {
       const s = await refreshSession();
       if (!s) {
-        setError('Потрібна сесія викладача.');
+        setError(errKey('err.sessionRequired'));
         return;
       }
     }
@@ -629,13 +639,13 @@ export default function TeacherApp() {
         navigate({ view: 'lesson', lessonId: id, mode });
         pollStatus(id);
       } else if (res.status === 404) {
-        setError('Урок не знайдено.');
+        setError(errKey('err.lessonNotFound'));
       } else {
-        const e: ErrorEnvelope = await res.json().catch(() => ({ code: '', message: 'Помилка' }));
+        const e: ErrorEnvelope = await res.json().catch(() => ({ code: '', message: '' }));
         handleApiError(e);
       }
     } catch {
-      setError('Не вдалося завантажити урок. Спробуйте, будь ласка, ще раз.');
+      setError(errKey('err.loadLesson'));
     } finally {
       setLoading(false);
     }
@@ -668,10 +678,10 @@ export default function TeacherApp() {
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
         if (e.code === 'revision_conflict') {
-          setError('Урок змінився. Перезавантажте.');
+          setError(errKey('err.lessonChangedReload'));
           await openLesson(currentLessonId, 'review');
         } else {
-          setError(e.message || 'Не вдалося підтвердити.');
+          setError(errOr(e.message, 'err.ackFailed'));
         }
       }
     } finally {
@@ -690,7 +700,7 @@ export default function TeacherApp() {
   const acceptLesson = async () => {
     if (!lesson || !currentLessonId || !csrf) return;
     if (!allVisibleWarningsAcked(lesson)) {
-      setError('Підтвердіть усі попередження перед прийняттям уроку.');
+      setError(errKey('err.ackAllBeforeAccept'));
       return;
     }
     setLoading(true);
@@ -707,12 +717,12 @@ export default function TeacherApp() {
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
         if (e.code === 'warning_acknowledgements_required') {
-          setError('Підтвердіть усі попередження перед прийняттям.');
+          setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
-          setError('Урок змінився — перезавантажте.');
+          setError(errKey('err.lessonChangedReload2'));
           await openLesson(currentLessonId, 'review');
         } else {
-          setError(e.message || 'Не вдалося прийняти.');
+          setError(errOr(e.message, 'err.acceptFailed'));
         }
       }
     } finally {
@@ -735,7 +745,7 @@ export default function TeacherApp() {
         await loadCatalog();
       } else {
         const e = await res.json().catch(() => ({}));
-        setError((e as any).message || 'Не вдалося повернути в чернетку.');
+        setError(errOr((e as any).message, 'err.draftFailed'));
       }
     } finally { setLoading(false); }
   };
@@ -776,7 +786,7 @@ export default function TeacherApp() {
   const bakingSubline = () => {
     if (!bakeStatus) return '';
     if (bakeStatus.status === 'failed') {
-      return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure);
+      return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure, t('bake.failFallback'));
     }
     if (bakeStatus.progress) {
       return formatBakeProgressLine(bakeStatus.progress);
@@ -784,7 +794,7 @@ export default function TeacherApp() {
     if (bakeStatus.status === 'baking') {
       return formatBakeElapsedFallback(bakeElapsedMs);
     }
-    return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure);
+    return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure, t('bake.failFallback'));
   };
 
   const renderAnchorBody = (text: string, testId?: string) => (
@@ -797,10 +807,10 @@ export default function TeacherApp() {
       setCsrf(null);
       setSessionReady(false);
       resetSessionScopedState();
-      setError('Сесія закінчилась. Увійдіть знову.');
+      setError(errKey('err.sessionExpired'));
       navigate({ view: 'invite' });
     } else {
-      setError(e.message || 'Помилка.');
+      setError(errOr(e.message, 'err.genericDot'));
     }
   }
 
@@ -817,7 +827,7 @@ export default function TeacherApp() {
       if (!bs.length) return null;
       return (
         <section key={phase} className="phase">
-          <h3>Фаза {phase}</h3>
+          <h3>{t('blocks.phase', { phase })}</h3>
           {bs.map(block => {
             const isWarn = block.mark === 'warn';
             const acked = (l.warning_acknowledgements || []).includes(block.id) || localAcks.includes(block.id);
@@ -833,8 +843,8 @@ export default function TeacherApp() {
                   <div className="block-meta">
                     <span className={`chip ${typeChip}`}>{block.type}</span>
                     <span className="mode">{block.mode}</span>
-                    {isWarn && <span className="warn-badge">⚠️ попередження</span>}
-                    {block.provenance?.external_options && <span className="prov">зовнішні варіанти</span>}
+                    {isWarn && <span className="warn-badge">{t('blocks.warnBadge')}</span>}
+                    {block.provenance?.external_options && <span className="prov">{t('blocks.externalOptions')}</span>}
                   </div>
                 )}
 
@@ -849,11 +859,11 @@ export default function TeacherApp() {
 
                 {showKey && (
                   <div className="teacher-key teacher-only" data-testid="teacher-answer-key">
-                    <strong>Ключ відповіді:</strong>
+                    <strong>{t('blocks.answerKey')}</strong>
                     <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
-                    {block.note && <div className="note">Примітка: {block.note}</div>}
+                    {block.note && <div className="note">{t('blocks.note')}{block.note}</div>}
                     {block.provenance && (
-                      <div className="prov-detail">Походження: {block.provenance.source} • {block.provenance.generator}</div>
+                      <div className="prov-detail">{t('blocks.provenance', { source: block.provenance.source, generator: block.provenance.generator })}</div>
                     )}
                   </div>
                 )}
@@ -865,11 +875,11 @@ export default function TeacherApp() {
                     disabled={loading}
                     data-testid="warning-ack-btn"
                   >
-                    Підтвердити попередження
+                    {t('blocks.ackBtn')}
                   </button>
                 )}
                 {viewMode === 'review' && isWarn && acked && (
-                  <span className="acked">✓ Підтверджено</span>
+                  <span className="acked">{t('blocks.acked')}</span>
                 )}
               </div>
             );
@@ -896,25 +906,39 @@ export default function TeacherApp() {
   return (
     <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}${isStudentSurface ? ' studentframe' : ''}`} data-testid={isStudentSurface ? 'student-surface' : 'teacher-surface'}>
       <header className="appbar">
-        <div className="brand">Граматка</div>
+        <div className="brand">{t('brand')}</div>
         {session && isStudentSurface && (
-          <span className="modechip student" data-testid="student-mode-badge">👩‍🎓 УЧЕНЬ</span>
+          <span className="modechip student" data-testid="student-mode-badge">{t('chip.student')}</span>
         )}
-        {session && !isStudentSurface && (
-          <div className="session">
-            <button
-              type="button"
-              className="helpbtn"
-              onClick={() => setHelpOpen(true)}
-              title="Довідка"
-              aria-label="Довідка"
-            >
-              ?
-            </button>
-            <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
-            <button onClick={logout} className="link" data-testid="logout-btn">Вийти</button>
-          </div>
-        )}
+        <div className="session">
+          {/* Header EN/УКР toggle (demo langbtn): default UA, instant + reversible, persisted.
+              Stays on the student surface too — the demo keeps interface-language switching there. */}
+          <button
+            type="button"
+            className="helpbtn langbtn"
+            onClick={toggleLang}
+            title={t('lang.title')}
+            aria-label={t('lang.title')}
+            data-testid="lang-toggle"
+          >
+            {lang === 'en' ? 'УКР' : 'EN'}
+          </button>
+          {session && !isStudentSurface && (
+            <>
+              <button
+                type="button"
+                className="helpbtn"
+                onClick={() => setHelpOpen(true)}
+                title={t('help.aria')}
+                aria-label={t('help.aria')}
+              >
+                ?
+              </button>
+              <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
+              <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
+            </>
+          )}
+        </div>
       </header>
 
       {helpOpen && (
@@ -925,13 +949,13 @@ export default function TeacherApp() {
           onClick={(e) => { if (e.target === e.currentTarget) setHelpOpen(false); }}
         >
           <div className="help-card">
-            <h2 id="help-title">Як користуватися «Граматкою»</h2>
-            <p><strong>Створення уроку.</strong> Вставте український текст, оберіть тривалість і натисніть «Згенерувати урок». Рівень B1 фіксований для пілоту.</p>
-            <p><strong>Скільки чекати.</strong> Генерація зазвичай триває кілька хвилин. Можна повернутися до списку — урок з’явиться, коли буде готовий.</p>
-            <p><strong>«Перевірте».</strong> Попередження означає, що завдання варто переглянути. Підтвердіть кожне перед прийняттям уроку.</p>
-            <p><strong>Якщо сталася помилка.</strong> Текст зберігається — натисніть «Створити урок ще раз із цим текстом» або поверніться до списку.</p>
+            <h2 id="help-title">{t('help.title')}</h2>
+            <p><strong>{t('help.p1.b')}</strong> {t('help.p1.t')}</p>
+            <p><strong>{t('help.p2.b')}</strong> {t('help.p2.t')}</p>
+            <p><strong>{t('help.p3.b')}</strong> {t('help.p3.t')}</p>
+            <p><strong>{t('help.p4.b')}</strong> {t('help.p4.t')}</p>
             <div className="help-actions">
-              <button type="button" className="btn primary" onClick={() => setHelpOpen(false)}>Зрозуміло</button>
+              <button type="button" className="btn primary" onClick={() => setHelpOpen(false)}>{t('help.gotIt')}</button>
             </div>
           </div>
         </div>
@@ -940,34 +964,34 @@ export default function TeacherApp() {
       {error && (
         <div className="banner fail error" role="alert">
           <span className="ic">!</span>
-          <span>{error}</span>
+          <span>{'raw' in error ? error.raw : t(error.key)}</span>
           <button onClick={() => setError(null)} style={{marginLeft:'auto',fontSize:13,opacity:.7}}>✕</button>
         </div>
       )}
 
-      {/* #93 item1: UA loading state (never blank page) */}
+      {/* #93 item1: localized loading state (never blank page) */}
       {initLoading && (
-        <main style={{ padding: 40, color: 'var(--ink-soft)' }}>Завантаження…</main>
+        <main style={{ padding: 40, color: 'var(--ink-soft)' }}>{t('loading')}</main>
       )}
 
       {!session && !initLoading && (
         <main className="invite">
-          <h1>Вхід для викладача</h1>
-          <p>Використайте посилання-запрошення. Токен обробляється лише в пам’яті.</p>
+          <h1>{t('invite.title')}</h1>
+          <p>{t('invite.lead')}</p>
           <button
             className="btn primary"
             onClick={async () => {
               // Dev helper: allow manual redeem with test token
-              const t = prompt('Тестовий токен (або залиште порожнім для автоматичного):') || 'TEST' + 'A'.repeat(39) + 'Q';
-              if (!isValidToken(t)) { setError('Некоректний формат токена.'); return; }
-              window.location.hash = `#invite=${t}`;
+              const tok = prompt(t('invite.prompt')) || 'TEST' + 'A'.repeat(39) + 'Q';
+              if (!isValidToken(tok)) { setError(errKey('invite.badToken')); return; }
+              window.location.hash = `#invite=${tok}`;
               await redeemFromFragment();
             }}
             disabled={loading}
           >
-            Увійти за тестовим запрошенням (тест)
+            {t('invite.testBtn')}
           </button>
-          <p className="small">У реальному сценарії — відкрийте посилання з #invite=...</p>
+          <p className="small">{t('invite.small')}</p>
         </main>
       )}
 
@@ -977,17 +1001,17 @@ export default function TeacherApp() {
           {route.view !== 'lesson' && (
             <main className="hub">
               <section className="paste">
-                <h2>Створити новий урок</h2>
-                <div className="banner honest"><span className="ic">ℹ︎</span><span>{disclose}</span></div>
+                <h2>{t('paste.title')}</h2>
+                <div className="banner honest"><span className="ic">ℹ︎</span><span>{t('paste.disclose')}</span></div>
 
                 <div className="formgrid">
                   {/* B1 and TTT are fixed-pilot constraints and remain clearly labelled (no port of demo editing). */}
                   <div className="field">
-                    <label>Рівень: <strong>B1</strong> (фіксовано для пілоту)</label>
+                    <label>{t('paste.levelPre')}<strong>B1</strong>{t('paste.levelPost')}</label>
                   </div>
 
                   <div className="field">
-                    <label>Тривалість (хв)</label>
+                    <label>{t('paste.duration')}</label>
                     <select className="inputbox" value={duration} onChange={e => {
                       const d = Number(e.target.value) as 45 | 60 | 90;
                       setDuration(d);
@@ -1007,19 +1031,19 @@ export default function TeacherApp() {
                   </div>
 
                   <div className="field">
-                    <label>Фокус (необов’язково)</label>
+                    <label>{t('paste.focus')}</label>
                     <input
                       className="inputbox"
                       type="text"
                       value={focus}
                       onChange={e => setFocus(e.target.value)}
-                      placeholder="напр. вищий ступінь прикметників"
+                      placeholder={t('paste.focusPh')}
                       maxLength={500}
                     />
                   </div>
 
                   <div className="field">
-                    <label>Текст для уроку (вставте)</label>
+                    <label>{t('paste.textLabel')}</label>
                     {restoredTextNotice && (
                       <div
                         className="banner honest restored-notice"
@@ -1027,12 +1051,12 @@ export default function TeacherApp() {
                         data-testid="restored-text-notice"
                       >
                         <span className="ic">ℹ︎</span>
-                        <span>Текст попереднього запиту відновлено</span>
+                        <span>{t('paste.restored')}</span>
                         <button
                           type="button"
                           onClick={() => setRestoredTextNotice(false)}
                           style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.7 }}
-                          aria-label="Закрити"
+                          aria-label={t('close.aria')}
                         >
                           ✕
                         </button>
@@ -1043,20 +1067,20 @@ export default function TeacherApp() {
                       value={pasteText}
                       onChange={e => setPasteText(e.target.value)}
                       rows={8}
-                      placeholder="Вставте український текст..."
+                      placeholder={t('paste.textPh')}
                     />
                   </div>
 
                   <button className="btn primary" onClick={startBake} disabled={loading || !pasteText.trim()}>
-                    {loading ? 'Надсилаємо…' : 'Згенерувати урок'}
+                    {loading ? t('paste.submitting') : t('paste.submit')}
                   </button>
                 </div>
               </section>
 
               <section className="catalog">
-                <h2>Ваші уроки</h2>
-                <button className="btn ghost" onClick={loadCatalog}>Оновити список</button>
-                {catalog.length === 0 && <p className="hint">Поки немає уроків.</p>}
+                <h2>{t('catalog.title')}</h2>
+                <button className="btn ghost" onClick={loadCatalog}>{t('catalog.refresh')}</button>
+                {catalog.length === 0 && <p className="hint">{t('catalog.empty')}</p>}
                 <ul>
                   {catalog.map(item => {
                     const st = item.status;
@@ -1065,10 +1089,10 @@ export default function TeacherApp() {
                       <li key={item.id} className="listrow">
                         <button onClick={() => openLesson(item.id, 'review')}>
                           <span className="title">{item.title || item.id.slice(0, 8)}</span>
-                          <span className={`chip ${chipClass}`}>{statusLabel(item.status)}</span>
-                          {item.accepted && <span className="chip ok">Прийнято</span>}
+                          <span className={`chip ${chipClass}`}>{t(statusKey(item.status))}</span>
+                          {item.accepted && <span className="chip ok">{t('accepted')}</span>}
                         </button>
-                        <span className="when">{new Date(item.updated_at).toLocaleString('uk')}</span>
+                        <span className="when">{new Date(item.updated_at).toLocaleString(lang === 'en' ? 'en' : 'uk')}</span>
                       </li>
                     );
                   })}
@@ -1083,10 +1107,10 @@ export default function TeacherApp() {
             <main className={`lesson-view${currentMode === 'run' ? ' student-run-view' : ''}`}>
               {showTeacherLessonChrome && (
               <div className="lesson-header">
-                <button className="btn ghost" onClick={() => navigate({ view: 'paste' })}>← До списку</button>
+                <button className="btn ghost" onClick={() => navigate({ view: 'paste' })}>{t('lesson.back')}</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
                 <div className="lesson-actions">
-                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>Режим огляду</button>
+                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>{t('lesson.reviewMode')}</button>
                   {lesson && lesson.lesson.status === 'ready' && (
                     <button
                       type="button"
@@ -1094,7 +1118,7 @@ export default function TeacherApp() {
                       data-testid="enter-student-mode-btn"
                       onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')}
                     >
-                      👩‍🎓 Показати як учневі
+                      {t('lesson.showAsStudent')}
                     </button>
                   )}
                   {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
@@ -1103,7 +1127,7 @@ export default function TeacherApp() {
                       className="btn ghost"
                       onClick={() => setShowAnswers(v => !v)}
                     >
-                      {showAnswers ? 'Сховати відповіді' : 'Показати відповіді'}
+                      {showAnswers ? t('lesson.hideAnswers') : t('lesson.showAnswers')}
                     </button>
                   )}
                   {lesson && lesson.lesson.status === 'ready' && (
@@ -1113,13 +1137,13 @@ export default function TeacherApp() {
                       onClick={copyLessonAsNew}
                       disabled={loading}
                     >
-                      Копіювати урок
+                      {t('lesson.copy')}
                     </button>
                   )}
                   {lesson && lesson.lesson.accepted && (
-                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')}>▶ Провести заняття</button>
+                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')}>{t('lesson.conduct')}</button>
                   )}
-                  {lesson && lesson.lesson.accepted && <span className="chip ok">Прийнято</span>}
+                  {lesson && lesson.lesson.accepted && <span className="chip ok">{t('accepted')}</span>}
                   {lesson && lesson.lesson.status === 'ready' && (
                     <>
                       <button
@@ -1128,7 +1152,7 @@ export default function TeacherApp() {
                         data-testid="print-teacher"
                         onClick={() => printLesson('teacher')}
                       >
-                        Друк для вчителя
+                        {t('print.teacher')}
                       </button>
                       <button
                         type="button"
@@ -1136,11 +1160,11 @@ export default function TeacherApp() {
                         data-testid="print-student"
                         onClick={() => printLesson('student')}
                       >
-                        Друк для учня
+                        {t('print.student')}
                       </button>
                     </>
                   )}
-                  <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>Завантажити JSON</button>
+                  <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>{t('lesson.downloadJson')}</button>
                 </div>
               </div>
               )}
@@ -1151,11 +1175,11 @@ export default function TeacherApp() {
                     <div className={`step ${bakeStatus.status === 'baking' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
                       <div className="dot">{bakeStatus.status === 'baking' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
                       <div>
-                        <b>Статус: {statusLabel(bakeStatus.status)}</b>
+                        <b>{t('bake.statusPrefix')}{t(statusKey(bakeStatus.status))}</b>
                         <div className="sd" data-testid="baking-subline">{bakingSubline()}</div>
                         {bakeStatus.status === 'baking' && (
                           <div className="sd bake-elapsed" data-testid="baking-elapsed">
-                            Минуло {formatBakeElapsedClock(bakeElapsedMs)}
+                            {t('bake.elapsed', { clock: formatBakeElapsedClock(bakeElapsedMs) })}
                           </div>
                         )}
                       </div>
@@ -1165,7 +1189,7 @@ export default function TeacherApp() {
                     <div className="recovery-card banner fail" data-testid="failure-recovery">
                       <span className="ic">!</span>
                       <div className="recovery-body">
-                        <p>Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.</p>
+                        <p>{t('recovery.body')}</p>
                         <div className="recovery-actions">
                           <button
                             type="button"
@@ -1173,7 +1197,7 @@ export default function TeacherApp() {
                             onClick={retryFailedLesson}
                             disabled={loading || !getRetrySource(currentLessonId || route.lessonId || null)}
                           >
-                            Створити урок ще раз із цим текстом
+                            {t('recovery.retry')}
                           </button>
                           <button
                             type="button"
@@ -1187,39 +1211,39 @@ export default function TeacherApp() {
                               navigate({ view: 'paste' });
                             }}
                           >
-                            Повернутися до списку
+                            {t('recovery.back')}
                           </button>
                         </div>
                       </div>
                     </div>
                   )}
                   {bakeStatus.status === 'baking' && polling && (
-                    <p className="hint" style={{marginTop:6}} data-testid="baking-polling">Оновлення…</p>
+                    <p className="hint" style={{marginTop:6}} data-testid="baking-polling">{t('bake.updating')}</p>
                   )}
                   {bakeStatus.status === 'baking' && (
-                    <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>Перевірити зараз</button>
+                    <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>{t('bake.checkNow')}</button>
                   )}
                 </div>
               )}
 
               {!lesson && !bakeStatus && (
-                <p style={{ color: 'var(--ink-soft)', padding: '12px 0' }}>Завантаження…</p>
+                <p style={{ color: 'var(--ink-soft)', padding: '12px 0' }}>{t('loading')}</p>
               )}
 
               {lesson && (
                 <>
                   {showTeacherLessonChrome && (
                   <div className="meta">
-                    <div>Рівень: {lesson.lesson.level} • Тривалість: {lesson.lesson.duration} хв</div>
-                    <div>Ревізія: {lesson.revision} • Прийнято: {lesson.lesson.accepted ? 'так' : 'ні'}</div>
-                    {lesson.lesson.focus && <div>Фокус: {lesson.lesson.focus}</div>}
+                    <div>{t('meta.level', { level: lesson.lesson.level, duration: lesson.lesson.duration })}</div>
+                    <div>{t('meta.revision', { rev: lesson.revision, acc: lesson.lesson.accepted ? t('meta.yes') : t('meta.no') })}</div>
+                    {lesson.lesson.focus && <div>{t('meta.focus')}{lesson.lesson.focus}</div>}
                   </div>
                   )}
 
                   {currentMode === 'review' && lesson.lesson.anchor?.text && (
                     <details className="anchor-panel noprint-student" data-testid="anchor-panel-review">
-                      <summary>Текст</summary>
-                      <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                      <summary>{t('anchor.summary')}</summary>
+                      <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
                       {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
                     </details>
                   )}
@@ -1227,11 +1251,11 @@ export default function TeacherApp() {
                   {currentMode === 'run' && (
                     <>
                       <div className="rolebanner student" data-testid="student-banner">
-                        👩‍🎓 ЕКРАН УЧНЯ — без відповідей і підказок. Безпечно ділитися в Zoom.
+                        {t('run.studentBanner')}
                       </div>
                       <div className="student-toolbar noprint">
                         <span className="chip info">
-                          {lesson.lesson.level} · готово · {lesson.lesson.duration} хв
+                          {t('run.toolbarChip', { level: lesson.lesson.level, duration: lesson.lesson.duration })}
                         </span>
                         <span className="student-toolbar-spacer" />
                         <button
@@ -1240,7 +1264,7 @@ export default function TeacherApp() {
                           data-testid="teacher-return-btn"
                           onClick={returnToTeacherView}
                         >
-                          👩‍🏫 Назад до екрана вчителя
+                          {t('run.backToTeacher')}
                         </button>
                       </div>
                       {lesson.lesson.anchor?.text && (
@@ -1251,11 +1275,11 @@ export default function TeacherApp() {
                             data-testid="anchor-toggle-run"
                             onClick={() => setAnchorOpen((v) => !v)}
                           >
-                            {anchorOpen ? 'Сховати текст' : 'Текст'}
+                            {anchorOpen ? t('anchor.hide') : t('anchor.summary')}
                           </button>
                           {anchorOpen && (
                             <div className="anchor-panel run-open" data-testid="anchor-panel-run">
-                              <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                              <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
                               {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
                             </div>
                           )}
@@ -1264,7 +1288,7 @@ export default function TeacherApp() {
                       <div className="student-sheet paper">
                         <p className="docsheet-title">{lesson.lesson.title}</p>
                         <p className="student-sheet-sub">
-                          Тест → Навчання → Тест · ≈ {lesson.lesson.duration} хв
+                          {t('run.sheetSub', { duration: lesson.lesson.duration })}
                         </p>
                         <div className={`modes run`}>
                           {renderBlocks(lesson, 'run')}
@@ -1275,7 +1299,7 @@ export default function TeacherApp() {
 
                   {lesson.lesson.anchor?.text && (
                     <div className="anchor-print" data-testid="anchor-print">
-                      <h4 className="dochead"><span className="pn">☰</span>Текст для читання</h4>
+                      <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
                       {renderAnchorBody(lesson.lesson.anchor.text)}
                     </div>
                   )}
@@ -1289,17 +1313,17 @@ export default function TeacherApp() {
                   {currentMode === 'review' && (
                     <div className="accept-bar">
                       {!allVisibleWarningsAcked(lesson) && (
-                        <div className="warn-note">Потрібно підтвердити всі попередження (⚠️), щоб прийняти урок.</div>
+                        <div className="warn-note">{t('accept.warnNote')}</div>
                       )}
                       <button
                         className="btn primary"
                         onClick={acceptLesson}
                         disabled={loading || !allVisibleWarningsAcked(lesson) || lesson.lesson.accepted}
                       >
-                        Прийняти урок (ревізія {lesson.revision})
+                        {t('accept.btn', { rev: lesson.revision })}
                       </button>
                       <button className="btn ghost" onClick={returnToDraft} disabled={loading || !lesson.lesson.accepted}>
-                        Повернути в чернетку
+                        {t('accept.draft')}
                       </button>
                     </div>
                   )}
@@ -1323,7 +1347,7 @@ export default function TeacherApp() {
 
       {!isStudentSurface && (
       <footer className="footer">
-        <small>Приватний пілот • Тільки для запрошених викладачів • B1</small>
+        <small>{t('footer')}</small>
       </footer>
       )}
     </div>

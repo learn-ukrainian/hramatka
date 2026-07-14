@@ -364,7 +364,9 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     if (await acceptBtn.isVisible()) {
       await acceptBtn.click();
     }
-    await expect(page.getByText(/Прийнято|accepted/i)).toBeVisible({ timeout: 8000 });
+    // Scope to the header chip: the meta line ("Ревізія … • Прийнято: так") also
+    // contains «Прийнято», so an unscoped getByText is strict-mode ambiguous.
+    await expect(page.locator('.lesson-actions').getByText(/Прийнято|accepted/i)).toBeVisible({ timeout: 8000 });
 
     // The conductor button should now be visible (only for accepted)
     const conductBtn = page.getByRole('button', { name: /Провести заняття/ });
@@ -445,7 +447,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
     await page.waitForSelector('.block', { timeout: 15000 });
 
-    await page.getByRole('button', { name: /Показати як учневі/ }).click();
+    await page.getByTestId('enter-student-mode-btn').click();
     await expect(page.getByTestId('anchor-panel-run')).toHaveCount(0);
     await page.getByTestId('anchor-toggle-run').click();
     await expect(page.getByTestId('anchor-panel-run')).toBeVisible();

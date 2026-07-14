@@ -30,14 +30,19 @@ export function statusLabel(s: LessonState): string {
   return s;
 }
 
-/** When failed, show only the failure message — never the last step label. */
+/**
+ * When failed, show only the failure message — never the last step label.
+ * `failFallback` lets the caller pass a language-aware fallback (chrome); the UA
+ * default keeps this helper usable standalone (and stable for its unit test).
+ */
 export function bakeStatusSubline(
   status: LessonState,
   step: string,
   failure?: string,
+  failFallback = 'Не вдалося створити урок.',
 ): string {
   if (status === 'failed') {
-    return failure || 'Не вдалося створити урок.';
+    return failure || failFallback;
   }
   return step || '';
 }

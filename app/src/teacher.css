@@ -41,6 +41,8 @@
   flex: none;
 }
 .helpbtn:hover { background: rgba(255,255,255,.35); }
+/* header EN/УКР toggle — demo langbtn: pill, not a circle */
+.langbtn { width: auto; padding: 0 9px; font-size: 10.5px; letter-spacing: .04em; border-radius: 11px; }
 
 .help-overlay {
   position: fixed;
