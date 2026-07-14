@@ -832,3 +832,63 @@ def test_per_phase_deadline_wall_clock_bound(tmp_path, monkeypatch):
     assert event["phase_deadline_s"] == 0.05
     assert event["regeneration_attempts_suppressed"] == 2
 
+
+def test_cloze_blank_removal_drops_entire_activity(tmp_path):
+    # Create a cloze activity with 2 blanks
+    cloze = {
+        "type": "cloze",
+        "instruction": "Заповніть пропуски.",
+        "text": "На думку вчених, читання є одним з найскладніших {gap} для {gap}.",
+        "blanks": [
+            {
+                "id": 1,
+                "answer": "завдань",
+                "options": ["завдань", "вправ", "задач", "питань"],
+            },
+            {
+                "id": 2,
+                "answer": "мозку",
+                "options": ["мозку", "серця"],
+            }
+        ],
+        "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку"
+    }
+
+    # Run 1: both blanks are valid (answers are present in evidence)
+    def gen_survivor(_p):
+        return json.dumps({"activities": [cloze]})
+
+    res_survivor = pipeline.run(
+        _anchor(),
+        generator=gen_survivor,
+        out_dir=tmp_path / "out_survivor",
+        cache_dir=tmp_path / "cache_survivor",
+        use_cache=False
+    )
+
+    assert len(res_survivor.ready) == 1
+    assert res_survivor.ready[0].gate_result.passed
+    assert len(res_survivor.ready[0].activity["blanks"]) == 2
+
+    # Run 2: one blank fails gating (answer 'письмо' is not present in evidence)
+    cloze_bad = json.loads(json.dumps(cloze))
+    cloze_bad["blanks"][1]["answer"] = "письмо"  # 'письмо' not in evidence!
+
+    def gen_bad(_p):
+        return json.dumps({"activities": [cloze_bad]})
+
+    res_bad = pipeline.run(
+        _anchor(),
+        generator=gen_bad,
+        out_dir=tmp_path / "out_bad",
+        cache_dir=tmp_path / "cache_bad",
+        use_cache=False
+    )
+
+    # Cloze activity should be dropped to GATE_FAILED because it lost a blank
+    assert len(res_bad.ready) == 0
+    assert len(res_bad.activities) == 1
+    assert not res_bad.activities[0].gate_result.passed
+    assert res_bad.activities[0].gate_result.status == schema.GATE_FAILED
+
+

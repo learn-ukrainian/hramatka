@@ -232,7 +232,7 @@ def make_fingerprint(**inputs) -> str:
 
 # Per-item (collection-index) gate locators look like "items[3]" / "pairs[1]".
 # Everything else ("text", None) is an ACTIVITY-level locator.
-_ITEM_LOCATOR_RE = re.compile(r"^(items|pairs)\[(\d+)\]$")
+_ITEM_LOCATOR_RE = re.compile(r"^(items|pairs|blanks)\[(\d+)\]$")
 
 def _status_rank(status: str) -> int:
     return {"pass": 0, "warn": 1, "fail": 2}[status]
@@ -424,6 +424,15 @@ def gate_activity(
             "fail",
             f"Only {len(kept)} item(s) survived per-item gating; {a_type} "
             f"requires >= {min_items} — dropping the whole activity.",
+        )
+        gr.status = schema.GATE_FAILED
+        return ir
+
+    if coll_key == "blanks" and flagged:
+        gr.add(
+            "partition",
+            "fail",
+            f"Cloze activity lost a blank ({len(flagged)} removed); dropping the whole activity.",
         )
         gr.status = schema.GATE_FAILED
         return ir

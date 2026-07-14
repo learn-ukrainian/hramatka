@@ -935,7 +935,7 @@ def _gate_cloze(
     has_gap = "{gap}" in text or "{{" in text
     if not has_gap:
         gr.add("cloze_gap", "fail", "Cloze text has no {gap}/{{N}} marker.", locator="text")
-    for blank in activity.get("blanks", []) or []:
+    for index, blank in enumerate(activity.get("blanks", []) or []):
         answer = blank.get("answer", "")
         options = blank.get("options", []) or []
         if answer and ev and answer not in ev.quote:
@@ -943,14 +943,14 @@ def _gate_cloze(
                 "cloze_answer",
                 "fail",
                 f"Cloze answer '{answer}' is not present in the source sentence.",
-                locator="text",
+                locator=f"blanks[{index}]",
             )
         if answer and answer not in options:
             gr.add(
                 "cloze_answer",
                 "fail",
                 f"Cloze answer '{answer}' is not among its own options.",
-                locator="text",
+                locator=f"blanks[{index}]",
             )
         distractors = [o for o in options if o != answer]
         token_verdicts = vesum_gate.check_tokens(
@@ -959,7 +959,12 @@ def _gate_cloze(
         worst = vesum_gate.worst_status(token_verdicts)
         if worst != "pass":
             bad = [v for v in token_verdicts if v["status"] == worst]
-            gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator="text")
+            gr.add(
+                "vesum_token",
+                worst,
+                "; ".join(v["detail"] for v in bad),
+                locator=f"blanks[{index}]",
+            )
 
 
 def _gate_mark_the_words(
@@ -1267,7 +1272,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         assessment_mode="auto_gradable",
         gate_chain="cloze.extractive.v1",
         gate_version="cloze.gates.v1",
-        partition_key=None,
+        partition_key="blanks",
         minimum_survivors=1,
         ttt_phases=(1, 2, 3),
         item_budget=1,

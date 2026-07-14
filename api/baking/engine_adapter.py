@@ -655,6 +655,9 @@ def rejected_entries(activities: list) -> list[dict]:
     out: list[dict] = []
     for index, ir in enumerate(activities, start=1):
         if ir.gate_result.status == schema.GATE_FAILED:
+            activity_type = ir.activity.get("type") if isinstance(ir.activity, dict) else None
+            if activity_type == "unknown" or activity_type not in PILOT_ACTIVITY_TYPES:
+                continue
             out.append(
                 {
                     "type": "gate-failed",
