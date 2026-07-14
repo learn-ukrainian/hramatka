@@ -168,6 +168,23 @@ const DICT = {
   'lesson.print': { uk: 'Друк', en: 'Print' }, // T_EXACT «🖨 Друк»
   'lesson.downloadJson': { uk: 'Завантажити JSON', en: 'Download JSON' },
 
+  // Clipboard export (PR #120 folded into #114 i18n): teacher/student variants + copy-as-new action.
+  // Lesson CONTENT text (anchor + activities) stays UA; only chrome labels/notices are translated here.
+  'lesson.copyAsNew': { uk: 'Створити інший урок із цього тексту', en: 'Create another lesson from this text' },
+  'lesson.copyTeacher': { uk: 'Копіювати для вчителя', en: 'Copy for teacher' },
+  'lesson.copyStudent': { uk: 'Копіювати для учня', en: 'Copy for student' },
+
+  // transient clipboard chrome notices (success/fail banners)
+  'clipboard.copiedTeacher': {
+    uk: 'Скопійовано: урок для вчителя (із відповідями).',
+    en: 'Copied: lesson for teacher (with answers).',
+  },
+  'clipboard.copiedStudent': {
+    uk: 'Скопійовано: урок для учня (без відповідей). Можна вставити в чат Zoom.',
+    en: 'Copied: lesson for student (no answers). You can paste into a Zoom chat.',
+  },
+  'clipboard.copyFailed': { uk: 'Не вдалося скопіювати. Спробуйте ще раз.', en: 'Could not copy. Please try again.' },
+
   // ---- baking card ----
   'bake.statusPrefix': { uk: 'Статус: ', en: 'Status: ' },
   'bake.failFallback': { uk: 'Не вдалося створити урок.', en: 'The lesson could not be created.' },

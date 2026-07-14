@@ -137,3 +137,174 @@ export function resolveDefaultDurationFromPref(pref: unknown): 45 | 60 | 90 {
   }
   return 60;
 }
+
+// ===== Clipboard lesson export (Sol P1-5) =====
+// Plain-text rendering of a lesson document for clipboard copy. Pure + unit-tested.
+// Teacher variant: appends «Ключ відповіді» per task + notes/provenance.
+// Student variant: NEVER includes answers, notes, or provenance — safe to share in Zoom.
+// NOTE: the rendered TEXT is lesson content (UA); only app chrome strings were i18n-folded.
+
+export interface ClipboardLessonBlock {
+  id: string;
+  phase: 1 | 2 | 3;
+  type: string;
+  mode: string;
+  activity: any;
+  answer_key: any;
+  note: string | null;
+  provenance?: any;
+}
+
+export interface ClipboardLesson {
+  title: string;
+  duration: number;
+  focus?: string | null;
+  anchor?: { text?: string } | null;
+  blocks: ClipboardLessonBlock[];
+}
+
+export type ClipboardMode = 'teacher' | 'student';
+
+const HOMEWORK_MODE = 'вдома'; // per openapi LessonBlock.mode enum: усно / письмово / вдома
+
+/** Render a single activity payload as a readable plain-text task body. */
+function renderActivityBody(activity: any): string {
+  if (!activity || typeof activity !== 'object') return '';
+  const p = activity.payload || {};
+  const lines: string[] = [];
+  const title = typeof activity.title === 'string' && activity.title ? activity.title : '';
+  if (title) lines.push(title);
+
+  const instruction =
+    typeof p.instruction === 'string' && p.instruction
+      ? p.instruction
+      : typeof p.prompt === 'string' && p.prompt
+        ? p.prompt
+        : '';
+  if (instruction && instruction !== title) lines.push(instruction);
+
+  if (Array.isArray(p.items) && p.items.length) {
+    p.items.forEach((item: any, i: number) => {
+      if (item == null) return;
+      const n = i + 1;
+      if (typeof item === 'string') {
+        lines.push(`${n}. ${item}`);
+        return;
+      }
+      const stmt =
+        typeof item.statement === 'string' ? item.statement
+        : typeof item.question === 'string' ? item.question
+        : typeof item.sentence === 'string' ? item.sentence
+        : '';
+      if (stmt) lines.push(`${n}. ${stmt}`);
+      if (Array.isArray(item.options)) {
+        item.options.forEach((opt: any, j: number) => {
+          const letter = String.fromCharCode(65 + j); // A, B, C...
+          const text = typeof opt === 'string' ? opt : (opt?.text ?? '');
+          if (text) lines.push(`   ${letter}) ${text}`);
+        });
+      }
+    });
+  }
+
+  if (typeof p.text === 'string' && p.text && !lines.includes(p.text)) {
+    lines.push(p.text);
+  }
+  if (Array.isArray(p.pairs) && p.pairs.length) {
+    p.pairs.forEach((pair: any, i: number) => {
+      if (!pair) return;
+      const l = pair.left ?? '';
+      const r = pair.right ?? '';
+      lines.push(`${i + 1}. ${l} — ${r}`);
+    });
+  }
+
+  if (typeof p.source_ref === 'string' && p.source_ref) {
+    lines.push(`(За текстом: ${p.source_ref})`);
+  }
+
+  return lines.filter(Boolean).join('\n');
+}
+
+/** Render the answer_key field as plain text (teacher-only). */
+function renderAnswerKey(answerKey: any): string {
+  if (answerKey == null || answerKey === '') return '';
+  if (typeof answerKey === 'string') return answerKey.trim();
+  try {
+    return JSON.stringify(answerKey, null, 2).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Render a lesson as plain text for the clipboard.
+ * Layout: title + duration header → anchor text → phase headers with planned tasks
+ * (mode !== 'вдома') → reserve/homework section (mode === 'вдома') → in teacher mode
+ * each task carries its «Ключ відповіді», note, and provenance appended inline.
+ */
+export function formatLessonForClipboard(
+  lesson: ClipboardLesson,
+  opts: { mode: ClipboardMode },
+): string {
+  const isTeacher = opts.mode === 'teacher';
+  const out: string[] = [];
+
+  out.push(lesson.title || 'Урок');
+  out.push(`Тривалість: ≈ ${lesson.duration} хв`);
+  if (lesson.focus) out.push(`Фокус: ${lesson.focus}`);
+  out.push('');
+
+  const anchorText = lesson.anchor?.text;
+  if (anchorText && anchorText.trim()) {
+    out.push('ТЕКСТ ДЛЯ ЧИТАННЯ');
+    out.push(anchorText.trim());
+    out.push('');
+  }
+
+  // Split blocks: planned (in-class) vs reserve/homework (mode === 'вдома').
+  const planned = [1, 2, 3].map((ph) => ({
+    phase: ph as 1 | 2 | 3,
+    blocks: lesson.blocks.filter((b) => b.phase === ph && b.mode !== HOMEWORK_MODE),
+  }));
+  const reserve = lesson.blocks.filter((b) => b.mode === HOMEWORK_MODE);
+
+  const renderBlock = (b: ClipboardLessonBlock): string[] => {
+    const body = renderActivityBody(b.activity);
+    const header = `• [${b.type}]`;
+    const block: string[] = [header];
+    if (body) block.push(body);
+    if (isTeacher) {
+      const key = renderAnswerKey(b.answer_key);
+      if (key) {
+        block.push(`Ключ відповіді: ${key}`);
+      }
+      if (b.note) block.push(`Примітка: ${b.note}`);
+      if (b.provenance) {
+        const src = b.provenance.source ?? '';
+        const gen = b.provenance.generator ?? '';
+        if (src || gen) block.push(`Походження: ${src} • ${gen}`);
+      }
+    }
+    return block;
+  };
+
+  for (const grp of planned) {
+    if (!grp.blocks.length) continue;
+    out.push(`Фаза ${grp.phase}`);
+    for (const b of grp.blocks) {
+      out.push(...renderBlock(b));
+      out.push('');
+    }
+  }
+
+  if (reserve.length) {
+    out.push('РЕЗЕРВ / ДОМАШНЄ ЗАВДАННЯ');
+    for (const b of reserve) {
+      out.push(...renderBlock(b));
+      out.push('');
+    }
+  }
+
+  return out.join('\n').trim() + '\n';
+}

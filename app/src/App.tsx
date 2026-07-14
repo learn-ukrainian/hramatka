@@ -12,8 +12,10 @@ import {
   loadLastBakeRequest,
   clearLastBakeRequest,
   resolveDefaultDurationFromPref,
+  formatLessonForClipboard,
   type BakeRequestPayload,
   type BakeProgress,
+  type ClipboardMode,
 } from './app-helpers';
 import Conductor from './Conductor';
 import { useT, statusKey, type ChromeKey } from './i18n';
@@ -227,6 +229,8 @@ export default function TeacherApp() {
   const [anchorOpen, setAnchorOpen] = useState(false);
   const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
+  // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
+  const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -257,6 +261,7 @@ export default function TeacherApp() {
     setPrintVariant(null);
     setBakeElapsedMs(0);
     resetLang(); // #106 boundary: UI language back to default UA + clear persisted choice
+    setClipboardNotice(null);
   }, [clearPoll, resetLang]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
@@ -596,6 +601,37 @@ export default function TeacherApp() {
       ...(lesson.lesson.anchor.source_url ? { sourceUrl: lesson.lesson.anchor.source_url } : {}),
     });
     navigate({ view: 'paste' });
+  };
+
+  // Sol P1-5: clipboard lesson export (teacher + student variants).
+  // Student variant is safe for Zoom share — never includes answers / notes / provenance.
+  // The *text* produced by formatLessonForClipboard is lesson content (stays UA always).
+  // Chrome notices use t() keys (added to i18n).
+  const copyLessonToClipboard = async (mode: ClipboardMode) => {
+    if (!lesson) return;
+    const text = formatLessonForClipboard(
+      {
+        title: lesson.lesson.title,
+        duration: lesson.lesson.duration,
+        focus: lesson.lesson.focus,
+        anchor: lesson.lesson.anchor,
+        blocks: lesson.lesson.blocks,
+      },
+      { mode },
+    );
+    const okKey: ChromeKey = mode === 'teacher' ? 'clipboard.copiedTeacher' : 'clipboard.copiedStudent';
+    const failKey: ChromeKey = 'clipboard.copyFailed';
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setClipboardNotice({ kind: 'ok', key: okKey });
+      } else {
+        setClipboardNotice({ kind: 'fail', key: failKey });
+      }
+    } catch {
+      setClipboardNotice({ kind: 'fail', key: failKey });
+    }
+    window.setTimeout(() => setClipboardNotice(null), 5000);
   };
 
   // #93 item 3: robust poll (F2 hardened)
@@ -1111,6 +1147,25 @@ export default function TeacherApp() {
         </div>
       )}
 
+      {clipboardNotice && (
+        <div
+          className={`banner ${clipboardNotice.kind === 'ok' ? 'honest' : 'fail'} clipboard-notice`}
+          role="status"
+          data-testid="clipboard-notice"
+        >
+          <span className="ic">{clipboardNotice.kind === 'ok' ? '✓' : '!'}</span>
+          <span>{t(clipboardNotice.key)}</span>
+          <button
+            type="button"
+            onClick={() => setClipboardNotice(null)}
+            style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.7 }}
+            aria-label={t('close.aria')}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* #93 item1: localized loading state (never blank page) */}
       {initLoading && (
         <main style={{ padding: 40, color: 'var(--ink-soft)' }}>{t('loading')}</main>
@@ -1325,9 +1380,32 @@ export default function TeacherApp() {
                       className="btn ghost"
                       onClick={copyLessonAsNew}
                       disabled={loading}
+                      data-testid="copy-lesson-as-new"
                     >
-                      {t('lesson.copy')}
+                      {t('lesson.copyAsNew')}
                     </button>
+                  )}
+                  {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => copyLessonToClipboard('teacher')}
+                        disabled={loading}
+                        data-testid="copy-clipboard-teacher"
+                      >
+                        {t('lesson.copyTeacher')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => copyLessonToClipboard('student')}
+                        disabled={loading}
+                        data-testid="copy-clipboard-student"
+                      >
+                        {t('lesson.copyStudent')}
+                      </button>
+                    </>
                   )}
                   {lesson && lesson.lesson.accepted && (
                     <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')}>{t('lesson.conduct')}</button>
@@ -1439,6 +1517,14 @@ export default function TeacherApp() {
                           {t('run.toolbarChip', { level: lesson.lesson.level, duration: lesson.lesson.duration })}
                         </span>
                         <span className="student-toolbar-spacer" />
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          data-testid="copy-clipboard-student-run"
+                          onClick={() => copyLessonToClipboard('student')}
+                        >
+                          {t('lesson.copyStudent')}
+                        </button>
                         <button
                           type="button"
                           className="btn primary"

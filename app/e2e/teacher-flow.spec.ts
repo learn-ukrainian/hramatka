@@ -137,9 +137,11 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
       await page.waitForTimeout(200);
     }
 
-    // Now accept should work
+    // Now accept should work. Assert the accepted CHIP specifically (exact «Прийнято»);
+    // the meta line also contains «Прийнято: так», so a loose regex matches 2 elements and
+    // trips Playwright strict mode nondeterministically under CI timing.
     await acceptBtn.click();
-    await expect(page.getByText(/Прийнято|accepted/i)).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('span.chip.ok').getByText('Прийнято', { exact: true })).toBeVisible({ timeout: 5000 });
 
     // Return to draft
     await page.getByRole('button', { name: /Зберегти як чернетку/ }).click();
@@ -661,5 +663,101 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await retryBtn.click();
     await page.waitForSelector('.block', { timeout: 15000 });
     await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+  });
+
+  // Sol P1-5: clipboard lesson export — student variant never includes answers/«Ключ відповіді».
+  test('clipboard student copy yields text with tasks but no answer_key content', async ({ page, context }) => {
+    // Grant clipboard-permission so navigator.clipboard.writeText works headlessly.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    // Use a distinct anchor phrase so we can assert the body is captured.
+    await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки експорту в буфер обміну.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    await page.getByTestId('copy-clipboard-student').click();
+
+    // UA success banner surfaces.
+    await expect(page.getByTestId('clipboard-notice')).toContainText(/Скопійовано.*учня/i);
+
+    // Read the actual captured clipboard text.
+    const captured = await page.evaluate(async () => {
+      const txt = await navigator.clipboard.readText();
+      return txt;
+    });
+
+    // Positive: a real task body was captured (the golden lesson title + a task chip).
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured).toContain('Золотий урок');
+    expect(captured).toContain('ТЕКСТ ДЛЯ ЧИТАННЯ');
+    expect(captured).toContain('Тривалість: ≈ 60 хв');
+    // Sanity: any task chip header is present.
+    expect(/\[true-false\]|\[cloze\]|\[quiz\]|\[match-up\]/.test(captured)).toBe(true);
+
+    // Negative: student copy MUST NOT contain answer-key content or its header.
+    expect(captured).not.toContain('Ключ відповіді');
+    // The golden true-false answer_key is the literal «правда» — student variant excludes it.
+    expect(captured).not.toMatch(/Примітка|Походження/);
+  });
+
+  test('clipboard student copy is available from the run-mode student toolbar', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки буфера в режимі учня.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    await page.getByTestId('enter-student-mode-btn').click();
+    await expect(page.getByTestId('student-surface')).toBeVisible();
+
+    await page.getByTestId('copy-clipboard-student-run').click();
+    await expect(page.getByTestId('clipboard-notice')).toContainText(/Скопійовано.*учня/i);
+
+    const captured = await page.evaluate(async () => await navigator.clipboard.readText());
+    expect(captured).toContain('Золотий урок');
+    expect(captured).toContain('ТЕКСТ ДЛЯ ЧИТАННЯ');
+    expect(captured).not.toContain('Ключ відповіді');
+  });
+
+  test('teacher copy includes «Ключ відповіді» (verify teacher variant differs)', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки вчительського буфера.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    await page.getByTestId('copy-clipboard-teacher').click();
+    await expect(page.getByTestId('clipboard-notice')).toContainText(/Скопійовано.*вчителя/i);
+
+    const captured = await page.evaluate(async () => await navigator.clipboard.readText());
+    expect(captured).toContain('Ключ відповіді');
+  });
+
+  test('clone-to-form action is preserved as «Створити інший урок із цього тексту»', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки кнопки клонування.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+
+    const cloneBtn = page.getByTestId('copy-lesson-as-new');
+    await expect(cloneBtn).toHaveText(/Створити інший урок із цього тексту/);
+    await cloneBtn.click();
+    // Form is restored on the paste view, with the anchor text pre-filled.
+    await expect(page.getByPlaceholder(/Вставте/)).toHaveValue('Текст для перевірки кнопки клонування.');
   });
 });
