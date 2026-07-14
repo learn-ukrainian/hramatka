@@ -57,7 +57,7 @@ async function ackAllWarnings(page: Page) {
 }
 
 async function acceptLesson(page: Page) {
-  const acceptBtn = page.getByRole('button', { name: /Прийняти урок/ });
+  const acceptBtn = page.getByRole('button', { name: /Прийняти заняття/ });
   if (await acceptBtn.isVisible()) {
     await acceptBtn.click();
     await expect(page.locator('.lesson-actions .chip.ok').filter({ hasText: 'Прийнято' })).toBeVisible({ timeout: 8000 });

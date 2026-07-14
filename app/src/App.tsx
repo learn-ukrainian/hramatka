@@ -17,6 +17,8 @@ import {
 } from './app-helpers';
 import Conductor from './Conductor';
 import { useT, statusKey, type ChromeKey } from './i18n';
+import ReviewWorkbench from './ReviewWorkbench';
+import { splitReviewBlocks, type LessonDuration } from './review-helpers';
 
 /**
  * The error banner holds either translated client chrome (`key`) or a raw server
@@ -729,36 +731,19 @@ export default function TeacherApp() {
 
   // ===== Warning ack (REVIEW only) =====
   const ackWarning = async (blockId: string) => {
-    if (!lesson || !currentLessonId || !csrf) return;
-    const expected = lesson.revision;
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/api/lessons/${currentLessonId}/blocks/${blockId}/accept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-        body: JSON.stringify({ expected_revision: expected }),
-      });
-      if (res.ok) {
-        await res.json();
-        // reload to get fresh
-        await openLesson(currentLessonId, 'review');
-      } else {
-        const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
-        if (e.code === 'revision_conflict') {
-          setError(errKey('err.lessonChangedReload'));
-          await openLesson(currentLessonId, 'review');
-        } else {
-          setError(errOr(e.message, 'err.ackFailed'));
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
+    await reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision }),
+    });
   };
 
   const allVisibleWarningsAcked = (l: LessonResource | null) => {
     if (!l) return true;
-    const warns = l.lesson.blocks.filter(b => b.mark === 'warn').map(b => b.id);
+    const warns = splitReviewBlocks(l.lesson.blocks, l.lesson.duration)
+      .visible
+      .filter((block) => block.mark === 'warn')
+      .map((block) => block.id);
     const acks = [...(l.warning_acknowledgements || []), ...localAcks];
     return warns.every(w => acks.includes(w));
   };
@@ -779,7 +764,7 @@ export default function TeacherApp() {
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
-        setLesson(lr);
+        applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
@@ -800,6 +785,7 @@ export default function TeacherApp() {
   const returnToDraft = async () => {
     if (!lesson || !currentLessonId || !csrf) return;
     setLoading(true);
+    setError(null);
     try {
       const res = await apiFetch(`/api/lessons/${currentLessonId}/draft`, {
         method: 'POST',
@@ -808,11 +794,16 @@ export default function TeacherApp() {
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
-        setLesson(lr);
+        applyLessonResource(lr);
         await loadCatalog();
       } else {
-        const e = await res.json().catch(() => ({}));
-        setError(errOr((e as any).message, 'err.draftFailed'));
+        const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+        if (e.code === 'revision_conflict') {
+          setError(errKey('err.lessonChangedReload'));
+          await handleRevisionConflict();
+        } else {
+          setError(errOr(e.message, 'err.draftFailed'));
+        }
       }
     } finally { setLoading(false); }
   };
@@ -880,6 +871,90 @@ export default function TeacherApp() {
       setError(errOr(e.message, 'err.genericDot'));
     }
   }
+
+  const applyLessonResource = (lr: LessonResource) => {
+    setLesson(lr);
+    setLocalAcks(lr.warning_acknowledgements || []);
+  };
+
+  const handleRevisionConflict = async () => {
+    if (currentLessonId) await openLesson(currentLessonId, 'review');
+  };
+
+  const reviewMutation = async (
+    path: string,
+    init: RequestInit,
+    opts?: { reloadOnConflict?: boolean },
+  ): Promise<LessonResource | null> => {
+    if (!lesson || !currentLessonId || !csrf) return null;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(path, init);
+      if (res.ok) {
+        const lr: LessonResource = await res.json();
+        applyLessonResource(lr);
+        return lr;
+      }
+      const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+      if (e.code === 'revision_conflict') {
+        setError(errKey('err.lessonChangedReload'));
+        if (opts?.reloadOnConflict !== false && currentLessonId) {
+          await handleRevisionConflict();
+        }
+      } else {
+        setError(errOr(e.message, 'err.generic'));
+      }
+      return null;
+    } catch {
+      setError(errKey('err.generic'));
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const moveBlock = (blockId: string, direction: 'up' | 'down') =>
+    reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision, direction }),
+    });
+
+  const removeBlock = (blockId: string) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision }),
+    });
+
+  const includeReserveBlock = (blockId: string) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/include`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision }),
+    });
+
+  const restoreRejected = (rejectedIndex: number) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/rejected/${rejectedIndex}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision, phase: 2 }),
+    });
+
+  const selectDuration = (duration: LessonDuration) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/duration`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision, duration }),
+    });
+
+  const replaceActivity = (blockId: string, activity: Record<string, unknown>) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/activity`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ expected_revision: lesson!.revision, activity }),
+    });
 
   // Render blocks grouped by phase using REAL ActivityPlayer
   const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => {
@@ -1354,14 +1429,6 @@ export default function TeacherApp() {
                   </div>
                   )}
 
-                  {currentMode === 'review' && lesson.lesson.anchor?.text && (
-                    <details className="anchor-panel noprint-student" data-testid="anchor-panel-review">
-                      <summary>{t('anchor.summary')}</summary>
-                      <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
-                      {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
-                    </details>
-                  )}
-
                   {currentMode === 'run' && (
                     <>
                       <div className="rolebanner student" data-testid="student-banner">
@@ -1419,27 +1486,21 @@ export default function TeacherApp() {
                   )}
 
                   {currentMode === 'review' && (
-                    <div className={`modes ${currentMode}`}>
-                      {renderBlocks(lesson, 'review')}
-                    </div>
-                  )}
-
-                  {currentMode === 'review' && (
-                    <div className="accept-bar">
-                      {!allVisibleWarningsAcked(lesson) && (
-                        <div className="warn-note">{t('accept.warnNote')}</div>
-                      )}
-                      <button
-                        className="btn primary"
-                        onClick={acceptLesson}
-                        disabled={loading || !allVisibleWarningsAcked(lesson) || lesson.lesson.accepted}
-                      >
-                        {t('accept.btn', { rev: lesson.revision })}
-                      </button>
-                      <button className="btn ghost" onClick={returnToDraft} disabled={loading || !lesson.lesson.accepted}>
-                        {t('accept.draft')}
-                      </button>
-                    </div>
+                    <ReviewWorkbench
+                      resource={lesson}
+                      showAnswers={showAnswers}
+                      loading={loading}
+                      onDurationChange={selectDuration}
+                      onMoveBlock={moveBlock}
+                      onRemoveBlock={removeBlock}
+                      onIncludeReserve={includeReserveBlock}
+                      onRestoreRejected={restoreRejected}
+                      onAckWarning={ackWarning}
+                      onSaveActivity={replaceActivity}
+                      onAcceptLesson={acceptLesson}
+                      onReturnToDraft={returnToDraft}
+                      allWarningsAcked={allVisibleWarningsAcked(lesson)}
+                    />
                   )}
 
                   {currentMode === 'conduct' && lesson && (

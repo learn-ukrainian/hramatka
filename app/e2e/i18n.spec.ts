@@ -102,12 +102,12 @@ test.describe('Hramatka dual-language chrome E2E (stub)', () => {
 
     // Review chrome in English
     await page.waitForSelector('.block', { timeout: 15000 });
-    await expect(page.getByRole('heading', { name: /Phase 1/ })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: /Test 1/ })).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('button', { name: 'Review mode' })).toBeVisible();
     await expect(page.locator('.teacher-key strong').first()).toHaveText('Answer key:');
     // Lesson CONTENT stays Ukrainian even with EN chrome (the anchor text is unchanged UA)
     // (the ActivityPlayer renders Ukrainian content; a Cyrillic activity string is present)
-    await expect(page.locator('.activity-wrapper').first()).toContainText(/[Ѐ-ӿ]/);
+    await expect(page.locator('.bcontent').first()).toContainText(/[Ѐ-ӿ]/);
 
     // Ack any warnings, then accept (EN labels)
     const ackButtons = page.locator('.ack-btn');

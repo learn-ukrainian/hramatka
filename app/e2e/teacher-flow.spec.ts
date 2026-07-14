@@ -94,13 +94,13 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByText(/бакінг|статус|готово/i)).toBeVisible({ timeout: 10000 });
 
     // wait for lesson view with blocks
-    await page.waitForSelector('[data-activity-player], .block', { timeout: 15000 });
+    await page.waitForSelector('[data-activity-player], .dblock, .block', { timeout: 15000 });
 
     // verify all 9 types are present via their labels or wrappers
     const expectedTypes = ['true-false','cloze','match-up','quiz','mark-the-words','fill-in','error-correction','text-questions','short-writing'];
     for (const t of expectedTypes) {
       // either data attr or title containing type-ish
-      const found = await page.locator(`[data-activity-type="${t}"], [data-activity-player="${t}"], .block:has-text("${t}")`).count();
+      const found = await page.locator(`[data-activity-type="${t}"], [data-activity-player="${t}"], .dblock:has-text("${t}"), .block:has-text("${t}")`).count();
       expect(found, `block for ${t} should be visible`).toBeGreaterThan(0);
     }
 
@@ -118,15 +118,15 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByPlaceholder(/Вставте/).fill(text);
     await page.getByRole('button', { name: /Згенерувати/ }).click();
 
-    await page.waitForSelector('.block.warn', { timeout: 15000 });
+    await page.waitForSelector('.dblock.warn, .block.warn', { timeout: 15000 });
 
     // There should be visible warnings
-    const warns = page.locator('.block.warn');
+    const warns = page.locator('.dblock.warn, .block.warn');
     const count = await warns.count();
     expect(count).toBeGreaterThan(0);
 
     // The blocked message (warn note) is visible before acks; the accept is disabled until acks.
-    const acceptBtn = page.getByRole('button', { name: /Прийняти урок/ });
+    const acceptBtn = page.getByRole('button', { name: /Прийняти заняття/ });
     await expect(page.getByText(/підтверд(іть|ити) (усі|всі) попередження|warning_acknowledgements/i)).toBeVisible();
 
     // Ack all visible warns
@@ -142,7 +142,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByText(/Прийнято|accepted/i)).toBeVisible({ timeout: 5000 });
 
     // Return to draft
-    await page.getByRole('button', { name: /Повернути в чернетку/ }).click();
+    await page.getByRole('button', { name: /Зберегти як чернетку/ }).click();
     await expect(page.getByText(/чернетку|draft/i)).toBeVisible({ timeout: 3000 });
   });
 
@@ -171,7 +171,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByPlaceholder(/Вставте український текст/).fill(text);
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
 
-    await page.waitForSelector('.lesson-view, .block', { timeout: 15000 });
+    await page.waitForSelector('.lesson-view, .dblock', { timeout: 15000 });
     const lessonUrl = await page.url();
     expect(lessonUrl).toMatch(/#\/lessons\//);
 
@@ -179,7 +179,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.goto(`${APP}/teacher/`);
     await page.goto(lessonUrl);
     await expect(page.locator('.lesson-view')).toBeVisible({ timeout: 8000 });
-    await page.waitForSelector('.block', { timeout: 10000 });
+    await page.waitForSelector('.dblock', { timeout: 10000 });
   });
 
   // #93 item2: catalog auto-loads
@@ -192,7 +192,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     const text = 'Текст для перевірки авто-каталогу.';
     await page.getByPlaceholder(/Вставте український текст/).fill(text);
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-    await page.waitForSelector('.block', { timeout: 15000 });
+    await page.waitForSelector('.dblock, .block', { timeout: 15000 });
 
     // navigate back to hub (paste/catalog) — this route change triggers auto loadCatalog via sessionReady gate
     await page.getByRole('button', { name: /До списку/ }).click();
@@ -213,9 +213,9 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
 
     await expect(page.getByText(/готується|статус/i)).toBeVisible({ timeout: 5000 });
-    await page.waitForSelector('.block', { timeout: 15000 });
+    await page.waitForSelector('.dblock, .block', { timeout: 15000 });
 
-    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+    await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(9, { timeout: 5000 });
     const staleCount = await page.locator('text=завдання складено').count();
     expect(staleCount).toBe(0);
   });
@@ -301,8 +301,8 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     });
 
     await page.getByRole('button', { name: /Створити урок ще раз із цим текстом/ }).click();
-    await page.waitForSelector('.block', { timeout: 15000 });
-    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+    await page.waitForSelector('.dblock, .block', { timeout: 15000 });
+    await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(9, { timeout: 5000 });
   });
 
   test('help overlay opens from header and shows Ukrainian guidance', async ({ page }) => {
@@ -347,7 +347,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
 
     // Wait for lesson content (blocks)
-    await page.waitForSelector('.block', { timeout: 15000 });
+    await page.waitForSelector('.dblock, .block', { timeout: 15000 });
 
     // Ack any warnings to enable accept
     const ackButtons = page.locator('.ack-btn');
@@ -360,7 +360,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     }
 
     // Accept
-    const acceptBtn = page.getByRole('button', { name: /Прийняти урок/ });
+    const acceptBtn = page.getByRole('button', { name: /Прийняти заняття/ });
     if (await acceptBtn.isVisible()) {
       await acceptBtn.click();
     }
@@ -419,7 +419,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.locator('.cond-sum')).toBeVisible({ timeout: 10000 });
   });
 
-  test('review mode shows collapsible anchor «Текст» with source text', async ({ page }) => {
+  test('review mode shows the source text inline in the document', async ({ page }) => {
     const anchorSnippet = 'Унікальний якірний текст для перевірки рендеру в каталозі.';
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
@@ -427,13 +427,11 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await page.getByPlaceholder(/Вставте/).fill(anchorSnippet);
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-    await page.waitForSelector('.block', { timeout: 15000 });
+    await page.waitForSelector('.dblock, .block', { timeout: 15000 });
 
-    const panel = page.getByTestId('anchor-panel-review');
-    await expect(panel).toBeVisible();
-    await expect(panel.locator('summary')).toHaveText('Текст');
-    await panel.locator('summary').click();
-    await expect(panel.getByTestId('anchor-text-body')).toContainText(anchorSnippet);
+    // Document-first review workbench keeps the anchor always visible inside the paper,
+    // plus the print-only copy stays attached for the teacher print stylesheet.
+    await expect(page.locator('.review-paper .anchorbody')).toContainText(anchorSnippet);
     await expect(page.getByTestId('anchor-print')).toBeAttached();
   });
 

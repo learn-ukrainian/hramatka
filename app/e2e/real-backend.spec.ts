@@ -15,7 +15,7 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   );
   await page.locator('select').selectOption('45');
   await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-  await expect(page.locator('.lesson-view .block')).toHaveCount(6, { timeout: 15_000 });
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 15_000 });
   await expect(page.locator('[data-activity-player]')).toHaveCount(6);
 
   const revisionBefore = await page.locator('.meta').textContent();
@@ -26,13 +26,13 @@ test('real teacher loop preserves session, status, revisions, and direct links',
     await page.locator('.ack-btn').first().click();
     await expect(page.locator('.ack-btn')).toHaveCount(remaining);
   }
-  await page.getByRole('button', { name: /Прийняти урок/ }).click();
+  await page.getByRole('button', { name: /Прийняти заняття/ }).click();
   await expect(page.getByText('Прийнято', { exact: true })).toBeVisible();
   await expect(page.locator('.meta')).toContainText(`Ревізія: ${initialRevision + warnings + 1}`);
 
   const directUrl = page.url();
   await page.reload();
   await expect(page).toHaveURL(directUrl);
-  await expect(page.locator('.lesson-view .block')).toHaveCount(6, { timeout: 10_000 });
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 10_000 });
   await expect(page.getByText('Прийнято', { exact: true })).toBeVisible();
 });

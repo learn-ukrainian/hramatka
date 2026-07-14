@@ -152,6 +152,135 @@ function bakeProgressFor(l) {
   };
 }
 
+const REVIEW_PHASE_BUDGETS = {
+  45: { 1: 2, 2: 3, 3: 1 },
+  60: { 1: 3, 2: 4, 3: 2 },
+  90: { 1: 4, 2: 5, 3: 3 },
+};
+const TEACHER_REMOVAL_REASON = 'вилучено вчителем';
+const RESTORED_WARNING_NOTE = 'повернено з відхилених — погляньте ще раз';
+const EDITED_WARNING_NOTE = 'змінено вчителем — підтвердьте ще раз перед прийняттям';
+
+function splitReviewBlocks(lesson) {
+  const budgets = REVIEW_PHASE_BUDGETS[lesson.duration] || REVIEW_PHASE_BUDGETS[60];
+  const seen = { 1: 0, 2: 0, 3: 0 };
+  const visible = [];
+  const reserve = [];
+  for (const block of lesson.blocks) {
+    const phase = block.phase;
+    if (seen[phase] < budgets[phase]) {
+      visible.push(block);
+      seen[phase] += 1;
+    } else {
+      reserve.push(block);
+    }
+  }
+  return { visible, reserve };
+}
+
+function blockIndex(blocks, blockId) {
+  return blocks.findIndex((b) => b.id === blockId);
+}
+
+function phaseStartIndex(blocks, phase) {
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].phase === phase) return i;
+  }
+  const lower = blocks.map((b, i) => (b.phase < phase ? i : -1)).filter((i) => i >= 0);
+  return lower.length ? lower[lower.length - 1] + 1 : 0;
+}
+
+function moveBlockInLesson(lesson, blockId, direction) {
+  const blocks = lesson.blocks;
+  const index = blockIndex(blocks, blockId);
+  if (index < 0) throw new Error('block_not_found');
+  const delta = direction === 'up' ? -1 : 1;
+  const block = blocks[index];
+  const neighborIndex = index + delta;
+  if (neighborIndex >= 0 && neighborIndex < blocks.length && blocks[neighborIndex].phase === block.phase) {
+    [blocks[index], blocks[neighborIndex]] = [blocks[neighborIndex], block];
+    return;
+  }
+  const targetPhase = block.phase + delta;
+  if (targetPhase < 1 || targetPhase > 3) throw new Error('invalid_move');
+  block.phase = targetPhase;
+}
+
+function removeBlockToRejected(lesson, blockId) {
+  const blocks = lesson.blocks;
+  const index = blockIndex(blocks, blockId);
+  if (index < 0) throw new Error('block_not_found');
+  const removed = blocks.splice(index, 1)[0];
+  lesson.rejected = lesson.rejected || [];
+  lesson.rejected.push({
+    type: removed.type,
+    activity: JSON.parse(JSON.stringify(removed.activity)),
+    reason: TEACHER_REMOVAL_REASON,
+  });
+}
+
+function includeReserveBlock(lesson, blockId) {
+  const { reserve } = splitReviewBlocks(lesson);
+  if (!reserve.some((b) => b.id === blockId)) throw new Error('not_reserve');
+  const blocks = lesson.blocks;
+  const index = blockIndex(blocks, blockId);
+  const block = blocks.splice(index, 1)[0];
+  blocks.splice(phaseStartIndex(blocks, block.phase), 0, block);
+}
+
+function restoreRejectedEntry(lesson, rejectedIndex, phase = 2) {
+  const rejected = lesson.rejected || [];
+  if (rejectedIndex < 0 || rejectedIndex >= rejected.length) throw new Error('rejected_not_found');
+  const entry = rejected.splice(rejectedIndex, 1)[0];
+  const activity = JSON.parse(JSON.stringify(entry.activity));
+  const blockId = `restored-${crypto.randomUUID().slice(0, 8)}`;
+  lesson.blocks.splice(phaseStartIndex(lesson.blocks, phase), 0, {
+    id: blockId,
+    phase,
+    type: activity.type,
+    mode: 'письмово',
+    activity,
+    answer_key: JSON.parse(JSON.stringify(activity.answer_key || {})),
+    mark: 'warn',
+    note: RESTORED_WARNING_NOTE,
+    edited: false,
+    provenance: { source: 'teacher', generator: 'teacher-restore', gates: [], external_options: false },
+  });
+  return blockId;
+}
+
+function replaceBlockActivity(lesson, blockId, replacement) {
+  const blocks = lesson.blocks;
+  const index = blockIndex(blocks, blockId);
+  if (index < 0) throw new Error('block_not_found');
+  const block = blocks[index];
+  block.type = replacement.type;
+  block.activity = JSON.parse(JSON.stringify(replacement));
+  block.answer_key = JSON.parse(JSON.stringify(replacement.answer_key || {}));
+  block.edited = true;
+  if (block.mark === 'warn') {
+    block.note = EDITED_WARNING_NOTE;
+  }
+  return block.mark === 'warn';
+}
+
+function lessonResource(l) {
+  return {
+    lesson_id: l.id,
+    revision: l.revision,
+    accepted_at: l.accepted_at,
+    accepted_revision: l.accepted_revision,
+    warning_acknowledgements: l.acks || [],
+    lesson: l.lesson,
+  };
+}
+
+function bumpLesson(l) {
+  l.revision += 1;
+  l.updated_at = new Date().toISOString();
+  if (l.lesson) l.lesson.updated_at = l.updated_at;
+}
+
 // In-memory stub state (dev only)
 const state = {
   session: null, // { teacher, expires_at, csrf_token, rawSecretForDev }
@@ -475,18 +604,146 @@ const server = http.createServer(async (req, res) => {
     if (body.expected_revision !== l.revision) {
       return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
     }
-    const block = l.lesson.blocks.find(b => b.id === bid);
+    const block = splitReviewBlocks(l.lesson).visible.find(b => b.id === bid);
     if (!block || block.mark !== 'warn' || l.acks.includes(bid)) {
       return sendJSON(res, 404, errorBody('warning_block_not_found', 'Warning block not found.'));
     }
     l.acks.push(bid);
-    l.revision += 1;
-    l.updated_at = new Date().toISOString();
-    return sendJSON(res, 200, {
-      lesson_id: lid,
-      revision: l.revision,
-      warning_acknowledgements: l.acks,
-    });
+    bumpLesson(l);
+    return sendJSON(res, 200, lessonResource(l));
+  }
+
+  const moveMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/blocks\/([^/]+)\/move$/);
+  if (moveMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = moveMatch[1];
+    const bid = moveMatch[2];
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    try {
+      moveBlockInLesson(l.lesson, bid, body.direction);
+      bumpLesson(l);
+      return sendJSON(res, 200, lessonResource(l));
+    } catch {
+      return sendJSON(res, 404, errorBody('lesson_block_not_found', 'Lesson block not found.'));
+    }
+  }
+
+  const removeMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/blocks\/([^/]+)\/remove$/);
+  if (removeMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = removeMatch[1];
+    const bid = removeMatch[2];
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    try {
+      removeBlockToRejected(l.lesson, bid);
+      l.acks = (l.acks || []).filter((id) => id !== bid);
+      bumpLesson(l);
+      return sendJSON(res, 200, lessonResource(l));
+    } catch {
+      return sendJSON(res, 404, errorBody('lesson_block_not_found', 'Lesson block not found.'));
+    }
+  }
+
+  const includeMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/blocks\/([^/]+)\/include$/);
+  if (includeMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = includeMatch[1];
+    const bid = includeMatch[2];
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    try {
+      includeReserveBlock(l.lesson, bid);
+      bumpLesson(l);
+      return sendJSON(res, 200, lessonResource(l));
+    } catch {
+      return sendJSON(res, 409, errorBody('review_mutation_invalid', 'Block is not currently in reserve.', false, lid));
+    }
+  }
+
+  const activityMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/blocks\/([^/]+)\/activity$/);
+  if (activityMatch && method === 'PUT') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = activityMatch[1];
+    const bid = activityMatch[2];
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    const activity = body.activity;
+    if (!activity || !activity.type || !activity.payload) {
+      return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    }
+    try {
+      const wasWarn = replaceBlockActivity(l.lesson, bid, activity);
+      if (wasWarn) {
+        l.acks = (l.acks || []).filter((id) => id !== bid);
+      }
+      bumpLesson(l);
+      return sendJSON(res, 200, lessonResource(l));
+    } catch {
+      return sendJSON(res, 404, errorBody('lesson_block_not_found', 'Lesson block not found.'));
+    }
+  }
+
+  const restoreMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/rejected\/(\d+)\/restore$/);
+  if (restoreMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = restoreMatch[1];
+    const rejIndex = Number(restoreMatch[2]);
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    try {
+      restoreRejectedEntry(l.lesson, rejIndex, body.phase || 2);
+      bumpLesson(l);
+      return sendJSON(res, 200, lessonResource(l));
+    } catch {
+      return sendJSON(res, 404, errorBody('rejected_entry_not_found', 'Rejected entry not found.'));
+    }
+  }
+
+  const durationMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/duration$/);
+  if (durationMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = durationMatch[1];
+    const l = state.lessons[lid];
+    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (body.expected_revision !== l.revision) {
+      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
+    }
+    const duration = body.duration;
+    if (![45, 60, 90].includes(duration)) {
+      return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    }
+    l.lesson.duration = duration;
+    bumpLesson(l);
+    return sendJSON(res, 200, lessonResource(l));
   }
 
   // Accept lesson
@@ -501,7 +758,7 @@ const server = http.createServer(async (req, res) => {
     if (body.expected_revision !== l.revision) {
       return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
     }
-    const warns = l.lesson.blocks.filter(b => b.mark === 'warn').map(b => b.id);
+    const warns = splitReviewBlocks(l.lesson).visible.filter(b => b.mark === 'warn').map(b => b.id);
     const unacked = warns.filter(w => !l.acks.includes(w));
     if (unacked.length > 0) {
       return sendJSON(res, 409, errorBody('warning_acknowledgements_required', 'Acknowledge every visible warning before accepting this lesson.', false, lid));
@@ -509,18 +766,9 @@ const server = http.createServer(async (req, res) => {
     l.accepted = true;
     l.accepted_at = new Date().toISOString();
     l.accepted_revision = l.revision;
-    l.revision += 1;
-    l.updated_at = new Date().toISOString();
-    // also stamp the inner lesson doc so client UI sees .lesson.accepted
+    bumpLesson(l);
     if (l.lesson) l.lesson.accepted = true;
-    return sendJSON(res, 200, {
-      lesson_id: lid,
-      revision: l.revision,
-      accepted_at: l.accepted_at,
-      accepted_revision: l.accepted_revision,
-      warning_acknowledgements: l.acks,
-      lesson: l.lesson,
-    });
+    return sendJSON(res, 200, lessonResource(l));
   }
 
   // Return to draft
@@ -538,17 +786,9 @@ const server = http.createServer(async (req, res) => {
     l.accepted = false;
     l.accepted_at = null;
     l.accepted_revision = null;
-    l.revision += 1;
-    l.updated_at = new Date().toISOString();
+    bumpLesson(l);
     if (l.lesson) l.lesson.accepted = false;
-    return sendJSON(res, 200, {
-      lesson_id: lid,
-      revision: l.revision,
-      accepted_at: null,
-      accepted_revision: null,
-      warning_acknowledgements: l.acks,
-      lesson: l.lesson,
-    });
+    return sendJSON(res, 200, lessonResource(l));
   }
 
   // 404 for unknown

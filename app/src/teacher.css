@@ -382,7 +382,153 @@ textarea, input, select {
   display: none !important;
 }
 
-/* extend print from demo (tokens ensure paper bg etc) */
+/* ===== Review workbench (document-first) ===== */
+.review-workbench { margin-top: 8px; }
+.review-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.review-toolbar .sub { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.duration-picker { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.duration-label { font-size: 12.5px; color: var(--ink-soft); }
+.duration-hint { font-size: 12px; color: var(--ink-soft); }
+button.choice {
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  background: var(--card);
+}
+button.choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.paper.review-paper {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: var(--shadow);
+  padding: 30px 36px;
+  font-size: 15.5px;
+  line-height: 1.66;
+}
+.docsheet-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+.docsheet-meta { margin: 0 0 6px; color: var(--ink-soft); font-size: 13px; }
+.dochead {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--accent);
+  padding: 16px 0 4px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dochead .pn { font-style: italic; color: var(--wheat); }
+.dochead .pd {
+  margin-left: auto;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+.anchorbody { white-space: pre-wrap; font-size: 14.5px; margin-bottom: 8px; }
+
+.dblock {
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.dblock.editing {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.dblock .type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--accent);
+  font-weight: 700;
+  display: block;
+  margin-bottom: 4px;
+}
+.dblock .type .mode-chip {
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 6px;
+}
+.dblock.warn { background: var(--warn-soft); border-radius: 6px; padding-left: 8px; padding-right: 8px; }
+.dblock.edited { border-style: dashed; }
+.dblock.empty-phase p { color: var(--ink-soft); font-size: 13.5px; margin: 4px 0; }
+
+.dmargin {
+  padding: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.dmargin .chip { display: inline-block; margin-bottom: 6px; margin-right: 6px; }
+.mnote { display: block; margin-top: 5px; line-height: 1.45; }
+.mtools {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.mtools button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12.5px;
+  background: var(--card);
+}
+.mtools button.accept { color: var(--ok); border-color: var(--ok); }
+
+.reserve-tray, .rejected-tray { margin-top: 14px; }
+.reserve-head, .rejected-head { font-size: 13.5px; color: var(--ink-soft); margin: 0 0 6px; }
+.reserve-block { opacity: .72; }
+.rejected-block { opacity: .85; }
+.rejected-type { color: var(--bad) !important; }
+.link-btn {
+  text-decoration: underline;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.activity-editor {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--paper);
+  margin: 6px 0;
+}
+.activity-editor .editor-group { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.activity-editor .editor-type-label { font-weight: 600; color: var(--accent); margin: 0 0 8px; font-size: 13px; }
+.activity-editor .editor-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.activity-editor .editor-errors ul { margin: 0; padding-left: 18px; }
+
+.bcontent { margin: 4px 0; }
+
+@media (max-width: 760px) {
+  .paper.review-paper { padding: 18px 16px; }
+}
 @media print {
   .appbar, .banner, .lesson-actions, .accept-bar, .footer, button, .noprint { display: none !important; }
   .lesson-view { max-width: 100%; padding: 0; }
