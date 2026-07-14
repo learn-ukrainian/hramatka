@@ -96,6 +96,7 @@ class _TelemetryState:
     calls_done: int | None = None
     calls_planned: int | None = None
     step: str | None = None
+    duration_fallback: dict[str, Any] | None = None
 
 
 @dataclass
@@ -110,6 +111,7 @@ class TelemetryContext:
     trace_dir: Path | None = None
     traces: list[dict] = field(default_factory=list)
     activity_types: list[str] = field(default_factory=list)
+    duration_fallback: dict[str, Any] | None = None
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -120,12 +122,14 @@ class TelemetryContext:
                 calls_done=self.calls_done,
                 calls_planned=self.calls_planned,
                 step=self.step,
+                duration_fallback=self.duration_fallback,
             )
         else:
             self.traces = self._state.traces
             self.calls_done = self._state.calls_done
             self.calls_planned = self._state.calls_planned
             self.step = self._state.step
+            self.duration_fallback = self._state.duration_fallback
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -177,6 +181,8 @@ class TelemetryContext:
                 "calls_done": self.calls_done,
                 "calls_planned": self.calls_planned,
             }
+            if self._state.duration_fallback is not None:
+                progress_obj["duration_fallback"] = self._state.duration_fallback
             snapshot = dict(progress_obj)
 
         if self.store is not None and self.job_id is not None:
@@ -228,7 +234,13 @@ class TelemetryContext:
         with self._state.lock:
             self._state.traces.append(trace_entry)
             self.traces = self._state.traces
+            if trace_entry.get("event") == "duration_fallback":
+                self._state.duration_fallback = {
+                    "requested_duration_kind": trace_entry.get("requested_duration_kind"),
+                    "resolved_duration": trace_entry.get("resolved_duration"),
+                }
             self.save_traces()
+        self.update_progress_db()
 
     def save_traces(self) -> None:
         if self.trace_dir:
