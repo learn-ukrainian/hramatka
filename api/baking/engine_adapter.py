@@ -572,13 +572,28 @@ class EngineLessonBaker:
             if review
             else "Згенеровано з опори; гейти чисті — звірте перед уроком."
         )
+        real_key = _answer_key(ir)
+        block_key = "Підтвердьте ключ разом з учителем."
+        if a_type in (
+            "true-false",
+            "cloze",
+            "match-up",
+            "quiz",
+            "mark-the-words",
+            "fill-in",
+            "error-correction",
+        ):
+            block_key = real_key
+        elif a_type == "text-questions" and "model_answers" in real_key:
+            block_key = real_key
+
         return {
             "id": f"block-{slot + 1}",
             "phase": phase,
             "type": a_type,
             "mode": _mode(phase, a_type),
             "activity": envelope,
-            "answer_key": "Підтвердьте ключ разом з учителем.",
+            "answer_key": block_key,
             "mark": "warn" if review else "ok",
             "note": note,
             "edited": False,

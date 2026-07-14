@@ -88,7 +88,31 @@ export default function ReviewWorkbench({
         {showAnswers && (
           <div className="teacher-key" data-testid="teacher-answer-key">
             <strong>{t('review.answerKey')}</strong>
-            <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+            {block.type === 'short-writing' ? (
+              <div className="short-writing-details" style={{ marginTop: '0.25rem' }}>
+                {(block.activity as any)?.answer_key?.rubric && (
+                  <div className="rubric-block" style={{ marginBottom: '0.25rem' }}>
+                    <strong>{t('editor.field.rubric')}:</strong>
+                    <pre style={{ marginTop: '0.125rem', whiteSpace: 'pre-wrap' }}>
+                      {String((block.activity as any).answer_key.rubric)}
+                    </pre>
+                  </div>
+                )}
+                {(block.activity as any)?.answer_key?.model_answer && (
+                  <div className="model-answer-block">
+                    <strong>{t('editor.field.modelAnswer')}:</strong>
+                    <pre style={{ marginTop: '0.125rem', whiteSpace: 'pre-wrap' }}>
+                      {String((block.activity as any).answer_key.model_answer)}
+                    </pre>
+                  </div>
+                )}
+                {!(block.activity as any)?.answer_key?.rubric && !(block.activity as any)?.answer_key?.model_answer && (
+                  <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+                )}
+              </div>
+            ) : (
+              <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+            )}
           </div>
         )}
       </div>
