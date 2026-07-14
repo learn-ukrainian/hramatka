@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 from collections import Counter
 from pathlib import Path
 
@@ -352,7 +353,7 @@ def _ready_quiz(index: int) -> dict:
             },
             {
                 "question": "Що людям простіше зробити замість читання?",
-                "options": ["увімкнути", "телевізор", "книжки"],
+                "options": ["увімкнути", "насолоду", "книжки"],
                 "correct": 0,
                 "evidence": "бо простіше увімкнути телевізор",
             },
@@ -725,18 +726,31 @@ _READY_CANDIDATES = {
 _COUNT_PLAN_RE = re.compile(r"^- ([a-z-]+): (\d+)$", re.MULTILINE)
 
 
+_fixtures_lock = threading.Lock()
+
+
 def _fixture_index(counters: Counter[str], activity_type: str) -> int:
-    """Monotonic per-type index, shifted by telemetry phase when phases run concurrently."""
-    index = counters[activity_type]
-    counters[activity_type] += 1
+    """Monotonic per-type index, shifted by telemetry phase when phases run concurrently.
+
+    Counts live in the caller's ``counters`` (phase-namespaced keys), so state
+    stays test-owned: no module globals, no ``id()`` keys that CPython may
+    recycle across garbage-collected Counters (a cross-test coupling hazard).
+    """
     try:
         from .providers import telemetry_ctx
 
         ctx = telemetry_ctx.get()
-        if ctx is not None and ctx.phase:
-            index += (int(ctx.phase) - 1) * 16
+        phase = int(ctx.phase) if ctx and ctx.phase else None
     except Exception:
-        pass
+        phase = None
+
+    key = activity_type if phase is None else f"{activity_type}@{phase}"
+    with _fixtures_lock:
+        index = counters[key]
+        counters[key] += 1
+
+    if phase is not None:
+        index += (phase - 1) * 1
     return index
 
 

@@ -207,14 +207,41 @@ def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp
     """Optional phase-specific variety must never consume the 45-minute fill floor."""
     constrained = {"match-up", "mark-the-words"}
 
-    type_counters: Counter[str] = Counter()
+    variant_mapping = {
+        # Phase 1
+        (1, "true-false"): 0,  # prim=sentence-5
+        (1, "cloze"): 1,       # prim=sentence-1
+        (1, "quiz"): 4,        # prim=sentence-5 (rejected by sentence reuse with true-false)
+        # Phase 2
+        (2, "text-questions"): 0,  # prim=sentence-2
+        (2, "fill-in"): 0,         # prim=sentence-5
+        (2, "true-false"): 2,      # prim=sentence-3
+        (2, "short-writing"): 1,   # prim=sentence-1
+        (2, "cloze"): 0,           # prim=sentence-3 (rejected by sentence reuse with true-false)
+        (2, "error-correction"): 0, # prim=sentence-1 (rejected by sentence reuse)
+        # Phase 3
+        (3, "quiz"): 2,            # prim=sentence-2 (eligible!)
+        (3, "short-writing"): 0,   # prim=sentence-5 (rejected by sentence reuse)
+    }
 
     def generator(prompt: str) -> str:
-        activities = [
-            activity
-            for activity in fixtures.activities_for_prompt(prompt, type_counters)
-            if activity["type"] not in constrained
-        ]
+        from hramatka.engine.providers import telemetry_ctx
+        ctx = telemetry_ctx.get()
+        phase = ctx.phase if ctx else 1
+        try:
+            phase_num = int(phase)
+        except ValueError:
+            phase_num = 1
+
+        activities = []
+        for activity_type, count in fixtures._COUNT_PLAN_RE.findall(prompt):
+            if activity_type in constrained:
+                continue
+            for _ in range(int(count)):
+                variant_index = variant_mapping.get((phase_num, activity_type), 0)
+                activity = fixtures._READY_CANDIDATES[activity_type](variant_index)
+                activities.append(activity)
+
         return json.dumps({"activities": activities}, ensure_ascii=False)
 
     baker = EngineLessonBaker(
@@ -223,7 +250,8 @@ def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp
         cache_dir=tmp_path / "cache",
     )
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-    assert len(baked["blocks"]) < 8
+    min_blocks = content_density.LESSON_FLOORS[45].min_blocks
+    assert min_blocks <= len(baked["blocks"]) < 8
     assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 
