@@ -144,8 +144,8 @@ class BakeRunner:
             if job is not None:
                 return job
         return None
-
     def _run_job(self, job) -> None:  # JobRecord is deliberately duck-typed for test seams.
+        lesson = None
         try:
             template = self._bake_with_one_provider_retry(job)
             if not self._store.set_step(job.teacher_id, job.id, "перевірка"):
@@ -155,7 +155,64 @@ class BakeRunner:
             self._store.complete(job.teacher_id, job.id, lesson)
         except BakeError as error:
             self._fail_bake_error(job.teacher_id, job.id, error)
-        except (ValidationError, ValueError):
+        except (ValidationError, ValueError) as error:
+            try:
+                latest_job = self._store.get(job.teacher_id, job.id)
+                progress = (
+                    dict(latest_job.progress)
+                    if (latest_job and latest_job.progress)
+                    else {}
+                )
+                errors_list = []
+                lesson_obj = (
+                    lesson
+                    if isinstance(lesson, dict)
+                    else (template if isinstance(template, dict) else None)
+                )
+                if lesson_obj is not None:
+                    from hramatka.api.validation import lesson_validator
+                    try:
+                        validator = lesson_validator()
+                        validation_errors = list(validator.iter_errors(lesson_obj))
+                    except Exception:
+                        validation_errors = []
+                    for val_err in validation_errors:
+                        path = list(val_err.path)
+                        rule_path = ".".join(str(p) for p in path) if path else ""
+                        block_index = None
+                        block_type = None
+                        if len(path) >= 2 and path[0] in ("blocks", "rejected"):
+                            try:
+                                idx = int(path[1])
+                                block_index = idx
+                                items_list = lesson_obj.get(path[0])
+                                if isinstance(items_list, list) and 0 <= idx < len(items_list):
+                                    block_type = items_list[idx].get("type")
+                            except Exception:
+                                pass
+                        raw_val = str(val_err.instance)
+                        truncated_value = raw_val[:256] + ("..." if len(raw_val) > 256 else "")
+                        errors_list.append({
+                            "rule_path": rule_path,
+                            "block_index": block_index,
+                            "block_type": block_type,
+                            "offending_value": truncated_value,
+                            "message": val_err.message,
+                        })
+                if not errors_list:
+                    errors_list.append({
+                        "rule_path": "",
+                        "block_index": None,
+                        "block_type": None,
+                        "offending_value": "",
+                        "message": str(error),
+                    })
+                progress["failure_detail"] = {
+                    "errors": errors_list
+                }
+                self._store.update_progress(job.id, progress)
+            except Exception as capture_exc:
+                log.exception("Failed to capture validation error details: %s", capture_exc)
             self._store.fail(
                 job.teacher_id,
                 job.id,
