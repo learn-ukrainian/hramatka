@@ -222,6 +222,14 @@ class TelemetryContext:
         if calls_done is not None:
             self.update_progress_db(calls_done=calls_done)
 
+    def record_event(self, trace_entry: dict) -> None:
+        """Persist a safe non-provider trace event without changing call progress."""
+        assert self._state is not None
+        with self._state.lock:
+            self._state.traces.append(trace_entry)
+            self.traces = self._state.traces
+            self.save_traces()
+
     def save_traces(self) -> None:
         if self.trace_dir:
             try:

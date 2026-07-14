@@ -366,10 +366,10 @@ function toast(html){var w=$('#toasts');var t=document.createElement('div');t.cl
 function bubble(anchor,text){var old=document.body.querySelector('.bubble[data-float]');if(old)old.remove();var b=document.createElement('span');b.className='bubble';b.setAttribute('data-float','1');b.textContent=(uiLang&&uiLang()==='en')?trStr(text):text;document.body.appendChild(b);var r=anchor.getBoundingClientRect();b.style.position='fixed';b.style.zIndex='60';b.style.maxWidth='300px';b.style.left=Math.max(8,Math.min(r.left,window.innerWidth-320))+'px';b.style.top=(r.bottom+6)+'px';b.style.marginTop='0';setTimeout(function(){b.remove()},3800)}
 
 /* ============ lesson sizing (user decision 2026-07-10): duration → planned tasks + phase minutes Т1·Н·Т2 ============ */
-var DUR={45:{tasks:6,pd:[10,15,15]},60:{tasks:9,pd:[15,25,15]},90:{tasks:12,pd:[20,40,25]}};
+var DUR={45:{tasks:8,pd:[10,15,15]},60:{tasks:10,pd:[15,25,15]},90:{tasks:12,pd:[20,40,25]}};
 function durInfo(d){return DUR[d]||DUR[45]}
 /* скільки завдань видно у кожній частині Т1·Н·Т2; решта — «у запасі / на домашнє» */
-var PLAN={45:[2,3,1],60:[3,4,2],90:[4,5,3]};
+var PLAN={45:[3,4,1],60:[3,5,2],90:[4,5,3]};
 function planSplit(d){return PLAN[d]||PLAN[45]}
 /* student-screen interface language: uk default, EN toggle (user 2026-07-10).
    INTERFACE ONLY — the lesson document (paper) is always Ukrainian. */
@@ -442,7 +442,7 @@ var T_EXACT={
  /* settings */ 'Імʼя (показуємо у шапці)':'Name (shown in the header)','зміниться одразу — погляньте на шапку':'updates instantly — look at the header',
  'Типовий рівень':'Default level','у пілоті — лише B1; інші рівні після пілота':'B1 only in the pilot; other levels after',
  'Типова методика':'Default methodology','Типова тривалість заняття':'Default lesson duration',
- 'нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 9 · 90 → 12)':'new lessons start from this value (45 min → 6 tasks · 60 → 9 · 90 → 12)',
+ 'нові заняття починатимуться з цього значення (45 хв → 8 завдань · 60 → 10 · 90 → 12)':'new lessons start from this value (45 min → 8 tasks · 60 → 10 · 90 → 12)',
  /* login */ 'Вітаємо!':'Welcome!','Введіть код доступу, який ви отримали від нас.':'Enter the access code you received from us.','код доступу':'access code','Увійти':'Sign in',
  'У пілоті входу не буде: посилання + один код. Ця сторінка — запас на майбутнє.':'The pilot has no login: a link + one code. This page is a reserve for later.',
  /* hint bar + help */ 'сховати підказку':'hide this hint','Повернути підказки':'Restore hints','Зрозуміло':'Got it','Як користуватися «Граматкою»':'How to use Hramatka',
@@ -948,7 +948,7 @@ function vSettings(){
    +'<div class="field"><label>Імʼя (показуємо у шапці)</label><input class="inputbox" id="namein" value="'+esc(S.teacher)+'"><p class="hint">зміниться одразу — погляньте на шапку</p></div>'
    +'<div class="field"><label>Типовий рівень</label><div class="choices">'+lv+'</div><p class="hint">у пілоті — лише B1; інші рівні після пілота</p></div>'
    +'<div class="field"><label>Типова методика</label><div class="choices"><button class="choice on">Тест → Навчання → Тест</button></div></div>'
-   +'<div class="field"><label>Типова тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 9 · 90 → 12)</p></div>'
+   +'<div class="field"><label>Типова тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">нові заняття починатимуться з цього значення (45 хв → 8 завдань · 60 → 10 · 90 → 12)</p></div>'
    +'</div>';
 }
 function vLogin(){
@@ -962,7 +962,7 @@ function vFreeze(){
   return '<div class="tablewrap"><table class="freeze">'
    +'<tr><th>№</th><th>Page</th><th>Status</th><th>What we lock</th></tr>'
    +'<tr><td>1</td><td>My lessons</td><td><span class="chip ok">v1</span></td><td>3 statuses, one main button, an empty state</td></tr>'
-   +'<tr><td>2</td><td>New lesson</td><td><span class="chip ok">v1</span></td><td>anchor = a full-screen sheet (the lesson’s foundation) · settings in a side panel · level B1 · methodology from cards · duration 45/60/90 min → 6/9/12 tasks (minimum 6) · honest waiting</td></tr>'
+   +'<tr><td>2</td><td>New lesson</td><td><span class="chip ok">v1</span></td><td>anchor = a full-screen sheet (the lesson’s foundation) · settings in a side panel · level B1 · methodology from cards · duration 45/60/90 min → 8/10/12 tasks · honest waiting</td></tr>'
    +'<tr><td>3</td><td>Baking</td><td><span class="chip ok">v1</span></td><td>real stages, no percentages · human error messages · you can leave, the result waits</td></tr>'
    +'<tr><td>4</td><td>Review & assembly</td><td><span class="chip ok">v1</span></td><td>the document dominates, like Word · margin marks · 3 states · “⚠” never auto-accepts · rejected drafts stay visible · a “Verify the facts” banner · the duration switch trims/regrows the plan · trimmed goes “to reserve / homework” · oral/written/home marks</td></tr>'
    +'<tr><td>5</td><td>Ready lesson</td><td><span class="chip ok">v1</span></td><td>a centered sheet, like a printout · screen + print · teacher answers (🔑) · homework from the reserve · an honest footer · a place for the student link · 🌐 dual-language interface (uk/EN) — lesson content always Ukrainian</td></tr>'
@@ -973,7 +973,7 @@ function vFreeze(){
   return '<div class="tablewrap"><table class="freeze">'
    +'<tr><th>№</th><th>Сторінка</th><th>Статус</th><th>Що фіксуємо</th></tr>'
    +'<tr><td>1</td><td>Мої заняття</td><td><span class="chip ok">v1</span></td><td>3 статуси, одна головна кнопка, порожній стан</td></tr>'
-   +'<tr><td>2</td><td>Нове заняття</td><td><span class="chip ok">v1</span></td><td>якір = аркуш на весь екран (основа заняття) · налаштування бічною панеллю · рівень B1 · методика з карток · тривалість 45/60/90 хв → 6/9/12 завдань (мінімум 6) · чесне очікування</td></tr>'
+   +'<tr><td>2</td><td>Нове заняття</td><td><span class="chip ok">v1</span></td><td>якір = аркуш на весь екран (основа заняття) · налаштування бічною панеллю · рівень B1 · методика з карток · тривалість 45/60/90 хв → 8/10/12 завдань · чесне очікування</td></tr>'
    +'<tr><td>3</td><td>Приготування</td><td><span class="chip ok">v1</span></td><td>справжні етапи, без відсотків · людські помилки · можна піти, результат дочекається</td></tr>'
    +'<tr><td>4</td><td>Перегляд і збирання</td><td><span class="chip ok">v1</span></td><td>документ домінує, як у Word · позначки на полях · 3 стани · «⚠» не приймається сам · відхилене видно · банер «Факти перевірте» · перемикач тривалості ріже/повертає план · зрізане — «у запасі / на домашнє» · позначки усно/письмово/вдома</td></tr>'
    +'<tr><td>5</td><td>Готове заняття</td><td><span class="chip ok">v1</span></td><td>аркуш по центру, як роздруківка · екран + друк · відповіді для вчителя (🔑) · домашнє з запасу · чесний підпис унизу · місце під учнівське посилання · 🌐 інтерфейс екрана учня укр/EN — перемикається; вміст заняття завжди українською</td></tr>'

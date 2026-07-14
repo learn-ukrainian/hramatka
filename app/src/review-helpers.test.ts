@@ -29,14 +29,14 @@ describe('splitReviewBlocks', () => {
     makeBlock('p3a', 3), makeBlock('p3b', 3), makeBlock('p3c', 3),
   ];
 
-  it('splits 45-min plan as 2/3/1 visible per phase', () => {
+  it('splits 45-min plan as 3/4/1 visible per phase', () => {
     const { visible, reserve, byPhase } = splitReviewBlocks(blocks, 45);
-    expect(visible).toHaveLength(6);
-    expect(reserve).toHaveLength(5);
+    expect(visible).toHaveLength(8);
+    expect(reserve).toHaveLength(3);
     expect(byPhase[1].visible).toHaveLength(REVIEW_PHASE_BUDGETS[45][1]);
     expect(byPhase[2].visible).toHaveLength(REVIEW_PHASE_BUDGETS[45][2]);
     expect(byPhase[3].visible).toHaveLength(REVIEW_PHASE_BUDGETS[45][3]);
-    expect(byPhase[1].reserve.map((b) => b.id)).toEqual(['p1c']);
+    expect(byPhase[1].reserve).toEqual([]);
   });
 
   it('keeps all blocks in visible or reserve (nothing disappears)', () => {

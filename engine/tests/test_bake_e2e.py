@@ -22,17 +22,19 @@ from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError
 from hramatka.engine import fixtures
 from hramatka.engine.fixtures import _READY_CANDIDATES, _bundle_with_matchup_vocabulary
+from hramatka.sizing_policy import B1, phase_plan
 
 
-def test_e2e_bake_refuses_to_repeat_thin_candidate_bank(tmp_path):
+def test_e2e_bake_surfaces_thin_candidate_bank_as_a_shortfall(tmp_path):
     anchor = fixtures.load_anchor()
     baker = EngineLessonBaker(generator=fixtures.mock_generator, cache_dir=tmp_path / "cache")
 
-    with pytest.raises(BakeError, match="too few distinct"):
-        baker.bake(anchor, duration=45, focus=None)
+    baked = baker.bake(anchor, duration=45, focus=None)
+    assert len(baked["blocks"]) < 8
+    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 
-def test_e2e_baker_fills_six_blocks_with_per_phase_variety(tmp_path):
+def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
     requested_counts: list[dict[str, int]] = []
     generated_counts: Counter[str] = Counter()
     records_lock = threading.Lock()
@@ -61,20 +63,20 @@ def test_e2e_baker_fills_six_blocks_with_per_phase_variety(tmp_path):
     )
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
-    expected_counts = engine_adapter._candidate_count_plan(engine_adapter._PHASE_PLAN[45])
+    expected_counts = engine_adapter._candidate_count_plan(phase_plan(B1, 45))
     # Each phase starts with exactly its derived request. A phase can make its
     # existing one safety regeneration request when a candidate is gated out.
     assert all(counts in requested_counts for counts in expected_counts.values())
     expected_generated = sum((Counter(counts) for counts in expected_counts.values()), Counter())
     assert generated_counts >= expected_generated
-    assert len(baked["blocks"]) == 6
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
-    assert len({block["id"] for block in baked["blocks"]}) == 6
+    assert len(baked["blocks"]) == 8
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2, 2, 3]
+    assert len({block["id"] for block in baked["blocks"]}) == 8
     assert {block["type"] for block in baked["blocks"]} >= {"match-up", "short-writing"}
 
 
 def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
-    plans = engine_adapter._candidate_count_plan(engine_adapter._PHASE_PLAN[45])
+    plans = engine_adapter._candidate_count_plan(phase_plan(B1, 45))
     started = threading.Event()
     active = 0
     max_active = 0
@@ -113,7 +115,7 @@ def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
     assert max_active == len(plans) == 3
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2, 2, 3]
 
 
 def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
@@ -153,14 +155,14 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
     )
     for _ in range(4):
         baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-        assert len(baked["blocks"]) == 6
+        assert len(baked["blocks"]) == 8
 
     assert assigned == ["google-ais", "openrouter", "google-ais", "openrouter"]
     assert set(handled) == {"google-ais", "openrouter"}
     assert Counter(handled) == Counter({"google-ais": 6, "openrouter": 6})
 
 
-def test_e2e_baker_fills_six_blocks_when_constrained_types_are_unavailable(tmp_path):
+def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp_path):
     """Optional phase-specific variety must never consume the 45-minute fill floor."""
     constrained = {"match-up", "short-writing"}
 
@@ -182,9 +184,10 @@ def test_e2e_baker_fills_six_blocks_when_constrained_types_are_unavailable(tmp_p
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
     assert len(baked["blocks"]) == 6
-    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 1, 2, 2, 2]
     assert len({block["id"] for block in baked["blocks"]}) == 6
     assert not {block["type"] for block in baked["blocks"]} & constrained
+    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 
 def test_e2e_bake_raises_bakeerror_when_generator_unavailable(tmp_path):
@@ -261,11 +264,14 @@ def test_e2e_salvage_visibility_generated_equals_shipped_plus_flagged_plus_rejec
     reasons = sorted(entry["reason"] for entry in rejected)
     assert reasons == ["gate-failed:evidence_span", "gate-failed:evidence_span"]
 
-    # The legacy duration adapter must not repeat the lone clean cloze into
-    # six slots; Wave 0 reports an honest shortfall until more types arrive.
+    # The dense duration adapter must not repeat the lone clean cloze into
+    # eight slots. It returns a ready-only partial lesson with an explicit
+    # shortfall instead of promoting the warning candidate to a visible block.
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    with pytest.raises(BakeError, match="too few distinct"):
-        baker.bake(anchor, duration=45, focus=None)
+    baked = baker.bake(anchor, duration=45, focus=None)
+    assert len(baked["blocks"]) == 1
+    assert {block["mark"] for block in baked["blocks"]} == {"ok"}
+    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
 
 
 def test_e2e_bake_wraps_data_bundle_errors_as_bakeerror(tmp_path, monkeypatch):

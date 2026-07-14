@@ -22,7 +22,6 @@ import os
 import pytest
 
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
-from hramatka.api.baking.port import BakeError
 from hramatka.engine import pipeline, schema
 
 # The seed only exists in the offline fixture bundle; in real-data mode the
@@ -117,12 +116,17 @@ def test_russianism_introduced_in_generated_task_language_is_caught(tmp_path):
     warns = _vesum_warns(tf)
     assert warns and RUSSIANISM in warns[0].detail and "russianism" in warns[0].detail
 
-    # 2) adapter: review-required material may deliberately fill a ready-bank
-    # deficit as a WARN BLOCK, but this one-item bank remains too short for the
-    # phase and safely reports the same shortfall.
+    # 2) adapter: review-required material never fills a visible slot. The
+    # clean block count remains short and the warning candidate stays in the
+    # teacher reserve/rejected tray with an explicit shortfall.
     baker = EngineLessonBaker(generator=gen, cache_dir=tmp_path / "cache-bake")
-    with pytest.raises(BakeError, match="too few distinct automatically includable"):
-        baker.bake(anchor, duration=45, focus=None)
+    baked = baker.bake(anchor, duration=45, focus=None)
+    assert baked["blocks"] == []
+    assert any(
+        entry["reason"].startswith("shortfall: composed 0 of 8")
+        for entry in baked["rejected"]
+    )
+    assert any("review-required" in entry["reason"] for entry in baked["rejected"])
 
 
 def test_augmentation_is_required_grounding_alone_would_miss_it(tmp_path):

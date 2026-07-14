@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from hramatka.engine import schema, selector
+from dataclasses import replace
+
+from hramatka.contracts import PILOT_ACTIVITY_TYPES
+from hramatka.engine import registry, schema, selector
 
 
 def _candidate(
@@ -86,3 +89,55 @@ def test_selector_honours_phase_coverage_variety_puzzle_and_duplicate_constraint
         phase=3,
     )
     assert [candidate.activity["type"] for candidate in phase_three] == ["cloze", "true-false"]
+
+
+def test_composed_selector_can_select_all_nine_registered_types_without_a_hidden_cap(monkeypatch):
+    """Ten B1 slots leave room for all nine types when evidence is distinct."""
+    for activity_type, entry in registry.ACTIVITY_REGISTRY.items():
+        monkeypatch.setitem(
+            registry.ACTIVITY_REGISTRY,
+            activity_type,
+            replace(
+                entry,
+                evidence_answer_pairs=lambda candidate: [
+                    (candidate.candidate_id or "", candidate.candidate_id or "")
+                ],
+            ),
+        )
+
+    def candidate(activity_type: str, phase: int, index: int) -> schema.HramatkaActivity:
+        return schema.HramatkaActivity(
+            activity={"type": activity_type, "fixture": index},
+            evidence=[
+                schema.Evidence(
+                    quote=f"evidence-{index}",
+                    locator="fixture",
+                    char_start=index,
+                    char_end=index + 1,
+                )
+            ],
+            candidate_id=f"{phase}-{activity_type}",
+        )
+
+    phase_types = {
+        1: ("match-up", "true-false", "quiz"),
+        2: ("short-writing", "cloze", "mark-the-words", "fill-in", "error-correction"),
+        3: ("text-questions", "true-false"),
+    }
+    candidates_by_phase = {
+        phase: [candidate(activity_type, phase, index) for index, activity_type in enumerate(types)]
+        for phase, types in phase_types.items()
+    }
+    selected = selector.select_composed_lesson(
+        candidates_by_phase,
+        slots_by_phase={1: 3, 2: 5, 3: 2},
+        count_plan={
+            **{activity_type: 1 for activity_type in PILOT_ACTIVITY_TYPES},
+            "true-false": 2,
+        },
+        policy=selector.SelectorPolicy(density_target=10),
+    )
+
+    assert {
+        activity.activity["type"] for activities in selected.values() for activity in activities
+    } == set(PILOT_ACTIVITY_TYPES)

@@ -7,20 +7,17 @@ import hashlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from hramatka.sizing_policy import B1, PHASE_BUDGETS_BY_LEVEL
+
 from .store import now_iso
 
 if TYPE_CHECKING:
     from .store import JobRecord
 
 
-# These budgets deliberately mirror the frozen TTT plan in the demo and the
-# engine adapter. Blocks beyond a phase budget are still in ``lesson.blocks``:
-# the review UI renders them as reserve/homework instead of discarding them.
-REVIEW_PHASE_BUDGETS: dict[int, dict[int, int]] = {
-    45: {1: 2, 2: 3, 3: 1},
-    60: {1: 3, 2: 4, 3: 2},
-    90: {1: 4, 2: 5, 3: 3},
-}
+# Re-export the canonical B1 sizing map for API callers.  Do not duplicate it:
+# browser maps are asserted against ``hramatka.sizing_policy`` in tests.
+REVIEW_PHASE_BUDGETS = PHASE_BUDGETS_BY_LEVEL[B1]
 TEACHER_REMOVAL_REASON = "вилучено вчителем"
 RESTORED_WARNING_NOTE = "повернено з відхилених — погляньте ще раз"
 EDITED_WARNING_NOTE = "змінено вчителем — підтвердьте ще раз перед прийняттям"
@@ -59,16 +56,9 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
             "updated_at": timestamp,
         }
     )
-    planned = {45: 6, 60: 9, 90: 12}[job.duration]
-    if len(lesson["blocks"]) < planned:
-        lesson["rejected"] = [
-            *lesson.get("rejected", []),
-            {
-                "type": "shortfall",
-                "activity": {},
-                "reason": f"складено {len(lesson['blocks'])} із {planned} — додайте текст",
-            },
-        ]
+    # The engine carries an honest shortfall on a schema-valid reserve/rejected
+    # activity, rather than adding the old invalid synthetic ``shortfall``
+    # draft.  The wire contract deliberately permits only real activities here.
     return lesson
 
 
@@ -167,6 +157,9 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
     entry = rejected.pop(rejected_index)
     if not isinstance(entry, dict) or not isinstance(entry.get("activity"), dict):
         raise ValueError("Rejected entry is invalid.")
+    if str(entry.get("reason", "")).startswith("shortfall-notice:"):
+        rejected.insert(rejected_index, entry)
+        raise ValueError("A shortfall notice cannot be restored as an activity.")
     activity = copy.deepcopy(entry["activity"])
     block_id = f"restored-{uuid.uuid4().hex}"
     blocks = _require_blocks(lesson)

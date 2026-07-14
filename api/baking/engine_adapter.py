@@ -7,16 +7,14 @@ plumbing, real generator, pedagogy validation) is a separate step. The
 generator is injectable, so the pipeline runs offline in tests with a fake
 generator and never touches the network here.
 
-Wave 0 consumes the engine selector rather than reimplementing selection here:
-`ready` candidates always compose first. `review_required` material stays in
-the pipeline IR review tray unless a phase still has a visible-slot deficit;
-only then can it deliberately fill that deficit as an acknowledged warning
-block. It never becomes a warning block by accident; rejected candidates and
-per-item salvage remain visible through `rejected[]`.
+The assembler selects only ``ready`` candidates under one whole-lesson policy.
+``review_required`` material is retained in the rejected/reserve tray, never
+promoted into a visible warning block to hide a density shortfall.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -29,25 +27,20 @@ from pathlib import Path
 from typing import Any
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
-from hramatka.engine import data, pipeline, registry, schema
+from hramatka.engine import data, pipeline, registry, schema, selector
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
+from hramatka.sizing_policy import B1, phase_plan, resolve_duration
 
 from .port import BakeError, ProviderUnavailable
 
-# TTT phase plan per duration → the phase of each composed block. Mirrors the
-# visible-block budget the store enforces ({45:{1:2,2:3,3:1}}, ...).
-_PHASE_PLAN: dict[int, list[int]] = {
-    45: [1, 1, 2, 2, 2, 3],
-    60: [1, 1, 1, 2, 2, 2, 2, 3, 3],
-    90: [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3],
-}
+log = logging.getLogger(__name__)
 
 # Real-Gemma measurement and pilot bakes yielded roughly 60–75% gate-ready
 # candidates. Use the conservative measured floor: a plan of N TTT slots asks
 # for ceil(N / 0.60) candidates, so its expected ready pool is at least N.
-# For example, the 45-minute six-slot plan asks for 10 candidates and expects
-# six ready. Two targeted regeneration rounds remain a bounded safety net for
+# For example, the 45-minute eight-slot plan asks for 14 candidates and expects
+# eight ready. Two targeted regeneration rounds remain a bounded safety net for
 # variance: they improve recovery from a short bank without unbounded provider
 # cost or an open-ended bake.
 _READY_SURVIVAL_FLOOR = 0.60
@@ -138,19 +131,6 @@ def _activity_identity(ir: Any) -> str:
     import json
 
     return json.dumps(ir.activity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _preferred_phase_types(phases: list[int]) -> dict[int, tuple[str, ...]]:
-    """Assign each phase-constrained pilot type to its earliest legal TTT slot."""
-    requested_phases = set(phases)
-    preferred: dict[int, list[str]] = {phase: [] for phase in sorted(requested_phases)}
-    for activity_type in PILOT_ACTIVITY_TYPES:
-        legal = set(registry.ACTIVITY_REGISTRY[activity_type].ttt_phases) & requested_phases
-        if legal and not requested_phases.issubset(
-            registry.ACTIVITY_REGISTRY[activity_type].ttt_phases
-        ):
-            preferred[min(legal)].append(activity_type)
-    return {phase: tuple(types) for phase, types in preferred.items()}
 
 
 def _answer_key(ir) -> dict:
@@ -380,7 +360,12 @@ class EngineLessonBaker:
         timestamps/status; here we only produce `blocks` (+ `rejected`).
         """
         del focus  # slice-1 generation does not branch on focus yet
-        plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
+        resolved_duration, fallback_kind = resolve_duration(B1, duration)
+        if fallback_kind is not None:
+            log.warning(
+                "Invalid bake duration (%s); using the 60-minute B1 sizing plan.", fallback_kind
+            )
+        plan = phase_plan(B1, resolved_duration)
         phase_count_plans = _candidate_count_plan(plan)
         bundle = self.resolve_data_bundle()
         out_root = _engine_out_root()
@@ -408,6 +393,14 @@ class EngineLessonBaker:
                 job_out.mkdir(parents=True)
                 _prune_engine_out(out_root, protected_names={job_out.name})
                 tel_ctx.trace_dir = job_out
+            if fallback_kind is not None:
+                tel_ctx.record_event(
+                    {
+                        "event": "duration_fallback",
+                        "requested_duration_kind": fallback_kind,
+                        "resolved_duration": resolved_duration,
+                    }
+                )
 
             # Select a primary once for this durable bake.  All independent
             # phase calls retain that primary and its opposite-provider
@@ -469,74 +462,62 @@ class EngineLessonBaker:
                     "Bake produced no automatically includable activities from this anchor."
                 )
 
-            preferred_by_phase = _preferred_phase_types(plan)
-            seen_activities: set[str] = set()
-            blocks = []
-            for phase in phase_count_plans:
-                slots = plan.count(phase)
-                candidates = [
-                    candidate
-                    for candidate in phase_results[phase].ready
-                    if _activity_identity(candidate) not in seen_activities
-                ]
-                selected: list[Any] = []
-                for activity_type in preferred_by_phase[phase]:
-                    candidate = next(
-                        (
-                            candidate
-                            for candidate in candidates
-                            if candidate.activity["type"] == activity_type
-                        ),
-                        None,
+            slots_by_phase = Counter(plan)
+            total_count_plan = sum(
+                (Counter(count_plan) for count_plan in phase_count_plans.values()), Counter()
+            )
+            selected_by_phase = selector.select_composed_lesson(
+                {phase: result.ready for phase, result in phase_results.items()},
+                slots_by_phase=slots_by_phase,
+                count_plan=total_count_plan,
+                policy=selector.SelectorPolicy(density_target=len(plan)),
+            )
+            selected = [
+                candidate
+                for phase in sorted(slots_by_phase)
+                for candidate in selected_by_phase[phase]
+            ]
+            blocks = [
+                self._block(candidate, slot, phase)
+                for slot, (phase, candidate) in enumerate(
+                    (phase, candidate)
+                    for phase in sorted(slots_by_phase)
+                    for candidate in selected_by_phase[phase]
+                )
+            ]
+            all_activities = [
+                activity
+                for result in phase_results.values()
+                for activity in result.activities
+            ]
+            review_reserve = [
+                activity
+                for result in phase_results.values()
+                for activity in result.review_required
+            ]
+            selected_identities = {_activity_identity(candidate) for candidate in selected}
+            composition_reserve = [
+                activity
+                for result in phase_results.values()
+                for activity in result.ready
+                if _activity_identity(activity) not in selected_identities
+            ]
+            rejected = rejected_entries(all_activities)
+            rejected.extend(
+                reserve_entries(
+                    review_reserve,
+                    reason="review-required: retained for teacher review; never auto-included",
+                )
+            )
+            shortfall = len(blocks) < len(plan)
+            if shortfall:
+                rejected.extend(
+                    reserve_entries(
+                        composition_reserve,
+                        reason="composition-reserve: not auto-included by lesson-wide policy",
                     )
-                    if candidate is not None:
-                        selected.append(candidate)
-                        candidates.remove(candidate)
-                selected.extend(candidates[: max(0, slots - len(selected))])
-
-                # The review tray is a deliberate, deficit-only recovery path:
-                # ready candidates above keep their complete priority.  Apply the
-                # same constrained-type preference to the review tray, but never
-                # duplicate an already selected ready activity.
-                if len(selected) < slots:
-                    selected_identities = {_activity_identity(candidate) for candidate in selected}
-                    review_candidates = [
-                        candidate
-                        for candidate in phase_results[phase].review_required
-                        if _activity_identity(candidate) not in seen_activities
-                        and _activity_identity(candidate) not in selected_identities
-                    ]
-                    for activity_type in preferred_by_phase[phase]:
-                        if len(selected) >= slots:
-                            break
-                        candidate = next(
-                            (
-                                candidate
-                                for candidate in review_candidates
-                                if candidate.activity["type"] == activity_type
-                            ),
-                            None,
-                        )
-                        if candidate is not None:
-                            selected.append(candidate)
-                            review_candidates.remove(candidate)
-                            selected_identities.add(_activity_identity(candidate))
-                    for candidate in review_candidates:
-                        if len(selected) >= slots:
-                            break
-                        identity = _activity_identity(candidate)
-                        if identity in selected_identities:
-                            continue
-                        selected.append(candidate)
-                        selected_identities.add(identity)
-                if len(selected) < slots:
-                    raise BakeError(
-                        "Bake produced too few distinct automatically includable activities "
-                        f"for TTT phase {phase} ({len(selected)} of {slots} candidates)."
-                    )
-                for candidate in selected:
-                    seen_activities.add(_activity_identity(candidate))
-                    blocks.append(self._block(candidate, len(blocks), phase))
+                )
+                _annotate_shortfall(rejected, blocks=blocks, planned=len(plan))
             # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
             # lesson schema forbids fingerprint/diagnostics on anchor.
             first_result = next(iter(phase_results.values()))
@@ -546,16 +527,17 @@ class EngineLessonBaker:
                 anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
 
             tel_ctx.update_progress_db(step="assembly")
+            tel_ctx.record_event(
+                _composition_trace(
+                    selected=selected,
+                    reserve=[*review_reserve, *(composition_reserve if shortfall else [])],
+                    planned=len(plan),
+                )
+            )
 
             return {
                 "blocks": blocks,
-                "rejected": rejected_entries(
-                    [
-                        activity
-                        for result in phase_results.values()
-                        for activity in result.activities
-                    ]
-                ),
+                "rejected": rejected,
                 "anchor_diagnostics": anchor_diagnostics,
             }
         except (data.DataConfigError, data.DataDriftError) as exc:
@@ -699,6 +681,67 @@ def rejected_entries(activities: list) -> list[dict]:
                 }
             )
     return out
+
+
+def reserve_entries(activities: list, *, reason: str) -> list[dict]:
+    """Project non-visible candidates into the review/reserve tray.
+
+    Review-required candidates are real activity documents, not invisible
+    deficit fillers.  The frozen lesson contract models that tray as
+    ``rejected[]``; retaining the activity lets a teacher inspect or restore
+    it deliberately.
+    """
+    return [
+        {
+            "type": activity.activity["type"],
+            "activity": _rejected_activity_document(activity, index),
+            "reason": reason,
+        }
+        for index, activity in enumerate(activities, start=1)
+    ]
+
+
+def _annotate_shortfall(rejected: list[dict], *, blocks: list[dict], planned: int) -> None:
+    """Make a clean-candidate deficit durable without inventing a fake block."""
+    reason = f"shortfall: composed {len(blocks)} of {planned} clean activities"
+    if rejected:
+        rejected[0]["reason"] = f"{reason}; {rejected[0]['reason']}"
+        return
+    if not blocks:
+        # The caller already rejects a completely empty generation bank.  This
+        # branch is therefore defensive, and keeps the template shape honest.
+        return
+    # The pinned rejected-draft schema only accepts activity documents.  A
+    # duplicate *notice* is the only legal carrier in the degenerate case in
+    # which every generated activity is visible and no reserve exists.
+    block = blocks[0]
+    rejected.append(
+        {
+            "type": block["type"],
+            "activity": block["activity"],
+            "reason": f"shortfall-notice: {reason}; informational, not a restore candidate",
+        }
+    )
+
+
+def _composition_trace(*, selected: list, reserve: list, planned: int) -> dict:
+    """Emit whole-lesson type-presence telemetry without candidate content."""
+    selected_counts = Counter(activity.activity["type"] for activity in selected)
+    reserve_counts = Counter(activity.activity["type"] for activity in reserve)
+    return {
+        "event": "composition",
+        "selected_type_counts": {
+            activity_type: selected_counts[activity_type] for activity_type in PILOT_ACTIVITY_TYPES
+        },
+        "selected_present_types": sorted(selected_counts),
+        "reserve_type_counts": {
+            activity_type: reserve_counts[activity_type] for activity_type in PILOT_ACTIVITY_TYPES
+        },
+        "reserve_present_types": sorted(reserve_counts),
+        "planned_blocks": planned,
+        "composed_blocks": len(selected),
+        "shortfall": len(selected) < planned,
+    }
 
 
 def _rejected_activity_document(ir, index: int) -> dict:

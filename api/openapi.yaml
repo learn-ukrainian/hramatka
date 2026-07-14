@@ -587,7 +587,7 @@ paths:
       summary: Select the review duration without discarding reserve blocks
       description: |
         The complete `lesson.blocks[]` order is retained. The browser renders
-        the first phase budgets (45: 2/3/1, 60: 3/4/2, 90: 4/5/3) as the plan
+        the first phase budgets (45: 3/4/1, 60: 3/5/2, 90: 4/5/3) as the plan
         and the remaining blocks as reserve or homework.
       security:
         - PilotSession: []

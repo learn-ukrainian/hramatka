@@ -51,15 +51,19 @@ class FixtureBaker:
 
 
 class ReserveFixtureBaker(FixtureBaker):
-    """Fixture baker with one durable phase-two reserve block."""
+    """Fixture baker with one durable phase-two reserve beyond the B1 budget."""
 
     def bake(
         self, anchor: str | dict[str, Any], duration: int, focus: str | None
     ) -> dict[str, Any]:
         template = super().bake(anchor, duration, focus)
-        reserve = copy.deepcopy(
+        visible_extra = copy.deepcopy(
             next(block for block in template["blocks"] if block["id"] == "block-4")
         )
+        visible_extra["id"] = "block-phase-two-visible"
+        visible_extra["activity"]["id"] = "activity-phase-two-visible"
+        template["blocks"].append(visible_extra)
+        reserve = copy.deepcopy(visible_extra)
         reserve["id"] = "block-reserve"
         reserve["activity"]["id"] = "activity-reserve"
         template["blocks"].append(reserve)

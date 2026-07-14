@@ -27,11 +27,12 @@ export interface ConductorProps {
   onStudentPreviewChange?: (preview: boolean) => void;
 }
 
-// Durations and phase budgets — faithful to demo
-const DUR: Record<number, { tasks: number; pd: readonly [number, number, number] }> = {
-  45: { tasks: 6, pd: [10, 15, 15] },
-  60: { tasks: 9, pd: [15, 25, 15] },
-  90: { tasks: 12, pd: [20, 40, 25] },
+// Timing remains a UI concern; visible block counts come from the canonical
+// review sizing policy rather than a second local task-budget map.
+const DUR: Record<number, { pd: readonly [number, number, number] }> = {
+  45: { pd: [10, 15, 15] },
+  60: { pd: [15, 25, 15] },
+  90: { pd: [20, 40, 25] },
 };
 
 function durInfo(d: number) {

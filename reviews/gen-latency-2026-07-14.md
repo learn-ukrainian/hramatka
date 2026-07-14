@@ -4,7 +4,31 @@ This note analyzes the end-to-end generation latency in Hramatka, specifically e
 
 ---
 
-## 1. Code Citation & Serial Execution Flow
+## Post-#133/#132 update (2026-07-14)
+
+The serial-flow analysis below is historical. #133 now fans the three TTT
+phases out through `ThreadPoolExecutor`; #132 raises the B1 visible policy to
+45→8 (`3/4/1`), 60→10 (`3/5/2`), and 90→12 (`4/5/3`). The 60%-survival bank
+therefore grows from 11→14 candidates for 45 minutes and 16→18 for 60 minutes
+(90 remains 21), but prompt coalescing leaves the logical provider-call count
+at three initial calls per bake and at most nine with two regeneration rounds
+per phase.
+
+Local stub-provider timing from
+`pytest -q -s tests/test_generation_telemetry.py::test_phase_trace_proves_provider_calls_overlap`:
+
+```text
+{'candidate_total': {'before': 11, 'after': 14}, 'provider_calls_per_bake': {'initial': 3, 'max_with_regeneration': 9}, 'wall_ms': 151, 'serial_ms': 324, 'max_phase_ms': 151}
+1 passed in 0.95s
+```
+
+The 151 ms wall clock equals the slowest 151 ms phase and is well below
+the 324 ms serial sum, so the higher candidate count remains bounded by phase
+fan-out rather than by a sequential three-phase wait.
+
+---
+
+## 1. Pre-#133 Code Citation & Serial Execution Flow
 
 The entire generation pipeline runs in a strictly serial, single-threaded manner:
 
@@ -39,7 +63,8 @@ The entire generation pipeline runs in a strictly serial, single-threaded manner
 
 ## 2. Deriving the Expected Call Count
 
-For a 45-minute lesson with a 3-phase TTT budget plan (`_PHASE_PLAN[45] = [1, 1, 2, 2, 2, 3]`), we can derive the expected provider calls under different conditions:
+For the pre-#132 45-minute lesson with a 3-phase TTT budget plan
+(`[1, 1, 2, 2, 2, 3]`), we can derive the expected provider calls under different conditions:
 
 *   **Best Case (No Deficits / 100% Gate Success)**:
     Each of the 3 phases succeeds on the first attempt.

@@ -153,8 +153,8 @@ function bakeProgressFor(l) {
 }
 
 const REVIEW_PHASE_BUDGETS = {
-  45: { 1: 2, 2: 3, 3: 1 },
-  60: { 1: 3, 2: 4, 3: 2 },
+  45: { 1: 3, 2: 4, 3: 1 },
+  60: { 1: 3, 2: 5, 3: 2 },
   90: { 1: 4, 2: 5, 3: 3 },
 };
 const TEACHER_REMOVAL_REASON = 'вилучено вчителем';

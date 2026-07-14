@@ -15,8 +15,9 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   );
   await page.locator('select').selectOption('45');
   await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 15_000 });
-  await expect(page.locator('[data-activity-player]')).toHaveCount(6);
+  // 45-min B1 lesson = 8 activities under the canonical sizing policy (hramatka/sizing_policy.py).
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(8, { timeout: 15_000 });
+  await expect(page.locator('[data-activity-player]')).toHaveCount(8);
 
   const revisionBefore = await page.locator('.meta').textContent();
   const initialRevision = Number(revisionBefore?.match(/Ревізія: (\d+)/)?.[1]);
@@ -33,6 +34,6 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   const directUrl = page.url();
   await page.reload();
   await expect(page).toHaveURL(directUrl);
-  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 10_000 });
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(8, { timeout: 10_000 });
   await expect(page.getByText('Прийнято', { exact: true })).toBeVisible();
 });
