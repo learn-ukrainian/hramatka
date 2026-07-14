@@ -24,11 +24,15 @@ repository:
 | `HRAMATKA_DB_PATH` | SQLite file on the persistent volume, outside the release directory. |
 | `HRAMATKA_PILOT_ORIGIN` | Exact HTTPS pilot origin, without a path or trailing slash. |
 | `HRAMATKA_CSRF_HMAC_KEY` | Independent canonical unpadded-base64url encoding of 32 random bytes. It is the server-side HMAC key for session-derived CSRF tokens and is never stored in SQLite. |
+| `HRAMATKA_BAKE_WORKERS` | In-process bake worker-pool size. Defaults to `4`; values are clamped to `1`–`8`. |
+| `HRAMATKA_MAX_PROVIDER_CONCURRENCY` | Process-wide cap on live Google-AIS/OpenRouter HTTP calls. Defaults to `8`. |
+| `HRAMATKA_BAKE_PROVIDERS` | Comma-separated active primary providers, default `google-ais,openrouter`. Bakes round-robin across this list; each primary retains the other provider as 5xx/429/timeout failover. |
 
 The deployed service must use the real `EngineLessonBaker` and leave mock mode off.
-Its selected engine/provider configuration is deployment secret material. The service
-is ready only when the database is writable with current migrations and the real baker
-is wired; see `/api/readyz` and the persistence contract.
+Its selected engine/provider configuration is deployment secret material. One Uvicorn
+process owns the bounded worker pool so SQLite remains one local durable authority. The
+service is ready only when the database is writable with current migrations and the real
+baker is wired; see `/api/readyz` and the persistence contract.
 
 ## Operator lifecycle
 

@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -317,6 +320,62 @@ def test_make_generator_gemma_ais_uses_locked_route():
     assert isinstance(gen, providers.FailoverGeneratorPort)
     assert gen._fallback._model == providers.DEFAULT_GEMMA_FALLBACK_MODEL
     assert gen._fallback._transport.base_url == providers.DEFAULT_GEMMA_FALLBACK_BASE_URL
+
+
+def test_round_robin_selector_spreads_bakes_across_both_provider_primaries():
+    handled: list[str] = []
+    handled_lock = threading.Lock()
+
+    def generator(name: str):
+        def call(_prompt: str) -> str:
+            with handled_lock:
+                handled.append(name)
+            return name
+
+        return call
+
+    selector = providers.RoundRobinGeneratorSelector(
+        {"google-ais": generator("google-ais"), "openrouter": generator("openrouter")}
+    )
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        outputs = list(executor.map(lambda _: selector.for_bake()("prompt"), range(12)))
+
+    assert sorted(outputs) == ["google-ais"] * 6 + ["openrouter"] * 6
+    assert sorted(handled) == ["google-ais"] * 6 + ["openrouter"] * 6
+
+
+def test_global_provider_budget_caps_inflight_http_calls():
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.04)
+            return httpx.Response(200, json=OK_BODY)
+        finally:
+            with lock:
+                active -= 1
+
+    providers.configure_provider_concurrency(2)
+    try:
+        transport = _transport(handler)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            outputs = list(
+                executor.map(
+                    lambda _: transport("prompt", api_key="key", model="m", timeout_s=5),
+                    range(4),
+                )
+            )
+    finally:
+        providers.configure_provider_concurrency(8)
+
+    assert outputs == ['{"activities": []}'] * 4
+    assert max_active == 2
 
 
 @pytest.mark.parametrize(

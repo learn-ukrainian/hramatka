@@ -13,11 +13,13 @@ generator.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import platform
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
@@ -616,12 +618,12 @@ def _run(
     snap["diagnostics"] = vesum_gate.anchor_baseline_diagnostics(
         snap["body_uk"], atlas_lookup=atlas_lookup
     )
-    def append_candidate(
+    def make_candidate(
         raw: object,
         candidate_id: str,
         lookup: dict | None,
         expected_types: list[str],
-    ) -> None:
+    ) -> schema.HramatkaActivity:
         if not isinstance(raw, dict):
             ir = reject_raw_candidate(
                 raw,
@@ -647,11 +649,50 @@ def _run(
                 atlas_lookup=lookup,
                 candidate_id=candidate_id,
             )
-        result.activities.append(ir)
+        return ir
+
+    def gate_batch(
+        activities: list[object],
+        *,
+        batch_index: int,
+        lookup: dict | None,
+        expected_types: list[str],
+    ) -> list[schema.HramatkaActivity]:
+        """Gate independent candidates concurrently while preserving IR order."""
+        jobs = [
+            (raw, f"candidate-{batch_index}-{index:03d}")
+            for index, raw in enumerate(activities)
+        ]
+        if len(jobs) < 2:
+            return [
+                make_candidate(raw, candidate_id, lookup, expected_types)
+                for raw, candidate_id in jobs
+            ]
+        # Read-only VESUM/Atlas gate work is independent once the shared lookup
+        # is complete.  Copy the active data-bundle ContextVar for each child.
+        with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as executor:
+            futures = [
+                executor.submit(
+                    contextvars.copy_context().run,
+                    make_candidate,
+                    raw,
+                    candidate_id,
+                    lookup,
+                    expected_types,
+                )
+                for raw, candidate_id in jobs
+            ]
+            return [future.result() for future in futures]
 
     for batch_index, (bank, activities) in enumerate(raw_batches):
-        for index, raw in enumerate(activities):
-            append_candidate(raw, f"candidate-{batch_index}-{index:03d}", atlas_lookup, bank)
+        result.activities.extend(
+            gate_batch(
+                activities,
+                batch_index=batch_index,
+                lookup=atlas_lookup,
+                expected_types=bank,
+            )
+        )
     result.regeneration_attempts = max(0, len(raw_batches) - 1)
 
     selector_phase = int(phase) if isinstance(phase, str) and phase.isdigit() else phase
@@ -698,10 +739,8 @@ def _run(
         if not deficits or result.generation_error:
             break
         if ctx is not None:
-            ctx.update_progress_db(
-                calls_planned=ctx.calls_planned + 1 if ctx.calls_planned is not None else None,
-                step="generation"
-            )
+            ctx.increase_calls_planned()
+            ctx.update_progress_db(step="generation")
         try:
             regenerated = _candidate_generator(
                 snap["body_uk"],
@@ -728,8 +767,14 @@ def _run(
         retry_lookup = retrieval.augmented_atlas_lookup(
             snap["body_uk"], retry_dicts, grounding["atlas_lookup"], atlas_db=atlas_db
         )
-        for index, raw in enumerate(regenerated):
-            append_candidate(raw, f"candidate-{attempt}-{index:03d}", retry_lookup, list(deficits))
+        result.activities.extend(
+            gate_batch(
+                regenerated,
+                batch_index=attempt,
+                lookup=retry_lookup,
+                expected_types=list(deficits),
+            )
+        )
         result.regeneration_attempts = attempt
         partition_and_select()
 

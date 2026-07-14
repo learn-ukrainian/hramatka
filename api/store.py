@@ -788,7 +788,7 @@ class JobStore:
     # -- Runner transitions -------------------------------------------------
 
     def claim_next_draft(self) -> JobRecord | None:
-        """Claim the next queued job for the one in-process worker, durably."""
+        """Atomically claim the next queued job for one in-process pool worker."""
         timestamp = now_iso()
         with self._write_transaction() as connection:
             row = connection.execute(
@@ -966,7 +966,7 @@ class JobStore:
         *,
         failure_code: str = "unknown_safe_failure",
     ) -> int:
-        """Fail drafts when the sole worker is deliberately quarantined."""
+        """Fail drafts only when the whole in-process worker pool is quarantined."""
         _validate_failure(failure_code, failure_message)
         timestamp = now_iso()
         with self._write_transaction() as connection:

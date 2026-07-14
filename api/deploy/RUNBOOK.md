@@ -31,7 +31,7 @@ change, provisioning, or disclosure of any secret.
    secret values.
 2. Confirm the source checkout is clean and reviewed, then run its applicable
    tests before transferring it. Verify the service unit still uses one Uvicorn
-   worker and `WorkingDirectory=/opt/hramatka/current`.
+   process and `WorkingDirectory=/opt/hramatka/current`.
 3. Confirm that the already mounted data release includes its matching
    `data-manifest.json`. Its digests must be verified by `/api/readyz`; never
    set `HRAMATKA_ALLOW_DATA_DRIFT=1` as part of a deploy.
@@ -40,11 +40,13 @@ change, provisioning, or disclosure of any secret.
    `HRAMATKA_PILOT_ORIGIN`, `HRAMATKA_CSRF_HMAC_KEY`, `HRAMATKA_DATA_DIR`, and
    `HRAMATKA_DATA_MANIFEST`. The latter two must refer to the same mounted data
    release, with `HRAMATKA_DATA_MANIFEST=$HRAMATKA_DATA_DIR/data-manifest.json`.
-   For the sanctioned AIS-outage fallback, also configure
+   Set `HRAMATKA_BAKE_WORKERS=4` (clamped 1–8),
+   `HRAMATKA_MAX_PROVIDER_CONCURRENCY=8`, and
+   `HRAMATKA_BAKE_PROVIDERS=google-ais,openrouter`. Also configure
    `HRAMATKA_GEMMA_FALLBACK_BASE_URL`, `HRAMATKA_GEMMA_FALLBACK_MODEL`, and one
    host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
-   `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. The paid OpenRouter route is invoked
-   only after AIS transport retries exhaust; never print the key or its file.
+   `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Both routes are active round-robin
+   primaries; the other route is outage-only failover. Never print a key or its file.
 
 ## Deploy
 

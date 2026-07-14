@@ -11,14 +11,32 @@ manifest (see `engine.data`); there is no checkout-relative default.
 
 from __future__ import annotations
 
+import threading
+
 from . import vendoring
 
 _vesum = vendoring.load_module(
     vendoring.LINGUISTICS, "vesum.py", "hramatka.vendor.learn_ukrainian_linguistics.vesum"
 )
 
-verify_word = _vesum.verify_word
-verify_words = _vesum.verify_words
-verify_lemma = _vesum.verify_lemma
+_vesum_lock = threading.RLock()
+
+
+def verify_word(*args, **kwargs):
+    """Serialize the vendored path-keyed SQLite handle across bake threads."""
+    with _vesum_lock:
+        return _vesum.verify_word(*args, **kwargs)
+
+
+def verify_words(*args, **kwargs):
+    """Serialize the vendored path-keyed SQLite handle across bake threads."""
+    with _vesum_lock:
+        return _vesum.verify_words(*args, **kwargs)
+
+
+def verify_lemma(*args, **kwargs):
+    """Serialize the vendored path-keyed SQLite handle across bake threads."""
+    with _vesum_lock:
+        return _vesum.verify_lemma(*args, **kwargs)
 
 __all__ = ["verify_word", "verify_words", "verify_lemma"]

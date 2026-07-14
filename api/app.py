@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hramatka.engine import data
+from hramatka.engine.providers import configure_provider_concurrency, make_bake_generator
 
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
@@ -183,8 +184,17 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     settings = settings or Settings.from_env()
     store = JobStore(settings.database_path)
     store.initialize()
-    baker = baker or EngineLessonBaker(store=store)
-    runner = BakeRunner(store, baker, settings.bake_hard_timeout_seconds)
+    configure_provider_concurrency(settings.max_provider_concurrency)
+    baker = baker or EngineLessonBaker(
+        store=store,
+        generator=make_bake_generator(settings.bake_providers),
+    )
+    runner = BakeRunner(
+        store,
+        baker,
+        settings.bake_hard_timeout_seconds,
+        worker_count=settings.bake_workers,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

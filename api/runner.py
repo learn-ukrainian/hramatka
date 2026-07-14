@@ -1,4 +1,4 @@
-"""Exactly one in-process durable bake runner per Uvicorn process."""
+"""A bounded in-process durable bake worker pool per Uvicorn process."""
 
 from __future__ import annotations
 
@@ -13,35 +13,52 @@ from .validation import validate_lesson
 
 _SAFE_FAILURE_MESSAGE = "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
 _PROVIDER_RETRY_DELAY_SECONDS = 0.25
+_DEFAULT_WORKERS = 4
+_MAX_WORKERS = 8
 
 
 class BakeRunner:
-    """Claim at most one SQLite job and never report an undurable result as ready."""
+    """Atomically claim jobs into a bounded pool and persist each result independently."""
 
-    def __init__(self, store: JobStore, baker: LessonBaker, hard_timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        baker: LessonBaker,
+        hard_timeout_seconds: int,
+        worker_count: int = _DEFAULT_WORKERS,
+    ) -> None:
         self._store = store
         self._baker = baker
         self._hard_timeout_seconds = hard_timeout_seconds
+        self._worker_count = min(_MAX_WORKERS, max(1, worker_count))
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._poisoned = threading.Event()
         self._state_lock = threading.Lock()
-        self._worker: threading.Thread | None = None
+        self._workers: list[threading.Thread] = []
         self._watchdog: threading.Thread | None = None
 
     def start(self) -> None:
-        """Start the sole worker plus a watchdog for honest timeout failure."""
+        """Start the configured independent workers plus a per-job timeout sweep."""
         with self._state_lock:
-            if self._worker is not None:
+            if self._workers:
                 return
-            self._worker = threading.Thread(target=self._work, daemon=True, name="hramatka-baker")
             self._watchdog = threading.Thread(
                 target=self._watchdog_loop, daemon=True, name="hramatka-bake-watchdog"
             )
             try:
-                self._worker.start()
+                for index in range(self._worker_count):
+                    worker = threading.Thread(
+                        target=self._work,
+                        daemon=True,
+                        name=f"hramatka-baker-{index + 1}",
+                    )
+                    worker.start()
+                    self._workers.append(worker)
                 self._watchdog.start()
             except RuntimeError:
+                # Thread creation failure is process-wide, not a job fault.
+                # Stop admitting drafts; a restart will sweep any in-flight rows.
                 self.quarantine()
                 raise
 
@@ -50,7 +67,7 @@ class BakeRunner:
         self._wake.set()
 
     def submit(self, lesson_id: str) -> bool:
-        """Wake the one worker; no request is allowed to spawn a bake thread."""
+        """Wake the shared pool; requests never create bake threads."""
         del lesson_id
         if self._poisoned.is_set() or self._stop.is_set():
             return False
@@ -58,13 +75,15 @@ class BakeRunner:
         return True
 
     def expire_and_quarantine(self) -> bool:
-        """Expose a non-cancellable in-process bake as durable timeout failure."""
-        if self._store.sweep_expired_bakes(self._hard_timeout_seconds) == 0:
-            return False
-        self.quarantine()
-        return True
+        """Durably fail every individually expired in-flight bake, never siblings.
+
+        The compatibility name remains for callers, but an ordinary timeout is
+        not a systemic outage and therefore must not quarantine the worker pool.
+        """
+        return self._store.sweep_expired_bakes(self._hard_timeout_seconds) > 0
 
     def quarantine(self) -> None:
+        """Stop and fail queued work only for an explicit systemic condition."""
         self._poisoned.set()
         self._store.fail_queued_drafts(
             "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
@@ -74,12 +93,20 @@ class BakeRunner:
 
     def _work(self) -> None:
         while not self._stop.is_set() and not self._poisoned.is_set():
-            job = self._store.claim_next_draft()
+            job = self._claim_next_job()
             if job is None:
                 self._wake.wait(timeout=1)
                 self._wake.clear()
                 continue
             self._run_job(job)
+
+    def _claim_next_job(self):
+        """Retry optimistic CAS losers promptly so a wake fills the whole pool."""
+        for _ in range(self._worker_count):
+            job = self._store.claim_next_draft()
+            if job is not None:
+                return job
+        return None
 
     def _run_job(self, job) -> None:  # JobRecord is deliberately duck-typed for test seams.
         try:
@@ -136,5 +163,4 @@ class BakeRunner:
     def _watchdog_loop(self) -> None:
         interval = max(0.05, min(self._hard_timeout_seconds / 4, 5))
         while not self._stop.wait(interval):
-            if self.expire_and_quarantine():
-                return
+            self.expire_and_quarantine()

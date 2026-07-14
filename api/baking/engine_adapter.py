@@ -22,6 +22,7 @@ import re
 import shutil
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from math import ceil
 from pathlib import Path
@@ -381,7 +382,7 @@ class EngineLessonBaker:
         del focus  # slice-1 generation does not branch on focus yet
         plan = _PHASE_PLAN.get(duration, _PHASE_PLAN[45])
         phase_count_plans = _candidate_count_plan(plan)
-        ctx = data.use_bundle(self.resolve_data_bundle())
+        bundle = self.resolve_data_bundle()
         out_root = _engine_out_root()
 
         from hramatka.engine.providers import TelemetryContext, telemetry_ctx
@@ -402,28 +403,55 @@ class EngineLessonBaker:
         tel_ctx.update_progress_db()
 
         try:
-            with ctx:
-                job_out = out_root / str(uuid.uuid4()) if out_root else None
-                if job_out is not None:
-                    job_out.mkdir(parents=True)
-                    _prune_engine_out(out_root, protected_names={job_out.name})
-                    tel_ctx.trace_dir = job_out
-                phase_results: dict[int, Any] = {}
-                for phase, count_plan in phase_count_plans.items():
-                    phase_results[phase] = pipeline.run(
-                        anchor,
-                        level="B1",
-                        pedagogy="ttt",
-                        phase=str(phase),
-                        types=list(count_plan),
-                        generator=self._generator,
-                        use_cache=False,
-                        cache_dir=self._cache_dir,
-                        out_dir=(job_out / f"phase-{phase}") if job_out else None,
-                        count_plan=count_plan,
-                        max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
-                    )
-            
+            job_out = out_root / str(uuid.uuid4()) if out_root else None
+            if job_out is not None:
+                job_out.mkdir(parents=True)
+                _prune_engine_out(out_root, protected_names={job_out.name})
+                tel_ctx.trace_dir = job_out
+
+            # Select a primary once for this durable bake.  All independent
+            # phase calls retain that primary and its opposite-provider
+            # failover, preserving deterministic per-job routing semantics.
+            generator_for_bake = getattr(self._generator, "for_bake", None)
+            generator = generator_for_bake() if callable(generator_for_bake) else self._generator
+
+            def run_phase(phase: int, count_plan: dict[str, int]):
+                phase_ctx = tel_ctx.fork(phase=phase)
+                phase_token = telemetry_ctx.set(phase_ctx)
+                try:
+                    # Context variables are not inherited by executor threads;
+                    # keep the exact digest-pinned bundle scoped to this phase.
+                    with data.use_bundle(bundle):
+                        return pipeline.run(
+                            anchor,
+                            level="B1",
+                            pedagogy="ttt",
+                            phase=str(phase),
+                            types=list(count_plan),
+                            generator=generator,
+                            use_cache=False,
+                            cache_dir=self._cache_dir,
+                            out_dir=(job_out / f"phase-{phase}") if job_out else None,
+                            count_plan=count_plan,
+                            max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
+                        )
+                finally:
+                    telemetry_ctx.reset(phase_token)
+
+            # The phase plans share only immutable input.  Regeneration stays
+            # serial inside each ``pipeline.run`` because it depends on that
+            # phase's first-batch gate deficits.
+            phase_results: dict[int, Any] = {}
+            with ThreadPoolExecutor(
+                max_workers=len(phase_count_plans), thread_name_prefix="hramatka-phase"
+            ) as executor:
+                futures = {
+                    phase: executor.submit(run_phase, phase, count_plan)
+                    for phase, count_plan in phase_count_plans.items()
+                }
+                for phase in phase_count_plans:
+                    phase_results[phase] = futures[phase].result()
+
             # pipeline.run degrades transport/parse failures to generation_error
             # rather than raising, so surface a safe, teacher-visible failure here.
             if any(result.generation_error for result in phase_results.values()):
@@ -516,7 +544,7 @@ class EngineLessonBaker:
             anchor_diagnostics = first_result.anchor.get("diagnostics")
             if anchor_diagnostics is None:
                 anchor_diagnostics = vesum_gate.anchor_baseline_diagnostics(anchor_body)
-            
+
             tel_ctx.update_progress_db(step="assembly")
 
             return {

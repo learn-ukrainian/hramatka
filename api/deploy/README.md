@@ -19,13 +19,15 @@ Do not arm the pilot until all of the following are recorded as passing:
 5. The explicit pilot-arming decision required by bridge message 2629 is present.
 
 A red readiness probe, missing backup destination, failed restore drill, or a change
-that adds Uvicorn workers is a launch blocker. Disarm by stopping
+that adds Uvicorn processes is a launch blocker. Disarm by stopping
 `hramatka-api.service`; do not work around a failed gate with the mock baker.
 
 ## Host layout
 
-The target is one Hetzner CX23. The layout deliberately separates immutable releases
-from mutable private state:
+The target is one Hetzner CX23 (2 vCPU / 4 GB). The layout deliberately separates
+immutable releases from mutable private state. Provider generation is I/O-bound; the
+default four in-process bake workers are appropriate for this host, while a shared
+eight-request provider cap bounds phase fan-out and provider-rate-limit pressure.
 
 | Path | Owner and purpose |
 | --- | --- |
@@ -47,8 +49,8 @@ files share this directory; do not copy any of the three files as a hand-made ba
 2. Put [`hramatka-api.service`](hramatka-api.service) at
    `/etc/systemd/system/hramatka-api.service`, then run
    `systemctl daemon-reload` and `systemctl enable --now hramatka-api.service`.
-   Its explicit `--workers 1` is required: the API process owns the one in-process
-   bake runner.
+   Its explicit `--workers 1` is required: one API process owns the bounded
+   in-process bake pool and its SQLite durable authority.
 3. Create `/etc/hramatka/api.env` from [`api.env.example`](api.env.example), set its
    owner to `root:hramatka` and mode to `0640`, then populate values only from the
    host secret store. `HRAMATKA_CSRF_HMAC_KEY` is the mandatory server-side HMAC key;
@@ -76,6 +78,21 @@ curl --fail --silent --show-error https://<pilot-hostname>/api/readyz
 
 Do not include cookies, invite fragments, request bodies, CSRF values, or response
 payloads containing teacher data in terminal captures or support logs.
+
+## Bake capacity and provider routing
+
+Set `HRAMATKA_BAKE_WORKERS=4`, `HRAMATKA_MAX_PROVIDER_CONCURRENCY=8`, and
+`HRAMATKA_BAKE_PROVIDERS=google-ais,openrouter` in the root-owned environment file
+unless measured provider limits justify a reviewed change. The worker setting is
+clamped to 1–8. The process picks an initial provider round-robin per durable bake:
+Google-AIS sends `gemma-4-31b-it`; OpenRouter sends `google/gemma-4-31b-it`.
+Each route retries the other provider only for retry-exhausted 5xx/timeout or 429;
+authentication and other 4xx errors never spend paid fallback tokens.
+
+Before pilot deployment, perform the separately driver-coordinated live check with
+four simultaneous teacher bakes. Record only concurrency counts, sanitized timing,
+provider host names, terminal job states, and `/api/readyz`—never prompts, provider
+responses, or secret values.
 
 ## Daily SQLite-consistent off-host backup
 

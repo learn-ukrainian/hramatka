@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 from collections import Counter
 
 import pytest
@@ -33,20 +35,23 @@ def test_e2e_bake_refuses_to_repeat_thin_candidate_bank(tmp_path):
 def test_e2e_baker_fills_six_blocks_with_per_phase_variety(tmp_path):
     requested_counts: list[dict[str, int]] = []
     generated_counts: Counter[str] = Counter()
+    records_lock = threading.Lock()
 
     def generator(prompt: str) -> str:
         counts = {
             activity_type: int(count)
             for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
         }
-        requested_counts.append(counts)
+        with records_lock:
+            requested_counts.append(counts)
         activities = [
             candidate(index)
             for activity_type, count in counts.items()
             for index in range(count)
             for candidate in [_READY_CANDIDATES[activity_type]]
         ]
-        generated_counts.update(activity["type"] for activity in activities)
+        with records_lock:
+            generated_counts.update(activity["type"] for activity in activities)
         return json.dumps({"activities": activities}, ensure_ascii=False)
 
     baker = EngineLessonBaker(
@@ -66,6 +71,93 @@ def test_e2e_baker_fills_six_blocks_with_per_phase_variety(tmp_path):
     assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
     assert len({block["id"] for block in baked["blocks"]}) == 6
     assert {block["type"] for block in baked["blocks"]} >= {"match-up", "short-writing"}
+
+
+def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
+    plans = engine_adapter._candidate_count_plan(engine_adapter._PHASE_PLAN[45])
+    started = threading.Event()
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def generator(prompt: str) -> str:
+        nonlocal active, max_active
+        counts = {
+            activity_type: int(count)
+            for activity_type, count in re.findall(r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE)
+        }
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            if active == 3:
+                started.set()
+        try:
+            assert started.wait(timeout=0.5), "phase generation was serialized"
+            time.sleep(0.08)
+            activities = [
+                candidate(index)
+                for activity_type, count in counts.items()
+                for index in range(count)
+                for candidate in [_READY_CANDIDATES[activity_type]]
+            ]
+            return json.dumps({"activities": activities}, ensure_ascii=False)
+        finally:
+            with lock:
+                active -= 1
+
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+    assert max_active == len(plans) == 3
+    assert [block["phase"] for block in baked["blocks"]] == [1, 1, 2, 2, 2, 3]
+
+
+def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
+    assigned: list[str] = []
+    handled: list[str] = []
+    lock = threading.Lock()
+
+    class StubLoadBalancer:
+        def for_bake(self):
+            with lock:
+                provider = ("google-ais", "openrouter")[len(assigned) % 2]
+                assigned.append(provider)
+
+            def generator(prompt: str) -> str:
+                counts = {
+                    activity_type: int(count)
+                    for activity_type, count in re.findall(
+                        r"^- ([a-z-]+): (\d+)$", prompt, re.MULTILINE
+                    )
+                }
+                activities = [
+                    candidate(index)
+                    for activity_type, count in counts.items()
+                    for index in range(count)
+                    for candidate in [_READY_CANDIDATES[activity_type]]
+                ]
+                with lock:
+                    handled.append(provider)
+                return json.dumps({"activities": activities}, ensure_ascii=False)
+
+            return generator
+
+    baker = EngineLessonBaker(
+        generator=StubLoadBalancer(),
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    for _ in range(4):
+        baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+        assert len(baked["blocks"]) == 6
+
+    assert assigned == ["google-ais", "openrouter", "google-ais", "openrouter"]
+    assert set(handled) == {"google-ais", "openrouter"}
+    assert Counter(handled) == Counter({"google-ais": 6, "openrouter": 6})
 
 
 def test_e2e_baker_fills_six_blocks_when_constrained_types_are_unavailable(tmp_path):

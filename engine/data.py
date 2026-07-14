@@ -21,6 +21,7 @@ Config:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -35,6 +36,9 @@ ALLOW_DRIFT_ENV = "HRAMATKA_ALLOW_DATA_DRIFT"
 DEFAULT_MANIFEST = Path(__file__).with_name("data-manifest.json")
 
 _active: DataBundle | None = None  # noqa: F821 - forward ref, defined below
+_active_context: contextvars.ContextVar[DataBundle | None] = contextvars.ContextVar(
+    "hramatka_active_data_bundle", default=None
+)
 
 
 class DataConfigError(RuntimeError):
@@ -166,7 +170,10 @@ def resolve_bundle(
 
 
 def active_bundle() -> DataBundle:
-    """The process-wide active bundle (resolved from env on first use)."""
+    """Return the task-local bundle, or the process default resolved from env."""
+    scoped = _active_context.get()
+    if scoped is not None:
+        return scoped
     global _active
     if _active is None:
         _active = resolve_bundle()
@@ -181,11 +188,9 @@ def set_active_bundle(bundle: DataBundle | None) -> None:
 
 @contextlib.contextmanager
 def use_bundle(bundle: DataBundle):
-    """Temporarily install `bundle` as active (restores the prior one on exit)."""
-    global _active
-    previous = _active
-    _active = bundle
+    """Temporarily install a task-local bundle without racing other bake threads."""
+    token = _active_context.set(bundle)
     try:
         yield bundle
     finally:
-        _active = previous
+        _active_context.reset(token)
