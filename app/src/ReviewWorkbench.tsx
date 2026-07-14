@@ -222,6 +222,9 @@ export default function ReviewWorkbench({
             </section>
           );
         })}
+        <p className="docsheet-footer" data-testid="honesty-footer">
+          {t('print.honestyFooter')}
+        </p>
       </div>
 
       {reserve.length > 0 && (

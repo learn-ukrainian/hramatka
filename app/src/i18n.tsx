@@ -273,6 +273,10 @@ const DICT = {
     uk: 'Приватний пілот • Тільки для запрошених викладачів • B1',
     en: 'Private pilot • Invited teachers only • B1',
   },
+  'print.honestyFooter': {
+    uk: 'Складено з тексту вчителя · мову перевірено за словником · факти перевірте · Граматка',
+    en: 'Compiled from the teacher’s text · language checked against dictionary · verify facts · Hramatka',
+  },
 
   // ---- client-set error chrome (server messages flow through as raw, never here) ----
   'err.sessionRequired': { uk: 'Потрібна сесія викладача.', en: 'A teacher session is required.' },

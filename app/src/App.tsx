@@ -1784,6 +1784,9 @@ export default function TeacherApp() {
                         <div className={`modes run`}>
                           {renderBlocks(lesson, 'run')}
                         </div>
+                        <p className="docsheet-footer" data-testid="honesty-footer">
+                          {t('print.honestyFooter')}
+                        </p>
                       </div>
                     </>
                   )}

@@ -106,6 +106,26 @@ test.describe('Hramatka print-media emulation (stub)', () => {
     expect(classCount).toBe(0);
     expect(phraseCount).toBe(0);
 
+    // Assert honesty footer is visible under print media and is translated
+    const honestyFooter = page.getByTestId('honesty-footer');
+    await expect(honestyFooter).toBeVisible();
+    await expect(honestyFooter).toHaveText(/Складено з тексту вчителя/);
+
+    // Switch back to screen media to click the language toggle (hidden under print media)
+    await page.emulateMedia({ media: 'screen' });
+    await page.getByTestId('lang-toggle').click();
+
+    // Emulate print media again to verify English footer
+    await page.emulateMedia({ media: 'print' });
+    await expect(honestyFooter).toHaveText(/Compiled from the teacher’s text/);
+
+    // Restore screen media to switch language back to Ukrainian
+    await page.emulateMedia({ media: 'screen' });
+    await page.getByTestId('lang-toggle').click();
+
+    // Emulate print media again for the remainder of the test
+    await page.emulateMedia({ media: 'print' });
+
     // (3) inline: restore screen media and verify the print-only rule no longer applies
     await page.emulateMedia({ media: 'screen' });
     await expect(page.getByTestId('anchor-print')).not.toBeVisible();
@@ -142,6 +162,26 @@ test.describe('Hramatka print-media emulation (stub)', () => {
     // ':has-text()' does substring match — the DOM label is «Ключ відповіді:» (trailing colon).
     const phraseCount = await page.locator('strong:has-text("Ключ відповіді"):visible').count();
     expect(phraseCount).toBeGreaterThan(0);
+
+    // Assert honesty footer is visible under print media and is translated
+    const honestyFooter = page.getByTestId('honesty-footer');
+    await expect(honestyFooter).toBeVisible();
+    await expect(honestyFooter).toHaveText(/Складено з тексту вчителя/);
+
+    // Switch back to screen media to click the language toggle (hidden under print media)
+    await page.emulateMedia({ media: 'screen' });
+    await page.getByTestId('lang-toggle').click();
+
+    // Emulate print media again to verify English footer
+    await page.emulateMedia({ media: 'print' });
+    await expect(honestyFooter).toHaveText(/Compiled from the teacher’s text/);
+
+    // Restore screen media to switch language back to Ukrainian
+    await page.emulateMedia({ media: 'screen' });
+    await page.getByTestId('lang-toggle').click();
+
+    // Emulate print media again for the remainder of the test
+    await page.emulateMedia({ media: 'print' });
 
     // (3) inline: restore screen media and verify the print-only rule no longer applies
     await page.emulateMedia({ media: 'screen' });

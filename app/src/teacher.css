@@ -436,6 +436,13 @@ button.choice.on {
   margin: 0 0 2px;
 }
 .docsheet-meta { margin: 0 0 6px; color: var(--ink-soft); font-size: 13px; }
+.docsheet-footer {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 22px;
+}
 .dochead {
   font-family: Georgia, 'Times New Roman', serif;
   font-size: 17px;
