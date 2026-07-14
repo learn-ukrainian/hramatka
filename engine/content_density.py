@@ -41,6 +41,14 @@ THIN_SOURCE_UA_MESSAGE: Final = (
     "і спробуйте ще раз."
 )
 
+# Non-blaming shortfall message for floor failures on anchors that pass the
+# deterministic thin-source precheck (i.e. sufficient source but still could not
+# assemble a full lesson this time). Must never blame the teacher's text.
+FLOOR_SHORTFALL_UA_MESSAGE: Final = (
+    "Цього разу не вдалося скласти повний урок на 45 хвилин. "
+    "Спробуйте, будь ласка, ще раз."
+)
+
 
 @dataclass(frozen=True)
 class AnchorSentences:

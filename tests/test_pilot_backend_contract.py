@@ -24,9 +24,13 @@ from fastapi.testclient import TestClient
 
 from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
-from hramatka.api.baking.port import BakeError, ProviderUnavailable
+from hramatka.api.baking.port import BakeError, FloorUnmetError, ProviderUnavailable
 from hramatka.api.config import Settings
 from hramatka.engine import data
+from hramatka.engine.content_density import (
+    FLOOR_SHORTFALL_UA_MESSAGE,
+    THIN_SOURCE_UA_MESSAGE,
+)
 
 ORIGIN = "https://pilot.example.test"
 CSRF_KEY = b"test-only-hmac-key-that-is-not-a-deployment-secret"
@@ -114,6 +118,41 @@ class TransientProviderBaker:
         del anchor, duration, focus
         self.calls += 1
         raise ProviderUnavailable("provider 500: private trace must not be served")
+
+
+# Floor-specific bakers for #174: exercise the typed FloorUnmetError path
+# (blames_source) from engine_adapter through runner classification.
+class ThinSourceFloorBaker:
+    """Raises FloorUnmetError with blames_source=True (thin source)."""
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        del anchor, duration, focus
+        raise FloorUnmetError(THIN_SOURCE_UA_MESSAGE, blames_source=True)
+
+
+class SufficientAnchorFloorBaker:
+    """Raises FloorUnmetError with blames_source=False (sufficient anchor)."""
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        del anchor, duration, focus
+        raise FloorUnmetError(
+            "Bake failed: the lesson could not reach the minimum activity density.",
+            blames_source=False,
+        )
+
+
+class UnknownBakeErrorBaker:
+    """Regression baker: plain BakeError with unknown text must classify as engine_unavailable."""
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        del anchor, duration, focus
+        raise BakeError("some future unknown text")
 
 
 def _settings(tmp_path: Path, *, mock_mode: bool = False) -> Settings:
@@ -809,6 +848,7 @@ def test_baker_failure_is_durable_sanitized_and_never_exposes_a_partial_lesson(
             "worker_restarted",
             "provider_unavailable",
             "engine_unavailable",
+            "lesson_floor_unmet",
             "lesson_schema_invalid",
             "unknown_safe_failure",
         }
@@ -856,6 +896,79 @@ def test_provider_unavailability_retries_once_then_persists_a_ukrainian_failure(
     assert failed["failure_code"] == "provider_unavailable"
     assert failed["failure_message"] == "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
     assert "private trace" not in (failed["failure_message"] or "")
+
+
+def test_floor_bakeerror_on_thin_source_uses_dedicated_code_and_exact_thin_message(
+    tmp_path: Path,
+) -> None:
+    """Thin-source floor path: dedicated code + the exact thin UA blame message (no generic)."""
+    baker = ThinSourceFloorBaker()
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+
+    assert failed["failure_code"] == "lesson_floor_unmet"
+    assert failed["failure_message"] == THIN_SOURCE_UA_MESSAGE
+    # Must not fall back to the generic safe message.
+    assert failed["failure_message"] != "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
+
+
+def test_floor_bakeerror_on_sufficient_anchor_uses_dedicated_code_and_nonblaming_message(
+    tmp_path: Path,
+) -> None:
+    """Sufficient anchor floor path: dedicated code + non-blaming UA retry message."""
+    baker = SufficientAnchorFloorBaker()
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+
+    assert failed["failure_code"] == "lesson_floor_unmet"
+    assert failed["failure_message"] == FLOOR_SHORTFALL_UA_MESSAGE
+    # Explicitly not the thin blame text.
+    assert "З цього тексту не вдалося" not in (failed["failure_message"] or "")
+
+
+def test_plain_bakeerror_unknown_text_classifies_as_engine_unavailable(
+    tmp_path: Path,
+) -> None:
+    """Regression: unknown/future BakeError string still falls to engine_unavailable.
+
+    Proves the classification no longer relies on (or leaks) specific floor strings.
+    """
+    baker = UnknownBakeErrorBaker()
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+
+    assert failed["failure_code"] == "engine_unavailable"
+    assert failed["failure_message"] == "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
 
 
 def test_readyz_requires_real_baker_and_mock_mode_off(tmp_path: Path) -> None:
@@ -1127,7 +1240,9 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
         conn.commit()
         # now apply full migrations (incl v3)
         apply_migrations(conn)
-        assert current_schema_version(conn) == EXPECTED_SCHEMA_VERSION == 3
+        # After v004 the final version is higher; assert against the live constant
+        # (the test exercises additive migration on a v2-populated DB and data survival).
+        assert current_schema_version(conn) == EXPECTED_SCHEMA_VERSION
         # data preserved
         trow = conn.execute("SELECT * FROM pilot_teachers WHERE id='t-pop-1'").fetchone()
         assert trow["display_name"] == "Популяційна"
@@ -1154,6 +1269,126 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
     assert store.get_teacher_default_duration("t-pop-1") == 60
     store.set_teacher_default_duration("t-pop-1", 90)
     assert store.get_teacher_default_duration("t-pop-1") == 90
+
+
+def test_migration_v004_extends_failure_code_check_and_preserves_data(tmp_path: Path) -> None:
+    """v4 migration: v3 data survives; 'lesson_floor_unmet' accepted by extended CHECK."""
+    from hramatka.api.migrations import (
+        EXPECTED_SCHEMA_VERSION,
+        apply_migrations,
+        current_schema_version,
+    )
+
+    db_path = tmp_path / "populated-v3.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        # Simulate a v3-populated DB (apply up to v3, insert teacher + lesson)
+        # Manual minimal schema up to v3 (no v4 CHECK yet).
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE pilot_teachers (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 100),
+                created_at TEXT NOT NULL,
+                deactivated_at TEXT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE lesson_jobs (
+                teacher_id TEXT NOT NULL REFERENCES pilot_teachers(id),
+                id TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                request_hash BLOB NOT NULL,
+                status TEXT NOT NULL,
+                step TEXT NOT NULL,
+                failure_code TEXT NULL,
+                failure_message TEXT NULL,
+                lesson_json TEXT NULL,
+                warning_acknowledgements_json TEXT NOT NULL DEFAULT '[]',
+                accepted INTEGER NOT NULL DEFAULT 0,
+                accepted_at TEXT NULL,
+                accepted_revision INTEGER NULL,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT NULL,
+                completed_at TEXT NULL,
+                progress_json TEXT NULL,
+                PRIMARY KEY (teacher_id, id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE teacher_preferences (
+                teacher_id TEXT PRIMARY KEY REFERENCES pilot_teachers(id),
+                default_duration INTEGER NOT NULL DEFAULT 60
+                    CHECK (default_duration IN (45, 60, 90)),
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        ts = "2026-07-14T00:00:00Z"
+        conn.execute(
+            "INSERT INTO pilot_teachers "
+            "(id, display_name, created_at, deactivated_at) VALUES (?,?,?,NULL)",
+            ("t-pop-v4", "Міграція-v4", ts),
+        )
+        conn.execute(
+            "INSERT INTO lesson_jobs (teacher_id, id, request_json, request_hash, "
+            "status, step, warning_acknowledgements_json, accepted, revision, "
+            "created_at, updated_at) VALUES (?,?,?,?, 'draft','текст отримано','[]',0,1,?,?)",
+            (
+                "t-pop-v4",
+                "l-v4",
+                '{"anchor":{"text":"y","source":"teacher-paste"},"level":"B1","duration":45,"focus":null}',
+                b"hashv4",
+                ts,
+                ts,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at) "
+            "VALUES (1,'pilot_schema',?), (2,'add_progress_column',?), "
+            "(3,'add_teacher_preferences',?)",
+            (ts, ts, ts),
+        )
+        conn.commit()
+        # apply full (now includes v4)
+        apply_migrations(conn)
+        assert current_schema_version(conn) == EXPECTED_SCHEMA_VERSION
+        # data preserved
+        lrow = conn.execute("SELECT * FROM lesson_jobs WHERE id='l-v4'").fetchone()
+        assert lrow is not None
+        assert lrow["teacher_id"] == "t-pop-v4"
+        # Now prove the new code is accepted by the extended CHECK (would have failed pre-v4)
+        conn.execute(
+            """
+            UPDATE lesson_jobs
+            SET status='failed', step='готово', failure_code='lesson_floor_unmet',
+                failure_message=?, updated_at=?
+            WHERE id='l-v4'
+            """,
+            ("З цього тексту не вдалося...", ts),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT failure_code FROM lesson_jobs WHERE id='l-v4'").fetchone()
+        assert updated["failure_code"] == "lesson_floor_unmet"
+    finally:
+        conn.close()
 
 
 def test_recreate_from_failed_starts_a_new_job(app) -> None:

@@ -8,7 +8,11 @@ import time
 
 from jsonschema import ValidationError
 
-from .baking.port import BakeError, LessonBaker, ProviderUnavailable
+# Floor failures use a typed exception (FloorUnmetError) so classification
+# never relies on string matching. THIN vs SHORTFALL is carried by blames_source.
+from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
+
+from .baking.port import BakeError, FloorUnmetError, LessonBaker, ProviderUnavailable
 from .lesson import materialize_lesson
 from .store import JobStore, PersistenceUnavailable
 from .validation import validate_lesson
@@ -252,14 +256,20 @@ class BakeRunner:
         raise AssertionError("Provider retry loop must return or raise.")  # pragma: no cover
 
     def _fail_bake_error(self, teacher_id: str, lesson_id: str, error: BakeError) -> None:
-        # Retry classification is a typed engine-boundary signal. Never inspect
-        # arbitrary provider text when choosing a frozen durable machine code.
-        failure_code = (
-            "provider_unavailable"
-            if isinstance(error, ProviderUnavailable)
-            else "engine_unavailable"
-        )
-        self._store.fail(teacher_id, lesson_id, failure_code, _SAFE_FAILURE_MESSAGE)
+        # Classification uses only typed exceptions (isinstance). Never inspect
+        # message text for code selection. FloorUnmetError carries blames_source.
+        if isinstance(error, ProviderUnavailable):
+            failure_code = "provider_unavailable"
+            failure_message = _SAFE_FAILURE_MESSAGE
+        elif isinstance(error, FloorUnmetError):
+            failure_code = "lesson_floor_unmet"
+            failure_message = (
+                str(error) if error.blames_source else FLOOR_SHORTFALL_UA_MESSAGE
+            )
+        else:
+            failure_code = "engine_unavailable"
+            failure_message = _SAFE_FAILURE_MESSAGE
+        self._store.fail(teacher_id, lesson_id, failure_code, failure_message)
 
     def _watchdog_loop(self) -> None:
         interval = max(0.05, min(self._hard_timeout_seconds / 4, 5))

@@ -32,7 +32,7 @@ from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
 
-from .port import BakeError, ProviderUnavailable
+from .port import BakeError, FloorUnmetError, ProviderUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -562,9 +562,12 @@ class EngineLessonBaker:
                 selected_by_phase=selected_by_phase,
             ):
                 if content_density.source_lacks_lesson_evidence(anchor_snapshot):
-                    raise BakeError(content_density.THIN_SOURCE_UA_MESSAGE)
-                raise BakeError(
-                    "Bake failed: the lesson could not reach the minimum activity density."
+                    raise FloorUnmetError(
+                        content_density.THIN_SOURCE_UA_MESSAGE, blames_source=True
+                    )
+                raise FloorUnmetError(
+                    "Bake failed: the lesson could not reach the minimum activity density.",
+                    blames_source=False,
                 )
             shortfall = len(blocks) < len(plan)
             if shortfall:
