@@ -16,8 +16,10 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import os
 import platform
 import re
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -561,6 +563,20 @@ def _run(
         )
         ctx_token = telemetry_ctx.set(ctx)
 
+    # ---- per-phase soft deadline (#141) ------------------------------
+    _phase_deadline_s = 240.0
+    _deadline_raw = os.environ.get("HRAMATKA_PHASE_DEADLINE_SECONDS")
+    if _deadline_raw is not None and _deadline_raw.strip():
+        try:
+            _parsed = float(_deadline_raw)
+            import math
+            if not math.isnan(_parsed) and not math.isinf(_parsed):
+                _phase_deadline_s = _parsed
+        except ValueError:
+            pass
+    _phase_start = time.perf_counter()
+    _phase_name = str(phase) if phase is not None else "unknown"
+
     # ---- generate typed candidates (cache-first) ---------------------
     raw_batches: list[tuple[list[str], list[object]]] = []
     if use_cache and cache_file.exists():
@@ -737,6 +753,24 @@ def _run(
             if ready_counts[activity_type] < count
         }
         if not deficits or result.generation_error:
+            break
+        # Per-phase soft deadline (#141): do not launch a regeneration that
+        # would push the phase beyond its wall-clock budget.  The clean
+        # candidates found so far are shipped honestly through the existing
+        # shortfall path — no silent padding with review_required items.
+        _elapsed = time.perf_counter() - _phase_start
+        if _elapsed > _phase_deadline_s:
+            if ctx is not None:
+                ctx.record_event(
+                    {
+                        "event": "phase_deadline_hit",
+                        "phase": _phase_name,
+                        "elapsed_s": round(_elapsed, 3),
+                        "candidates_shipped": len(result.ready),
+                        "phase_deadline_s": _phase_deadline_s,
+                        "regeneration_attempts_suppressed": max_regeneration_attempts - attempt + 1,
+                    }
+                )
             break
         if ctx is not None:
             ctx.increase_calls_planned()

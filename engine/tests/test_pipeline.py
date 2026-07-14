@@ -734,3 +734,101 @@ def test_no_cache_run_never_writes_the_cache_dir(tmp_path, monkeypatch):
         ro_parent.chmod(parent_mode)
     assert res.generation_error is None
     assert not blocked_cache.exists()
+
+
+def test_per_phase_deadline_wall_clock_bound(tmp_path, monkeypatch):
+    import json
+    import time
+
+    # We want a slow generator that returns only a single cloze candidate, creating a deficit.
+    # We will simulate a slow network call by sleeping 0.08 seconds per call.
+    calls = {"count": 0}
+    def slow_generator(_p):
+        calls["count"] += 1
+        time.sleep(0.08)
+        return json.dumps({"activities": [fixtures.GOOD_ACTIVITIES[1]]}, ensure_ascii=False)
+
+    # Scen 1: default path (fast/unset deadline) is unchanged.
+    # It runs 2 regeneration attempts because we have a deficit.
+    monkeypatch.delenv("HRAMATKA_PHASE_DEADLINE_SECONDS", raising=False)
+    out_dir_default = tmp_path / "default"
+    res_default = pipeline.run(
+        _anchor(),
+        generator=slow_generator,
+        out_dir=out_dir_default,
+        cache_dir=tmp_path / "cache_default",
+        use_cache=False,
+        count_plan={"cloze": 2, "match-up": 1},
+        max_regeneration_attempts=2,
+    )
+    # The default path runs all 2 regeneration attempts (total 3 calls: 1 initial + 2 regen)
+    assert res_default.regeneration_attempts == 2
+    assert calls["count"] == 3
+
+    # Scen 2: Hardened env parsing validation.
+    # If the deadline env var is invalid (non-numeric, NaN, inf, or empty spaces), it should
+    # gracefully fallback to the default (240.0s) and NOT hit the deadline, continuing to attempt 2.
+    for invalid_val in ["invalid_deadline", "", "   ", "NaN", "inf", "-inf"]:
+        monkeypatch.setenv("HRAMATKA_PHASE_DEADLINE_SECONDS", invalid_val)
+        calls["count"] = 0
+        out_dir_invalid = tmp_path / f"invalid_{invalid_val.replace(' ', '_')}"
+        res_invalid = pipeline.run(
+            _anchor(),
+            generator=slow_generator,
+            out_dir=out_dir_invalid,
+            cache_dir=tmp_path / f"cache_invalid_{invalid_val.replace(' ', '_')}",
+            use_cache=False,
+            count_plan={"cloze": 2, "match-up": 1},
+            max_regeneration_attempts=2,
+        )
+        assert res_invalid.regeneration_attempts == 2
+        assert calls["count"] == 3
+
+    # Scen 3: Deadline exceedance (soft deadline limits execution).
+    # Setting deadline to 0.05 seconds. Since a single call takes 0.08s,
+    # elapsed time (0.08s) will exceed the deadline (0.05s) after the first attempt.
+    # So the regeneration loop must check the deadline, break, suppress regenerations,
+    # and record the "phase_deadline_hit" event.
+    monkeypatch.setenv("HRAMATKA_PHASE_DEADLINE_SECONDS", "0.05")
+    calls["count"] = 0
+    out_dir_deadline = tmp_path / "deadline"
+    
+    t_start = time.perf_counter()
+    res_deadline = pipeline.run(
+        _anchor(),
+        generator=slow_generator,
+        out_dir=out_dir_deadline,
+        cache_dir=tmp_path / "cache_deadline",
+        use_cache=False,
+        count_plan={"cloze": 2, "match-up": 1},
+        max_regeneration_attempts=2,
+    )
+    t_elapsed = time.perf_counter() - t_start
+
+    # (a) Wall-clock bound: generous ceiling guards against a hung/extra provider call only;
+    # deterministic suppression proof is calls["count"] == 1 below.
+    assert t_elapsed < 2.0
+    assert res_deadline.regeneration_attempts == 0
+    assert calls["count"] == 1
+
+    # (b) Shortfall output is honest: counts match clean candidates
+    # The clean candidate from the first call is shipped.
+    assert len(res_deadline.ready) == 1
+    assert [ir.activity["type"] for ir in res_deadline.ready] == ["cloze"]
+    # No silent padding with review_required items.
+    assert len(res_deadline.lesson_b1) == 1
+
+    # (c) Event telemetry payload is correct:
+    trace_path = out_dir_deadline / "trace.json"
+    assert trace_path.exists()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+    events = [ev for ev in trace_data if ev.get("event") == "phase_deadline_hit"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["phase"] == "unknown"
+    assert isinstance(event["elapsed_s"], float)
+    assert event["elapsed_s"] >= 0.08
+    assert event["candidates_shipped"] == 1
+    assert event["phase_deadline_s"] == 0.05
+    assert event["regeneration_attempts_suppressed"] == 2
+
