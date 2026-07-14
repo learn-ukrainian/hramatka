@@ -455,3 +455,85 @@ def test_calls_done_never_regresses_under_concurrent_updates():
     assert len(history) > 0
     for i in range(1, len(history)):
         assert history[i] >= history[i - 1], f"Regressed calls_done at index {i}: {history}"
+
+
+# --- DeepInfra Gemma provider ----------------------------------------------
+def test_make_generator_deepinfra_absent_raises(monkeypatch):
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    with pytest.raises(ValueError) as exc:
+        providers.make_generator("deepinfra")
+    assert "unknown generator 'deepinfra'" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        providers.make_bake_generator(["deepinfra"])
+    assert "Bake providers must be one or more of google-ais, openrouter" in str(exc.value)
+
+
+def test_make_generator_deepinfra_present(monkeypatch):
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
+    monkeypatch.setenv("HRAMATKA_DEEPINFRA_BASE_URL", "https://di.example/v1")
+    gen = providers.make_generator("deepinfra")
+    assert gen._model == "google/gemma-4-31B-it"
+    assert gen._transport.base_url == "https://di.example/v1"
+    assert gen._resolve_key() == "test-key-di"
+
+
+def test_make_bake_generator_includes_deepinfra_when_enabled(monkeypatch):
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
+    selector = providers.make_bake_generator()
+    assert "deepinfra" in selector._generators
+    assert "google-ais" in selector._generators
+    assert "openrouter" in selector._generators
+
+
+def test_deepinfra_transport_request_shape(monkeypatch):
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    base = "https://api.deepinfra.com/v1/openai"
+    client = _client(handler)
+
+    port = AISGeneratorPort(
+        api_key_env="DEEPINFRA_API_KEY",
+        model="google/gemma-4-31B-it",
+        transport=providers.HttpChatTransport(
+            base_url=base,
+            client=client,
+            host="deepinfra",
+            strip_model_prefix=False,
+        ),
+    )
+
+    out = port("PROMPT-DEEP")
+    assert out == '{"activities": []}'
+    assert seen["url"] == "https://api.deepinfra.com/v1/openai/chat/completions"
+    assert seen["auth"] == "Bearer test-key-di"
+    assert seen["body"]["model"] == "google/gemma-4-31B-it"
+    assert seen["body"]["messages"] == [{"role": "user", "content": "PROMPT-DEEP"}]
+    assert "tools" not in seen["body"]
+
+
+def test_api_config_gating(monkeypatch):
+    from hramatka.api import config
+
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    allowed = config._parse_bake_providers(None)
+    assert "deepinfra" not in allowed
+
+    with pytest.raises(RuntimeError) as exc:
+        config._parse_bake_providers("google-ais,openrouter,deepinfra")
+    assert "supports only google-ais, openrouter" in str(exc.value)
+
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key")
+    allowed = config._parse_bake_providers(None)
+    assert "deepinfra" in allowed
+
+    parsed = config._parse_bake_providers("google-ais,deepinfra")
+    assert parsed == ("google-ais", "deepinfra")
+

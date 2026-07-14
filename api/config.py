@@ -23,19 +23,27 @@ def _clamp_bake_workers(value: int) -> int:
     return min(_MAX_BAKE_WORKERS, max(1, value))
 
 
+def _get_default_bake_providers() -> tuple[str, ...]:
+    if "DEEPINFRA_API_KEY" in os.environ:
+        return ("google-ais", "openrouter", "deepinfra")
+    return _DEFAULT_BAKE_PROVIDERS
+
+
 def _parse_bake_providers(value: str | None) -> tuple[str, ...]:
+    allowed = _get_default_bake_providers()
     if value is None:
-        return _DEFAULT_BAKE_PROVIDERS
+        return allowed
     providers = tuple(part.strip().lower() for part in value.split(",") if part.strip())
     if not providers:
         raise RuntimeError("HRAMATKA_BAKE_PROVIDERS must name at least one provider.")
-    unknown = sorted(set(providers) - set(_DEFAULT_BAKE_PROVIDERS))
+    unknown = sorted(set(providers) - set(allowed))
     if unknown:
         raise RuntimeError(
-            "HRAMATKA_BAKE_PROVIDERS supports only google-ais and openrouter "
+            f"HRAMATKA_BAKE_PROVIDERS supports only {', '.join(allowed)} "
             f"(got {', '.join(unknown)})."
         )
     return tuple(dict.fromkeys(providers))
+
 
 
 def _decode_secret(value: str) -> bytes:

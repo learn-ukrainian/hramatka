@@ -274,6 +274,18 @@ DEFAULT_GEMMA_FALLBACK_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_GEMMA_FALLBACK_MODEL = "google/gemma-4-31b-it"
 _BAKE_PROVIDERS = ("google-ais", "openrouter")
 
+DEEPINFRA_API_KEY_ENV = "DEEPINFRA_API_KEY"
+DEEPINFRA_BASE_URL_ENV = "HRAMATKA_DEEPINFRA_BASE_URL"
+DEFAULT_DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
+DEEPINFRA_MODEL = "google/gemma-4-31B-it"
+
+
+def _get_bake_providers() -> tuple[str, ...]:
+    if DEEPINFRA_API_KEY_ENV in os.environ:
+        return ("google-ais", "openrouter", "deepinfra")
+    return _BAKE_PROVIDERS
+
+
 DEEPSEEK_API_KEY_ENV = "HRAMATKA_DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL_ENV = "HRAMATKA_DEEPSEEK_BASE_URL"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
@@ -468,8 +480,8 @@ class FailoverGeneratorPort(AISGeneratorPort):
                 raise GeneratorUnavailable("provider generation failed") from fallback_error
 
 
-def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort]:
-    """Construct both provider-native Gemma ports without performing I/O."""
+def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPort | None]:
+    """Construct provider-native Gemma ports without performing I/O."""
     ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
     openrouter_base = os.environ.get(GEMMA_FALLBACK_BASE_URL_ENV, DEFAULT_GEMMA_FALLBACK_BASE_URL)
     openrouter_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, DEFAULT_GEMMA_FALLBACK_MODEL)
@@ -490,7 +502,21 @@ def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort]:
             strip_model_prefix=False,
         ),
     )
-    return ais, openrouter
+    deepinfra = None
+    if DEEPINFRA_API_KEY_ENV in os.environ:
+        deepinfra_base = os.environ.get(DEEPINFRA_BASE_URL_ENV, DEFAULT_DEEPINFRA_BASE_URL)
+        deepinfra = AISGeneratorPort(
+            api_key_env=DEEPINFRA_API_KEY_ENV,
+            model=DEEPINFRA_MODEL,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=deepinfra_base,
+                host="deepinfra",
+                strip_model_prefix=False,
+            ),
+        )
+    return ais, openrouter, deepinfra
+
 
 
 def _with_failover(primary: AISGeneratorPort, fallback: AISGeneratorPort) -> FailoverGeneratorPort:
@@ -532,15 +558,18 @@ def make_bake_generator(
     provider_names: tuple[str, ...] | list[str] | None = None,
 ) -> RoundRobinGeneratorSelector:
     """Create load-balanced primary routes, each with the opposite failover host."""
-    names = tuple(provider_names or _BAKE_PROVIDERS)
-    unknown = sorted(set(names) - set(_BAKE_PROVIDERS))
+    allowed = _get_bake_providers()
+    names = tuple(provider_names or allowed)
+    unknown = sorted(set(names) - set(allowed))
     if not names or unknown:
-        raise ValueError("Bake providers must be one or both of google-ais, openrouter.")
-    ais, openrouter = _gemma_routes()
+        raise ValueError(f"Bake providers must be one or more of {', '.join(allowed)}.")
+    ais, openrouter, deepinfra = _gemma_routes()
     routes: dict[str, AISGeneratorPort] = {
         "google-ais": _with_failover(ais, openrouter),
         "openrouter": _with_failover(openrouter, ais),
     }
+    if deepinfra is not None:
+        routes["deepinfra"] = _with_failover(deepinfra, ais)
     return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(names)})
 
 
@@ -550,16 +579,21 @@ def make_generator(name: str) -> AISGeneratorPort:
 
       "gemma-ais" / "gemma" / "google-ais" -> AIS-primary Gemma, OpenRouter fallback
       "openrouter"                           -> OpenRouter-primary Gemma, AIS fallback
+      "deepinfra"                            -> DeepInfra-primary Gemma, AIS fallback
       "deepseek"                            -> deepseek-chat, HRAMATKA_DEEPSEEK_API_KEY + _BASE_URL
       "deepseek-v4-flash" / "deepseek-v4-pro" -> explicit V4 tier, same DeepSeek route
     """
     key = name.lower()
     if key in ("gemma-ais", "gemma", "google-ais"):
-        ais, openrouter = _gemma_routes()
+        ais, openrouter, deepinfra = _gemma_routes()
         return _with_failover(ais, openrouter)
     if key == "openrouter":
-        ais, openrouter = _gemma_routes()
+        ais, openrouter, deepinfra = _gemma_routes()
         return _with_failover(openrouter, ais)
+    if key == "deepinfra":
+        ais, openrouter, deepinfra = _gemma_routes()
+        if deepinfra is not None:
+            return _with_failover(deepinfra, ais)
     if key == "deepseek":
         base = os.environ.get(DEEPSEEK_BASE_URL_ENV, DEFAULT_DEEPSEEK_BASE_URL)
         return AISGeneratorPort(
@@ -574,7 +608,11 @@ def make_generator(name: str) -> AISGeneratorPort:
             model=key,
             transport=HttpChatTransport(base_url=base),
         )
+    
+    known = ["gemma-ais", "openrouter", "deepseek", "deepseek-v4-flash", "deepseek-v4-pro"]
+    if "DEEPINFRA_API_KEY" in os.environ:
+        known.append("deepinfra")
     raise ValueError(
-        "unknown generator "
-        f"{name!r}; known: gemma-ais, openrouter, deepseek, deepseek-v4-flash, deepseek-v4-pro"
+        f"unknown generator {name!r}; known: {', '.join(known)}"
     )
+
