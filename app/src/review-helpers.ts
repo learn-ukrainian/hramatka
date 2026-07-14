@@ -1,5 +1,6 @@
 /** Review assembly helpers — mirrors hramatka/api/lesson.py budgets and split logic. */
 import type { ErrorObject } from 'ajv';
+import { translate, type ChromeKey, type TFn } from './i18n';
 
 // CSP-safe precompiled validator (generated at build time via ajv standalone).
 // Replaces the previous top-level `new Ajv().compile()` which used runtime `new Function()`
@@ -27,10 +28,10 @@ const REVIEW_PHASE_BUDGETS_RAW = {
 
 export const REVIEW_PHASE_BUDGETS: Record<LessonDuration, Record<1 | 2 | 3, number>> = REVIEW_PHASE_BUDGETS_RAW;
 
-export const PHASE_LABELS: Record<1 | 2 | 3, { pn: string; titleKey: string; pd: Record<LessonDuration, number> }> = {
-  1: { pn: 'І.', titleKey: 'phase.test1', pd: { 45: 8, 60: 10, 90: 12 } },
-  2: { pn: 'ІІ.', titleKey: 'phase.teach', pd: { 45: 18, 60: 22, 90: 28 } },
-  3: { pn: 'ІІІ.', titleKey: 'phase.test2', pd: { 45: 8, 60: 10, 90: 12 } },
+export const PHASE_LABELS: Record<1 | 2 | 3, { pnKey: ChromeKey; titleKey: ChromeKey; pd: Record<LessonDuration, number> }> = {
+  1: { pnKey: 'phase.roman1', titleKey: 'phase.test1', pd: { 45: 8, 60: 10, 90: 12 } },
+  2: { pnKey: 'phase.roman2', titleKey: 'phase.teach', pd: { 45: 18, 60: 22, 90: 28 } },
+  3: { pnKey: 'phase.roman3', titleKey: 'phase.test2', pd: { 45: 8, 60: 10, 90: 12 } },
 };
 
 export interface ReviewBlock {
@@ -96,27 +97,29 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => typeof item === 'string' ? item : '') : [];
 }
 
-function pilotTypeError(type: unknown): string | null {
+function pilotTypeError(type: unknown, t: TFn): string | null {
   return PILOT_ACTIVITY_TYPES.includes(type as PilotActivityType)
     ? null
-    : `Тип ${String(type || 'завдання')} не підтримується пілотом.`;
+    : t('err.unsupportedType', { type: String(type || t('editor.valLabel.taskDefault')) });
 }
 
-function formatSchemaError(error: ErrorObject): string {
+function formatSchemaError(error: ErrorObject, t: TFn): string {
   const path = error.instancePath || 'activity';
-  return `${path} ${error.message || 'не відповідає схемі'}`;
+  return t('err.schemaPath', { path, message: error.message || t('err.schemaDefault') });
 }
 
-function nonBlankTextErrors(activity: Record<string, unknown>): string[] {
+function nonBlankTextErrors(activity: Record<string, unknown>, t: TFn): string[] {
   const payload = asRecord(activity.payload);
   const requiredText = [
-    ['назва', activity.title],
-    ['інструкція', payload.instruction],
-    ['текст', payload.text],
-    ['завдання', payload.prompt],
+    ['editor.valLabel.title', activity.title],
+    ['editor.valLabel.instruction', payload.instruction],
+    ['editor.valLabel.text', payload.text],
+    ['editor.valLabel.prompt', payload.prompt],
   ] as const;
-  return requiredText.flatMap(([label, value]) =>
-    typeof value === 'string' && value.trim().length === 0 ? [`Поле «${label}» не може складатися лише з пробілів.`] : [],
+  return requiredText.flatMap(([labelKey, value]) =>
+    typeof value === 'string' && value.trim().length === 0
+      ? [t('err.blankField', { label: t(labelKey as ChromeKey) })]
+      : [],
   );
 }
 
@@ -201,13 +204,16 @@ export function regenerateAnswerKey(activity: Record<string, unknown>): Record<s
 }
 
 /** Validate the full activity envelope using the pinned vendored lu.activity.v1 schema. */
-export function validateActivityDocument(activity: Record<string, unknown>): { valid: boolean; errors: string[] } {
-  const pilotError = pilotTypeError(activity.type);
+export function validateActivityDocument(
+  activity: Record<string, unknown>,
+  t: TFn = (key, params) => translate('uk', key as ChromeKey, params),
+): { valid: boolean; errors: string[] } {
+  const pilotError = pilotTypeError(activity.type, t);
   const valid = activityValidator(activity);
   const errors = [
     ...(pilotError ? [pilotError] : []),
-    ...(valid ? [] : (activityValidator.errors || []).map(formatSchemaError)),
-    ...nonBlankTextErrors(activity),
+    ...(valid ? [] : (activityValidator.errors || []).map((error) => formatSchemaError(error, t))),
+    ...nonBlankTextErrors(activity, t),
   ];
   return { valid: errors.length === 0, errors };
 }

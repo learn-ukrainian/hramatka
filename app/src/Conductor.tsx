@@ -147,17 +147,16 @@ function getReceipt(b: ConductorLessonDoc['blocks'][number], t: TFn) {
   };
 }
 
-// Future-labelled stub content (demo COND_PROFILE): the chrome frame is translated;
-// the illustrative Ukrainian grammar tokens stay Ukrainian in both modes (demo does the same).
-const COND_PROFILE: Array<{ k: { uk: string; en: string }; v: { uk: string; en: string } }> = [
-  { k: { uk: 'Засвоїв', en: 'Mastered' }, v: { uk: 'вищий ступінь із «ніж» (тепліший, ніж…)', en: 'comparative with «ніж» (тепліший, ніж…)' } },
-  { k: { uk: 'Часта помилка', en: 'Common error' }, v: { uk: '«дешевіша» замість «дешевша»; «сама краща» замість «найкраща»', en: '«дешевіша» for «дешевша»; «сама краща» for «найкраща»' } },
-  { k: { uk: 'Вагається', en: 'Hesitates on' }, v: { uk: 'найвищий ступінь (най-)', en: 'superlative (най-)' } },
-  { k: { uk: 'Успішно виправив', en: 'Successfully fixed' }, v: { uk: '«на поверху» → «на поверсі»', en: '«на поверху» → «на поверсі»' } },
+// Future-labelled stub content (demo COND_PROFILE): chrome via dictionary keys.
+const COND_PROFILE_KEYS: Array<{ k: ChromeKey; v: ChromeKey }> = [
+  { k: 'cond.prof1.k', v: 'cond.prof1.v' },
+  { k: 'cond.prof2.k', v: 'cond.prof2.v' },
+  { k: 'cond.prof3.k', v: 'cond.prof3.v' },
+  { k: 'cond.prof4.k', v: 'cond.prof4.v' },
 ];
 
 export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }: ConductorProps) {
-  const { t, lang } = useT();
+  const { t } = useT();
   const phaseName = (ph: 1 | 2 | 3) => t(phaseKey(ph));
   const [cond, setCond] = useState<CondState | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -702,10 +701,10 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
             <button className="cond-close" onClick={() => setShowProfile(false)}>×</button>
             <h2>{t('cond.profileBtn')} <span className="cond-newpill">{t('cond.future')}</span></h2>
             <p className="cond-modp">{t('cond.profLead')}</p>
-            {COND_PROFILE.map((it, idx) => (
+            {COND_PROFILE_KEYS.map((it, idx) => (
               <div className="cond-lrow" key={idx}>
-                <span className="k">{it.k[lang]}:</span>
-                <span>{it.v[lang]}</span>
+                <span className="k">{t(it.k)}:</span>
+                <span>{t(it.v)}</span>
               </div>
             ))}
             <div className="cond-optin">{t('cond.ledgerNote')}</div>

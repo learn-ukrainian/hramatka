@@ -162,7 +162,7 @@ export default function ReviewWorkbench({
               onClick={() => onDurationChange(v)}
               disabled={loading || v === lesson.duration}
             >
-              {v} хв
+              {t('review.durationChip', { minutes: v })}
             </button>
           ))}
           <span className="duration-hint">{t('review.durationHint')}</span>
@@ -171,7 +171,7 @@ export default function ReviewWorkbench({
 
       <div className="paper review-paper">
         <p className="docsheet-title">{lesson.title}</p>
-        <p className="docsheet-meta">{lesson.level} · Тест → Навчання → Тест · ≈ {lesson.duration} хв</p>
+        <p className="docsheet-meta">{t('review.docsheetMeta', { level: lesson.level, duration: lesson.duration })}</p>
 
         <h4 className="dochead">
           <span className="pn">☰</span>{t('anchor.readingHead')}
@@ -184,9 +184,9 @@ export default function ReviewWorkbench({
           return (
             <section key={phase} className="review-phase" data-phase={phase}>
               <h4 className="dochead">
-                <span className="pn">{label.pn}</span>
-                {t(label.titleKey as ChromeKey)}
-                <span className="pd">≈ {label.pd[lesson.duration]} хв</span>
+                <span className="pn">{t(label.pnKey)}</span>
+                {t(label.titleKey)}
+                <span className="pd">{t('review.phaseDuration', { minutes: label.pd[lesson.duration] })}</span>
               </h4>
               {phaseData.visible.length === 0 && (
                 <div className="dblock block empty-phase">
@@ -230,14 +230,12 @@ export default function ReviewWorkbench({
           <p className="rejected-head">
             {(() => {
               const count = lesson.rejected.length;
-              const plural = count === 1 ? 'ка' : 'ки';
-              const ending = count === 1 ? 'а' : 'и';
-              return t('review.rejectedHead', { count, plural, ending });
+              return t(count === 1 ? 'review.rejectedHeadOne' : 'review.rejectedHeadMany', { count });
             })()}
             <button type="button" className="link-btn" data-action="toggle-rejected" onClick={() => setShowRejected((v) => !v)}>
               {t(showRejected ? 'review.hide' : 'review.show')}
             </button>{' '}
-            (нічого не ховаємо).
+            {t('review.rejectedNote')}
           </p>
           {showRejected && lesson.rejected.map((entry, i) => (
             <div key={i} className="dblock block rejected-block" data-rejected-index={i}>

@@ -15,6 +15,10 @@ import {
   type CatalogLessonItem,
   type ClipboardLesson,
 } from './app-helpers';
+import { translate, type ChromeKey } from './i18n';
+
+const tUk = (key: string, params?: Record<string, string | number>) =>
+  translate('uk', key as ChromeKey, params);
 
 const GOLDEN_BLOCK_BASE = {
   id: 'b1',
@@ -88,7 +92,7 @@ describe('app-helpers', () => {
         calls_done: 4,
         calls_planned: 12,
         updated_at: '2026-07-14T10:00:00Z',
-      }),
+      }, tUk),
     ).toBe('Фаза 2 із 3 — створення завдань… (4 з 12)');
     expect(
       formatBakeProgressLine({
@@ -98,15 +102,15 @@ describe('app-helpers', () => {
         calls_done: null,
         calls_planned: null,
         updated_at: '2026-07-14T10:00:00Z',
-      }),
+      }, tUk),
     ).toBe('Фаза 3 із 3 — збирання заняття…');
   });
 
   it('formatBakeElapsedFallback stages UA copy by elapsed time', () => {
-    expect(formatBakeElapsedFallback(30_000)).toContain('Текст отримано');
-    expect(formatBakeElapsedFallback(4 * 60_000)).toContain('Генерація триває');
-    expect(formatBakeElapsedFallback(10 * 60_000)).toContain('Ще працюємо');
-    expect(formatBakeElapsedFallback(20 * 60_000)).toContain('до пів години');
+    expect(formatBakeElapsedFallback(30_000, tUk)).toContain('Текст отримано');
+    expect(formatBakeElapsedFallback(4 * 60_000, tUk)).toContain('Генерація триває');
+    expect(formatBakeElapsedFallback(10 * 60_000, tUk)).toContain('Ще працюємо');
+    expect(formatBakeElapsedFallback(20 * 60_000, tUk)).toContain('до пів години');
   });
 
   it('formatBakeElapsedClock shows mm:ss without implying progress percent', () => {

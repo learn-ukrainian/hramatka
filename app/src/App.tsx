@@ -512,7 +512,7 @@ export default function TeacherApp() {
         setFocus(source.focus?.trim() || '');
         setCurrentLessonId(id);
         const startedAt = new Date().toISOString();
-        setBakeStatus({ status: data.status || 'baking', step: 'текст отримано', startedAt });
+        setBakeStatus({ status: data.status || 'baking', step: 'bake.step.textReceived', startedAt });
         setBakeElapsedMs(0);
         navigate({ view: 'lesson', lessonId: id, mode: 'review' });
         pollStatus(id);
@@ -584,7 +584,7 @@ export default function TeacherApp() {
     const startedAt = new Date().toISOString();
     setBakeStatus({
       status: (data.status as LessonState) || 'baking',
-      step: 'текст отримано',
+      step: 'bake.step.textReceived',
       startedAt,
     });
     setBakeElapsedMs(0);
@@ -770,7 +770,7 @@ export default function TeacherApp() {
         if (activePollIdRef.current !== id) {
           return;
         }
-        setBakeStatus((prev) => prev || { status: 'baking', step: 'оновлення…' });
+        setBakeStatus((prev) => prev || { status: 'baking', step: 'bake.step.updating' });
       }
       if (attempts < max) {
         schedule(attempts < 30 ? 800 : 2500);
@@ -839,7 +839,7 @@ export default function TeacherApp() {
             const startedAt = st.created_at || new Date().toISOString();
             setBakeStatus({
               status: st.status === 'ready' ? 'baking' : (st.status as LessonState),
-              step: st.step || 'завдання складено',
+              step: st.step || 'bake.step.tasksComposed',
               progress: st.progress || undefined,
               startedAt,
             });
@@ -851,7 +851,7 @@ export default function TeacherApp() {
           // fall through to generic baking poll
         }
         const startedAt = new Date().toISOString();
-        setBakeStatus({ status: 'baking', step: 'завдання складено', startedAt });
+        setBakeStatus({ status: 'baking', step: 'bake.step.tasksComposed', startedAt });
         setBakeElapsedMs(0);
         pollStatus(id);
       } else if (res.status === 404) {
@@ -989,18 +989,30 @@ export default function TeacherApp() {
     return () => clearInterval(id);
   }, [bakeStatus?.status, bakeStatus?.startedAt]);
 
+  const CLIENT_BAKE_STEP_KEYS = new Set<ChromeKey>([
+    'bake.step.textReceived',
+    'bake.step.updating',
+    'bake.step.tasksComposed',
+  ]);
+
+  const resolveBakeStep = (step: string): string => {
+    if (CLIENT_BAKE_STEP_KEYS.has(step as ChromeKey)) return t(step as ChromeKey);
+    return step;
+  };
+
   const bakingSubline = () => {
     if (!bakeStatus) return '';
+    const step = resolveBakeStep(bakeStatus.step);
     if (bakeStatus.status === 'failed') {
-      return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure, t('bake.failFallback'));
+      return bakeStatusSubline(bakeStatus.status, step, bakeStatus.failure, t('bake.failFallback'));
     }
     if (bakeStatus.progress) {
-      return formatBakeProgressLine(bakeStatus.progress);
+      return formatBakeProgressLine(bakeStatus.progress, t);
     }
     if (bakeStatus.status === 'baking') {
-      return formatBakeElapsedFallback(bakeElapsedMs);
+      return formatBakeElapsedFallback(bakeElapsedMs, t);
     }
-    return bakeStatusSubline(bakeStatus.status, bakeStatus.step, bakeStatus.failure, t('bake.failFallback'));
+    return bakeStatusSubline(bakeStatus.status, step, bakeStatus.failure, t('bake.failFallback'));
   };
 
   const renderAnchorBody = (text: string, testId?: string) => (
@@ -1211,7 +1223,7 @@ export default function TeacherApp() {
             aria-label={t('lang.title')}
             data-testid="lang-toggle"
           >
-            {lang === 'en' ? 'УКР' : 'EN'}
+            {lang === 'en' ? t('lang.switchUk') : t('lang.switchEn')}
           </button>
           {session && !isStudentSurface && (
             <>

@@ -556,6 +556,8 @@ const DICT = {
   'review.reserveHead': { uk: 'У запасі — не входить у {duration}-хвилинний план · підійде на домашнє або на довше заняття:', en: 'In reserve — does not fit the {duration}-minute plan · suitable for homework or a longer lesson:' },
   'review.include': { uk: 'включити в план', en: 'include in plan' },
   'review.rejectedHead': { uk: 'Ще {count} чернет{plural} не пройшл{ending} перевірку — ', en: 'Still {count} draft{plural} did not pass verification — ' },
+  'review.rejectedHeadOne': { uk: 'Ще {count} чернетка не пройшла перевірку — ', en: 'Still {count} draft did not pass verification — ' },
+  'review.rejectedHeadMany': { uk: 'Ще {count} чернетки не пройшли перевірку — ', en: 'Still {count} drafts did not pass verification — ' },
   'review.show': { uk: 'показати', en: 'show' },
   'review.hide': { uk: 'сховати', en: 'hide' },
   'review.rejectedChip': { uk: '✕ відхилено', en: '✕ rejected' },
@@ -590,6 +592,111 @@ const DICT = {
   'phase.test1': { uk: 'Тест 1 — що учні вже знають', en: 'Test 1 — what students already know' },
   'phase.teach': { uk: 'Навчання — закриваємо прогалину', en: 'Teaching — close the gap' },
   'phase.test2': { uk: 'Тест 2 — перевіряємо ще раз', en: 'Test 2 — check again' },
+  'phase.roman1': { uk: 'І.', en: 'I.' },
+  'phase.roman2': { uk: 'ІІ.', en: 'II.' },
+  'phase.roman3': { uk: 'ІІІ.', en: 'III.' },
+
+  // lang toggle button labels (show the language you switch TO — demo langbtn)
+  'lang.switchUk': { uk: 'УКР', en: 'УКР' },
+  'lang.switchEn': { uk: 'EN', en: 'EN' },
+
+  // baking progress / elapsed sublines (app-helpers chrome)
+  'bake.step.textReceived': { uk: 'текст отримано', en: 'text received' },
+  'bake.step.updating': { uk: 'оновлення…', en: 'updating…' },
+  'bake.step.tasksComposed': { uk: 'завдання складено', en: 'tasks composed' },
+  'bake.step.generation': { uk: 'створення завдань', en: 'creating tasks' },
+  'bake.step.gates': { uk: 'перевірка', en: 'verification' },
+  'bake.step.assembly': { uk: 'збирання заняття', en: 'assembling the lesson' },
+  'bake.step.prep': { uk: 'приготування', en: 'preparing' },
+  'bake.progressLine': { uk: 'Фаза {phase} із {total} — {step}…', en: 'Phase {phase} of {total} — {step}…' },
+  'bake.progressCalls': { uk: ' ({done} з {planned})', en: ' ({done} of {planned})' },
+  'bake.elapsed.lt2': {
+    uk: 'Текст отримано — складаємо завдання з вашого тексту.',
+    en: 'Text received — building tasks from your text.',
+  },
+  'bake.elapsed.lt5': {
+    uk: 'Генерація триває — це нормально. Зазвичай кілька хвилин.',
+    en: 'Generation is in progress — that is normal. Usually a few minutes.',
+  },
+  'bake.elapsed.lt15': {
+    uk: 'Ще працюємо над завданнями. Можна повернутися до списку — ми продовжимо тут.',
+    en: 'Still working on the tasks. You can go back to the list — we will continue here.',
+  },
+  'bake.elapsed.gte15': {
+    uk: 'Це може тривати до пів години. Можна повернутися до «Моїх занять» — заняття дочекається вас.',
+    en: 'This can take up to half an hour. You can go back to “My lessons” — the lesson will wait for you.',
+  },
+
+  // review workbench chrome (remaining literals from #130 sweep)
+  'review.docsheetMeta': {
+    uk: '{level} · Тест → Навчання → Тест · ≈ {duration} хв',
+    en: '{level} · Test → Teach → Test · ≈ {duration} min',
+  },
+  'review.phaseDuration': { uk: '≈ {minutes} хв', en: '≈ {minutes} min' },
+  'review.durationChip': { uk: '{minutes} хв', en: '{minutes} min' },
+  'review.rejectedNote': { uk: '(нічого не ховаємо).', en: '(nothing is hidden).' },
+
+  // activity editor field labels
+  'editor.field.title': { uk: 'Назва', en: 'Title' },
+  'editor.field.instruction': { uk: 'Інструкція', en: 'Instruction' },
+  'editor.field.statement': { uk: 'Твердження {n}', en: 'Statement {n}' },
+  'editor.field.correctAnswer': { uk: 'Правильна відповідь', en: 'Correct answer' },
+  'editor.option.true': { uk: 'Правда', en: 'True' },
+  'editor.option.false': { uk: 'Ні', en: 'False' },
+  'editor.field.clozeText': { uk: 'Текст із прогалинами', en: 'Text with gaps' },
+  'editor.field.blankNumber': { uk: 'Прогалина {n} — номер', en: 'Gap {n} — number' },
+  'editor.field.answer': { uk: 'Відповідь', en: 'Answer' },
+  'editor.field.optionsComma': { uk: 'Варіанти (через кому)', en: 'Options (comma-separated)' },
+  'editor.field.pairLeft': { uk: 'Пара {n} — ліворуч', en: 'Pair {n} — left' },
+  'editor.field.pairRight': { uk: 'Пара {n} — праворуч', en: 'Pair {n} — right' },
+  'editor.field.question': { uk: 'Питання {n}', en: 'Question {n}' },
+  'editor.field.option': { uk: 'Варіант {letter}', en: 'Option {letter}' },
+  'editor.field.correctOption': { uk: 'Правильний варіант', en: 'Correct option' },
+  'editor.field.optionFallback': { uk: 'варіант {n}', en: 'option {n}' },
+  'editor.field.text': { uk: 'Текст', en: 'Text' },
+  'editor.field.targetWords': { uk: 'Цільові слова (через кому)', en: 'Target words (comma-separated)' },
+  'editor.field.criterion': { uk: 'Критерій', en: 'Criterion' },
+  'editor.field.sentence': { uk: 'Речення {n}', en: 'Sentence {n}' },
+  'editor.field.errorSentence': { uk: 'Речення з помилкою {n}', en: 'Sentence with error {n}' },
+  'editor.field.correctedSentence': { uk: 'Виправлене речення', en: 'Corrected sentence' },
+  'editor.field.textRef': { uk: 'Посилання на текст', en: 'Reference to text' },
+  'editor.field.modelAnswer': { uk: 'Модельна відповідь', en: 'Model answer' },
+  'editor.field.prompt': { uk: 'Завдання', en: 'Task' },
+  'editor.field.teacherGuidance': { uk: 'Вказівка для вчителя', en: 'Guidance for teacher' },
+  'editor.field.rubric': { uk: 'Рубрика', en: 'Rubric' },
+
+  // validation error labels (editor chrome)
+  'editor.valLabel.title': { uk: 'назва', en: 'title' },
+  'editor.valLabel.instruction': { uk: 'інструкція', en: 'instruction' },
+  'editor.valLabel.text': { uk: 'текст', en: 'text' },
+  'editor.valLabel.prompt': { uk: 'завдання', en: 'prompt' },
+  'editor.valLabel.taskDefault': { uk: 'завдання', en: 'task' },
+  'err.unsupportedType': {
+    uk: 'Тип {type} не підтримується пілотом.',
+    en: 'Type {type} is not supported in the pilot.',
+  },
+  'err.schemaDefault': { uk: 'не відповідає схемі', en: 'does not match the schema' },
+  'err.schemaPath': { uk: '{path} {message}', en: '{path} {message}' },
+  'err.blankField': {
+    uk: 'Поле «{label}» не може складатися лише з пробілів.',
+    en: 'Field «{label}» cannot consist only of spaces.',
+  },
+
+  // conductor profile stub rows (demo COND_PROFILE)
+  'cond.prof1.k': { uk: 'Засвоїв', en: 'Mastered' },
+  'cond.prof1.v': {
+    uk: 'вищий ступінь із «ніж» (тепліший, ніж…)',
+    en: 'comparative with «ніж» (тепліший, ніж…)',
+  },
+  'cond.prof2.k': { uk: 'Часта помилка', en: 'Common error' },
+  'cond.prof2.v': {
+    uk: '«дешевіша» замість «дешевша»; «сама краща» замість «найкраща»',
+    en: '«дешевіша» for «дешевша»; «сама краща» for «найкраща»',
+  },
+  'cond.prof3.k': { uk: 'Вагається', en: 'Hesitates on' },
+  'cond.prof3.v': { uk: 'найвищий ступінь (най-)', en: 'superlative (най-)' },
+  'cond.prof4.k': { uk: 'Успішно виправив', en: 'Successfully fixed' },
+  'cond.prof4.v': { uk: '«на поверху» → «на поверсі»', en: '«на поверху» → «на поверсі»' },
 } satisfies Record<string, Entry>;
 
 export type ChromeKey = keyof typeof DICT;

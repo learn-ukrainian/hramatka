@@ -1,3 +1,5 @@
+import { translate, statusKey, type ChromeKey } from './i18n';
+
 export type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
 
 export interface CatalogLessonItem {
@@ -38,14 +40,15 @@ export interface BakeRequestPayload {
 
 const LAST_BAKE_KEY = 'hramatka:last-bake-request';
 
-/** UA status chip labels (demo-reference: «готово» not «готовий»). */
+/** UA status chip labels — delegates to i18n (UA default for standalone tests). */
 export function statusLabel(s: LessonState): string {
-  if (s === 'baking') return 'готується';
-  if (s === 'ready') return 'готово';
-  if (s === 'failed') return 'помилка';
-  if (s === 'draft') return 'чернетка';
-  return s;
+  return translate('uk', statusKey(s));
 }
+
+export type BakeStatusTranslator = (
+  key: ChromeKey,
+  params?: Record<string, string | number>,
+) => string;
 
 /**
  * When failed, show only the failure message — never the last step label.
@@ -56,7 +59,7 @@ export function bakeStatusSubline(
   status: LessonState,
   step: string,
   failure?: string,
-  failFallback = 'Не вдалося створити урок.',
+  failFallback = translate('uk', 'bake.failFallback' as ChromeKey),
 ): string {
   if (status === 'failed') {
     return failure || failFallback;
@@ -64,42 +67,44 @@ export function bakeStatusSubline(
   return step || '';
 }
 
-const PROGRESS_STEP_UA: Record<Exclude<BakeProgressStep, null>, string> = {
-  generation: 'створення завдань',
-  gates: 'перевірка',
-  assembly: 'збирання заняття',
-};
-
 /** Honest line when API exposes `progress` — never a fake percent. */
-export function formatBakeProgressLine(progress: BakeProgress): string {
+export function formatBakeProgressLine(progress: BakeProgress, t: BakeStatusTranslator): string {
   const phase = Math.max(1, progress.phase);
   const total = Math.max(phase, progress.phases_total);
   const stepKey = progress.step;
-  const stepLabel = stepKey ? PROGRESS_STEP_UA[stepKey] : 'приготування';
-  let line = `Фаза ${phase} із ${total} — ${stepLabel}…`;
+  const stepLabels: Record<Exclude<BakeProgressStep, null>, string> = {
+    generation: t('bake.step.generation'),
+    gates: t('bake.step.gates'),
+    assembly: t('bake.step.assembly'),
+  };
+  const stepLabel = stepKey ? stepLabels[stepKey] : t('bake.step.prep');
+  let line = t('bake.progressLine', { phase: String(phase), total: String(total), step: stepLabel });
   if (
     progress.calls_done != null &&
     progress.calls_planned != null &&
     progress.calls_planned > 0
   ) {
-    line += ` (${progress.calls_done} з ${progress.calls_planned})`;
+    line += t('bake.progressCalls', {
+      done: String(progress.calls_done),
+      planned: String(progress.calls_planned),
+    });
   }
   return line;
 }
 
-/** Staged reassuring UA copy keyed to elapsed time when `progress` is absent. */
-export function formatBakeElapsedFallback(elapsedMs: number): string {
+/** Staged reassuring copy keyed to elapsed time when `progress` is absent. */
+export function formatBakeElapsedFallback(elapsedMs: number, t: BakeStatusTranslator): string {
   const min = elapsedMs / 60000;
   if (min < 2) {
-    return 'Текст отримано — складаємо завдання з вашого тексту.';
+    return t('bake.elapsed.lt2');
   }
   if (min < 5) {
-    return 'Генерація триває — це нормально. Зазвичай кілька хвилин.';
+    return t('bake.elapsed.lt5');
   }
   if (min < 15) {
-    return 'Ще працюємо над завданнями. Можна повернутися до списку — ми продовжимо тут.';
+    return t('bake.elapsed.lt15');
   }
-  return 'Це може тривати до пів години. Можна повернутися до «Моїх занять» — заняття дочекається вас.';
+  return t('bake.elapsed.gte15');
 }
 
 /** Elapsed mm:ss for the baking status header (not a progress percent). */
@@ -239,7 +244,8 @@ export interface ClipboardLesson {
 
 export type ClipboardMode = 'teacher' | 'student';
 
-const HOMEWORK_MODE = 'вдома'; // per openapi LessonBlock.mode enum: усно / письмово / вдома
+/** OpenAPI LessonBlock.mode enum value — lesson data, not UI chrome. */
+const HOMEWORK_MODE = 'вдома' as const;
 
 /** Render a single activity payload as a readable plain-text task body. */
 function renderActivityBody(activity: any): string {
