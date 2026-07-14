@@ -1,5 +1,20 @@
 export type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
 
+export interface CatalogLessonItem {
+  id: string;
+  title: string | null;
+  status: LessonState;
+  duration: number;
+  focus: string | null;
+  revision: number;
+  accepted: boolean;
+  accepted_at: string | null;
+  accepted_revision: number | null;
+  failure_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type BakeProgressStep = 'generation' | 'gates' | 'assembly' | null;
 
 /** Optional status payload field (may be absent until engine PR lands). */
@@ -127,6 +142,65 @@ export function clearLastBakeRequest(): void {
   } catch {
     /* private mode / quota */
   }
+}
+
+/** Build an optimistic catalog row from a saved bake request (in-flight create/recreate). */
+export function catalogItemFromBakeRequest(payload: BakeRequestPayload): CatalogLessonItem {
+  const now = new Date().toISOString();
+  return {
+    id: payload.lessonId,
+    title: null,
+    status: 'baking',
+    duration: payload.duration,
+    focus: payload.focus?.trim() || null,
+    revision: 1,
+    accepted: false,
+    accepted_at: null,
+    accepted_revision: null,
+    failure_code: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+/** Pending catalog rows from sessionStorage (+ optional in-memory fallback). */
+export function loadLocalCatalogEntries(fallback?: BakeRequestPayload | null): CatalogLessonItem[] {
+  const payload = loadLastBakeRequest() ?? fallback ?? null;
+  if (!payload?.lessonId) return [];
+  return [catalogItemFromBakeRequest(payload)];
+}
+
+/**
+ * Merge server catalog rows with optimistic local rows.
+ * Server rows win on id collision; local-only rows (not yet listed by API) are kept.
+ */
+export function mergeCatalogLessons(
+  server: CatalogLessonItem[],
+  local: CatalogLessonItem[],
+): CatalogLessonItem[] {
+  const serverById = new Map<string, CatalogLessonItem>();
+  for (const item of server) {
+    if (item?.id && !serverById.has(item.id)) {
+      serverById.set(item.id, item);
+    }
+  }
+
+  const merged: CatalogLessonItem[] = [];
+  const seen = new Set<string>();
+
+  for (const item of local) {
+    if (!item?.id || serverById.has(item.id) || seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+  }
+
+  for (const item of server) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(serverById.get(item.id)!);
+  }
+
+  return merged;
 }
 
 /** Resolve persisted teacher pref to a valid duration (preselect for new-lesson form). */

@@ -11,6 +11,8 @@ import {
   saveLastBakeRequest,
   loadLastBakeRequest,
   clearLastBakeRequest,
+  mergeCatalogLessons,
+  loadLocalCatalogEntries,
   resolveDefaultDurationFromPref,
   formatLessonForClipboard,
   type BakeRequestPayload,
@@ -642,6 +644,10 @@ export default function TeacherApp() {
       });
       if (res.status === 204) {
         setPendingDeleteId(null);
+        if (loadLastBakeRequest(lessonId)) {
+          clearLastBakeRequest();
+          lastBakeRef.current = null;
+        }
         if (currentLessonId === lessonId || route.lessonId === lessonId) {
           clearPoll();
           setLesson(null);
@@ -866,7 +872,8 @@ export default function TeacherApp() {
     const res = await apiFetch('/api/lessons');
     if (res.ok) {
       const data = await res.json();
-      setCatalog(data.lessons || []);
+      const local = loadLocalCatalogEntries(lastBakeRef.current);
+      setCatalog(mergeCatalogLessons(data.lessons || [], local));
     }
   };
 
