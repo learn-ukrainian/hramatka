@@ -518,5 +518,122 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     const text = await subline.innerText();
     expect(text).not.toMatch(/готово|готовий/i);
     expect(text).toMatch(/Постачальник|Не вдалося/i);
+    // restore native uuid so subsequent tests (incl. catalog open states) get real bakes, not forced-fail
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
+  });
+
+  // Catalog open states (PR #111 hardened per review F3): prove ready (200), baking (409 + poll), failed (409 + failure card)
+  // from catalog after returning to hub. Use distinctive text + filter (no first() fallback).
+  // Baking uses slow marker so it reliably stays non-ready across back+reopen.
+  test('open ready lesson from catalog', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    // ensure native uuid (previous tests may have left BAD override)
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
+
+    const text = 'Текст для відкриття готового уроку з каталогу.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(text);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+
+    // back to hub; catalog has the ready item
+    await page.getByRole('button', { name: '← До списку' }).click();
+    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /Оновити список/i }).click();
+    await expect(page.locator('.catalog li')).toBeVisible({ timeout: 3000 });
+
+    // target a ready row by chip label (titles are not unique); click proves openLesson 200 path from catalog
+    const row = page.locator('.catalog li').filter({ hasText: /готово/ }).first();
+    await row.locator('button').click();
+
+    // lands in review with 9 blocks (real 200)
+    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 10000 });
+  });
+
+  test('open baking lesson from catalog (exercises 409 path reliably)', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    // ensure native uuid (previous tests may have left BAD override)
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
+
+    const slowText = '__SLOW_BAKE__ Текст для відкриття baking-стану з каталогу.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(slowText);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    // ensure we entered baking path
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-polling')).toBeVisible({ timeout: 8000 });
+
+    // back to hub/catalog quickly; slow requires 8 polls so it stays baking
+    await page.getByRole('button', { name: '← До списку' }).click();
+    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /Оновити список/i }).click();
+
+    // target the baking row via chip (reliable, independent of title/id text); no blind first()
+    const row = page.locator('.catalog li').filter({ hasText: /готується/ }).first();
+    await expect(row).toBeVisible({ timeout: 3000 });
+    await row.locator('button').click();
+
+    // must land on baking UI (not ready blocks), via 409 path + bakeStatus && !lesson
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('baking-polling')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('baking-subline')).toBeVisible();
+    await expect(page.locator('.block')).toHaveCount(0);
+    // still baking, not promoted yet (slow)
+    await expect(page.getByText(/готується|статус/i).first()).toBeVisible();
+  });
+
+  test('open failed lesson from catalog shows failure card + re-submit wired', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const text = 'Текст для failed-уроку з каталогу.';
+    await page.getByPlaceholder(/Вставте український текст/).fill(text);
+
+    // force the BAD id so stub marks failed on POST (and saveLastBakeRequest stores it)
+    await page.evaluate(() => {
+      // @ts-ignore
+      crypto.randomUUID = () => '00000000-0000-0000-0000-000000000bad';
+    });
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+
+    // wait via baking then failure (poll corrects status); some timing from prior state
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+    const recovery = page.getByTestId('failure-recovery');
+    await expect(recovery).toBeVisible({ timeout: 10000 });
+
+    // back to catalog via list button (use the header one with arrow; recovery card has different "Повернутися...")
+    await page.getByRole('button', { name: '← До списку' }).click();
+    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /Оновити список/i }).click();
+
+    // the failed row exists (chip bad or помилка)
+    await expect(page.locator('.catalog li').filter({ hasText: /помилка|bad|00000000/ })).toBeVisible({ timeout: 3000 });
+
+    // click the failed catalog row -> must land on failure card (not "not found", not blank)
+    await page.locator('.catalog li').filter({ hasText: /помилка|00000000/ }).locator('button').click();
+
+    const recovery2 = page.getByTestId('failure-recovery');
+    await expect(recovery2).toBeVisible({ timeout: 8000 });
+    await expect(recovery2).toContainText('Створити урок ще раз із цим текстом');
+
+    // button visible and enabled (wired to retryFailedLesson using stored request)
+    const retryBtn = recovery2.getByRole('button', { name: /Створити урок ще раз із цим текстом/i });
+    await expect(retryBtn).toBeVisible();
+    await expect(retryBtn).toBeEnabled();
+
+    // restore real uuid; click re-submit -> should produce a new ready lesson (proves wired + stored text used)
+    await page.evaluate(() => {
+      // @ts-ignore
+      delete crypto.randomUUID;
+    });
+    await retryBtn.click();
+    await page.waitForSelector('.block', { timeout: 15000 });
+    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
   });
 });

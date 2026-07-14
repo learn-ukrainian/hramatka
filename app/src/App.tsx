@@ -195,6 +195,9 @@ export default function TeacherApp() {
 
   // Poll ref (prepared; used robust in item 3)
   const pollTimerRef = useRef<number | null>(null);
+  // Track the id we are actively polling for. Used to make clear-on-id-change + start
+  // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
+  const activePollIdRef = useRef<string | null>(null);
 
   // Last bake request: sessionStorage (+ in-memory fallback when storage unavailable).
   // Recovery path: API status does not expose anchor on failed lessons — see app-helpers.
@@ -212,6 +215,7 @@ export default function TeacherApp() {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+    activePollIdRef.current = null;
     setPolling(false);
   }, []);
 
@@ -358,20 +362,33 @@ export default function TeacherApp() {
       if (!currentLessonId) {
         setCurrentLessonId(route.lessonId);
       }
-      if (currentLessonId !== route.lessonId || !lesson) {
+      const haveContent = !!lesson && lesson.lesson_id === route.lessonId;
+      const haveBakeForIt = !!bakeStatus && currentLessonId === route.lessonId;
+      // F1/F2 stability: do not re-invoke openLesson (which would re-seed 'baking' on 409)
+      // if we already have either lesson content or active bakeStatus for this exact id.
+      // This prevents double 409 on catalog open of non-ready, and keeps failure card stable.
+      if (currentLessonId !== route.lessonId || (!haveContent && !haveBakeForIt)) {
         openLesson(route.lessonId, (route.mode as 'review' | 'run' | 'conduct') || 'review').catch(() => {});
       }
     } else if (route.view !== 'lesson') {
       // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
       loadCatalog().catch(() => {});
     }
-  }, [sessionReady, route.view, route.lessonId, route.mode]);
+  }, [sessionReady, route.view, route.lessonId, route.mode, lesson, bakeStatus, currentLessonId]);
 
   // #93 item 3 cleanup: never orphan poll loops
   useEffect(() => {
     return () => { clearPoll(); };
   }, [clearPoll]);
-  useEffect(() => { clearPoll(); }, [currentLessonId, clearPoll]);
+  // F2 fix: only clear if the active poll id is *not* the one we just switched to.
+  // The pollStatus(new) call (which sets activePollIdRef) happens before this effect runs,
+  // so we avoid cancelling the freshly started poll for the target lesson when switching
+  // catalog rows mid-bake. Still stops orphans from prior lessons.
+  useEffect(() => {
+    if (activePollIdRef.current && activePollIdRef.current !== currentLessonId) {
+      clearPoll();
+    }
+  }, [currentLessonId, clearPoll]);
 
   const logout = async () => {
     if (!csrf) return;
@@ -486,13 +503,15 @@ export default function TeacherApp() {
     navigate({ view: 'paste' });
   };
 
-  // #93 item 3: robust poll
+  // #93 item 3: robust poll (F2 hardened)
   // - update step on every tick (no stale)
   // - converge on ready/failed
   // - resume after refresh if baking (via 409 + route effect)
   // - cleanup on unmount/lesson switch
+  // - active id tracking + tick guards + conditional clear so catalog row switches don't kill polls
   const pollStatus = (id: string) => {
     clearPoll();
+    activePollIdRef.current = id;
     setPolling(true);
     let attempts = 0;
     // Real bakes run ~4 min and provider hiccups stretch them further: poll
@@ -503,11 +522,20 @@ export default function TeacherApp() {
       pollTimerRef.current = window.setTimeout(tick, delay);
     };
     const tick = async () => {
+      // F2: guard against a stale timer from a previous lesson that wasn't cleared in time.
+      // If we switched catalog rows, active will be the new id; old scheduled tick aborts.
+      if (activePollIdRef.current !== id) {
+        return;
+      }
       attempts++;
       let st: any = null;
       try {
         const res = await apiFetch(`/api/lessons/${id}/status`);
         st = await res.json();
+        // Re-check after await in case switch happened during network
+        if (activePollIdRef.current !== id) {
+          return;
+        }
         setBakeStatus((prev) => ({
           status: st.status,
           step: st.step || '',
@@ -526,6 +554,9 @@ export default function TeacherApp() {
           return;
         }
       } catch {
+        if (activePollIdRef.current !== id) {
+          return;
+        }
         setBakeStatus((prev) => prev || { status: 'baking', step: 'оновлення…' });
       }
       if (attempts < max) {
@@ -553,6 +584,15 @@ export default function TeacherApp() {
     setLoading(true);
     setError(null);
     setLocalAcks([]);
+    // F1 fix: clear stale `lesson` (from a prior ready lesson) at start of open when
+    // targeting a different lesson. This guarantees that when catalog opens a failed
+    // (or baking) item after viewing a ready one, the 409 path's bakeStatus + !lesson
+    // condition renders the failure card instead of old blocks. Clear only on id switch
+    // to avoid unnecessary flicker on re-checks of same lesson.
+    if (currentLessonId !== id) {
+      setLesson(null);
+      setBakeStatus(null);
+    }
     try {
       const res = await apiFetch(`/api/lessons/${id}`);
       if (res.status === 200) {
