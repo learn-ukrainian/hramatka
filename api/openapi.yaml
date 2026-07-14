@@ -18,6 +18,8 @@ tags:
     description: Invite exchange and current-session lifecycle.
   - name: Lessons
     description: Owner-scoped bake, review, acceptance, and catalog lifecycle.
+  - name: Teacher
+    description: Per-teacher preferences (owner-scoped; display_name remains identity-owned).
   - name: Probes
     description: Unauthenticated process-health and deployment-readiness probes.
 paths:
@@ -101,6 +103,60 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/CsrfRejected'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/teacher/preferences:
+    get:
+      tags: [Teacher]
+      operationId: getTeacherPreferences
+      summary: Return the authenticated teacher's persisted defaults (e.g. default lesson duration)
+      security:
+        - PilotSession: []
+      responses:
+        '200':
+          description: Current defaults (absent row yields server default 60)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+    put:
+      tags: [Teacher]
+      operationId: putTeacherPreferences
+      summary: Persist updated teacher defaults (owner-scoped, CSRF protected)
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeacherPreferences'
+      responses:
+        '200':
+          description: Updated defaults committed
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons:
@@ -670,6 +726,15 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+    TeacherPreferences:
+      type: object
+      additionalProperties: false
+      required: [default_duration]
+      properties:
+        default_duration:
+          type: integer
+          enum: [45, 60, 90]
+          description: Persisted default for new-lesson form; preselects and updates on change.
     Session:
       type: object
       additionalProperties: false

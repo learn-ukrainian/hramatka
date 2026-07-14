@@ -75,6 +75,11 @@ The CSRF token is the unpadded base64url encoding of
 must remain in browser memory. The server-side CSRF key is deployment secret material,
 not repository or database data.
 
+`GET /api/teacher/preferences` and `PUT /api/teacher/preferences` (P2-6) are owner-scoped
+and follow identical CSRF/Origin/401/403/422/503 envelope rules as lesson mutations
+from #113. `display_name` in the identity record remains read-only and server-owned;
+no local editing surface is provided.
+
 ## Same-origin and CSRF rules
 
 CORS is disabled. No `/api/*` response emits `Access-Control-Allow-Origin`. Every

@@ -8,6 +8,7 @@ import {
   saveLastBakeRequest,
   loadLastBakeRequest,
   clearLastBakeRequest,
+  resolveDefaultDurationFromPref,
 } from './app-helpers';
 
 describe('app-helpers', () => {
@@ -87,5 +88,15 @@ describe('app-helpers', () => {
     });
     clearLastBakeRequest();
     expect(loadLastBakeRequest()).toBeNull();
+  });
+
+  it('resolveDefaultDurationFromPref preselects from teacher pref (falls back to 60)', () => {
+    expect(resolveDefaultDurationFromPref({ default_duration: 45 })).toBe(45);
+    expect(resolveDefaultDurationFromPref({ default_duration: 60 })).toBe(60);
+    expect(resolveDefaultDurationFromPref({ default_duration: 90 })).toBe(90);
+    expect(resolveDefaultDurationFromPref({ default_duration: 30 })).toBe(60);
+    expect(resolveDefaultDurationFromPref(null)).toBe(60);
+    expect(resolveDefaultDurationFromPref({})).toBe(60);
+    expect(resolveDefaultDurationFromPref({ default_duration: '60' })).toBe(60);
   });
 });

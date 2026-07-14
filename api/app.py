@@ -31,6 +31,7 @@ from .models import (
     LessonCreate,
     RestoreRejectedMutation,
     RevisionMutation,
+    TeacherPreferences,
 )
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
@@ -360,6 +361,26 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             "Set-Cookie", f"{_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
         )
         return response
+
+    @app.get("/api/teacher/preferences")
+    def get_teacher_preferences(
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        """Owner-scoped read of persisted defaults (no CSRF needed for GET)."""
+        dur = store.get_teacher_default_duration(session.teacher_id)
+        return {"default_duration": dur}
+
+    @app.put("/api/teacher/preferences")
+    def put_teacher_preferences(
+        request_body: TeacherPreferences,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        """Owner-scoped upsert; requires Origin + X-CSRF-Token (per #113 patterns)."""
+        store.set_teacher_default_duration(
+            session.teacher_id, request_body.default_duration
+        )
+        return {"default_duration": request_body.default_duration}
 
     @app.post("/api/lessons", status_code=status.HTTP_202_ACCEPTED)
     def create_lesson(

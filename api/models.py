@@ -60,3 +60,9 @@ class RestoreRejectedMutation(FrozenModel):
 class DurationMutation(FrozenModel):
     expected_revision: int = Field(ge=1)
     duration: Literal[45, 60, 90]
+
+
+class TeacherPreferences(FrozenModel):
+    """GET response and PUT body for per-teacher defaults (owner-scoped)."""
+
+    default_duration: Literal[45, 60, 90]

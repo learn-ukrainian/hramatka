@@ -925,3 +925,228 @@ def test_startup_recovers_an_orphaned_baking_aggregate_without_partial_lesson(
     assert recovered.status == "failed"
     assert recovered.failure_code == "worker_restarted"
     assert recovered.lesson is None
+
+
+# --- P2-6: teacher preferences (default duration) persistence, ownership, CSRF ---
+
+def test_teacher_preferences_defaults_to_60_and_persists_per_teacher(app, client) -> None:
+    """Persist/GET roundtrip; absent row yields 60. Quotes raw from contract."""
+    teacher, _invite, token = _issue_invite(app)
+    sess = _redeem(client, token)
+    csrf = sess["csrf_token"]
+    # initial GET yields default
+    r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
+    assert r.status_code == 200
+    assert r.json() == {"default_duration": 60}
+    # PUT updates
+    r = client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(csrf),
+        json={"default_duration": 90},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"default_duration": 90}
+    # GET reflects
+    r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
+    assert r.json() == {"default_duration": 90}
+    # also test 45
+    r = client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(csrf),
+        json={"default_duration": 45},
+    )
+    assert r.status_code == 200
+    r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
+    assert r.json()["default_duration"] == 45
+
+
+def test_teacher_preferences_ownership_scoped(app, client) -> None:
+    """Cross-teacher cannot read/write other's pref (owner-scoped like lessons)."""
+    t1, _i1, tok1 = _issue_invite(app, display_name="T1")
+    t2, _i2, tok2 = _issue_invite(app, display_name="T2")
+    s1 = _redeem(client, tok1)
+    # set for t1 (client cookie is now t1's from redeem)
+    r_put = client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(s1["csrf_token"]),
+        json={"default_duration": 90},
+    )
+    assert r_put.status_code == 200, r_put.text
+    # t2 still default (verified via store; cookie sequencing handled by sequential redeem)
+    assert app.state.store.get_teacher_default_duration(t1.id) == 90
+    assert app.state.store.get_teacher_default_duration(t2.id) == 60
+    # t2 PUT does not affect t1
+    s2 = _redeem(client, tok2)
+    client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(s2["csrf_token"]),
+        json={"default_duration": 45},
+    )
+    assert app.state.store.get_teacher_default_duration(t1.id) == 90
+    assert app.state.store.get_teacher_default_duration(t2.id) == 45
+    # GET under t2 session returns its value (owner-scoped read)
+    r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
+    assert r.status_code == 200 and r.json()["default_duration"] == 45
+
+
+def test_teacher_preferences_requires_csrf_and_origin_for_put(app, client) -> None:
+    """PUT mutations obey same CSRF/Origin rules as #113 review assembly mutations."""
+    _t, _inv, token = _issue_invite(app)
+    sess = _redeem(client, token)
+    csrf = sess["csrf_token"]
+    # missing csrf -> 403
+    r = client.put(
+        "/api/teacher/preferences",
+        headers={"Origin": ORIGIN, "Content-Type": "application/json"},
+        json={"default_duration": 90},
+    )
+    assert r.status_code == 403
+    assert r.json()["code"] == "csrf_rejected"
+    # bad origin
+    r = client.put(
+        "/api/teacher/preferences",
+        headers={
+            "Origin": "https://evil.test",
+            "X-CSRF-Token": csrf,
+            "Content-Type": "application/json",
+        },
+        json={"default_duration": 90},
+    )
+    assert r.status_code == 403
+    assert r.json()["code"] == "csrf_rejected"
+    # good still works
+    r = client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(csrf),
+        json={"default_duration": 60},
+    )
+    assert r.status_code == 200
+
+
+def test_teacher_preferences_invalid_input_is_422(app, client) -> None:
+    _t, _inv, token = _issue_invite(app)
+    sess = _redeem(client, token)
+    csrf = sess["csrf_token"]
+    r = client.put(
+        "/api/teacher/preferences",
+        headers=_mutation_headers(csrf),
+        json={"default_duration": 30},
+    )
+    assert r.status_code == 422
+    assert r.json()["code"] == "invalid_input"
+
+
+def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_path: Path) -> None:
+    """Migration-on-populated-DB: v2 data survives v003; prefs table appears; defaults work."""
+    from hramatka.api.migrations import (
+        EXPECTED_SCHEMA_VERSION,
+        apply_migrations,
+        current_schema_version,
+    )
+    db_path = tmp_path / "populated-v2.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        # Simulate a v2-populated DB (apply up to v2, insert teacher + lesson)
+        # Manually apply v1 + v2 without v3
+        conn.execute("BEGIN IMMEDIATE")
+        # minimal v1 schema subset sufficient for test (teachers + lesson_jobs + schema_migrations)
+        conn.execute(
+            """
+            CREATE TABLE pilot_teachers (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 100),
+                created_at TEXT NOT NULL,
+                deactivated_at TEXT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE lesson_jobs (
+                teacher_id TEXT NOT NULL REFERENCES pilot_teachers(id),
+                id TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                request_hash BLOB NOT NULL,
+                status TEXT NOT NULL,
+                step TEXT NOT NULL,
+                failure_code TEXT NULL,
+                failure_message TEXT NULL,
+                lesson_json TEXT NULL,
+                warning_acknowledgements_json TEXT NOT NULL DEFAULT '[]',
+                accepted INTEGER NOT NULL DEFAULT 0,
+                accepted_at TEXT NULL,
+                accepted_revision INTEGER NULL,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT NULL,
+                completed_at TEXT NULL,
+                progress_json TEXT NULL,
+                PRIMARY KEY (teacher_id, id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        ts = "2026-07-14T00:00:00Z"
+        conn.execute(
+            "INSERT INTO pilot_teachers "
+            "(id, display_name, created_at, deactivated_at) VALUES (?,?,?,NULL)",
+            ("t-pop-1", "Популяційна", ts),
+        )
+        conn.execute(
+            "INSERT INTO lesson_jobs (teacher_id, id, request_json, request_hash, "
+            "status, step, warning_acknowledgements_json, accepted, revision, "
+            "created_at, updated_at) VALUES (?,?,?,?, 'draft','текст отримано','[]',0,1,?,?)",
+            (
+                "t-pop-1",
+                "l-1",
+                '{"anchor":{"text":"x","source":"teacher-paste"},"level":"B1","duration":60,"focus":null}',
+                b"hash",
+                ts,
+                ts,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at) "
+            "VALUES (1,'pilot_schema',?), (2,'add_progress_column',?)",
+            (ts, ts),
+        )
+        conn.commit()
+        # now apply full migrations (incl v3)
+        apply_migrations(conn)
+        assert current_schema_version(conn) == EXPECTED_SCHEMA_VERSION == 3
+        # data preserved
+        trow = conn.execute("SELECT * FROM pilot_teachers WHERE id='t-pop-1'").fetchone()
+        assert trow["display_name"] == "Популяційна"
+        lrow = conn.execute("SELECT * FROM lesson_jobs WHERE id='l-1'").fetchone()
+        assert lrow is not None
+        # prefs table exists (from v3), no row yet -> get yields 60
+        prow = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='teacher_preferences'"
+        ).fetchone()
+        assert prow is not None
+        # simulate store usage: direct select default
+        d = conn.execute(
+            "SELECT default_duration FROM teacher_preferences "
+            "WHERE teacher_id='t-pop-1'"
+        ).fetchone()
+        assert d is None  # absent row
+    finally:
+        conn.close()
+    # Now via store: init will have migrated already, but re-open confirms
+    from hramatka.api.store import JobStore
+    store = JobStore(db_path)
+    store.initialize()
+    assert store.get_teacher_default_duration("t-pop-1") == 60
+    store.set_teacher_default_duration("t-pop-1", 90)
+    assert store.get_teacher_default_duration("t-pop-1") == 90

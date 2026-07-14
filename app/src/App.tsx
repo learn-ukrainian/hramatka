@@ -12,6 +12,7 @@ import {
   saveLastBakeRequest,
   loadLastBakeRequest,
   clearLastBakeRequest,
+  resolveDefaultDurationFromPref,
   type BakeRequestPayload,
   type BakeProgress,
 } from './app-helpers';
@@ -272,6 +273,7 @@ export default function TeacherApp() {
         navigate({ view: 'paste' });
         // Fetch full session for display
         await refreshSession();
+        await loadTeacherDefaultDuration();
         // Load catalog so paste view is fully populated (used by some flows)
         try { await loadCatalog(); } catch {}
       } else if (res.status === 410) {
@@ -311,6 +313,19 @@ export default function TeacherApp() {
     return null;
   };
 
+  const loadTeacherDefaultDuration = useCallback(async () => {
+    // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
+    try {
+      const res = await apiFetch('/api/teacher/preferences');
+      if (res.ok) {
+        const p = await res.json();
+        setDuration(resolveDefaultDurationFromPref(p));
+      }
+    } catch {
+      /* silent; keep current/60 */
+    }
+  }, []);
+
   // On mount (and on hashchange for invite fragment): try redeem from fragment.
   // This ensures E2E direct-goto with hash (or late hash set) triggers redeem without requiring full reload.
   // #93 item1: drive sessionReady; UA «Завантаження…» during init, never blank.
@@ -335,6 +350,7 @@ export default function TeacherApp() {
           const s = await refreshSession();
           if (s) {
             did = true;
+            await loadTeacherDefaultDuration();
           }
         }
       } catch (e) {
@@ -965,13 +981,25 @@ export default function TeacherApp() {
                 <div className="banner honest"><span className="ic">ℹ︎</span><span>{disclose}</span></div>
 
                 <div className="formgrid">
+                  {/* B1 and TTT are fixed-pilot constraints and remain clearly labelled (no port of demo editing). */}
                   <div className="field">
                     <label>Рівень: <strong>B1</strong> (фіксовано для пілоту)</label>
                   </div>
 
                   <div className="field">
                     <label>Тривалість (хв)</label>
-                    <select className="inputbox" value={duration} onChange={e => setDuration(Number(e.target.value) as any)}>
+                    <select className="inputbox" value={duration} onChange={e => {
+                      const d = Number(e.target.value) as 45 | 60 | 90;
+                      setDuration(d);
+                      // Silent persist (no extra UI, per P2-6); owner-scoped via csrf.
+                      if (csrf) {
+                        apiFetch('/api/teacher/preferences', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                          body: JSON.stringify({ default_duration: d }),
+                        }).catch(() => { /* silent */ });
+                      }
+                    }}>
                       <option value={45}>45</option>
                       <option value={60}>60</option>
                       <option value={90}>90</option>

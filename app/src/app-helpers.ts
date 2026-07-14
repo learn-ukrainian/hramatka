@@ -121,3 +121,12 @@ export function clearLastBakeRequest(): void {
     /* private mode / quota */
   }
 }
+
+/** Resolve persisted teacher pref to a valid duration (preselect for new-lesson form). */
+export function resolveDefaultDurationFromPref(pref: unknown): 45 | 60 | 90 {
+  if (pref && typeof pref === 'object') {
+    const d = (pref as { default_duration?: unknown }).default_duration;
+    if (d === 45 || d === 60 || d === 90) return d;
+  }
+  return 60;
+}

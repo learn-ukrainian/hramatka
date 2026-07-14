@@ -624,6 +624,36 @@ class JobStore:
             )
         return cursor.rowcount == 1
 
+    # -- Teacher preferences (P2-6) ----------------------------------------
+
+    def get_teacher_default_duration(self, teacher_id: str) -> int:
+        """Return persisted default_duration or 60 when absent (additive table)."""
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT default_duration FROM teacher_preferences WHERE teacher_id = ?",
+                (teacher_id,),
+            ).fetchone()
+            if row is None:
+                return 60
+            return int(row["default_duration"])
+
+    def set_teacher_default_duration(self, teacher_id: str, duration: int) -> None:
+        """Upsert default_duration for owner; validates and commits before return."""
+        if duration not in (45, 60, 90):
+            raise ValueError("default_duration must be one of 45, 60, 90")
+        ts = now_iso()
+        with self._write_transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO teacher_preferences (teacher_id, default_duration, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(teacher_id) DO UPDATE SET
+                    default_duration = excluded.default_duration,
+                    updated_at = excluded.updated_at
+                """,
+                (teacher_id, duration, ts),
+            )
+
     # -- Owner-scoped job creation and reads -------------------------------
 
     def create_or_get(
