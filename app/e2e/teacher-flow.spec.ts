@@ -785,4 +785,55 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     // Form is restored on the paste view, with the anchor text pre-filled.
     await expect(page.getByPlaceholder(/Вставте/)).toHaveValue('Текст для перевірки кнопки клонування.');
   });
+
+  test('copy-as-new is not silently disabled while another lesson bakes and a review save is in flight', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const anchorOne = '__CLONE_BUSY__ Текст готового уроку для клонування під час бакінгу.';
+    await page.getByPlaceholder(/Вставте/).fill(anchorOne);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await page.waitForSelector('.teacher-key', { timeout: 15000 });
+    await page.waitForURL(/#\/lessons\//);
+    const lessonOneUrl = page.url();
+
+    // Leave for catalog; start a slow bake so another lesson stays in-flight.
+    await page.getByRole('button', { name: '← До списку' }).click();
+    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
+    const slowText = '__SLOW_BAKE__ Текст другого уроку, що залишається в бакінгу.';
+    await page.getByPlaceholder(/Вставте/).fill(slowText);
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
+
+    await page.goto(lessonOneUrl);
+    await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 10000 });
+
+    // Hold the next warning-ack mutation open so global `loading` stays true briefly.
+    let releaseAck: (() => void) | null = null;
+    const ackGate = new Promise<void>((resolve) => { releaseAck = resolve; });
+    await page.route('**/api/lessons/*/blocks/*/accept', async (route) => {
+      await ackGate;
+      try {
+        await route.continue();
+      } catch {
+        /* page may navigate away before the held ack completes */
+      }
+    });
+
+    const ackBtn = page.locator('.ack-btn').first();
+    await expect(ackBtn).toBeVisible({ timeout: 5000 });
+    await ackBtn.click();
+
+    const cloneBtn = page.getByTestId('copy-lesson-as-new');
+    await expect(cloneBtn).toBeEnabled({ timeout: 1000 });
+    await cloneBtn.click();
+
+    releaseAck?.();
+    await page.unroute('**/api/lessons/*/blocks/*/accept').catch(() => {});
+
+    await expect(page.getByPlaceholder(/Вставте/)).toHaveValue(anchorOne, { timeout: 5000 });
+  });
 });

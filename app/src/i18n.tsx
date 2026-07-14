@@ -288,6 +288,10 @@ const DICT = {
     uk: 'Текст уроку недоступний. Вставте текст знову на головній сторінці.',
     en: 'The lesson text is unavailable. Paste the text again on the main page.',
   },
+  'err.copyAsNewNoAnchor': {
+    uk: 'Текст уроку недоступний для копіювання. Спробуйте оновити сторінку.',
+    en: 'The lesson text is unavailable to copy. Try refreshing the page.',
+  },
   'err.inviteGone': { uk: 'Запрошення більше недоступне.', en: 'The invitation is no longer available.' },
   'err.inviteBadToken': { uk: 'Некоректний токен запрошення.', en: 'Invalid invitation token.' },
   'err.loginFailed': { uk: 'Помилка входу', en: 'Sign-in error' },

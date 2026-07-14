@@ -672,10 +672,19 @@ export default function TeacherApp() {
     }
   };
 
-  const copyLessonAsNew = async () => {
-    if (!lesson) return;
+  const copyLessonAsNew = () => {
+    if (!lesson) {
+      setError(errKey('err.lessonNotFound'));
+      return;
+    }
+    const anchorText = lesson.lesson.anchor?.text?.trim();
+    if (!anchorText) {
+      setError(errKey('err.copyAsNewNoAnchor'));
+      return;
+    }
+    setError(null);
     restoreFormFromPayload({
-      text: lesson.lesson.anchor.text,
+      text: anchorText,
       duration: lesson.lesson.duration,
       focus: lesson.lesson.focus || '',
       lessonId: lesson.lesson_id,
@@ -1537,7 +1546,6 @@ export default function TeacherApp() {
                       type="button"
                       className="btn ghost"
                       onClick={copyLessonAsNew}
-                      disabled={loading}
                       data-testid="copy-lesson-as-new"
                     >
                       {t('lesson.copyAsNew')}
