@@ -18,7 +18,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'npm run dev',
+      command: 'node dev/server.js & npm run build && npm run preview',
       url: 'http://localhost:5173/teacher/',
       reuseExistingServer: false,
       timeout: 120 * 1000,
