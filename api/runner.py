@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 
 from jsonschema import ValidationError
 
 from .baking.port import BakeError, LessonBaker, ProviderUnavailable
 from .lesson import materialize_lesson
-from .store import JobStore
+from .store import JobStore, PersistenceUnavailable
 from .validation import validate_lesson
+
+log = logging.getLogger(__name__)
 
 _SAFE_FAILURE_MESSAGE = "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
 _PROVIDER_RETRY_DELAY_SECONDS = 0.25
+_STOP_JOIN_TIMEOUT_SECONDS = 10
 _DEFAULT_WORKERS = 4
 _MAX_WORKERS = 8
 
@@ -61,10 +66,31 @@ class BakeRunner:
                 # Stop admitting drafts; a restart will sweep any in-flight rows.
                 self.quarantine()
                 raise
-
     def stop(self) -> None:
+        """Signal workers and the watchdog, then join within a bounded deadline.
+
+        In-flight jobs that time out remain 'baking'; the restart sweep converts
+        them to durable `worker_restarted` failures on next start.
+        """
         self._stop.set()
         self._wake.set()
+        deadline = time.monotonic() + _STOP_JOIN_TIMEOUT_SECONDS
+        for worker in self._workers:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                worker.join(timeout=remaining)
+            if worker.is_alive():
+                log.warning(
+                    "Worker %s did not finish within stop deadline; "
+                    "in-flight bake will be recovered on restart.",
+                    worker.name,
+                )
+        if self._watchdog is not None and self._watchdog.is_alive():
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                self._watchdog.join(timeout=remaining)
+            if self._watchdog.is_alive():
+                log.warning("Watchdog did not finish within stop deadline.")
 
     def submit(self, lesson_id: str) -> bool:
         """Wake the shared pool; requests never create bake threads."""
@@ -93,12 +119,23 @@ class BakeRunner:
 
     def _work(self) -> None:
         while not self._stop.is_set() and not self._poisoned.is_set():
-            job = self._claim_next_job()
+            try:
+                job = self._claim_next_job()
+            except PersistenceUnavailable:
+                log.warning("Claim skipped: persistence unavailable; will retry.")
+                time.sleep(0.5)
+                continue
             if job is None:
                 self._wake.wait(timeout=1)
                 self._wake.clear()
                 continue
-            self._run_job(job)
+            try:
+                self._run_job(job)
+            except Exception:
+                log.exception(
+                    "Worker thread caught unhandled exception while running job %s",
+                    job.id,
+                )
 
     def _claim_next_job(self):
         """Retry optimistic CAS losers promptly so a wake fills the whole pool."""
@@ -129,12 +166,19 @@ class BakeRunner:
             # Never persist an exception, trace, provider response, original
             # anchor, or filesystem path.  The durable aggregate carries only a
             # frozen allowlisted code and teacher-safe wording.
-            self._store.fail(
-                job.teacher_id,
-                job.id,
-                "unknown_safe_failure",
-                _SAFE_FAILURE_MESSAGE,
-            )
+            try:
+                self._store.fail(
+                    job.teacher_id,
+                    job.id,
+                    "unknown_safe_failure",
+                    _SAFE_FAILURE_MESSAGE,
+                )
+            except Exception:
+                log.exception(
+                    "store.fail raised while handling worker exception for job %s; "
+                    "job stays baking, restart sweep will convert to durable timeout.",
+                    job.id,
+                )
 
     def _bake_with_one_provider_retry(self, job) -> dict:  # JobRecord is deliberately duck-typed.
         request = {

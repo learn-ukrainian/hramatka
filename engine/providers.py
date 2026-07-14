@@ -82,12 +82,20 @@ def provider_call_slot() -> Iterator[None]:
         yield
 
 
+_STEP_ORDER = {
+    "generation": 1,
+    "gates": 2,
+    "assembly": 3,
+}
+
+
 @dataclass
 class _TelemetryState:
     lock: threading.RLock = field(default_factory=threading.RLock)
     traces: list[dict] = field(default_factory=list)
     calls_done: int | None = None
     calls_planned: int | None = None
+    step: str | None = None
 
 
 @dataclass
@@ -111,11 +119,13 @@ class TelemetryContext:
                 traces=self.traces,
                 calls_done=self.calls_done,
                 calls_planned=self.calls_planned,
+                step=self.step,
             )
         else:
             self.traces = self._state.traces
             self.calls_done = self._state.calls_done
             self.calls_planned = self._state.calls_planned
+            self.step = self._state.step
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -126,7 +136,7 @@ class TelemetryContext:
             calls_planned=self.calls_planned,
             calls_done=self.calls_done,
             phase=phase,
-            step=self.step,
+            step=self._state.step if self._state else self.step,
             trace_dir=self.trace_dir,
             _state=self._state,
             _report_phase=False,
@@ -143,13 +153,20 @@ class TelemetryContext:
         assert self._state is not None
         with self._state.lock:
             if step is not None:
-                self.step = step
+                current_order = _STEP_ORDER.get(self._state.step or "", 0)
+                new_order = _STEP_ORDER.get(step, 0)
+                if new_order >= current_order:
+                    self._state.step = step
             if phase is not None:
                 self.phase = phase
             if calls_done is not None:
-                self._state.calls_done = calls_done
+                if self._state.calls_done is None or calls_done > self._state.calls_done:
+                    self._state.calls_done = calls_done
             if calls_planned is not None:
-                self._state.calls_planned = calls_planned
+                if self._state.calls_planned is None or calls_planned > self._state.calls_planned:
+                    self._state.calls_planned = calls_planned
+
+            self.step = self._state.step
             self.calls_done = self._state.calls_done
             self.calls_planned = self._state.calls_planned
             progress_phase = self.phase if self._report_phase else 1
@@ -160,17 +177,28 @@ class TelemetryContext:
                 "calls_done": self.calls_done,
                 "calls_planned": self.calls_planned,
             }
-            if self.store is not None and self.job_id is not None:
-                from datetime import UTC, datetime
+            snapshot = dict(progress_obj)
 
-                timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-                    "+00:00", "Z"
-                )
-                progress_obj["updated_at"] = timestamp
-                try:
-                    self.store.update_progress(self.job_id, progress_obj)
-                except Exception as exc:
-                    log.warning("Failed to update progress in DB for job %s: %s", self.job_id, exc)
+        if self.store is not None and self.job_id is not None:
+            # Monotonic: never write a smaller calls_done than the shared state holds
+            with self._state.lock:
+                if (
+                    snapshot["calls_done"] is not None
+                    and self._state.calls_done is not None
+                    and snapshot["calls_done"] < self._state.calls_done
+                ):
+                    return
+
+            from datetime import UTC, datetime
+
+            timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+            snapshot["updated_at"] = timestamp
+            try:
+                self.store.update_progress(self.job_id, snapshot)
+            except Exception as exc:
+                log.warning("Failed to update progress in DB for job %s: %s", self.job_id, exc)
 
     def increase_calls_planned(self) -> None:
         """Atomically account for one dependent regeneration request."""

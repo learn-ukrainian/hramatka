@@ -414,3 +414,44 @@ def test_port_over_http_transport_passes_prompt_through():
     handler, _ = _seq([200])
     port = AISGeneratorPort(api_key="k", transport=_transport(handler))
     assert port("prompt") == '{"activities": []}'
+
+
+def test_calls_done_never_regresses_under_concurrent_updates():
+    history = []
+    lock = threading.Lock()
+
+    class FakeStore:
+        def update_progress(self, job_id, progress):
+            if "calls_done" in progress:
+                with lock:
+                    history.append(progress["calls_done"])
+
+    store = FakeStore()
+    ctx = providers.TelemetryContext(
+        job_id="test-job",
+        store=store,
+        phases_total=2,
+        calls_planned=10,
+        calls_done=0,
+    )
+
+    threads = []
+
+    def worker(num_calls):
+        forked = ctx.fork(phase=1)
+        for _ in range(num_calls):
+            forked.record_provider_call({"dummy": "trace"})
+            time.sleep(0.001)
+
+    for _ in range(10):
+        t = threading.Thread(target=worker, args=(5,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    # Verify that history of calls_done is monotonically non-decreasing
+    assert len(history) > 0
+    for i in range(1, len(history)):
+        assert history[i] >= history[i - 1], f"Regressed calls_done at index {i}: {history}"
