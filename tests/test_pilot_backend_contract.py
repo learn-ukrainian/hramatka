@@ -1217,6 +1217,46 @@ def test_recreate_without_stored_request_returns_422(tmp_path: Path) -> None:
         _error(recreate, 422, "invalid_input")
 
 
+def test_recreate_store_invalid_request_returns_422(tmp_path: Path) -> None:
+    """A stored request_json that fails store-level validation (e.g. non-B1 level)
+    must produce a 422 envelope, NOT an unhandled 500."""
+    app = create_app(settings=_settings(tmp_path), baker=FixtureBaker())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        created = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, lesson_id, "ready")
+        # Seed a request_json with a level the store rejects.
+        bad_request = json.dumps(
+            {
+                "anchor": {
+                    "text": "Учні читають текст.",
+                    "source": "teacher-paste",
+                },
+                "level": "A2",
+                "duration": 45,
+                "focus": None,
+            }
+        )
+        with sqlite3.connect(app.state.store.database_path) as connection:
+            connection.execute(
+                "UPDATE lesson_jobs SET request_json = ? WHERE id = ?",
+                (bad_request, lesson_id),
+            )
+            connection.commit()
+        recreate = client.post(
+            f"/api/lessons/{lesson_id}/recreate",
+            headers=_mutation_headers(session["csrf_token"]),
+        )
+        _error(recreate, 422, "invalid_input")
+
+
 def test_delete_lesson_returns_204_and_removes_row(app) -> None:
     with TestClient(app, base_url=ORIGIN) as client:
         _, _, token = _issue_invite(app)

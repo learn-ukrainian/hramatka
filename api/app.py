@@ -538,6 +538,8 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             ) from error
         except SessionUnavailable as error:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
+        except ValueError:
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from None
         if created and not runner.submit(job.id):
             store.fail_queued_drafts(
                 "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
