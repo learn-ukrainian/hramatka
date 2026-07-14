@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/gen-activity-validator.mjs",
     "build": "vite build",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "lint": "oxlint",
-    "test": "vitest run",
+    "test": "vitest run && npm run build && node scripts/csp-guard.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:real": "playwright test -c playwright.real-backend.config.ts",
@@ -17,7 +18,6 @@
   },
   "dependencies": {
     "@learn-ukrainian/activity-kit": "file:../vendor/activity-kit/learn-ukrainian-activity-kit-0.1.0-ffd54054.tgz",
-    "ajv": "8.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -29,6 +29,7 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
+    "ajv": "8.17.1",
     "eslint": "^9.12.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.12",

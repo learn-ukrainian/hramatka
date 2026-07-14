@@ -58,6 +58,18 @@ test.describe('Review workbench E2E (stub)', () => {
     });
   });
 
+  // CONFIRMED E2E GUARD (per task):
+  // The flows below (loginAndBake + review selectors) exercise import of review-helpers.ts
+  // which statically imports the generated activityValidator.js.
+  // - A require( or any top-level module init error → synchronous throw on import → blank page
+  //   → subsequent waitForSelector for review-workbench or actions will timeout/fail.
+  // - This catches BOTH the old eval-crash and the require-crash (the latter is unconditional,
+  //   does not require CSP header).
+  // The dev stub server (dev/server.js) does NOT set a strict CSP response header on assets
+  // (it is API-only; Vite :5173 serves the app JS). Adding prod-like CSP to E2E (to also catch
+  // eval regressions under header) is tracked in issue #123. The bundle guard + this E2E load
+  // path together close the regression window for CI.
+
   test('move block within review document', async ({ page }) => {
     await loginAndBake(page);
     const before = await page.locator('.review-paper .dblock:not(.empty-phase)').count();
@@ -179,5 +191,23 @@ test.describe('Review workbench E2E (stub)', () => {
     await expect(accept).toBeEnabled();
     await accept.click();
     await expect(accept).toBeDisabled();
+  });
+
+  test('review path loads without load-time crash (require or eval in validator)', async ({ page }) => {
+    // Explicit load-time crash detector for the merge blocker.
+    // Any ReferenceError on `require` (or EvalError) during import of activityValidator
+    // will cause the page to fail to render the workbench; the wait will fail or pageerror fires.
+    const jsErrors: string[] = [];
+    page.on('pageerror', (err) => {
+      jsErrors.push(String(err));
+    });
+
+    await loginAndBake(page);
+
+    // If we reached here the module initialized without throwing require/eval.
+    await expect(page.locator('[data-testid="review-workbench"]')).toBeVisible();
+
+    const badErrors = jsErrors.filter((m) => /require is not defined|EvalError|new Function/i.test(m));
+    expect(badErrors, `Unexpected crash errors during review load: ${badErrors.join('; ')}`).toHaveLength(0);
   });
 });

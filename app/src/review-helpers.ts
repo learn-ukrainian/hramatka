@@ -1,6 +1,10 @@
 /** Review assembly helpers — mirrors hramatka/api/lesson.py budgets and split logic. */
-import Ajv, { type ErrorObject } from 'ajv';
-import activitySchema from '@learn-ukrainian/activity-kit/schema';
+import type { ErrorObject } from 'ajv';
+
+// CSP-safe precompiled validator (generated at build time via ajv standalone).
+// Replaces the previous top-level `new Ajv().compile()` which used runtime `new Function()`
+// and violated the production CSP (`default-src 'self'`, no `unsafe-eval`).
+import activityValidator from './generated/activityValidator.js';
 
 export type PilotActivityType =
   | 'true-false' | 'cloze' | 'match-up' | 'quiz' | 'mark-the-words'
@@ -12,8 +16,6 @@ export const PILOT_ACTIVITY_TYPES: readonly PilotActivityType[] = [
   'true-false', 'cloze', 'match-up', 'quiz', 'mark-the-words',
   'fill-in', 'error-correction', 'text-questions', 'short-writing',
 ];
-
-const activityValidator = new Ajv({ allErrors: true, strict: false }).compile(activitySchema);
 
 export const REVIEW_PHASE_BUDGETS: Record<LessonDuration, Record<1 | 2 | 3, number>> = {
   45: { 1: 2, 2: 3, 3: 1 },
