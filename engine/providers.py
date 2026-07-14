@@ -334,11 +334,27 @@ class HttpChatTransport:
         # returns HTTP 404 (bake-off 2026-07-10, all gemma cells). Strip at the
         # wire; keep the canonical id in fingerprints/meta.
         wire_model = model.split("/", 1)[1] if self.strip_model_prefix and "/" in model else model
+
+        temp_env = os.environ.get("HRAMATKA_GEN_TEMPERATURE")
+        temperature = 0.2
+        if temp_env is not None:
+            try:
+                temperature = float(temp_env)
+            except ValueError:
+                pass
+
+        json_mode_env = os.environ.get("HRAMATKA_GEN_JSON_MODE")
+        json_mode_enabled = json_mode_env != "0"
+
         payload = {
             "model": wire_model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
+            "temperature": temperature,
         }  # TOOLLESS: no `tools` key by construction
+        if json_mode_enabled:
+            payload["response_format"] = {"type": "json_object"}
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -366,6 +382,25 @@ class HttpChatTransport:
                 try:
                     with provider_call_slot():
                         response = client.post(url, json=payload, headers=headers)
+
+                    if response.status_code == 400 and "response_format" in payload:
+                        log.warning(
+                            "%s 400 JSON mode bad request. Retrying without it. model=%s",
+                            self.host,
+                            model,
+                        )
+                        ctx = telemetry_ctx.get()
+                        if ctx is not None:
+                            ctx.record_event(
+                                {
+                                    "event": "json_mode_unsupported",
+                                    "host": self.host,
+                                    "model": model,
+                                }
+                            )
+                        payload.pop("response_format", None)
+                        with provider_call_slot():
+                            response = client.post(url, json=payload, headers=headers)
                 except httpx.TimeoutException:
                     log.warning("%s timeout model=%s attempt=%d", self.host, model, attempt)
                     last_error = GeneratorUnavailable(f"provider timed out after {timeout_s}s")

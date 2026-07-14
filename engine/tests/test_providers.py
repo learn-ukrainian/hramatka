@@ -537,3 +537,72 @@ def test_api_config_gating(monkeypatch):
     parsed = config._parse_bake_providers("google-ais,deepinfra")
     assert parsed == ("google-ais", "deepinfra")
 
+
+# --- Quick wins tests: JSON mode, temperature, fallback, and overrides -------
+def test_default_payload_shape_and_temperature_present(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GEN_TEMPERATURE", raising=False)
+    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    _transport(handler)("prompt", api_key="k", model="m", timeout_s=5)
+    assert seen["body"]["temperature"] == 0.2
+    assert seen["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_payload_env_overrides_honored(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_TEMPERATURE", "0.7")
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "0")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    _transport(handler)("prompt", api_key="k", model="m", timeout_s=5)
+    assert seen["body"]["temperature"] == 0.7
+    assert "response_format" not in seen["body"]
+
+
+def test_400_fallback_retry_without_json_mode(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GEN_TEMPERATURE", raising=False)
+    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            return httpx.Response(400, text="Bad Request: json mode not supported")
+        return httpx.Response(200, json=OK_BODY)
+
+    # Set up TelemetryContext
+    ctx = providers.TelemetryContext(
+        job_id="test-job-400",
+        phases_total=1,
+        calls_planned=1,
+        calls_done=0,
+    )
+    token = providers.telemetry_ctx.set(ctx)
+
+    try:
+        transport = _transport(handler)
+        out = transport("prompt", api_key="k", model="m", timeout_s=5)
+        assert out == '{"activities": []}'
+
+        # Verify first call had json_object and second didn't
+        assert len(calls) == 2
+        assert calls[0]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in calls[1]
+
+        # Verify telemetry event was recorded
+        events = [t for t in ctx.traces if t.get("event") == "json_mode_unsupported"]
+        assert len(events) == 1
+        assert events[0]["host"] == "ais"
+        assert events[0]["model"] == "m"
+    finally:
+        providers.telemetry_ctx.reset(token)
+
