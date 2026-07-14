@@ -28,6 +28,82 @@
   --shadow:0 1px 3px rgba(35,36,31,.08),0 4px 16px rgba(35,36,31,.06);
 }
 
+/*
+  Activity-kit token bridge (#129).
+  The vendored @learn-ukrainian/activity-kit CSS module (Activities.module.css)
+  consumes Infima/LU design tokens (--ifm-*, --lu-*) that are NOT part of this
+  app's demo SSOT palette (paper/ink/wheat/accent + dark variants).  Without a
+  bridge every var(--ifm-*) / var(--lu-*) resolves to nothing, so activity
+  selection / active / correct / wrong state backgrounds and borders silently
+  disappear in BOTH themes — e.g. mark-the-words `.marked` renders as a
+  transparent background with white text, making the selected state
+  indistinguishable (#129).
+
+  Each kit token is mapped to the matching demo SSOT token below.  Because CSS
+  custom properties resolve lazily at use-site, a single :root block adapts to
+  every theme context (light/dark via prefers-color-scheme + data-theme) — the
+  underlying demo tokens are already redefined per-theme above.
+*/
+:root{
+  /* primary / accent */
+  --ifm-color-primary: var(--accent);
+  --ifm-color-primary-lightest: var(--accent-soft);
+  --ifm-color-primary-light: var(--accent);
+  --ifm-color-primary-dark: var(--accent);
+  /* surfaces & text */
+  --ifm-card-background-color: var(--card);
+  --ifm-background-color: var(--paper);
+  --ifm-background-surface-color: var(--card);
+  --ifm-heading-color: var(--ink);
+  --ifm-font-color-base: var(--ink);
+  --ifm-color-warning: var(--warn);
+  --ifm-color-danger-dark: var(--bad);
+  --ifm-color-success-dark: var(--ok);
+  /* emphasis scale: lightest surface tint → strongest text */
+  --ifm-color-emphasis-100: var(--paper);
+  --ifm-color-emphasis-200: var(--line);
+  --ifm-color-emphasis-300: var(--line);
+  --ifm-color-emphasis-400: var(--line);
+  --ifm-color-emphasis-500: var(--ink-soft);
+  --ifm-color-emphasis-600: var(--ink-soft);
+  --ifm-color-emphasis-700: var(--ink-soft);
+  --ifm-color-emphasis-800: var(--ink);
+  /* LU state tokens → demo semantic tokens (visible in both themes) */
+  --lu-text: var(--ink);
+  --lu-text-muted: var(--ink-soft);
+  --lu-state-active: var(--accent-soft);
+  --lu-state-correct-bg: var(--ok-soft);
+  --lu-state-correct-fg: var(--ok);
+  --lu-state-wrong-bg: var(--bad-soft);
+  --lu-state-wrong-fg: var(--bad);
+  --lu-state-missed: var(--warn-soft);
+  --lu-state-drag: var(--wheat-soft);
+  --lu-match-right: var(--wheat-soft);
+  --lu-blue: var(--accent);
+  --lu-purple: var(--accent);
+}
+
+/*
+  Dark-theme contrast refinement for mark-the-words selected state (#129).
+  The kit forces `color:#fff` on `.markableWord.marked` while using
+  `--ifm-color-primary` (= --accent) as the fill.  In dark theme --accent is a
+  LIGHT periwinkle (#8FA9D9), so white-on-light text fails WCAG AA even though
+  the background tint is now visible (≥3:1 UI-component contrast).  Switch the
+  text to --paper — the darkest demo token in dark theme — for readable dark
+  text on the light accent fill.  Works for both dark mechanisms
+  (prefers-color-scheme + data-theme).  CSS-module class names preserve the
+  original identifier as a substring, so [class*="…"] reliably targets the
+  hashed names in both dev and production builds.
+*/
+@media (prefers-color-scheme: dark){
+  [data-activity-type="mark-the-words"] [class*="markableWord"][class*="marked"]{
+    color: var(--paper);
+  }
+}
+:root[data-theme="dark"] [data-activity-type="mark-the-words"] [class*="markableWord"][class*="marked"]{
+  color: var(--paper);
+}
+
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
