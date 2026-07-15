@@ -561,13 +561,50 @@ class EngineLessonBaker:
 
             # pipeline.run degrades transport/parse failures to generation_error
             # rather than raising, so surface a safe, teacher-visible failure here.
-            if any(result.generation_error for result in phase_results.values()):
-                if any(
-                    (result.generation_error or "").startswith("GeneratorUnavailable:")
-                    for result in phase_results.values()
-                ):
-                    raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
-                raise BakeError("Bake failed: the lesson generator is unavailable.")
+            errored = {
+                phase: result.generation_error
+                for phase, result in phase_results.items()
+                if result.generation_error
+            }
+            if errored:
+                if prompt_pack_enabled:
+                    had_success = any(
+                        (result.ready or result.review_required)
+                        for result in phase_results.values()
+                    )
+                    if had_success:
+                        # Partial: degrade only the errored phase(s); record durable telemetry.
+                        # Composition + floor decide (FloorUnmetError non-blaming if below).
+                        for phase, err in errored.items():
+                            error_class = (err or "").split(":", 1)[0] if err else "Unknown"
+                            tel_ctx.record_event(
+                                {
+                                    "event": "phase_generation_degraded",
+                                    "phase": phase,
+                                    "error_class": error_class,
+                                }
+                            )
+                        # fall through; do not abort the bake
+                    else:
+                        # Total failure under pack: preserve classification
+                        if any(
+                            (err or "").startswith("GeneratorUnavailable:")
+                            for err in errored.values()
+                        ):
+                            raise ProviderUnavailable(
+                                "Bake failed: the lesson generator is unavailable."
+                            )
+                        raise BakeError("Bake failed: the lesson generator is unavailable.")
+                else:
+                    # Legacy path (flag off): behavior UNCHANGED — any error aborts whole.
+                    if any(
+                        (err or "").startswith("GeneratorUnavailable:")
+                        for err in errored.values()
+                    ):
+                        raise ProviderUnavailable(
+                            "Bake failed: the lesson generator is unavailable."
+                        )
+                    raise BakeError("Bake failed: the lesson generator is unavailable.")
 
             if not any(result.ready or result.review_required for result in phase_results.values()):
                 raise BakeError(

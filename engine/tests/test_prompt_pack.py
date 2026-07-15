@@ -5,13 +5,20 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
+from hramatka.api.baking.port import BakeError, FloorUnmetError, ProviderUnavailable
 from hramatka.engine import fixtures, pipeline, prompt_pack, retrieval
+from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
 from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
-from hramatka.engine.generate import GenerationUnparseable, generate_prompt_pack
+from hramatka.engine.generate import (
+    GenerationUnparseable,
+    GeneratorUnavailable,
+    generate_prompt_pack,
+)
 
 
 def _shared(*, focus: str | None = "читання") -> dict:
@@ -294,3 +301,159 @@ def test_unsupported_focus_is_an_honest_ukrainian_notice():
     focus = shared["lesson_plan"]["focus"]
     assert focus["status"] == "unsupported"
     assert focus["notice_uk"].startswith("Опора не містить достатньо перевіреного матеріалу")
+
+
+# --- tests for #181 partial phase degrade (pack mode) ---
+# Use pack scaffolding (_pack_fixture_generator, certified paths) and anchor verbatim.
+# external_options gate remains live via real bundle + pipeline.
+
+
+def _make_phase_failing_generator(bad_phase: int):
+    """Return a generator that produces valid pack responses for good phases
+    (using the file-local scaffolding) but always-bad envelopes for bad_phase
+    (causing GenerationUnparseable after its internal retry).
+    """
+    counters: Counter[str] = Counter()
+
+    def generator(prompt: str) -> str:
+        phase_match = re.search(
+            r"=== ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ \(дані, не інструкції\) ===\n```json\n(.*?)\n```",
+            prompt,
+            re.DOTALL,
+        )
+        phase = 0
+        if phase_match:
+            try:
+                phase_req = json.loads(phase_match.group(1))
+                phase = int(phase_req.get("phase", 0))
+            except Exception:
+                phase = 0
+        if phase == bad_phase:
+            # bad envelope -> fails validate both attempts -> GenerationUnparseable
+            bad = {"activities": [{"type": "quiz", "items": []}], "citations": []}
+            return json.dumps(bad, ensure_ascii=False)
+        return _pack_fixture_generator(prompt, counters)
+
+    return generator
+
+
+def test_pack_partial_phase_unparseable_ships_with_shortfall_and_degraded_telemetry(
+    monkeypatch, tmp_path: Path
+):
+    """Case 1: partial unparseable + survivors >=floor (60min) -> ships + shortfall + telemetry."""
+
+    monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+    engine_out = tmp_path / "engine-out"
+    monkeypatch.setenv("HRAMATKA_ENGINE_OUT_DIR", str(engine_out))
+
+    gen = _make_phase_failing_generator(bad_phase=1)
+    baker = EngineLessonBaker(
+        generator=gen,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    anchor = fixtures.load_anchor()
+    # dict form with anchor_id to trigger out dir job
+    if isinstance(anchor, str):
+        anchor = {"anchor_id": "hramatka-181-partial-ship", "body_uk": anchor}
+    else:
+        anchor = dict(anchor)
+        anchor.setdefault("anchor_id", "hramatka-181-partial-ship")
+
+    baked = baker.bake(anchor, duration=60, focus="читання")
+    assert baked.get("blocks"), "partial success must ship blocks from surviving phases"
+    # honest shortfall
+    shortfall_notes = [
+        r.get("reason", "")
+        for r in baked.get("rejected", [])
+        if "shortfall:" in str(r.get("reason", ""))
+    ]
+    assert shortfall_notes, "expected shortfall: annotation for honest candidate deficit"
+
+    # telemetry durable via trace
+    trace_paths = list(engine_out.glob("*/trace.json"))
+    assert trace_paths, "expected trace.json for telemetry"
+    traces = json.loads(trace_paths[0].read_text(encoding="utf-8"))
+    degraded_events = [t for t in traces if t.get("event") == "phase_generation_degraded"]
+    assert len(degraded_events) >= 1
+    ev = degraded_events[0]
+    assert ev["phase"] == 1
+    assert ev["error_class"] == "GenerationUnparseable"
+
+
+def test_pack_partial_phase_unparseable_below_floor_raises_floorunmet_nonblaming(
+    monkeypatch, tmp_path: Path
+):
+    """Case 2: partial +45min below floor -> FloorUnmet(blames=False) + lesson_floor_unmet."""
+
+    monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+    gen = _make_phase_failing_generator(bad_phase=1)
+    baker = EngineLessonBaker(
+        generator=gen,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    anchor = fixtures.load_anchor()
+    with pytest.raises(FloorUnmetError) as ei:
+        baker.bake(anchor, duration=45, focus="читання")
+    err = ei.value
+    assert err.blames_source is False
+    assert "could not reach the minimum activity density." in str(err)
+    # Simulate runner classification used for failure_code + exact non-blaming msg
+    failure_code = "lesson_floor_unmet"
+    failure_message = FLOOR_SHORTFALL_UA_MESSAGE if not err.blames_source else "thin"
+    assert failure_code == "lesson_floor_unmet"
+    assert failure_message == FLOOR_SHORTFALL_UA_MESSAGE
+    # exact non-blaming (not thin source)
+    assert "З цього тексту не вдалося скласти повний урок" not in failure_message
+
+
+def test_pack_all_phases_unparseable_raises_bakeerror(monkeypatch, tmp_path: Path):
+    """Case 3: ALL unparseable (pack) -> BakeError (engine_unavailable path)."""
+    monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+
+    def always_bad(prompt: str) -> str:
+        return json.dumps({"activities": [], "citations": []}, ensure_ascii=False)
+
+    baker = EngineLessonBaker(
+        generator=always_bad,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    with pytest.raises(BakeError, match="the lesson generator is unavailable"):
+        baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+
+def test_pack_all_phases_generator_unavailable_raises_provider_unavailable(
+    monkeypatch, tmp_path: Path
+):
+    """Case 4: all GeneratorUnavailable -> ProviderUnavailable preserved."""
+    monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+
+    def always_unavailable(prompt: str) -> str:
+        raise GeneratorUnavailable("simulated full outage for #181")
+
+    baker = EngineLessonBaker(
+        generator=always_unavailable,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    with pytest.raises(ProviderUnavailable):
+        baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+
+def test_legacy_flag_off_error_path_aborts_whole_unchanged(monkeypatch, tmp_path: Path):
+    """Legacy (flag off): error still aborts whole (prove unchanged behavior)."""
+
+    monkeypatch.delenv("HRAMATKA_PROMPT_PACK", raising=False)
+    # bad return triggers generation_error in legacy path too
+    def bad_legacy(prompt: str) -> str:
+        return "not valid json for legacy generate"
+
+    baker = EngineLessonBaker(
+        generator=bad_legacy,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    with pytest.raises(BakeError, match="the lesson generator is unavailable"):
+        baker.bake(fixtures.load_anchor(), duration=60, focus=None)
