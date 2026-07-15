@@ -550,7 +550,7 @@ def test_default_payload_shape_and_temperature_present(monkeypatch):
 
     _transport(handler)("prompt", api_key="k", model="m", timeout_s=5)
     assert seen["body"]["temperature"] == 0.2
-    assert seen["body"]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in seen["body"]
 
 
 def test_payload_env_overrides_honored(monkeypatch):
@@ -569,7 +569,7 @@ def test_payload_env_overrides_honored(monkeypatch):
 
 def test_400_fallback_retry_without_json_mode(monkeypatch):
     monkeypatch.delenv("HRAMATKA_GEN_TEMPERATURE", raising=False)
-    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -605,4 +605,3 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
         assert events[0]["model"] == "m"
     finally:
         providers.telemetry_ctx.reset(token)
-

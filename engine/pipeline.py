@@ -32,6 +32,7 @@ from . import (
     content_density,
     data,
     paths,
+    prompt_pack,
     registry,
     retrieval,
     schema,
@@ -172,6 +173,7 @@ def _gate_impl_digest() -> str:
         paths.ENGINE_DIR / "pipeline.py",
         paths.ENGINE_DIR / "registry.py",
         paths.ENGINE_DIR / "selector.py",
+        paths.ENGINE_DIR / "prompt_pack.py",
     ]
     h = hashlib.sha256()
     for fp in sorted(gate_files, key=lambda p: p.relative_to(paths.ENGINE_DIR).as_posix()):
@@ -196,6 +198,7 @@ def fingerprint_inputs(
     max_regeneration_attempts: int = 0,
     atlas_override_digest: str | None = None,
     pipeline_mode: str = "candidate-bank.v1",
+    prompt_pack_digest: str | None = None,
 ) -> dict:
     """The FULL bake-identity input set (Sol defect #4 / review item 4).
 
@@ -221,6 +224,7 @@ def fingerprint_inputs(
         "selector_policy": selector_policy or selector.DEFAULT_POLICY.as_dict(),
         "max_regeneration_attempts": max_regeneration_attempts,
         "pipeline_mode": pipeline_mode,
+        "prompt_pack_injection_digest": prompt_pack_digest,
         "gate_impl_digest": _gate_impl_digest(),
         "packages": _package_versions(),
         "vendor": vendoring.artifact_versions(),
@@ -243,6 +247,7 @@ def make_fingerprint(**inputs) -> str:
 # Per-item (collection-index) gate locators look like "items[3]" / "pairs[1]".
 # Everything else ("text", None) is an ACTIVITY-level locator.
 _ITEM_LOCATOR_RE = re.compile(r"^(items|pairs|blanks)\[(\d+)\]$")
+
 
 def _status_rank(status: str) -> int:
     return {"pass": 0, "warn": 1, "fail": 2}[status]
@@ -496,6 +501,9 @@ def _run(
     cache_dir: str | Path | None = None,
     count_plan: dict[str, int] | None = None,
     max_regeneration_attempts: int = 0,
+    prompt_pack_context: dict | None = None,
+    precomputed_snapshot: dict | None = None,
+    precomputed_grounding: dict | None = None,
     _candidate_generator: Callable[..., list[object]],
     _pipeline_mode: str,
 ) -> PipelineResult:
@@ -511,11 +519,25 @@ def _run(
         raise ValueError("count_plan values must be positive integers")
     selection_policy = selector.SelectorPolicy(density_target=sum(plan.values()))
     atlas_override_digest = _file_sha256(atlas_db)
-    snap = snapshot_anchor(anchor)
-    grounding = retrieval.build_grounding_pack(snap["body_uk"], level, atlas_db=atlas_db)
+    # The prompt pack supplies these immutable shared blocks once per lesson;
+    # every phase must use the same snapshot/grounding rather than rebuilding
+    # divergent context in its worker thread.  Legacy callers retain the
+    # original local-precompute path exactly.
+    snap = (
+        dict(precomputed_snapshot) if precomputed_snapshot is not None else snapshot_anchor(anchor)
+    )
+    grounding = (
+        dict(precomputed_grounding)
+        if precomputed_grounding is not None
+        else retrieval.build_grounding_pack(snap["body_uk"], level, atlas_db=atlas_db)
+    )
     snap["lemmas"] = sorted(grounding["lemmas"])
     snap["numerals"] = grounding["numeral_inventory"]
-    template = load_extractive_template()
+    template = (
+        prompt_pack.TEMPLATE_VERSION
+        if prompt_pack_context is not None
+        else load_extractive_template()
+    )
     fp_inputs = fingerprint_inputs(
         anchor_hash=snap["hash"],
         level=level,
@@ -530,6 +552,11 @@ def _run(
         max_regeneration_attempts=max_regeneration_attempts,
         atlas_override_digest=atlas_override_digest,
         pipeline_mode=_pipeline_mode,
+        prompt_pack_digest=(
+            prompt_pack_context.get("provenance", {}).get("injection_sha256")
+            if prompt_pack_context is not None
+            else None
+        ),
     )
     fingerprint = _sha(
         json.dumps(fp_inputs, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -555,11 +582,14 @@ def _run(
         "phase": phase,
         "generator": GEMMA_MODEL,
         "fingerprint": fingerprint,
+        "prompt_pack": (
+            prompt_pack_context.get("provenance", {}).get("injection_sha256")
+            if prompt_pack_context is not None
+            else None
+        ),
     }
 
-    result = PipelineResult(
-        anchor=snap, fingerprint=fingerprint, fingerprint_inputs=fp_inputs
-    )
+    result = PipelineResult(anchor=snap, fingerprint=fingerprint, fingerprint_inputs=fp_inputs)
     raw_attempt_counter = [0]
 
     from .providers import TelemetryContext, telemetry_ctx
@@ -589,6 +619,7 @@ def _run(
         try:
             _parsed = float(_deadline_raw)
             import math
+
             if not math.isnan(_parsed) and not math.isinf(_parsed):
                 _phase_deadline_s = _parsed
         except ValueError:
@@ -612,18 +643,28 @@ def _run(
                     raw_batches.append(([str(activity_type) for activity_type in bank], activities))
     else:
         try:
-            raw_batches = [(types, _candidate_generator(
-                snap["body_uk"],
-                level,
-                types,
-                counts=plan,
-                generator=generator,
-                grounding_pack=grounding["text"],
-                out_dir=out_dir,
-                _raw_attempt_counter=raw_attempt_counter,
-                anchor_snapshot=snap,
-            ))]
-        except (GeneratorUnavailable, GenerationUnparseable) as exc:
+            generation_kwargs = {
+                "counts": plan,
+                "generator": generator,
+                "grounding_pack": grounding["text"],
+                "out_dir": out_dir,
+                "_raw_attempt_counter": raw_attempt_counter,
+                "anchor_snapshot": snap,
+            }
+            if prompt_pack_context is not None:
+                generation_kwargs["prompt_pack_context"] = prompt_pack_context
+            raw_batches = [
+                (
+                    types,
+                    _candidate_generator(
+                        snap["body_uk"],
+                        level,
+                        types,
+                        **generation_kwargs,
+                    ),
+                )
+            ]
+        except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
 
     if ctx is not None:
@@ -640,10 +681,7 @@ def _run(
         return entry is not None and not entry.raw_validator(raw)
 
     raw_dicts = [
-        raw
-        for _bank, activities in raw_batches
-        for raw in activities
-        if safe_for_grounding(raw)
+        raw for _bank, activities in raw_batches for raw in activities if safe_for_grounding(raw)
     ]
     atlas_lookup = retrieval.augmented_atlas_lookup(
         snap["body_uk"], raw_dicts, grounding["atlas_lookup"], atlas_db=atlas_db
@@ -654,6 +692,7 @@ def _run(
     snap["diagnostics"] = vesum_gate.anchor_baseline_diagnostics(
         snap["body_uk"], atlas_lookup=atlas_lookup
     )
+
     def make_candidate(
         raw: object,
         candidate_id: str,
@@ -696,8 +735,7 @@ def _run(
     ) -> list[schema.HramatkaActivity]:
         """Gate independent candidates concurrently while preserving IR order."""
         jobs = [
-            (raw, f"candidate-{batch_index}-{index:03d}")
-            for index, raw in enumerate(activities)
+            (raw, f"candidate-{batch_index}-{index:03d}") for index, raw in enumerate(activities)
         ]
         if len(jobs) < 2:
             return [
@@ -738,14 +776,10 @@ def _run(
             ir for ir in result.activities if ir.gate_result.status == schema.DISPOSITION_READY
         ]
         result.review_required = [
-            ir
-            for ir in result.activities
-            if ir.gate_result.status == schema.DISPOSITION_REVIEW
+            ir for ir in result.activities if ir.gate_result.status == schema.DISPOSITION_REVIEW
         ]
         result.rejected = [
-            ir
-            for ir in result.activities
-            if ir.gate_result.status == schema.DISPOSITION_REJECTED
+            ir for ir in result.activities if ir.gate_result.status == schema.DISPOSITION_REJECTED
         ]
         result.selected = selector.select_lesson(
             result.ready,
@@ -803,18 +837,41 @@ def _run(
             ctx.increase_calls_planned()
             ctx.update_progress_db(step="generation")
         try:
+            repair_kwargs = {
+                "counts": deficits,
+                "generator": generator,
+                "grounding_pack": grounding["text"],
+                "out_dir": out_dir,
+                "_raw_attempt_counter": raw_attempt_counter,
+                "anchor_snapshot": snap,
+            }
+            if prompt_pack_context is not None:
+                phase_value = int(phase) if isinstance(phase, str) and phase.isdigit() else phase
+                if not isinstance(phase_value, int):
+                    raise prompt_pack.PromptPackError(
+                        "Prompt-pack repair requires a numeric phase."
+                    )
+                repair_context = prompt_pack.phase_context(
+                    prompt_pack_context["shared"],
+                    phase=phase_value,
+                    requested_types=[
+                        activity_type
+                        for activity_type, count in deficits.items()
+                        for _ in range(count)
+                    ],
+                    repair_failures=[{"mode": "repair"}],
+                )
+                repair_context["repair_failures"] = prompt_pack.repair_failures_from_activities(
+                    result.activities, deficits
+                )
+                repair_kwargs["prompt_pack_context"] = repair_context
             regenerated = _candidate_generator(
                 snap["body_uk"],
                 level,
                 list(deficits),
-                counts=deficits,
-                generator=generator,
-                grounding_pack=grounding["text"],
-                out_dir=out_dir,
-                _raw_attempt_counter=raw_attempt_counter,
-                anchor_snapshot=snap,
+                **repair_kwargs,
             )
-        except (GeneratorUnavailable, GenerationUnparseable) as exc:
+        except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
             break
         if ctx is not None:
@@ -859,9 +916,7 @@ def _run(
     # ---- persist ------------------------------------------------------
     b1_path = out_dir / "lesson.b1.json"
     ir_path = out_dir / "lesson.ir.json"
-    b1_path.write_text(
-        json.dumps(result.lesson_b1, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    b1_path.write_text(json.dumps(result.lesson_b1, ensure_ascii=False, indent=2), encoding="utf-8")
     ir_path.write_text(
         json.dumps(
             {
@@ -905,6 +960,9 @@ def run(
     cache_dir: str | Path | None = None,
     count_plan: dict[str, int] | None = None,
     max_regeneration_attempts: int = 0,
+    prompt_pack_context: dict | None = None,
+    precomputed_snapshot: dict | None = None,
+    precomputed_grounding: dict | None = None,
 ) -> PipelineResult:
     """Run the production typed candidate-bank pipeline end-to-end.
 
@@ -925,6 +983,9 @@ def run(
         cache_dir=cache_dir,
         count_plan=count_plan,
         max_regeneration_attempts=max_regeneration_attempts,
+        prompt_pack_context=prompt_pack_context,
+        precomputed_snapshot=precomputed_snapshot,
+        precomputed_grounding=precomputed_grounding,
         _candidate_generator=generate,
         _pipeline_mode="candidate-bank.v1",
     )

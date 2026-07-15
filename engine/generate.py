@@ -18,6 +18,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+from . import prompt_pack
 from .providers import make_generator
 from .transport import (
     GEMMA_MODEL,
@@ -34,6 +35,7 @@ __all__ = [
     "generate",
     "generate_baseline_v1",
     "make_generator",
+    "generate_prompt_pack",
 ]
 
 LEGACY_GENERATOR_VERSION = "extractive-v1"
@@ -158,6 +160,7 @@ def generate_baseline_v1(
         raise ValueError("generate_baseline_v1 only supports one candidate per type")
     types = types or ["true-false", "cloze", "match-up"]
     from .providers import telemetry_ctx
+
     ctx = telemetry_ctx.get()
     if ctx is not None:
         ctx.activity_types = list(types)
@@ -203,6 +206,37 @@ def _generate_from_prompt(
     raise GenerationUnparseable("Gemma output was not parseable JSON after one retry.")
 
 
+def generate_prompt_pack(
+    context: dict,
+    *,
+    generator: Callable[[str], str] = call_gemma,
+    out_dir: str | Path | None = None,
+    _raw_attempt_counter: list[int] | None = None,
+) -> list[object]:
+    """Generate one engineered phase envelope and validate citations first.
+
+    The returned value deliberately contains *only* raw activities.  Citation
+    data is a private response-envelope concern and must never leak into an
+    activity passed to the public raw contracts or projectors.
+    """
+    prompt = prompt_pack.render_phase_prompt(context)
+    attempts = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
+    parse_error: str | None = None
+    for _ in range(2):
+        attempts[0] += 1
+        raw = generator(prompt)
+        parsed = extract_json(raw)
+        try:
+            return prompt_pack.validate_response_envelope(parsed, context)
+        except prompt_pack.PromptPackError as exc:
+            parse_error = str(exc)
+            _persist_raw_parse_failure(raw, out_dir, attempts[0])
+    raise GenerationUnparseable(
+        "Prompt-pack response failed its JSON/citation envelope after one retry: "
+        + (parse_error or "unparseable JSON")
+    )
+
+
 def generate(
     anchor: str,
     level: str = "B1",
@@ -215,6 +249,7 @@ def generate(
     out_dir: str | Path | None = None,
     _raw_attempt_counter: list[int] | None = None,
     anchor_snapshot: dict | None = None,
+    prompt_pack_context: dict | None = None,
 ) -> list[object]:
     """Registry-planned typed candidate generation.
 
@@ -224,6 +259,16 @@ def generate(
     plans coalesce into one model call.  Future entries may use different
     prompts without changing callers.
     """
+    if prompt_pack_context is not None:
+        # The context is precomputed once by the adapter.  Do not fall back to
+        # a type-oriented prompt when a pack preflight rejects the phase.
+        return generate_prompt_pack(
+            prompt_pack_context,
+            generator=generator,
+            out_dir=out_dir,
+            _raw_attempt_counter=_raw_attempt_counter,
+        )
+
     from .registry import ACTIVITY_REGISTRY, entries_for
 
     requested = list(types if types is not None else (counts or ACTIVITY_REGISTRY))
@@ -235,8 +280,10 @@ def generate(
     requested_counts = {
         activity_type: (counts or {}).get(activity_type, 1) for activity_type in requested
     }
-    if any(isinstance(count, bool) or not isinstance(count, int) or count < 1
-           for count in requested_counts.values()):
+    if any(
+        isinstance(count, bool) or not isinstance(count, int) or count < 1
+        for count in requested_counts.values()
+    ):
         raise ValueError("counts values must be positive integers")
 
     # Include the normalized plan in the key as well as the rendered text.  A
@@ -261,6 +308,7 @@ def generate(
     candidates: list[object] = []
     raw_attempt_counter = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
     from .providers import telemetry_ctx
+
     for prompt, _count_signature in prompt_groups:
         active_types = prompt_groups[(prompt, _count_signature)]
         ctx = telemetry_ctx.get()
@@ -281,9 +329,7 @@ def generate(
     return candidates
 
 
-def _default_prompt_builder(
-    anchor: str, level: str, types: list[str], grounding_pack: str
-) -> str:
+def _default_prompt_builder(anchor: str, level: str, types: list[str], grounding_pack: str) -> str:
     """Assemble the pinned pre-count-plumbing prompt for measurement only.
 
     This deliberately preserves the v4 baseline's original literal request

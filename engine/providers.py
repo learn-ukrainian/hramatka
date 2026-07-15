@@ -197,9 +197,7 @@ class TelemetryContext:
 
             from datetime import UTC, datetime
 
-            timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-                "+00:00", "Z"
-            )
+            timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             snapshot["updated_at"] = timestamp
             try:
                 self.store.update_progress(self.job_id, snapshot)
@@ -299,9 +297,7 @@ def _extract_text(body: Any) -> str:
     try:
         content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise GeneratorUnavailable(
-            "provider response had no choices[0].message.content"
-        ) from exc
+        raise GeneratorUnavailable("provider response had no choices[0].message.content") from exc
     if not isinstance(content, str):
         raise GeneratorUnavailable("provider response content was not text")
     return content
@@ -343,8 +339,10 @@ class HttpChatTransport:
             except ValueError:
                 pass
 
-        json_mode_env = os.environ.get("HRAMATKA_GEN_JSON_MODE")
-        json_mode_enabled = json_mode_env != "0"
+        # #171: constrained decoding remains an explicit compatibility probe,
+        # never an ambient transport default.  The engineered prompt carries
+        # its own complete JSON contract and validates citations locally.
+        json_mode_enabled = os.environ.get("HRAMATKA_GEN_JSON_MODE") == "1"
 
         payload = {
             "model": wire_model,
@@ -439,9 +437,7 @@ class HttpChatTransport:
                 if code >= 400:
                     # auth/bad-request — do not retry, never echo the body
                     status_class = "4xx"
-                    raise GeneratorUnavailable(
-                        f"provider returned HTTP {code} for model {model}"
-                    )
+                    raise GeneratorUnavailable(f"provider returned HTTP {code} for model {model}")
                 text = _extract_text(response.json())
                 log.info(
                     "%s response model=%s status=%d response_bytes=%d attempt=%d",
@@ -553,7 +549,6 @@ def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPor
     return ais, openrouter, deepinfra
 
 
-
 def _with_failover(primary: AISGeneratorPort, fallback: AISGeneratorPort) -> FailoverGeneratorPort:
     """Promote one configured port to primary without resolving either secret."""
     return FailoverGeneratorPort(
@@ -643,11 +638,8 @@ def make_generator(name: str) -> AISGeneratorPort:
             model=key,
             transport=HttpChatTransport(base_url=base),
         )
-    
+
     known = ["gemma-ais", "openrouter", "deepseek", "deepseek-v4-flash", "deepseek-v4-pro"]
     if "DEEPINFRA_API_KEY" in os.environ:
         known.append("deepinfra")
-    raise ValueError(
-        f"unknown generator {name!r}; known: {', '.join(known)}"
-    )
-
+    raise ValueError(f"unknown generator {name!r}; known: {', '.join(known)}")

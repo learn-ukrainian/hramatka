@@ -65,6 +65,26 @@ def _activity_identity(ir: schema.HramatkaActivity) -> str:
     return json.dumps(ir.activity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _focus_score(
+    candidate: schema.HramatkaActivity,
+    *,
+    focus_context: Mapping[str, Any] | None,
+    anchor: dict | None,
+) -> int:
+    """Prefer verified focus evidence without weakening any selection guard."""
+    if not focus_context:
+        return 0
+    terms = [str(term).casefold() for term in focus_context.get("terms", []) if len(str(term)) > 2]
+    text = _activity_identity(candidate).casefold()
+    # Inflection makes exact phrase equality too brittle for Ukrainian.  A
+    # conservative five-character stem still makes the signal deterministic,
+    # and sentence IDs are the stronger source-grounded component below.
+    term_matches = sum(term[:5] in text for term in terms if len(term) >= 5)
+    focus_ids = {str(sentence_id) for sentence_id in focus_context.get("sentence_ids", [])}
+    cited_ids = content_density.evidence_sentence_ids(candidate, anchor)
+    return term_matches + 3 * len(focus_ids & cited_ids)
+
+
 def _select(
     candidates: Sequence[schema.HramatkaActivity],
     *,
@@ -74,6 +94,7 @@ def _select(
     policy: SelectorPolicy,
     state: _SelectionState,
     anchor: dict | None = None,
+    focus_context: Mapping[str, Any] | None = None,
 ) -> list[schema.HramatkaActivity]:
     """Select one slot group while retaining any supplied whole-lesson state."""
     phase_candidates = [
@@ -87,7 +108,7 @@ def _select(
     selected: list[schema.HramatkaActivity] = []
 
     while remaining and len(selected) < density_target:
-        ranked: list[tuple[tuple[int, int, str], int, schema.HramatkaActivity]] = []
+        ranked: list[tuple[tuple[int, int, int, int, str], int, schema.HramatkaActivity]] = []
         for original_index, candidate in remaining:
             activity_type = candidate.activity["type"]
             entry = ACTIVITY_REGISTRY[activity_type]
@@ -96,10 +117,7 @@ def _select(
                 continue
             if state.selected_types.get(activity_type, 0) >= count_plan.get(activity_type, 0):
                 continue
-            if (
-                policy.forbid_adjacent_repeated_type
-                and state.last_type == activity_type
-            ):
+            if policy.forbid_adjacent_repeated_type and state.last_type == activity_type:
                 continue
             if (
                 entry.is_puzzle
@@ -123,14 +141,17 @@ def _select(
             productive_boost = int(
                 policy.require_productive
                 and activity_type in content_density.PRODUCTIVE_TYPES
-                and not (
-                    state.selected_types.keys() & content_density.PRODUCTIVE_TYPES
-                )
+                and not (state.selected_types.keys() & content_density.PRODUCTIVE_TYPES)
+            )
+            focus_boost = _focus_score(
+                candidate,
+                focus_context=focus_context,
+                anchor=anchor,
             )
             tie_break = candidate.candidate_id or f"{original_index:06d}"
             ranked.append(
                 (
-                    (-productive_boost, -new_coverage, -variety, tie_break),
+                    (-focus_boost, -productive_boost, -new_coverage, -variety, tie_break),
                     original_index,
                     candidate,
                 )
@@ -169,6 +190,7 @@ def select_lesson(
     phase: int | None = None,
     policy: SelectorPolicy = DEFAULT_POLICY,
     anchor: dict | None = None,
+    focus_context: Mapping[str, Any] | None = None,
 ) -> list[schema.HramatkaActivity]:
     """Greedily select the strongest ready candidates under Wave-0 rules."""
     return _select(
@@ -179,6 +201,7 @@ def select_lesson(
         policy=policy,
         state=_SelectionState(),
         anchor=anchor,
+        focus_context=focus_context,
     )
 
 
@@ -189,6 +212,7 @@ def select_composed_lesson(
     count_plan: Mapping[str, int],
     policy: SelectorPolicy = DEFAULT_POLICY,
     anchor: dict | None = None,
+    focus_context: Mapping[str, Any] | None = None,
 ) -> dict[int, list[schema.HramatkaActivity]]:
     """Select a TTT lesson under one global composition policy."""
     state = _SelectionState()
@@ -204,5 +228,6 @@ def select_composed_lesson(
             policy=policy,
             state=state,
             anchor=anchor,
+            focus_context=focus_context,
         )
     return selected_by_phase

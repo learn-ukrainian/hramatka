@@ -27,7 +27,16 @@ from pathlib import Path
 from typing import Any
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
-from hramatka.engine import content_density, data, pipeline, registry, schema, selector
+from hramatka.engine import (
+    content_density,
+    data,
+    pipeline,
+    prompt_pack,
+    registry,
+    retrieval,
+    schema,
+    selector,
+)
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
@@ -126,6 +135,30 @@ def _candidate_count_plan(phases: list[int]) -> dict[int, dict[str, int]]:
     return plans
 
 
+def _prompt_pack_candidate_count_plan(phases: list[int]) -> dict[int, dict[str, int]]:
+    """Use ``max(2, visible_slots)`` candidates, capped at six, per TTT phase.
+
+    This intentionally differs from the legacy survival-inflated bank while
+    keeping each phase's candidate count directly visible in the pack.
+    """
+    visible = Counter(phases)
+    base_types = ("true-false", "quiz", "cloze", "fill-in")
+    plans: dict[int, dict[str, int]] = {}
+    for phase, slots in sorted(visible.items()):
+        quota = prompt_pack.phase_candidate_quota(slots)
+        # Phase three deliberately reserves the two productive forms when its
+        # quota permits; all selected types remain legal under the registry.
+        candidates = ("text-questions", "short-writing", *base_types) if phase == 3 else base_types
+        counts: Counter[str] = Counter()
+        for index in range(quota):
+            activity_type = candidates[index % len(candidates)]
+            if phase not in registry.ACTIVITY_REGISTRY[activity_type].ttt_phases:
+                raise ValueError(f"Prompt-pack selected illegal TTT type {activity_type!r}.")
+            counts[activity_type] += 1
+        plans[phase] = dict(counts)
+    return plans
+
+
 def _activity_identity(ir: Any) -> str:
     """Stable semantic identity used to keep composed visible blocks distinct."""
     import json
@@ -186,8 +219,7 @@ def _answer_key(ir) -> dict:
         return {"items": corrected}
     if a_type == "text-questions":
         key: dict[str, Any] = {
-            "guidance": raw.get("teacher_guidance")
-            or "Перевірте відповіді за текстом якоря.",
+            "guidance": raw.get("teacher_guidance") or "Перевірте відповіді за текстом якоря.",
         }
         model_answers = [
             item.get("model_answer")
@@ -399,16 +431,41 @@ class EngineLessonBaker:
         The durable layer (`api.lesson.materialize_lesson`) binds id/anchor/
         timestamps/status; here we only produce `blocks` (+ `rejected`).
         """
-        del focus  # slice-1 generation does not branch on focus yet
         resolved_duration, fallback_kind = resolve_duration(B1, duration)
         if fallback_kind is not None:
             log.warning(
                 "Invalid bake duration (%s); using the 60-minute B1 sizing plan.", fallback_kind
             )
         plan = phase_plan(B1, resolved_duration)
-        phase_count_plans = _candidate_count_plan(plan)
+        prompt_pack_enabled = prompt_pack.enabled()
+        phase_count_plans = (
+            _prompt_pack_candidate_count_plan(plan)
+            if prompt_pack_enabled
+            else _candidate_count_plan(plan)
+        )
         bundle = self.resolve_data_bundle()
         out_root = _engine_out_root()
+        shared_pack: dict[str, Any] | None = None
+        precomputed_snapshot: dict[str, Any] | None = None
+        precomputed_grounding: dict[str, Any] | None = None
+        if prompt_pack_enabled:
+            # One immutable snapshot/grounding/kit pass is shared by all three
+            # phase workers.  It is local, deterministic, and content-hashed.
+            with data.use_bundle(bundle):
+                precomputed_snapshot = pipeline.snapshot_anchor(anchor)
+                precomputed_grounding = retrieval.build_grounding_pack(
+                    precomputed_snapshot["body_uk"], B1
+                )
+                precomputed_snapshot["lemmas"] = sorted(precomputed_grounding["lemmas"])
+                precomputed_snapshot["numerals"] = precomputed_grounding["numeral_inventory"]
+                shared_pack = prompt_pack.build_shared_input(
+                    snapshot=precomputed_snapshot,
+                    grounding=precomputed_grounding,
+                    duration_minutes=resolved_duration,
+                    focus=focus,
+                    phase_count_plans=phase_count_plans,
+                    visible_slots_by_phase=Counter(plan),
+                )
 
         from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 
@@ -441,6 +498,15 @@ class EngineLessonBaker:
                         "resolved_duration": resolved_duration,
                     }
                 )
+            if prompt_pack_enabled:
+                tel_ctx.record_event(
+                    {
+                        "event": "prompt_pack_enabled",
+                        "version": prompt_pack.PROMPT_PACK_VERSION,
+                        "candidate_policy": "max(2, visible_slots), capped at 6",
+                        "focus_status": shared_pack["lesson_plan"]["focus"]["status"],
+                    }
+                )
 
             # Select a primary once for this durable bake.  All independent
             # phase calls retain that primary and its opposite-provider
@@ -455,6 +521,11 @@ class EngineLessonBaker:
                     # Context variables are not inherited by executor threads;
                     # keep the exact digest-pinned bundle scoped to this phase.
                     with data.use_bundle(bundle):
+                        pack_context = (
+                            prompt_pack.phase_context(shared_pack, phase=phase)
+                            if shared_pack is not None
+                            else None
+                        )
                         return pipeline.run(
                             anchor,
                             level="B1",
@@ -467,6 +538,9 @@ class EngineLessonBaker:
                             out_dir=(job_out / f"phase-{phase}") if job_out else None,
                             count_plan=count_plan,
                             max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
+                            prompt_pack_context=pack_context,
+                            precomputed_snapshot=precomputed_snapshot,
+                            precomputed_grounding=precomputed_grounding,
                         )
                 finally:
                     telemetry_ctx.reset(phase_token)
@@ -495,9 +569,7 @@ class EngineLessonBaker:
                     raise ProviderUnavailable("Bake failed: the lesson generator is unavailable.")
                 raise BakeError("Bake failed: the lesson generator is unavailable.")
 
-            if not any(
-                result.ready or result.review_required for result in phase_results.values()
-            ):
+            if not any(result.ready or result.review_required for result in phase_results.values()):
                 raise BakeError(
                     "Bake produced no automatically includable activities from this anchor."
                 )
@@ -518,6 +590,11 @@ class EngineLessonBaker:
                     require_productive=bool(floor and floor.require_productive),
                 ),
                 anchor=anchor_snapshot,
+                focus_context=(
+                    prompt_pack.focus_selector_context(shared_pack)
+                    if shared_pack is not None
+                    else None
+                ),
             )
             selected = [
                 candidate
@@ -533,14 +610,10 @@ class EngineLessonBaker:
                 )
             ]
             all_activities = [
-                activity
-                for result in phase_results.values()
-                for activity in result.activities
+                activity for result in phase_results.values() for activity in result.activities
             ]
             review_reserve = [
-                activity
-                for result in phase_results.values()
-                for activity in result.review_required
+                activity for result in phase_results.values() for activity in result.review_required
             ]
             selected_identities = {_activity_identity(candidate) for candidate in selected}
             composition_reserve = [
@@ -598,7 +671,17 @@ class EngineLessonBaker:
                 "blocks": blocks,
                 "rejected": rejected,
                 "anchor_diagnostics": anchor_diagnostics,
+                **(
+                    {"focus_notice": shared_pack["lesson_plan"]["focus"]["notice_uk"]}
+                    if shared_pack is not None
+                    and shared_pack["lesson_plan"]["focus"].get("status") == "unsupported"
+                    else {}
+                ),
             }
+        except prompt_pack.PromptPackError as exc:
+            raise BakeError(
+                "Bake failed: prompt-pack preflight could not verify source material."
+            ) from exc
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,
             # teacher-visible BakeError like any other bake failure — never a

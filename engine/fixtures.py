@@ -174,6 +174,10 @@ def mock_generator_with_hallucination(_prompt: str) -> str:
 # No behavior change; pure relocation.
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
+_TASK_LANGUAGE_FORMS = (
+    {"word_form": "Опишіть", "lemma": "описати", "tags": "verb:perf:impr:2p", "pos": "verb"},
+    {"word_form": "Поясніть", "lemma": "пояснити", "tags": "verb:perf:impr:2p", "pos": "verb"},
+)
 
 
 def _sha_size(path: Path) -> tuple[str, int]:
@@ -193,7 +197,7 @@ def _seed() -> dict:
 
 def _build_vesum_db(path: Path) -> None:
     rows = json.loads((_FIXTURES_DIR / "vesum_forms.json").read_text(encoding="utf-8"))
-    rows = [*rows, *_seed().get("vesum_forms", [])]
+    rows = [*rows, *_seed().get("vesum_forms", []), *_TASK_LANGUAGE_FORMS]
     conn = sqlite3.connect(path)
     try:
         conn.execute(
