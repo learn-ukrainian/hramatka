@@ -233,6 +233,141 @@ export function activityTypeLabel(type: string): string {
   return keys[type] || type;
 }
 
+/**
+ * Render an answer_key for teacher review display (#186).
+ * - string → as-is (lesson content, may already be a human placeholder)
+ * - object → human-readable lines (never raw JSON)
+ * - null/empty → empty string (caller keeps any existing empty/placeholder UI)
+ *
+ * Chrome labels go through `t`; resolved option/answer text is lesson content and stays UA.
+ */
+export function formatAnswerKeyDisplay(
+  answerKey: string | object | null | undefined,
+  activity?: Record<string, unknown> | null,
+  t: TFn = (key, params) => translate('uk', key as ChromeKey, params),
+): string {
+  if (answerKey == null || answerKey === '') return '';
+  if (typeof answerKey === 'string') return answerKey.trim();
+  if (typeof answerKey !== 'object' || Array.isArray(answerKey)) {
+    return Array.isArray(answerKey)
+      ? answerKey.map((item, i) => t('answerKey.simpleLine', { n: i + 1, value: String(item ?? '') })).join('\n')
+      : '';
+  }
+
+  const key = asRecord(answerKey);
+  const payload = asRecord(activity?.payload);
+  const lines: string[] = [];
+
+  if (Array.isArray(key.items)) {
+    key.items.forEach((raw, i) => {
+      const n = i + 1;
+      if (typeof raw === 'string') {
+        lines.push(t('answerKey.simpleLine', { n, value: raw }));
+        return;
+      }
+      const item = asRecord(raw);
+      const index = typeof item.index === 'number' ? item.index : i;
+      const displayN = index + 1;
+      const correct = item.correct;
+
+      if (typeof correct === 'boolean') {
+        const value = correct ? t('editor.option.true') : t('editor.option.false');
+        lines.push(t('answerKey.itemLine', { n: displayN, value }));
+        return;
+      }
+
+      if (typeof correct === 'number') {
+        const payloadItems = Array.isArray(payload.items) ? payload.items : [];
+        const payloadItem = asRecord(payloadItems[index]);
+        const options = Array.isArray(payloadItem.options) ? payloadItem.options : [];
+        const opt = options[correct];
+        const value =
+          typeof opt === 'string'
+            ? opt
+            : opt != null && typeof asRecord(opt).text === 'string'
+              ? String(asRecord(opt).text)
+              : t('editor.field.optionFallback', { n: correct + 1 });
+        lines.push(t('answerKey.itemLine', { n: displayN, value }));
+        return;
+      }
+
+      // Unknown item shape — render a compact non-JSON summary of known fields.
+      const parts = Object.entries(item)
+        .filter(([, v]) => v != null && typeof v !== 'object')
+        .map(([k, v]) => `${k}=${String(v)}`);
+      if (parts.length) {
+        lines.push(t('answerKey.simpleLine', { n: displayN, value: parts.join(', ') }));
+      }
+    });
+  }
+
+  if (Array.isArray(key.blanks)) {
+    key.blanks.forEach((raw, i) => {
+      const blank = asRecord(raw);
+      const n = typeof blank.id === 'number' ? blank.id : i + 1;
+      const value = typeof blank.answer === 'string' ? blank.answer : String(blank.answer ?? '');
+      lines.push(t('answerKey.blankLine', { n, value }));
+    });
+  }
+
+  if (Array.isArray(key.pairs)) {
+    const payloadPairs = Array.isArray(payload.pairs) ? payload.pairs : [];
+    key.pairs.forEach((raw, i) => {
+      const pair = asRecord(raw);
+      const li = typeof pair.left_index === 'number' ? pair.left_index : i;
+      const ri = typeof pair.right_index === 'number' ? pair.right_index : i;
+      const leftSrc = asRecord(payloadPairs[li]);
+      const rightSrc = asRecord(payloadPairs[ri]);
+      const left =
+        typeof leftSrc.left === 'string'
+          ? leftSrc.left
+          : typeof pair.left === 'string'
+            ? pair.left
+            : String(li + 1);
+      const right =
+        typeof rightSrc.right === 'string'
+          ? rightSrc.right
+          : typeof pair.right === 'string'
+            ? pair.right
+            : String(ri + 1);
+      lines.push(t('answerKey.pairLine', { n: i + 1, left, right }));
+    });
+  }
+
+  if (Array.isArray(key.target_words)) {
+    const words = key.target_words.filter((w): w is string => typeof w === 'string');
+    if (words.length) {
+      lines.push(t('answerKey.wordsLine', { value: words.join(', ') }));
+    }
+  }
+
+  if (typeof key.guidance === 'string' && key.guidance.trim()) {
+    lines.push(t('answerKey.guidanceLine', { value: key.guidance.trim() }));
+  }
+  if (Array.isArray(key.model_answers)) {
+    const answers = key.model_answers
+      .map((a, i) => (typeof a === 'string' && a.trim() ? `${i + 1}. ${a.trim()}` : ''))
+      .filter(Boolean);
+    if (answers.length) {
+      lines.push(t('answerKey.modelAnswersLine', { value: answers.join(' · ') }));
+    }
+  }
+  if (typeof key.model_answer === 'string' && key.model_answer.trim()) {
+    lines.push(t('answerKey.modelLine', { value: key.model_answer.trim() }));
+  }
+  if (typeof key.rubric === 'string' && key.rubric.trim()) {
+    lines.push(t('answerKey.rubricLine', { value: key.rubric.trim() }));
+  }
+
+  if (lines.length > 0) return lines.join('\n');
+
+  // Last resort for unexpected object shapes: surface primitive fields, never JSON braces dump.
+  const fallback = Object.entries(key)
+    .filter(([, v]) => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+    .map(([k, v]) => `${k}: ${String(v)}`);
+  return fallback.join('\n');
+}
+
 export function blockNeedsReview(block: ReviewBlock): boolean {
   return block.mark === 'warn' || block.provenance?.external_options === true;
 }

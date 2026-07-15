@@ -188,9 +188,39 @@ const DICT = {
   // ---- baking card ----
   'bake.statusPrefix': { uk: 'Статус: ', en: 'Status: ' },
   'bake.failFallback': { uk: 'Не вдалося створити урок.', en: 'The lesson could not be created.' },
+  // Generic fallback (unknown codes) — overload framing kept for backward-compatible unknown path.
   'recovery.body': {
     uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
     en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
+  },
+  // Per-failure_code recovery copy (#185). VESUM-checked forms: додайте, речення, деталей, спробуйте, збережено…
+  'recovery.body.lesson_floor_unmet': {
+    uk: 'Не вдалося скласти повний урок. Додайте 2–3 речення або більше деталей і спробуйте ще раз — текст уже збережено.',
+    en: 'Could not build a full lesson. Add 2–3 sentences or more detail and try again — your text is already saved.',
+  },
+  'recovery.body.engine_unavailable': {
+    uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
+  },
+  'recovery.body.provider_unavailable': {
+    uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
+  },
+  'recovery.body.bake_timeout': {
+    uk: 'Не вдалося створити урок — перевищено час очікування. Спробуйте ще раз — текст уже збережено.',
+    en: 'Could not create the lesson — the wait time was exceeded. Try again — your text is already saved.',
+  },
+  'recovery.body.lesson_schema_invalid': {
+    uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. Try again — your text is already saved.',
+  },
+  'recovery.body.worker_restarted': {
+    uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. Try again — your text is already saved.',
+  },
+  'recovery.body.unknown_safe_failure': {
+    uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
+    en: 'The lesson could not be created. Try again — your text is already saved.',
   },
   'recovery.retry': {
     uk: 'Створити урок ще раз із цим текстом',
@@ -583,6 +613,19 @@ const DICT = {
   'review.checks': { uk: 'Перевірки: ', en: 'Checks: ' },
   'review.external': { uk: 'Зовнішні варіанти — перевірте', en: 'External options — please review' },
   'review.answerKey': { uk: 'Ключ відповіді:', en: 'Answer key:' },
+  // answer-key display chrome (#186) — content values stay UA; labels are dual-lang
+  'answerKey.itemLine': {
+    uk: 'Питання {n} → правильна відповідь: {value}',
+    en: 'Question {n} → correct answer: {value}',
+  },
+  'answerKey.blankLine': { uk: 'Прогалина {n}: {value}', en: 'Gap {n}: {value}' },
+  'answerKey.simpleLine': { uk: '{n}. {value}', en: '{n}. {value}' },
+  'answerKey.pairLine': { uk: '{n}. {left} — {right}', en: '{n}. {left} — {right}' },
+  'answerKey.wordsLine': { uk: 'Слова: {value}', en: 'Words: {value}' },
+  'answerKey.guidanceLine': { uk: 'Вказівка: {value}', en: 'Guidance: {value}' },
+  'answerKey.modelLine': { uk: 'Модельна відповідь: {value}', en: 'Model answer: {value}' },
+  'answerKey.modelAnswersLine': { uk: 'Модельні відповіді: {value}', en: 'Model answers: {value}' },
+  'answerKey.rubricLine': { uk: 'Рубрика: {value}', en: 'Rubric: {value}' },
   // editor buttons
   'editor.save': { uk: 'Зберегти зміни', en: 'Save changes' },
   'editor.cancel': { uk: 'Скасувати', en: 'Cancel' },
@@ -733,6 +776,31 @@ export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed'): Chro
       return 'status.failed';
     default:
       return 'status.draft';
+  }
+}
+
+/**
+ * Failure-card body key for a durable bake `failure_code` (#185).
+ * Unknown / null codes fall back to the generic overload copy (`recovery.body`).
+ */
+export function recoveryBodyKey(failureCode: string | null | undefined): ChromeKey {
+  switch (failureCode) {
+    case 'lesson_floor_unmet':
+      return 'recovery.body.lesson_floor_unmet';
+    case 'engine_unavailable':
+      return 'recovery.body.engine_unavailable';
+    case 'provider_unavailable':
+      return 'recovery.body.provider_unavailable';
+    case 'bake_timeout':
+      return 'recovery.body.bake_timeout';
+    case 'lesson_schema_invalid':
+      return 'recovery.body.lesson_schema_invalid';
+    case 'worker_restarted':
+      return 'recovery.body.worker_restarted';
+    case 'unknown_safe_failure':
+      return 'recovery.body.unknown_safe_failure';
+    default:
+      return 'recovery.body';
   }
 }
 

@@ -197,14 +197,16 @@ describe('ReviewWorkbench answer key rendering', () => {
     const keys = screen.getAllByTestId('teacher-answer-key');
     expect(keys).toHaveLength(5);
 
-    // block-1 (true-false): should render real key json
-    expect(keys[0].textContent).toContain('items');
-    expect(keys[0].textContent).toContain('correct');
+    // block-1 (true-false): human-readable key, not raw JSON
+    expect(keys[0].textContent).toContain('Питання 1 → правильна відповідь: Правда');
+    expect(keys[0].textContent).not.toContain('"items"');
+    expect(keys[0].textContent).not.toContain('{');
     expect(keys[0].textContent).not.toContain('Підтвердьте ключ разом з учителем.');
 
-    // block-2 (cloze): should render real key json
-    expect(keys[1].textContent).toContain('blanks');
+    // block-2 (cloze): human-readable blank answer
+    expect(keys[1].textContent).toContain('Прогалина 1: рушником');
     expect(keys[1].textContent).toContain('рушником');
+    expect(keys[1].textContent).not.toContain('"blanks"');
     expect(keys[1].textContent).not.toContain('Підтвердьте ключ разом з учителем.');
 
     // block-3 (short-writing): placeholder string block.answer_key, but rubric + model answer rendered instead
@@ -214,12 +216,14 @@ describe('ReviewWorkbench answer key rendering', () => {
     expect(keys[2].textContent).toContain('Моя родина любить вареники.');
     expect(keys[2].textContent).not.toContain('Підтвердьте ключ разом з учителем.');
 
-    // block-4 (text-questions with no key): should render placeholder
+    // block-4 (text-questions with no key): should render placeholder string as-is
     expect(keys[3].textContent).toContain('Підтвердьте ключ разом з учителем.');
 
-    // block-5 (text-questions with key): should render real key
-    expect(keys[4].textContent).toContain('model_answers');
+    // block-5 (text-questions with key): human-readable guidance + model answers
     expect(keys[4].textContent).toContain('Відповідь 1.');
+    expect(keys[4].textContent).toMatch(/Вказівка:|Модельн/);
+    expect(keys[4].textContent).not.toContain('"model_answers"');
+    expect(keys[4].textContent).not.toContain('{');
     expect(keys[4].textContent).not.toContain('Підтвердьте ключ разом з учителем.');
   });
 });

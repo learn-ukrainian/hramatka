@@ -10,6 +10,7 @@ import {
   marginStateChip,
   blockNeedsReview,
   activityTypeLabel,
+  formatAnswerKeyDisplay,
 } from './review-helpers';
 import { useT, type ChromeKey } from './i18n';
 
@@ -108,11 +109,15 @@ export default function ReviewWorkbench({
                   </div>
                 )}
                 {!(block.activity as any)?.answer_key?.rubric && !(block.activity as any)?.answer_key?.model_answer && (
-                  <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>
+                    {formatAnswerKeyDisplay(block.answer_key, block.activity, t)}
+                  </pre>
                 )}
               </div>
             ) : (
-              <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+              <pre style={{ whiteSpace: 'pre-wrap' }}>
+                {formatAnswerKeyDisplay(block.answer_key, block.activity, t)}
+              </pre>
             )}
           </div>
         )}

@@ -20,9 +20,14 @@ import {
   type ClipboardMode,
 } from './app-helpers';
 import Conductor from './Conductor';
-import { useT, statusKey, type ChromeKey } from './i18n';
+import { useT, statusKey, recoveryBodyKey, type ChromeKey } from './i18n';
 import ReviewWorkbench from './ReviewWorkbench';
-import { splitReviewBlocks, blockNeedsReview, type LessonDuration } from './review-helpers';
+import {
+  splitReviewBlocks,
+  blockNeedsReview,
+  formatAnswerKeyDisplay,
+  type LessonDuration,
+} from './review-helpers';
 
 /**
  * The error banner holds either translated client chrome (`key`) or a raw server
@@ -201,6 +206,7 @@ export default function TeacherApp() {
     status: LessonState;
     step: string;
     failure?: string;
+    failure_code?: string | null;
     progress?: BakeProgress;
     startedAt?: string;
   } | null>(null);
@@ -762,6 +768,7 @@ export default function TeacherApp() {
           status: st.status,
           step: st.step || '',
           failure: st.failure_message || undefined,
+          failure_code: st.failure_code ?? null,
           progress: st.progress || undefined,
           startedAt: prev?.startedAt || st.created_at,
         }));
@@ -839,6 +846,7 @@ export default function TeacherApp() {
                 status: 'failed',
                 step: st.step || '',
                 failure: st.failure_message || undefined,
+                failure_code: st.failure_code ?? null,
                 progress: st.progress || undefined,
                 startedAt: st.created_at,
               });
@@ -1190,11 +1198,15 @@ export default function TeacherApp() {
                           </div>
                         )}
                         {!(block.activity as any)?.answer_key?.rubric && !(block.activity as any)?.answer_key?.model_answer && (
-                          <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+                          <pre style={{ whiteSpace: 'pre-wrap' }}>
+                            {formatAnswerKeyDisplay(block.answer_key, block.activity as Record<string, unknown>, t)}
+                          </pre>
                         )}
                       </div>
                     ) : (
-                      <pre>{typeof block.answer_key === 'string' ? block.answer_key : JSON.stringify(block.answer_key, null, 2)}</pre>
+                      <pre style={{ whiteSpace: 'pre-wrap' }}>
+                        {formatAnswerKeyDisplay(block.answer_key, block.activity as Record<string, unknown>, t)}
+                      </pre>
                     )}
                     {block.note && <div className="note">{t('blocks.note')}{block.note}</div>}
                     {block.provenance && (
@@ -1646,7 +1658,9 @@ export default function TeacherApp() {
                     <div className="recovery-card banner fail" data-testid="failure-recovery">
                       <span className="ic">!</span>
                       <div className="recovery-body">
-                        <p>{t('recovery.body')}</p>
+                        <p data-testid="failure-recovery-body" data-failure-code={bakeStatus.failure_code || ''}>
+                          {t(recoveryBodyKey(bakeStatus.failure_code))}
+                        </p>
                         <div className="recovery-actions">
                           <button
                             type="button"

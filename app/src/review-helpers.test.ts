@@ -6,9 +6,16 @@ import {
   REVIEW_PHASE_BUDGETS,
   blockNeedsReview,
   marginStateChip,
+  formatAnswerKeyDisplay,
   type ReviewBlock,
 } from './review-helpers';
+import { translate, type ChromeKey } from './i18n';
 import activityFixtures from '@learn-ukrainian/activity-kit/fixtures';
+
+const tUk = (key: string, params?: Record<string, string | number>) =>
+  translate('uk', key as ChromeKey, params);
+const tEn = (key: string, params?: Record<string, string | number>) =>
+  translate('en', key as ChromeKey, params);
 
 function makeBlock(id: string, phase: 1 | 2 | 3): ReviewBlock {
   return {
@@ -159,5 +166,83 @@ describe('regenerateAnswerKey', () => {
     const rebuilt = regenerateAnswerKey(fillIn);
     expect(rebuilt.answer_key).toEqual({ items: ['оновлена форма'] });
     expect(validateActivityDocument(rebuilt).valid).toBe(true);
+  });
+});
+
+describe('formatAnswerKeyDisplay (#186)', () => {
+  it('returns strings as-is and empty for null', () => {
+    expect(formatAnswerKeyDisplay('правда', null, tUk)).toBe('правда');
+    expect(formatAnswerKeyDisplay('  ключ  ', null, tUk)).toBe('ключ');
+    expect(formatAnswerKeyDisplay(null, null, tUk)).toBe('');
+    expect(formatAnswerKeyDisplay(undefined, null, tUk)).toBe('');
+  });
+
+  it('renders true-false object keys as readable lines, not raw JSON', () => {
+    const activity = {
+      type: 'true-false',
+      payload: {
+        type: 'true-false',
+        items: [
+          { statement: 'A', correct: true },
+          { statement: 'B', correct: false },
+        ],
+      },
+    };
+    const key = {
+      items: [
+        { index: 0, correct: true },
+        { index: 1, correct: false },
+      ],
+    };
+    const text = formatAnswerKeyDisplay(key, activity, tUk);
+    expect(text).toContain('Питання 1 → правильна відповідь: Правда');
+    expect(text).toContain('Питання 2 → правильна відповідь: Ні');
+    expect(text).not.toContain('{');
+    expect(text).not.toContain('"items"');
+    expect(text).not.toContain('JSON');
+  });
+
+  it('resolves quiz correct index to option text from the activity payload', () => {
+    const activity = {
+      type: 'quiz',
+      payload: {
+        type: 'quiz',
+        items: [
+          { question: 'Яке слово?', options: ['книга', 'книгу'], correct: 0 },
+        ],
+      },
+    };
+    const key = { items: [{ index: 0, correct: 0 }] };
+    const text = formatAnswerKeyDisplay(key, activity, tUk);
+    expect(text).toContain('книга');
+    expect(text).toMatch(/Питання 1 → правильна відповідь: книга/);
+    expect(text).not.toContain('"correct"');
+    expect(text).not.toContain('{');
+  });
+
+  it('renders cloze blanks and fill-in string items without JSON braces', () => {
+    const cloze = formatAnswerKeyDisplay(
+      { blanks: [{ id: 1, answer: 'рушником' }] },
+      { type: 'cloze', payload: { blanks: [{ id: 1, answer: 'рушником' }] } },
+      tUk,
+    );
+    expect(cloze).toBe('Прогалина 1: рушником');
+    expect(cloze).not.toContain('{');
+
+    const fillIn = formatAnswerKeyDisplay({ items: ['книга', 'стіл'] }, null, tUk);
+    expect(fillIn).toContain('1. книга');
+    expect(fillIn).toContain('2. стіл');
+    expect(fillIn).not.toContain('[');
+  });
+
+  it('keeps dual-lang chrome labels while content stays UA', () => {
+    const activity = {
+      type: 'quiz',
+      payload: { type: 'quiz', items: [{ question: 'Q', options: ['увімкнути', 'вимкнути'], correct: 0 }] },
+    };
+    const key = { items: [{ index: 0, correct: 0 }] };
+    const en = formatAnswerKeyDisplay(key, activity, tEn);
+    expect(en).toContain('Question 1 → correct answer: увімкнути');
+    expect(en).toContain('увімкнути'); // lesson content not translated
   });
 });

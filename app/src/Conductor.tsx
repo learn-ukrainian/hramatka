@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import './conductor.css';
 import { useT, type TFn, type ChromeKey } from './i18n';
+import { formatAnswerKeyDisplay } from './review-helpers';
 
 // Minimal shape for the lesson document (from app contract; no new API)
 export interface ConductorLessonDoc {
@@ -476,8 +477,8 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
         {c.showAns && curB.answer_key != null && (
           <div className="cond-answer" data-testid="cond-answer-key">
             <span className="lbl">{t('cond.answerLabel')}</span>
-            <div className="val">
-              {typeof curB.answer_key === 'string' ? curB.answer_key : JSON.stringify(curB.answer_key, null, 2)}
+            <div className="val" style={{ whiteSpace: 'pre-wrap' }}>
+              {formatAnswerKeyDisplay(curB.answer_key, curB.activity, t)}
             </div>
           </div>
         )}
