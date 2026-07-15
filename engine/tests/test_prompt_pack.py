@@ -11,7 +11,7 @@ import pytest
 
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError, FloorUnmetError, ProviderUnavailable
-from hramatka.engine import fixtures, pipeline, prompt_pack, retrieval
+from hramatka.engine import fixtures, pipeline, prompt_pack, providers, retrieval
 from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
 from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
 from hramatka.engine.generate import (
@@ -163,6 +163,68 @@ def test_pack_retries_a_bad_citation_envelope_and_keeps_raw_activities_clean():
 
     with pytest.raises(GenerationUnparseable):
         generate_prompt_pack(context, generator=lambda _prompt: json.dumps(bad, ensure_ascii=False))
+
+
+def _synthetic_phase_one_envelope(context: dict) -> dict:
+    """Return a valid envelope from committed synthetic test fixtures only."""
+    activities = [
+        _certified_activity(fixtures._READY_CANDIDATES["true-false"](0), context["type_kits"][0]),
+        _certified_activity(fixtures._READY_CANDIDATES["quiz"](0), context["type_kits"][1]),
+    ]
+    return {"activities": activities, "citations": _citations(activities, context)}
+
+
+def test_pack_repairs_split_envelope_after_thought_and_records_telemetry():
+    context = prompt_pack.phase_context(_shared(), phase=1)
+    envelope = _synthetic_phase_one_envelope(context)
+    raw = "<thought>synthetic preamble</thought>\n" + json.dumps(
+        {"activities": envelope["activities"]}, ensure_ascii=False
+    ) + "," + json.dumps({"citations": envelope["citations"]}, ensure_ascii=False)
+    telemetry = providers.TelemetryContext(phase=1)
+    token = providers.telemetry_ctx.set(telemetry)
+    try:
+        assert generate_prompt_pack(
+            context, generator=lambda _prompt: raw
+        ) == envelope["activities"]
+    finally:
+        providers.telemetry_ctx.reset(token)
+
+    assert telemetry.traces == [
+        {"event": "envelope_repaired", "phase": 1, "object_count": 2}
+    ]
+
+
+def test_pack_does_not_merge_split_objects_with_overlapping_keys():
+    context = prompt_pack.phase_context(_shared(), phase=1)
+    envelope = _synthetic_phase_one_envelope(context)
+    raw = json.dumps({"activities": envelope["activities"]}, ensure_ascii=False) + "," + json.dumps(
+        {"activities": [], "citations": envelope["citations"]}, ensure_ascii=False
+    )
+    telemetry = providers.TelemetryContext(phase=1)
+    token = providers.telemetry_ctx.set(telemetry)
+    try:
+        with pytest.raises(GenerationUnparseable, match="requires activities and citations arrays"):
+            generate_prompt_pack(context, generator=lambda _prompt: raw)
+    finally:
+        providers.telemetry_ctx.reset(token)
+
+    assert telemetry.traces == []
+
+
+def test_pack_single_object_envelope_remains_unrepaired():
+    context = prompt_pack.phase_context(_shared(), phase=1)
+    envelope = _synthetic_phase_one_envelope(context)
+    telemetry = providers.TelemetryContext(phase=1)
+    token = providers.telemetry_ctx.set(telemetry)
+    try:
+        assert generate_prompt_pack(
+            context,
+            generator=lambda _prompt: json.dumps(envelope, ensure_ascii=False),
+        ) == envelope["activities"]
+    finally:
+        providers.telemetry_ctx.reset(token)
+
+    assert telemetry.traces == []
 
 
 def test_slot_density_contracts_are_preflighted_and_enforced_in_the_envelope():

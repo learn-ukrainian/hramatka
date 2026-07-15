@@ -40,6 +40,7 @@ __all__ = [
 
 LEGACY_GENERATOR_VERSION = "extractive-v1"
 RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
+_ENVELOPE_SHAPE_ERROR = "Prompt-pack response requires activities and citations arrays."
 
 # The default real generator: the locked Gemma AIS route over the real HTTP
 # transport (env key, toolless). Constructing it performs no network I/O and
@@ -84,6 +85,83 @@ def extract_json(text: str) -> dict | list | None:
             if first_dict_list is None:
                 first_dict_list = obj
     return first_dict if first_dict is not None else first_dict_list
+
+
+def _repair_split_envelope(raw: str) -> tuple[dict, int] | None:
+    """Merge adjacent, disjoint top-level objects from a split pack envelope.
+
+    The pack response contract is one object, but the known host failure closes
+    the activities object before emitting a comma and a citations object.  Keep
+    this deliberately narrow: only a contiguous comma-separated object region
+    that can be parsed as a JSON array, has disjoint keys, and supplies both
+    envelope keys can be repaired.
+    """
+    decoder = json.JSONDecoder()
+    search_from = 0
+    while search_from < len(raw):
+        starts = [raw.find(char, search_from) for char in "[{"]
+        starts = [start for start in starts if start >= 0]
+        if not starts:
+            return None
+        start = min(starts)
+        try:
+            first, first_end = decoder.raw_decode(raw, start)
+        except ValueError:
+            search_from = start + 1
+            continue
+        if not isinstance(first, dict):
+            search_from = first_end
+            continue
+
+        region_end = first_end
+        while True:
+            next_start = region_end
+            while next_start < len(raw) and raw[next_start].isspace():
+                next_start += 1
+            if next_start >= len(raw) or raw[next_start] != ",":
+                break
+            next_start += 1
+            while next_start < len(raw) and raw[next_start].isspace():
+                next_start += 1
+            try:
+                next_object, next_end = decoder.raw_decode(raw, next_start)
+            except ValueError:
+                break
+            if not isinstance(next_object, dict):
+                break
+            region_end = next_end
+
+        if region_end != first_end:
+            try:
+                objects = json.loads(f"[{raw[start:region_end]}]")
+            except json.JSONDecodeError:
+                objects = None
+            if isinstance(objects, list) and all(isinstance(item, dict) for item in objects):
+                merged: dict = {}
+                for item in objects:
+                    if not set(merged).isdisjoint(item):
+                        break
+                    merged.update(item)
+                else:
+                    if {"activities", "citations"} <= set(merged):
+                        return merged, len(objects)
+        search_from = region_end
+    return None
+
+
+def _record_envelope_repaired(context: dict, object_count: int) -> None:
+    """Record the accepted structural repair through the durable trace path."""
+    from .providers import telemetry_ctx
+
+    telemetry = telemetry_ctx.get()
+    if telemetry is not None:
+        telemetry.record_event(
+            {
+                "event": "envelope_repaired",
+                "phase": context["phase_request"]["phase"],
+                "object_count": object_count,
+            }
+        )
 
 
 def _persist_raw_parse_failure(raw: str, out_dir: str | Path | None, attempt: int) -> None:
@@ -230,6 +308,17 @@ def generate_prompt_pack(
             return prompt_pack.validate_response_envelope(parsed, context)
         except prompt_pack.PromptPackError as exc:
             parse_error = str(exc)
+            if parse_error == _ENVELOPE_SHAPE_ERROR:
+                repaired = _repair_split_envelope(raw)
+                if repaired is not None:
+                    payload, object_count = repaired
+                    try:
+                        activities = prompt_pack.validate_response_envelope(payload, context)
+                    except prompt_pack.PromptPackError as repair_exc:
+                        parse_error = str(repair_exc)
+                    else:
+                        _record_envelope_repaired(context, object_count)
+                        return activities
             _persist_raw_parse_failure(raw, out_dir, attempts[0])
     raise GenerationUnparseable(
         "Prompt-pack response failed its JSON/citation envelope after one retry: "
