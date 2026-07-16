@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import ActivityEditor from './ActivityEditor';
+import { DeliberateErrorBadge, DeliberateErrorList } from './DeliberateError';
 import {
   type LessonDuration,
   type ReviewBlock,
@@ -10,6 +11,7 @@ import {
   PHASE_LABELS,
   marginStateChip,
   blockNeedsReview,
+  deliberateErrors,
   focusStatusNeedsReview,
   FOCUS_STATUS_ACK_ID,
   activityTypeLabel,
@@ -94,8 +96,13 @@ export default function ReviewWorkbench({
         />
       );
     }
+    // #164: the workbench is teacher-only by construction — no student path reaches it.
+    const intent = deliberateErrors(block.answer_key);
     return (
       <div className="bcontent" data-activity-type={block.type}>
+        {/* Marked before the activity: the point is to pre-empt reading the wrong
+            Ukrainian below as an engine defect, so it must be seen first. */}
+        {intent.length > 0 && <DeliberateErrorBadge />}
         <ActivityPlayer activity={block.activity} isUkrainian />
         {showAnswers && (
           <div className="teacher-key" data-testid="teacher-answer-key">
@@ -125,9 +132,12 @@ export default function ReviewWorkbench({
                 )}
               </div>
             ) : (
-              <pre style={{ whiteSpace: 'pre-wrap' }}>
-                {formatAnswerKeyDisplay(block.answer_key, block.activity, t)}
-              </pre>
+              <>
+                <DeliberateErrorList entries={intent} />
+                <pre style={{ whiteSpace: 'pre-wrap' }}>
+                  {formatAnswerKeyDisplay(block.answer_key, block.activity, t)}
+                </pre>
+              </>
             )}
           </div>
         )}

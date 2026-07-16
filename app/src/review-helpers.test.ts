@@ -9,6 +9,8 @@ import {
   FOCUS_STATUS_ACK_ID,
   marginStateChip,
   formatAnswerKeyDisplay,
+  deliberateErrors,
+  splitOnDeliberateError,
   type ReviewBlock,
 } from './review-helpers';
 import { translate, type ChromeKey } from './i18n';
@@ -267,5 +269,46 @@ describe('focusStatusNeedsReview (#191)', () => {
     // Real ids are `block-<n>` / `restored-<hex>`; the reserved id is neither.
     expect(FOCUS_STATUS_ACK_ID.startsWith('block-')).toBe(false);
     expect(FOCUS_STATUS_ACK_ID.startsWith('restored-')).toBe(false);
+  });
+});
+
+describe('deliberateErrors / splitOnDeliberateError (#164)', () => {
+  const entry = { sentence: 'Я живу в Києв.', error: 'Києв', correction: 'Києві' };
+
+  it('reads intent metadata off the block key', () => {
+    expect(deliberateErrors({ items: ['Я живу в Києві.'], corrections: [entry] })).toEqual([entry]);
+  });
+
+  it('returns none for pre-#164 keys, placeholders and empties', () => {
+    // Older stored lessons carry no `corrections` — callers must degrade to the plain key.
+    expect(deliberateErrors({ items: ['Я живу в Києві.'] })).toEqual([]);
+    expect(deliberateErrors('Підтвердьте ключ разом з учителем.')).toEqual([]);
+    expect(deliberateErrors(null)).toEqual([]);
+    expect(deliberateErrors(undefined)).toEqual([]);
+    expect(deliberateErrors({ corrections: 'not-an-array' })).toEqual([]);
+  });
+
+  it('drops entries that are incomplete or unhighlightable', () => {
+    expect(deliberateErrors({ corrections: [{ sentence: 'Я живу в Києв.', error: 'Києв' }] })).toEqual([]);
+    expect(deliberateErrors({ corrections: [{ ...entry, error: '' }] })).toEqual([]);
+    // `error` absent from `sentence` would render no <mark> at all.
+    expect(deliberateErrors({ corrections: [{ ...entry, error: 'Львов' }] })).toEqual([]);
+  });
+
+  it('splits a sentence into literal segments around the erroneous form', () => {
+    expect(splitOnDeliberateError(entry)).toEqual({
+      before: 'Я живу в ',
+      error: 'Києв',
+      after: '.',
+    });
+  });
+
+  it('splits on the FIRST occurrence only', () => {
+    const twice = { sentence: 'Києв і Києв.', error: 'Києв', correction: 'Києві' };
+    expect(splitOnDeliberateError(twice)).toEqual({
+      before: '',
+      error: 'Києв',
+      after: ' і Києв.',
+    });
   });
 });

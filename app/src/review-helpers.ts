@@ -109,6 +109,55 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => typeof item === 'string' ? item : '') : [];
 }
 
+/**
+ * One deliberately-wrong sentence and the form that was broken on purpose (#164).
+ * `error` is guaranteed by the engine to occur in `sentence`.
+ */
+export interface DeliberateError {
+  sentence: string;
+  error: string;
+  correction: string;
+}
+
+/**
+ * Read the engine's teacher-only intent metadata off an error-correction BLOCK key.
+ *
+ * It lives on the block key rather than the inner activity envelope because the pinned
+ * `lu.activity.v1` `itemsAnswerKey` is `additionalProperties: false`. Older lessons
+ * (and any lesson whose items lacked a full triple) simply have none — callers then
+ * render today's plain answer key, so this is additive for stored documents too.
+ */
+export function deliberateErrors(answerKey: string | object | null | undefined): DeliberateError[] {
+  const raw = asRecord(answerKey).corrections;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const { sentence, error, correction } = asRecord(entry);
+    return typeof sentence === 'string' && sentence !== ''
+      && typeof error === 'string' && error !== ''
+      && typeof correction === 'string' && correction !== ''
+      && sentence.includes(error)
+      ? [{ sentence, error, correction }]
+      : [];
+  });
+}
+
+/**
+ * Split a sentence around the FIRST occurrence of its deliberate error.
+ * Returns the literal segments to render — never markup — so callers stay
+ * injection-safe and the erroneous form can be wrapped in `<mark>`.
+ */
+export function splitOnDeliberateError(
+  entry: DeliberateError,
+): { before: string; error: string; after: string } {
+  const at = entry.sentence.indexOf(entry.error);
+  if (at < 0) return { before: entry.sentence, error: '', after: '' };
+  return {
+    before: entry.sentence.slice(0, at),
+    error: entry.error,
+    after: entry.sentence.slice(at + entry.error.length),
+  };
+}
+
 function pilotTypeError(type: unknown, t: TFn): string | null {
   return PILOT_ACTIVITY_TYPES.includes(type as PilotActivityType)
     ? null

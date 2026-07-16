@@ -188,6 +188,49 @@ def _activity_identity(ir: Any) -> str:
     return json.dumps(ir.activity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _error_correction_intent(ir) -> list[dict[str, str]]:
+    """Structured `{sentence, error, correction}` behind an error-correction key.
+
+    Teacher-only affordance (#164): the student payload prints deliberately wrong
+    Ukrainian, which teachers read as an engine defect. The corrected-string list
+    in the answer key cannot say *which* form was broken on purpose, so carry the
+    raw triple the pipeline already produced.
+
+    This is deliberately NOT part of `_answer_key()`. That return value is also the
+    `activity.answer_key` of the frozen `lu.activity.v1` envelope, whose
+    `itemsAnswerKey` is `additionalProperties: false` — #163 had to revert exactly
+    this metadata from there. The block-level key it feeds instead is typed
+    `["string", "object", "array", "null"]` by the pinned lu.lesson.v1 block, so the
+    structure rides there additively with no contract change.
+
+    Items missing any leg of the triple are skipped rather than half-reported: the
+    app matches an entry to a rendered sentence by `sentence` text, so a gap costs
+    one badge, never a mislabelled one.
+    """
+    activity = ir.activity
+    raw = ir.raw_candidate if isinstance(ir.raw_candidate, dict) else activity
+    intent: list[dict[str, str]] = []
+    for item in raw.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        sentence = item.get("sentence")
+        error = item.get("error")
+        correction = item.get("correction")
+        if not (
+            isinstance(sentence, str)
+            and isinstance(error, str)
+            and isinstance(correction, str)
+            and sentence.strip()
+            and error.strip()
+            and correction.strip()
+        ):
+            continue
+        if error not in sentence:
+            continue  # Cannot highlight a form the printed sentence does not contain.
+        intent.append({"sentence": sentence, "error": error, "correction": correction})
+    return intent
+
+
 def _answer_key(ir) -> dict:
     activity = ir.activity
     raw = ir.raw_candidate if isinstance(ir.raw_candidate, dict) else activity
@@ -1166,6 +1209,13 @@ class EngineLessonBaker:
             block_key = real_key
         elif a_type == "text-questions" and "model_answers" in real_key:
             block_key = real_key
+
+        # #164: teacher-only intent metadata rides the block key, never `envelope`
+        # (frozen `itemsAnswerKey` forbids it). Additive — `items` stays untouched.
+        if a_type == "error-correction" and isinstance(block_key, dict):
+            intent = _error_correction_intent(ir)
+            if intent:
+                block_key = {**block_key, "corrections": intent}
 
         return {
             "id": f"block-{slot + 1}",

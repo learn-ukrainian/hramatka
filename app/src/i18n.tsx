@@ -296,6 +296,9 @@ const DICT = {
   // ---- lesson blocks (phase renderer) ----
   'blocks.phase': { uk: 'Фаза {phase}', en: 'Phase {phase}' },
   'blocks.warnBadge': { uk: '⚠️ попередження', en: '⚠️ warning' },
+  // #164: error-correction prints deliberately wrong Ukrainian; teachers read it as an
+  // engine defect. Chrome, so dual-lang — the marked-up forms below it stay lesson content.
+  'blocks.deliberateError': { uk: 'Навмисна помилка', en: 'Deliberate mistake' },
   'blocks.externalOptions': { uk: 'зовнішні варіанти', en: 'external options' },
   'blocks.answerKey': { uk: 'Ключ відповіді:', en: 'Answer key:' }, // cf. T_EXACT «🔑 Відповіді»
   'blocks.note': { uk: 'Примітка: ', en: 'Note: ' },

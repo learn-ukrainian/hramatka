@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
 import './teacher.css';
@@ -21,13 +20,13 @@ import {
 } from './app-helpers';
 import Conductor from './Conductor';
 import { useT, statusKey, recoveryBodyKey, type ChromeKey } from './i18n';
+import LessonBlocks from './LessonBlocks';
 import ReviewWorkbench from './ReviewWorkbench';
 import {
   splitReviewBlocks,
   blockNeedsReview,
   focusStatusNeedsReview,
   FOCUS_STATUS_ACK_ID,
-  formatAnswerKeyDisplay,
   type LessonDuration,
   type FocusStatus,
 } from './review-helpers';
@@ -1142,108 +1141,16 @@ export default function TeacherApp() {
       body: JSON.stringify({ expected_revision: lesson!.revision, activity }),
     });
 
-  // Render blocks grouped by phase using REAL ActivityPlayer
-  const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => {
-    const isStudentView = viewMode === 'run';
-    const phases: Record<number, LessonBlock[]> = { 1: [], 2: [], 3: [] };
-    l.lesson.blocks.forEach(b => {
-      if (phases[b.phase]) phases[b.phase].push(b);
-    });
-
-    return [1, 2, 3].map(phase => {
-      const bs = phases[phase];
-      if (!bs.length) return null;
-      return (
-        <section key={phase} className="phase">
-          <h3>{t('blocks.phase', { phase })}</h3>
-          {bs.map(block => {
-            const isWarn = block.mark === 'warn';
-            const acked = (l.warning_acknowledgements || []).includes(block.id) || localAcks.includes(block.id);
-            const showKey = viewMode === 'review' && showAnswers;
-            const typeChip = isWarn ? 'warn' : 'info';
-            return (
-              <div
-                key={block.id}
-                className={`block ${isStudentView ? 'student-block' : ''} ${isWarn && !isStudentView ? 'warn' : 'ok'} ${block.edited && !isStudentView ? 'edited' : ''}`}
-                data-testid={isStudentView ? 'student-block' : undefined}
-              >
-                {!isStudentView && (
-                  <div className="block-meta">
-                    <span className={`chip ${typeChip}`}>{block.type}</span>
-                    <span className="mode">{block.mode}</span>
-                    {isWarn && <span className="warn-badge">{t('blocks.warnBadge')}</span>}
-                    {block.provenance?.external_options && <span className="prov">{t('blocks.externalOptions')}</span>}
-                  </div>
-                )}
-
-                {/* REAL WIDGET — zero fallback (container styled only; kit kept untouched) */}
-                <div className="activity-wrapper" data-activity-type={block.type}>
-                  <ActivityPlayer
-                    activity={block.activity}
-                    isUkrainian={true}
-                    // onComplete omitted for teacher review/run
-                  />
-                </div>
-
-                {showKey && (
-                  <div className="teacher-key teacher-only" data-testid="teacher-answer-key">
-                    <strong>{t('blocks.answerKey')}</strong>
-                    {block.type === 'short-writing' ? (
-                      <div className="short-writing-details" style={{ marginTop: '0.25rem' }}>
-                        {(block.activity as any)?.answer_key?.rubric && (
-                          <div className="rubric-block" style={{ marginBottom: '0.25rem' }}>
-                            <strong>{t('editor.field.rubric')}:</strong>
-                            <pre style={{ marginTop: '0.125rem', whiteSpace: 'pre-wrap' }}>
-                              {String((block.activity as any).answer_key.rubric)}
-                            </pre>
-                          </div>
-                        )}
-                        {(block.activity as any)?.answer_key?.model_answer && (
-                          <div className="model-answer-block">
-                            <strong>{t('editor.field.modelAnswer')}:</strong>
-                            <pre style={{ marginTop: '0.125rem', whiteSpace: 'pre-wrap' }}>
-                              {String((block.activity as any).answer_key.model_answer)}
-                            </pre>
-                          </div>
-                        )}
-                        {!(block.activity as any)?.answer_key?.rubric && !(block.activity as any)?.answer_key?.model_answer && (
-                          <pre style={{ whiteSpace: 'pre-wrap' }}>
-                            {formatAnswerKeyDisplay(block.answer_key, block.activity as Record<string, unknown>, t)}
-                          </pre>
-                        )}
-                      </div>
-                    ) : (
-                      <pre style={{ whiteSpace: 'pre-wrap' }}>
-                        {formatAnswerKeyDisplay(block.answer_key, block.activity as Record<string, unknown>, t)}
-                      </pre>
-                    )}
-                    {block.note && <div className="note">{t('blocks.note')}{block.note}</div>}
-                    {block.provenance && (
-                      <div className="prov-detail">{t('blocks.provenance', { source: block.provenance.source, generator: block.provenance.generator })}</div>
-                    )}
-                  </div>
-                )}
-
-                {viewMode === 'review' && isWarn && !acked && (
-                  <button
-                    className="ack-btn btn"
-                    onClick={() => ackWarning(block.id)}
-                    disabled={loading}
-                    data-testid="warning-ack-btn"
-                  >
-                    {t('blocks.ackBtn')}
-                  </button>
-                )}
-                {viewMode === 'review' && isWarn && acked && (
-                  <span className="acked">{t('blocks.acked')}</span>
-                )}
-              </div>
-            );
-          })}
-        </section>
-      );
-    });
-  };
+  const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => (
+    <LessonBlocks
+      blocks={l.lesson.blocks}
+      viewMode={viewMode}
+      showAnswers={showAnswers}
+      acknowledgedIds={[...(l.warning_acknowledgements || []), ...localAcks]}
+      onAck={ackWarning}
+      loading={loading}
+    />
+  );
 
   // ===== Render =====
   const currentMode = (route.mode as 'review' | 'run' | 'conduct') || 'review';
