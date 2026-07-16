@@ -58,6 +58,18 @@ export interface RejectedEntry {
   reason: string;
 }
 
+/**
+ * The lesson document's honest focus outcome (lu.lesson.v1 >= 1.1.0).
+ * Absent — never an explicit null — when the teacher requested no focus.
+ * `notice_uk` is engine-authored learner-facing Ukrainian: render it verbatim,
+ * never translate it, and it is non-null exactly when `supported` is false.
+ */
+export interface FocusStatus {
+  requested: string;
+  supported: boolean;
+  notice_uk: string | null;
+}
+
 export function splitReviewBlocks(
   blocks: ReviewBlock[],
   duration: LessonDuration,
@@ -370,6 +382,25 @@ export function formatAnswerKeyDisplay(
 
 export function blockNeedsReview(block: ReviewBlock): boolean {
   return block.mark === 'warn' || block.provenance?.external_options === true;
+}
+
+/**
+ * Reserved lesson-level pseudo-block id acknowledging an unsupported focus.
+ * Must stay equal to `FOCUS_STATUS_ACK_ID` in hramatka/api/store.py: the ack
+ * posts it to the ordinary block-ack endpoint, and the server requires it
+ * before accept. Real block ids are generated (`block-<n>`, `restored-<hex>`),
+ * so it cannot collide with one.
+ */
+export const FOCUS_STATUS_ACK_ID = 'focus-status';
+
+/**
+ * Whether the lesson's focus outcome needs teacher acknowledgement — mirrors
+ * `focus_status_needs_review` in hramatka/api/store.py. An unsupported focus is
+ * a caveat the teacher accepts explicitly; a supported focus, and an absent
+ * carrier (no focus requested), need nothing.
+ */
+export function focusStatusNeedsReview(focusStatus: FocusStatus | null | undefined): boolean {
+  return focusStatus?.supported === false;
 }
 
 export function marginStateChip(block: ReviewBlock, acked: boolean): { className: string; key: string } {

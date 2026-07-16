@@ -112,6 +112,16 @@ class WarningAcknowledgementsRequired(ValueError):
 WarningBlocksUnacknowledged = WarningAcknowledgementsRequired
 
 
+FOCUS_STATUS_ACK_ID = "focus-status"
+"""Reserved lesson-level pseudo-block id acknowledging an unsupported focus.
+
+Real ids are generated and always carry a prefix — ``block-<n>`` from the
+composer, ``restored-<uuid4hex>`` from a teacher restore — so this literal
+cannot name an actual block. ``tests/test_pilot_backend_contract.py`` asserts
+the namespace stays disjoint.
+"""
+
+
 def block_needs_review(block: Mapping[str, Any]) -> bool:
     """Return whether a visible block requires teacher acknowledgement.
 
@@ -128,6 +138,18 @@ def block_needs_review(block: Mapping[str, Any]) -> bool:
         return True
     provenance = block.get("provenance")
     return isinstance(provenance, Mapping) and provenance.get("external_options") is True
+
+
+def focus_status_needs_review(lesson: Mapping[str, Any]) -> bool:
+    """Return whether the lesson's focus outcome requires acknowledgement.
+
+    A focus the anchor cannot support is a quality caveat, not an FYI: the
+    teacher acknowledges it explicitly, exactly like a warn block. A supported
+    focus — and an absent ``focus_status``, meaning none was requested — needs
+    nothing.
+    """
+    focus_status = lesson.get("focus_status")
+    return isinstance(focus_status, Mapping) and focus_status.get("supported") is False
 
 
 @dataclass(frozen=True)
@@ -1437,10 +1459,16 @@ class JobStore:
 
     @classmethod
     def _visible_needs_review_ids(cls, lesson: Mapping[str, Any]) -> set[str]:
-        """Ids of visible blocks that require ack under ``block_needs_review``."""
-        return {
-            block["id"] for block in cls._visible_blocks(lesson) if block_needs_review(block)
-        }
+        """Ids requiring ack: visible warn blocks, plus an unsupported focus.
+
+        Widening the set here is the whole change: ``acknowledge_warning`` will
+        admit the reserved id and ``accept_lesson`` will demand it, with no
+        condition duplicated at either call site.
+        """
+        ids = {block["id"] for block in cls._visible_blocks(lesson) if block_needs_review(block)}
+        if focus_status_needs_review(lesson):
+            ids.add(FOCUS_STATUS_ACK_ID)
+        return ids
 
     @staticmethod
     def _require_lesson(job: JobRecord) -> dict[str, Any]:

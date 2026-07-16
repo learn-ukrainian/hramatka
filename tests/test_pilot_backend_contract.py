@@ -679,6 +679,199 @@ def test_plain_ok_blocks_need_no_ack_and_cannot_be_acked(app, client) -> None:
     assert accepted.json()["lesson"]["accepted"] is True
 
 
+def _store_focus_status(database_path: Path, lesson_id: str, focus_status: dict | None) -> None:
+    """Give a ready lesson a focus outcome, and nothing else that needs review.
+
+    The FixtureBaker bakes without a focus, so the carrier is written straight
+    onto the stored document (unlike the stale-external_options injection above,
+    this is an ordinary schema-legal shape). Every block is flattened to plain
+    ok so the focus caveat is the sole required ack.
+    """
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT lesson_json FROM lesson_jobs WHERE id = ?", (lesson_id,)
+        ).fetchone()
+        assert row is not None and row[0], "ready lesson_json must exist before injection"
+        lesson = json.loads(row[0])
+        for block in lesson["blocks"]:
+            block["mark"] = "ok"
+            block.setdefault("provenance", {})
+            block["provenance"]["external_options"] = False
+        if focus_status is None:
+            lesson.pop("focus_status", None)
+        else:
+            lesson["focus_status"] = focus_status
+        connection.execute(
+            """
+            UPDATE lesson_jobs
+            SET lesson_json = ?, warning_acknowledgements_json = '[]'
+            WHERE id = ?
+            """,
+            (
+                json.dumps(lesson, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                lesson_id,
+            ),
+        )
+        connection.commit()
+
+
+_UNSUPPORTED_FOCUS_STATUS = {
+    "requested": "умовний спосіб",
+    "supported": False,
+    "notice_uk": "Опора не містить достатньо перевіреного матеріалу для фокусу «умовний спосіб».",
+}
+
+
+def _ready_lesson_with_focus_status(app, client, focus_status: dict | None) -> tuple[str, dict]:
+    _, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    lesson_id = str(uuid.uuid4())
+    created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+    assert created.status_code == 202, created.text
+    _wait_for_status(client, lesson_id, "ready")
+    _store_focus_status(app.state.settings.database_path, lesson_id, focus_status)
+    return lesson_id, headers
+
+
+def test_unsupported_focus_status_is_ackable_and_blocks_accept(app, client) -> None:
+    """#191: an unsupported focus is a caveat the teacher must accept explicitly.
+
+    It rides the same needs-review machinery as #179/#192 under the reserved
+    lesson-level id, so warn-never-auto-accepts holds for the focus notice too.
+    """
+    lesson_id, headers = _ready_lesson_with_focus_status(app, client, _UNSUPPORTED_FOCUS_STATUS)
+
+    resource = client.get(f"/api/lessons/{lesson_id}")
+    assert resource.status_code == 200, resource.text
+    body = resource.json()
+    revision = body["revision"]
+    # The notice reaches the client on the document itself, not via a tray entry.
+    assert body["lesson"]["focus_status"] == _UNSUPPORTED_FOCUS_STATUS
+    assert all(block["mark"] == "ok" for block in body["lesson"]["blocks"])
+
+    # (b) acceptance refuses while the sole caveat is unacknowledged
+    blocked = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    _error(blocked, 409, "warning_acknowledgements_required", lesson_id=lesson_id)
+    assert client.get(f"/api/lessons/{lesson_id}").json()["revision"] == revision
+
+    # (a) the reserved id is ackable through the ordinary block-ack endpoint
+    ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/focus-status/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert ack.status_code == 200, ack.text
+    ack_body = ack.json()
+    assert "focus-status" in ack_body["warning_acknowledgements"]
+    acknowledged_revision = ack_body["revision"]
+    assert acknowledged_revision == revision + 1
+
+    # (c) with the ack present, accept succeeds
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": acknowledged_revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["lesson"]["accepted"] is True
+
+
+def test_supported_focus_status_needs_no_ack_and_cannot_be_acked(app, client) -> None:
+    """A focus the anchor backs is not a caveat: nothing to acknowledge."""
+    supported = {"requested": "читання", "supported": True, "notice_uk": None}
+    lesson_id, headers = _ready_lesson_with_focus_status(app, client, supported)
+
+    revision = client.get(f"/api/lessons/{lesson_id}").json()["revision"]
+    cannot_ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/focus-status/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    _error(cannot_ack, 404, "warning_block_not_found")
+
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["lesson"]["accepted"] is True
+
+
+def test_lesson_without_focus_status_is_unaffected(app, client) -> None:
+    """Regression: plain lessons neither gain a required ack nor a fake block."""
+    lesson_id, headers = _ready_lesson_with_focus_status(app, client, None)
+
+    body = client.get(f"/api/lessons/{lesson_id}").json()
+    revision = body["revision"]
+    assert "focus_status" not in body["lesson"]
+
+    cannot_ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/focus-status/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    _error(cannot_ack, 404, "warning_block_not_found")
+
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["lesson"]["accepted"] is True
+
+
+def test_focus_status_needs_review_predicate() -> None:
+    """Unit lock: only a strictly-false `supported` is a caveat."""
+    from hramatka.api.store import focus_status_needs_review
+
+    assert focus_status_needs_review({"focus_status": {"supported": False}}) is True
+    assert focus_status_needs_review({"focus_status": {"supported": True}}) is False
+    assert focus_status_needs_review({}) is False
+    assert focus_status_needs_review({"focus_status": None}) is False
+    # Truthiness must not decide a gate: only the real boolean counts.
+    assert focus_status_needs_review({"focus_status": {"supported": "false"}}) is False
+    assert focus_status_needs_review({"focus_status": {"supported": 0}}) is False
+
+
+def test_reserved_focus_status_id_cannot_collide_with_a_real_block_id(app, client) -> None:
+    """The reserved id lives outside every generated block-id namespace."""
+    from hramatka.api.lesson import restore_rejected_entry
+    from hramatka.api.store import FOCUS_STATUS_ACK_ID
+
+    _, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    lesson_id = str(uuid.uuid4())
+    created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+    assert created.status_code == 202, created.text
+    _wait_for_status(client, lesson_id, "ready")
+
+    lesson = client.get(f"/api/lessons/{lesson_id}").json()["lesson"]
+    real_ids = {block["id"] for block in lesson["blocks"]}
+    assert real_ids, "the fixture bake must produce blocks to compare against"
+    assert FOCUS_STATUS_ACK_ID not in real_ids
+    # Composer ids are `block-<n>`; a teacher restore mints `restored-<uuid4hex>`.
+    assert all(block_id.startswith(("block-", "restored-")) for block_id in real_ids)
+
+    restorable = copy.deepcopy(lesson)
+    restorable["rejected"] = [
+        entry
+        for entry in restorable["rejected"]
+        if not str(entry.get("reason", "")).startswith(("shortfall-notice:", "focus-notice:"))
+    ]
+    if restorable["rejected"]:
+        restored_id = restore_rejected_entry(restorable, 0, 1)
+        assert restored_id != FOCUS_STATUS_ACK_ID
+        assert restored_id.startswith("restored-")
+
+
 def test_block_needs_review_predicate_matches_ui() -> None:
     """Unit lock: server predicate mirrors review-helpers.ts blockNeedsReview."""
     from hramatka.api.store import block_needs_review

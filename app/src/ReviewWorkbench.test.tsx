@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ReviewWorkbench, { type LessonResourceView } from './ReviewWorkbench';
 import { LangProvider } from './i18n';
@@ -225,5 +225,121 @@ describe('ReviewWorkbench answer key rendering', () => {
     expect(keys[4].textContent).not.toContain('"model_answers"');
     expect(keys[4].textContent).not.toContain('{');
     expect(keys[4].textContent).not.toContain('Підтвердьте ключ разом з учителем.');
+  });
+});
+
+const NOTICE_UK =
+  'Опора не містить достатньо перевіреного матеріалу для фокусу «умовний спосіб». ' +
+  'Вправи спираються лише на текст-опору; додайте приклади або змініть фокус.';
+
+const UNSUPPORTED_FOCUS_STATUS = {
+  requested: 'умовний спосіб',
+  supported: false,
+  notice_uk: NOTICE_UK,
+};
+
+function renderWorkbench(
+  resource: LessonResourceView,
+  overrides: Partial<React.ComponentProps<typeof ReviewWorkbench>> = {},
+) {
+  const props = {
+    resource,
+    showAnswers: false,
+    loading: false,
+    onDurationChange: vi.fn(),
+    onMoveBlock: vi.fn(),
+    onRemoveBlock: vi.fn(),
+    onIncludeReserve: vi.fn(),
+    onRestoreRejected: vi.fn(),
+    onAckWarning: vi.fn(),
+    onSaveActivity: vi.fn(),
+    onAcceptLesson: vi.fn(),
+    onReturnToDraft: vi.fn(),
+    allWarningsAcked: true,
+    ...overrides,
+  };
+  render(
+    <LangProvider>
+      <ReviewWorkbench {...props} />
+    </LangProvider>,
+  );
+  return props;
+}
+
+function withFocusStatus(focusStatus?: LessonResourceView['lesson']['focus_status']) {
+  return {
+    ...mockResource,
+    lesson: { ...mockResource.lesson, focus_status: focusStatus },
+  };
+}
+
+describe('ReviewWorkbench focus notice (#191)', () => {
+  it('renders an unsupported focus as its own banner, never as a rejected draft', () => {
+    renderWorkbench(withFocusStatus(UNSUPPORTED_FOCUS_STATUS));
+
+    const banner = screen.getByTestId('focus-notice');
+    expect(banner).toBeTruthy();
+    // Chrome label is translated; the notice body is engine UA content, verbatim.
+    expect(banner.textContent).toContain('Фокус не підкріплено опорою');
+    expect(banner.textContent).toContain('умовний спосіб');
+    expect(screen.getByTestId('focus-notice-body').textContent).toBe(NOTICE_UK);
+    // Nothing was rejected, so the tray must stay out of it.
+    expect(screen.queryByTestId('rejected-tray')).toBeNull();
+  });
+
+  it('acks the notice under the reserved lesson-level id', () => {
+    const props = renderWorkbench(withFocusStatus(UNSUPPORTED_FOCUS_STATUS), {
+      allWarningsAcked: false,
+    });
+
+    fireEvent.click(screen.getByText('зрозуміло, підтверджую'));
+
+    expect(props.onAckWarning).toHaveBeenCalledWith('focus-status');
+  });
+
+  it('keeps accept disabled while the notice is outstanding', () => {
+    renderWorkbench(withFocusStatus(UNSUPPORTED_FOCUS_STATUS), { allWarningsAcked: false });
+
+    const accept = document.querySelector('[data-action="accept-lesson"]') as HTMLButtonElement;
+    expect(accept.disabled).toBe(true);
+    // The caveat is stated and still awaiting its explicit acknowledgement.
+    expect(screen.getByTestId('focus-notice')).toBeTruthy();
+    expect(screen.queryByTestId('focus-notice-acked')).toBeNull();
+    expect(screen.getByText('зрозуміло, підтверджую')).toBeTruthy();
+  });
+
+  it('shows the acked chip and no ack button once acknowledged', () => {
+    const resource = withFocusStatus(UNSUPPORTED_FOCUS_STATUS);
+    renderWorkbench({ ...resource, warning_acknowledgements: ['focus-status'] });
+
+    expect(screen.getByTestId('focus-notice-acked')).toBeTruthy();
+    expect(screen.queryByText('зрозуміло, підтверджую')).toBeNull();
+    const accept = document.querySelector('[data-action="accept-lesson"]') as HTMLButtonElement;
+    expect(accept.disabled).toBe(false);
+  });
+
+  it('carries the notice onto the printed sheet, which drops the banner chrome', () => {
+    renderWorkbench(withFocusStatus(UNSUPPORTED_FOCUS_STATUS));
+
+    const printed = screen.getByTestId('focus-notice-print');
+    expect(printed.textContent).toContain(NOTICE_UK);
+    // The banner is chrome (.noprint); the sheet line is what survives printing.
+    expect(screen.getByTestId('focus-notice').className).toContain('noprint');
+    expect(printed.className).toContain('focus-notice-print');
+    expect(printed.className).not.toContain('noprint');
+  });
+
+  it('shows no banner for a supported focus', () => {
+    renderWorkbench(withFocusStatus({ requested: 'читання', supported: true, notice_uk: null }));
+
+    expect(screen.queryByTestId('focus-notice')).toBeNull();
+    expect(screen.queryByTestId('focus-notice-print')).toBeNull();
+  });
+
+  it('shows no banner when no focus was requested', () => {
+    renderWorkbench(withFocusStatus(undefined));
+
+    expect(screen.queryByTestId('focus-notice')).toBeNull();
+    expect(screen.queryByTestId('focus-notice-print')).toBeNull();
   });
 });

@@ -25,8 +25,11 @@ import ReviewWorkbench from './ReviewWorkbench';
 import {
   splitReviewBlocks,
   blockNeedsReview,
+  focusStatusNeedsReview,
+  FOCUS_STATUS_ACK_ID,
   formatAnswerKeyDisplay,
   type LessonDuration,
+  type FocusStatus,
 } from './review-helpers';
 
 /**
@@ -78,6 +81,8 @@ interface LessonDocument {
   level: 'B1';
   method: 'ttt';
   focus: string | null;
+  // Absent (never an explicit null) when the teacher requested no focus.
+  focus_status?: FocusStatus;
   anchor: { text: string; source: 'teacher-paste' | 'teacher-url'; chars: number; source_url?: string };
   duration: 45 | 60 | 90;
   version: 1;
@@ -905,12 +910,16 @@ export default function TeacherApp() {
 
   const allVisibleWarningsAcked = (l: LessonResource | null) => {
     if (!l) return true;
-    const warns = splitReviewBlocks(l.lesson.blocks, l.lesson.duration)
+    const required = splitReviewBlocks(l.lesson.blocks, l.lesson.duration)
       .visible
       .filter((block) => blockNeedsReview(block))
       .map((block) => block.id);
+    // Mirrors the server's _visible_needs_review_ids: an unsupported focus is
+    // acknowledged under a reserved lesson-level id, so the accept button and
+    // the accept endpoint agree on what is still outstanding.
+    if (focusStatusNeedsReview(l.lesson.focus_status)) required.push(FOCUS_STATUS_ACK_ID);
     const acks = [...(l.warning_acknowledgements || []), ...localAcks];
-    return warns.every(w => acks.includes(w));
+    return required.every(id => acks.includes(id));
   };
 
   // ===== Accept / Draft =====

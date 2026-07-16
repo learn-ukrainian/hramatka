@@ -1,0 +1,18 @@
+{
+  "artifact": "lu.lesson.v1",
+  "version": "1.1.0",
+  "kind": "json-schema",
+  "description": "Verbatim public lesson contract; adds the additive optional focus_status carrier (absent when no focus was requested).",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "packages/activity-kit/src/lu.lesson.v1.schema.json",
+    "commit": "96f4b1b11015f34d46c8a6455352ccc083f8407e"
+  },
+  "adapted": false,
+  "files": {
+    "lu.lesson.v1.schema.json": {
+      "sha256": "d99166da6e7eedce185106ecec43eb81bd3235abe8e3feedd1ac6405b22b37d3",
+      "size": 9254
+    }
+  }
+}

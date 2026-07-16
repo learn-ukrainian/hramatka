@@ -25,7 +25,11 @@ VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor"
 LU_ACTIVITY = "lu.activity.v1@1.0.0"
 LU_LESSON = "lu.lesson.v1@1.0.0"
 PILOT_LU_ACTIVITY = "lu.activity.v1@1.0.0-ffd54054"
-PILOT_LU_LESSON = "lu.lesson.v1@1.0.0-ffd54054"
+# 1.1.0 adds the additive optional `focus_status` carrier; old documents (which
+# simply omit it) stay valid, so this is a drop-in re-pin of the pilot lesson
+# contract.  The superseded `lu.lesson.v1@1.0.0-ffd54054/` pin stays on disk as
+# immutable provenance for fingerprints recorded by earlier calibration runs.
+PILOT_LU_LESSON = "lu.lesson.v1@1.1.0-96f4b1b1"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
 
 REGISTERED = (LU_ACTIVITY, LU_LESSON, PILOT_LU_ACTIVITY, PILOT_LU_LESSON, LINGUISTICS)

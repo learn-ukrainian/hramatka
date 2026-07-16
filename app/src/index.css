@@ -187,6 +187,7 @@ code, .counter { font-family: ui-monospace, Consolas, monospace; display: inline
   .appbar,.banner,.lesson-actions,.accept-bar,.footer,button,.noprint{display:none!important}
   #root,.lesson-view{max-width:none;margin:0;padding:0}
   .anchor-print{display:block!important}
+  .focus-notice-print{display:block!important}
   .block{border:1px solid var(--line);margin-bottom:12pt;background:#fff}
   .teacher-key{background:var(--paper);border:1px solid var(--line)}
   .phase h3{page-break-after:avoid}

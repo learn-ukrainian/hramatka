@@ -366,6 +366,35 @@ def _mode(phase: int, a_type: str) -> str:
     return "письмово" if a_type == "cloze" else "усно"
 
 
+def _focus_status(focus_support: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Map the engine's focus-support verdict onto the wire `focus_status`.
+
+    `None` means the document omits the property entirely — the contract states
+    the outcome by absence and never by an explicit null. That covers both "no
+    focus was requested" and "the prompt pack never ran", because a legacy-path
+    bake has not judged the focus at all and must not imply that it did.
+
+    An unsupported focus carries the engine's own `notice_uk` verbatim: this
+    layer never composes learner-facing Ukrainian prose. The notice is passed
+    through unguarded on purpose — should the engine ever report `unsupported`
+    without saying why, the pinned schema fails the bake loudly rather than let
+    the document quietly claim a focus it cannot back up.
+    """
+    if focus_support is None:
+        return None
+    requested = focus_support.get("requested")
+    status = focus_support.get("status")
+    if not isinstance(requested, str) or status not in {"supported", "unsupported"}:
+        return None
+    if status == "supported":
+        return {"requested": requested, "supported": True, "notice_uk": None}
+    return {
+        "requested": requested,
+        "supported": False,
+        "notice_uk": focus_support.get("notice_uk"),
+    }
+
+
 def _engine_out_root() -> Path | None:
     """Writable root for pipeline artifacts (lesson.b1/ir.json diagnostics).
 
@@ -779,16 +808,14 @@ class EngineLessonBaker:
                 )
             )
 
+            focus_status = _focus_status(
+                shared_pack["lesson_plan"]["focus"] if shared_pack is not None else None
+            )
             return {
                 "blocks": blocks,
                 "rejected": rejected,
                 "anchor_diagnostics": anchor_diagnostics,
-                **(
-                    {"focus_notice": shared_pack["lesson_plan"]["focus"]["notice_uk"]}
-                    if shared_pack is not None
-                    and shared_pack["lesson_plan"]["focus"].get("status") == "unsupported"
-                    else {}
-                ),
+                **({"focus_status": focus_status} if focus_status is not None else {}),
             }
         except prompt_pack.PromptPackError as exc:
             if prompt_pack_enabled:

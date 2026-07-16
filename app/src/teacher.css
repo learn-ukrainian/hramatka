@@ -268,6 +268,11 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 }
 .anchor-run-bar { margin: 8px 0 12px; }
 .anchor-print { display: none; }
+/* The focus caveat is stated on screen by the .focus-notice banner, which print
+   strips with the rest of the chrome; this line carries it onto paper instead. */
+.focus-notice-print { display: none; }
+.focus-notice-body { margin: 4px 0 6px; }
+.focus-notice-requested { display: block; margin-top: 2px; }
 .bake-elapsed { margin-top: 4px; font-variant-numeric: tabular-nums; }
 
 /* student print prep: hide teacher-only chrome as soon as variant is chosen */
@@ -550,6 +555,7 @@ button.choice.on {
   .appbar, .banner, .lesson-actions, .accept-bar, .footer, button, .noprint { display: none !important; }
   .lesson-view { max-width: 100%; padding: 0; }
   .anchor-print { display: block !important; }
+  .focus-notice-print { display: block !important; }
   .anchor-panel { display: none !important; }
   .block { break-inside: avoid; page-break-inside: avoid; border: 1px solid var(--line); margin-bottom: 12pt; background: #fff; box-shadow: none; }
   .teacher-key { background: var(--paper); border: 1px solid var(--line); }

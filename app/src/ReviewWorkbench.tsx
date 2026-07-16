@@ -5,10 +5,13 @@ import {
   type LessonDuration,
   type ReviewBlock,
   type RejectedEntry,
+  type FocusStatus,
   splitReviewBlocks,
   PHASE_LABELS,
   marginStateChip,
   blockNeedsReview,
+  focusStatusNeedsReview,
+  FOCUS_STATUS_ACK_ID,
   activityTypeLabel,
   formatAnswerKeyDisplay,
 } from './review-helpers';
@@ -23,6 +26,7 @@ export interface LessonResourceView {
     level: string;
     duration: LessonDuration;
     focus: string | null;
+    focus_status?: FocusStatus;
     anchor: { text: string };
     blocks: ReviewBlock[];
     rejected: RejectedEntry[];
@@ -67,6 +71,12 @@ export default function ReviewWorkbench({
 
   const { byPhase, reserve } = splitReviewBlocks(lesson.blocks, lesson.duration);
   const acks = new Set(warning_acknowledgements);
+
+  // An unsupported focus is a caveat about the whole lesson, so it gets a real
+  // banner rather than a slot in the rejected tray — nothing was rejected.
+  const focusStatus = lesson.focus_status;
+  const showFocusNotice = focusStatusNeedsReview(focusStatus);
+  const focusNoticeAcked = acks.has(FOCUS_STATUS_ACK_ID);
 
   const { t } = useT();
 
@@ -178,6 +188,37 @@ export default function ReviewWorkbench({
         <span><b>Факти перевірте.</b> {t('review.banner')}</span>
       </div>
 
+      {showFocusNotice && (
+        <div className="banner honest focus-notice noprint" data-testid="focus-notice">
+          <span className="ic">⚠</span>
+          <span>
+            <b>{t('review.focusNotice')}</b>
+            <span className="mnote focus-notice-requested">
+              {t('review.focusNoticeRequested')}«{focusStatus!.requested}»
+            </span>
+            {/* Engine-authored, learner-facing: rendered verbatim, never translated. */}
+            <p className="focus-notice-body" lang="uk" data-testid="focus-notice-body">
+              {focusStatus!.notice_uk}
+            </p>
+            {focusNoticeAcked ? (
+              <span className="chip ok" data-testid="focus-notice-acked">
+                {t('review.focusNoticeAcked')}
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="accept ack-btn"
+                data-action="focus-notice-accept"
+                onClick={() => onAckWarning(FOCUS_STATUS_ACK_ID)}
+                disabled={loading}
+              >
+                {t('review.focusNoticeAck')}
+              </button>
+            )}
+          </span>
+        </div>
+      )}
+
       <div className="noprint review-toolbar">
         <p className="sub">{t('review.sub')}</p>
         <span className="duration-picker">
@@ -230,6 +271,17 @@ export default function ReviewWorkbench({
         <p className="docsheet-footer" data-testid="honesty-footer">
           {t('print.honestyFooter')}
         </p>
+        {/* The banner is screen chrome and prints away with the rest of it. The
+            caveat itself must survive onto paper, so it rides the sheet too. */}
+        {showFocusNotice && (
+          <p
+            className="docsheet-footer focus-notice-print"
+            data-testid="focus-notice-print"
+            lang="uk"
+          >
+            {t('review.focusNotice')}: {focusStatus!.notice_uk}
+          </p>
+        )}
       </div>
 
       {reserve.length > 0 && (

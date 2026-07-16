@@ -5,6 +5,8 @@ import {
   regenerateAnswerKey,
   REVIEW_PHASE_BUDGETS,
   blockNeedsReview,
+  focusStatusNeedsReview,
+  FOCUS_STATUS_ACK_ID,
   marginStateChip,
   formatAnswerKeyDisplay,
   type ReviewBlock,
@@ -244,5 +246,26 @@ describe('formatAnswerKeyDisplay (#186)', () => {
     const en = formatAnswerKeyDisplay(key, activity, tEn);
     expect(en).toContain('Question 1 → correct answer: увімкнути');
     expect(en).toContain('увімкнути'); // lesson content not translated
+  });
+});
+
+describe('focusStatusNeedsReview (#191)', () => {
+  // Must stay in lockstep with focus_status_needs_review in hramatka/api/store.py:
+  // the UI gate and the server gate have to agree on what blocks accept.
+  it('treats only a strictly unsupported focus as a caveat', () => {
+    expect(focusStatusNeedsReview({ requested: 'x', supported: false, notice_uk: 'Опора…' })).toBe(true);
+    expect(focusStatusNeedsReview({ requested: 'x', supported: true, notice_uk: null })).toBe(false);
+  });
+
+  it('needs nothing when no focus was requested', () => {
+    expect(focusStatusNeedsReview(undefined)).toBe(false);
+    expect(focusStatusNeedsReview(null)).toBe(false);
+  });
+
+  it('reserves an id that no generated block id can take', () => {
+    expect(FOCUS_STATUS_ACK_ID).toBe('focus-status');
+    // Real ids are `block-<n>` / `restored-<hex>`; the reserved id is neither.
+    expect(FOCUS_STATUS_ACK_ID.startsWith('block-')).toBe(false);
+    expect(FOCUS_STATUS_ACK_ID.startsWith('restored-')).toBe(false);
   });
 });

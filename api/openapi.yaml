@@ -376,6 +376,13 @@ paths:
         A block needs review when its `mark` is `warn` **or**
         `provenance.external_options` is true (UI-aligned needs-review set).
         Warn never auto-accepts: acknowledgement is always explicit.
+
+        `block_id` additionally accepts the reserved lesson-level id
+        `focus-status`, which acknowledges an unsupported requested focus
+        (`lesson.focus_status.supported: false`). It is only ackable while that
+        caveat stands, and `acceptLesson` requires it exactly like a warn block.
+        Generated block ids (`block-<n>`, `restored-<hex>`) never collide with
+        it. Any id outside the current needs-review set is a 404.
       security:
         - PilotSession: []
       parameters:
@@ -1198,6 +1205,8 @@ components:
           const: ttt
         focus:
           type: [string, 'null']
+        focus_status:
+          $ref: '#/components/schemas/FocusStatus'
         anchor:
           $ref: '#/components/schemas/LessonAnchor'
         duration:
@@ -1229,8 +1238,40 @@ components:
           format: date-time
       description: |
         Pilot-constrained `lu.lesson.v1`. It matches the verbatim public schema
-        pinned at `hramatka/vendor/lu.lesson.v1@1.0.0-ffd54054/`, narrows the
+        pinned at `hramatka/vendor/lu.lesson.v1@1.1.0-96f4b1b1/`, narrows the
         anchor to teacher-paste, and narrows blocks to PILOT_ACTIVITY_TYPES.
+    FocusStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - requested
+        - supported
+        - notice_uk
+      properties:
+        requested:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The teacher's requested focus, normalized (trimmed).
+        supported:
+          type: boolean
+          description: Whether the anchor text verifiably backs the requested focus.
+        notice_uk:
+          type: [string, 'null']
+          minLength: 1
+          description: |
+            Engine-authored, learner-facing Ukrainian explaining why the anchor
+            cannot support the focus. Non-null exactly when `supported` is false,
+            and null exactly when it is true. Rendered verbatim, never translated.
+      description: |
+        The honest outcome of the teacher's requested focus for this bake
+        (`lu.lesson.v1` >= 1.1.0). Absent from the document — never an explicit
+        null — when no focus was requested, or when the bake did not judge the
+        focus at all and so must not imply that it did.
+
+        When `supported` is false the caveat is not informational: accepting the
+        lesson requires acknowledging the reserved `focus-status` id first (see
+        `acknowledgeWarningBlock`). Warn never auto-accepts.
     LessonResource:
       type: object
       additionalProperties: false

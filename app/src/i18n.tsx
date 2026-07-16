@@ -612,7 +612,13 @@ const DICT = {
   'review.up': { uk: 'вгору', en: 'up' },
   'review.down': { uk: 'вниз', en: 'down' },
   'review.remove': { uk: 'вилучити', en: 'remove' },
-  'review.ack': { uk: 'прийняти', en: 'acknowledge' },
+  'review.ack': { uk: 'підтвердити', en: 'acknowledge' },
+  // Focus-notice chrome (#191). The notice body itself is engine-authored UA
+  // lesson content rendered verbatim — only these labels are dual-lang.
+  'review.focusNotice': { uk: 'Фокус не підкріплено опорою', en: 'Focus not supported by the text' },
+  'review.focusNoticeRequested': { uk: 'Запит: ', en: 'Requested: ' },
+  'review.focusNoticeAck': { uk: 'зрозуміло, підтверджую', en: 'understood, acknowledge' },
+  'review.focusNoticeAcked': { uk: '✓ підтверджено', en: '✓ confirmed' },
   'review.acceptWarn': { uk: 'Потрібно підтвердити всі попередження (⚠), щоб прийняти урок.', en: 'You must confirm all warnings (⚠) to accept the lesson.' },
   'review.accept': { uk: 'Прийняти заняття', en: 'Accept lesson' },
   'review.saveDraft': { uk: 'Зберегти як чернетку', en: 'Save as draft' },

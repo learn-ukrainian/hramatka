@@ -27,14 +27,10 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
     """Bind an engine template to its durable job without changing block content."""
     lesson = copy.deepcopy(template)
     lesson.pop("anchor_diagnostics", None)  # engine-out artifact only, not wire lesson
-    focus_notice = lesson.pop("focus_notice", None)
-    if isinstance(focus_notice, str) and focus_notice.strip():
-        # The frozen lesson document has no top-level notice field.  Carry an
-        # honest source-support warning in the existing rejected tray instead
-        # of silently treating an unsupported teacher focus as fulfilled.
-        lesson.setdefault("rejected", []).append(
-            {"type": "focus-notice", "activity": {}, "reason": f"focus-notice:{focus_notice}"}
-        )
+    # `focus_status` (set by the engine when a focus was judged) passes straight
+    # through: since lu.lesson.v1@1.1.0 the honest focus outcome is a first-class
+    # property of the document, so it no longer has to masquerade as a rejected
+    # draft — a shape the rejected tray never accepted (#191).
     _normalize_rejected_entries(lesson)
     timestamp = now_iso()
     lesson.update(
@@ -165,6 +161,10 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
     entry = rejected.pop(rejected_index)
     if not isinstance(entry, dict) or not isinstance(entry.get("activity"), dict):
         raise ValueError("Rejected entry is invalid.")
+    # `shortfall-notice:` is still emitted by the engine.  `focus-notice:` no
+    # longer is, but lessons baked before the focus_status carrier landed keep
+    # their folded entry in the durable document, so the guard must still refuse
+    # to restore one as an activity.
     if str(entry.get("reason", "")).startswith(("shortfall-notice:", "focus-notice:")):
         rejected.insert(rejected_index, entry)
         raise ValueError("A notice cannot be restored as an activity.")
