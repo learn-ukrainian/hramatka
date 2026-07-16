@@ -18,8 +18,9 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import statistics
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,62 @@ from .transport import (
 )
 
 log = logging.getLogger(__name__)
+
+# #171 probe: google-ais accepts response_format=json_object (HTTP 200) but
+# returns thought-wrapped content, and production full-lesson bakes hung 12+ min
+# with JSON mode on AIS. OpenRouter path is clean on the same family. Even when
+# HRAMATKA_GEN_JSON_MODE=1, never send response_format to these hosts.
+_JSON_MODE_HOST_DENY = frozenset({"google-ais", "ais"})
+
+# Latency watchdog: fire when one call exceeds multiplier × rolling median of
+# prior samples in the same TelemetryContext (hang-class visibility for #165).
+LATENCY_WATCHDOG_MULTIPLIER = 3.0
+LATENCY_WATCHDOG_MIN_SAMPLES = 3
+LATENCY_WATCHDOG_WINDOW = 100
+
+
+def evaluate_latency_watchdog(
+    duration_ms: float,
+    prior_samples_ms: Sequence[float],
+    *,
+    multiplier: float = LATENCY_WATCHDOG_MULTIPLIER,
+    min_samples: int = LATENCY_WATCHDOG_MIN_SAMPLES,
+) -> dict[str, Any] | None:
+    """Return a latency_watchdog event if duration exceeds multiplier × median.
+
+    Pure function (no I/O, no mutation) so unit tests cover the trigger math
+    without a live provider call. Requires ``min_samples`` prior observations;
+    the current duration is NOT included in the median.
+    """
+    if min_samples < 1 or multiplier <= 0:
+        return None
+    if len(prior_samples_ms) < min_samples:
+        return None
+    med = float(statistics.median(prior_samples_ms))
+    if med <= 0:
+        return None
+    threshold = multiplier * med
+    if duration_ms <= threshold:
+        return None
+    return {
+        "event": "latency_watchdog",
+        "duration_ms": duration_ms,
+        "rolling_median_ms": med,
+        "threshold_ms": threshold,
+        "ratio": duration_ms / med,
+        "sample_count": len(prior_samples_ms),
+    }
+
+
+def json_mode_enabled_for_host(host: str) -> bool:
+    """Whether this transport host may attach response_format=json_object.
+
+    Requires explicit env opt-in (``HRAMATKA_GEN_JSON_MODE=1``). Google-AIS is
+    hard-denied per #171 probe + production hang evidence.
+    """
+    if os.environ.get("HRAMATKA_GEN_JSON_MODE") != "1":
+        return False
+    return host not in _JSON_MODE_HOST_DENY
 
 
 class ProviderConcurrencyBudget:
@@ -97,6 +154,7 @@ class _TelemetryState:
     calls_planned: int | None = None
     step: str | None = None
     duration_fallback: dict[str, Any] | None = None
+    latency_samples_ms: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -213,9 +271,38 @@ class TelemetryContext:
             self.calls_planned = self._state.calls_planned
 
     def record_provider_call(self, trace_entry: dict) -> None:
-        """Atomically keep one trace and progress increment from a phase thread."""
+        """Atomically keep one trace and progress increment from a phase thread.
+
+        Also evaluates the #171 latency watchdog against the rolling median of
+        prior provider-call durations in this bake's shared telemetry state.
+        """
         assert self._state is not None
         with self._state.lock:
+            duration_ms = trace_entry.get("duration_ms")
+            if isinstance(duration_ms, (int, float)):
+                prior = list(self._state.latency_samples_ms)
+                watchdog = evaluate_latency_watchdog(float(duration_ms), prior)
+                if watchdog is not None:
+                    watchdog = {
+                        **watchdog,
+                        "host": trace_entry.get("host"),
+                        "phase": trace_entry.get("phase"),
+                        "activity_type": trace_entry.get("activity_type"),
+                        "http_status_class": trace_entry.get("http_status_class"),
+                    }
+                    self._state.traces.append(watchdog)
+                    log.warning(
+                        "latency_watchdog host=%s dur_ms=%s median_ms=%s ratio=%.2f",
+                        watchdog.get("host"),
+                        watchdog.get("duration_ms"),
+                        watchdog.get("rolling_median_ms"),
+                        float(watchdog.get("ratio") or 0.0),
+                    )
+                self._state.latency_samples_ms.append(float(duration_ms))
+                if len(self._state.latency_samples_ms) > LATENCY_WATCHDOG_WINDOW:
+                    self._state.latency_samples_ms = self._state.latency_samples_ms[
+                        -LATENCY_WATCHDOG_WINDOW:
+                    ]
             self._state.traces.append(trace_entry)
             self.traces = self._state.traces
             if self._state.calls_done is not None:
@@ -342,10 +429,11 @@ class HttpChatTransport:
             except ValueError:
                 pass
 
-        # #171: constrained decoding remains an explicit compatibility probe,
-        # never an ambient transport default.  The engineered prompt carries
-        # its own complete JSON contract and validates citations locally.
-        json_mode_enabled = os.environ.get("HRAMATKA_GEN_JSON_MODE") == "1"
+        # #171: constrained decoding is opt-in (HRAMATKA_GEN_JSON_MODE=1) and
+        # host-gated. google-ais is denied (production hang + probe: accept-
+        # but-thought-wrapped; no pure-JSON benefit). OpenRouter may use it.
+        # The engineered prompt carries its own JSON contract either way.
+        json_mode_enabled = json_mode_enabled_for_host(self.host)
 
         payload = {
             "model": wire_model,

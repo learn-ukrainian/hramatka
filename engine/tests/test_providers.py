@@ -653,6 +653,46 @@ def test_payload_env_overrides_honored(monkeypatch):
     assert "response_format" not in seen["body"]
 
 
+def test_json_mode_denied_on_google_ais_even_when_env_on(monkeypatch):
+    """#171: AIS host must never attach response_format (hang + probe)."""
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    for host in ("google-ais", "ais"):
+        seen.clear()
+        transport = providers.HttpChatTransport(
+            base_url="https://prov.example/v1",
+            client=_client(handler),
+            host=host,
+            retry_backoff_s=0,
+        )
+        transport("prompt", api_key="k", model="m", timeout_s=5)
+        assert "response_format" not in seen["body"], host
+
+
+def test_json_mode_enabled_on_openrouter_when_env_on(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    transport = providers.HttpChatTransport(
+        base_url="https://openrouter.example/v1",
+        client=_client(handler),
+        host="openrouter",
+        strip_model_prefix=False,
+        retry_backoff_s=0,
+    )
+    transport("prompt", api_key="k", model="google/gemma-4-31b-it", timeout_s=5)
+    assert seen["body"]["response_format"] == {"type": "json_object"}
+
+
 def test_400_fallback_retry_without_json_mode(monkeypatch):
     monkeypatch.delenv("HRAMATKA_GEN_TEMPERATURE", raising=False)
     monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
@@ -675,7 +715,14 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
     token = providers.telemetry_ctx.set(ctx)
 
     try:
-        transport = _transport(handler)
+        # #171: JSON mode is AIS-denied; exercise 400 fallback on openrouter.
+        transport = providers.HttpChatTransport(
+            base_url="https://openrouter.example/v1",
+            client=_client(handler),
+            host="openrouter",
+            strip_model_prefix=False,
+            retry_backoff_s=0,
+        )
         out = transport("prompt", api_key="k", model="m", timeout_s=5)
         assert out == '{"activities": []}'
 
@@ -687,10 +734,73 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
         # Verify telemetry event was recorded
         events = [t for t in ctx.traces if t.get("event") == "json_mode_unsupported"]
         assert len(events) == 1
-        assert events[0]["host"] == "ais"
+        assert events[0]["host"] == "openrouter"
         assert events[0]["model"] == "m"
     finally:
         providers.telemetry_ctx.reset(token)
+
+
+# --- #171 latency watchdog --------------------------------------------------
+def test_evaluate_latency_watchdog_trigger_math():
+    """Pure trigger math: 3× rolling median of prior samples only."""
+    prior = [100.0, 100.0, 100.0]
+    # Exactly at threshold — no fire
+    assert providers.evaluate_latency_watchdog(300.0, prior) is None
+    # Just over 3× median — fire
+    event = providers.evaluate_latency_watchdog(301.0, prior)
+    assert event is not None
+    assert event["event"] == "latency_watchdog"
+    assert event["duration_ms"] == 301.0
+    assert event["rolling_median_ms"] == 100.0
+    assert event["threshold_ms"] == 300.0
+    assert event["sample_count"] == 3
+    assert event["ratio"] == pytest.approx(3.01)
+
+    # Too few prior samples — no fire even if huge
+    assert providers.evaluate_latency_watchdog(10_000.0, [100.0, 100.0]) is None
+    # Zero / negative median — no fire
+    assert providers.evaluate_latency_watchdog(1000.0, [0.0, 0.0, 0.0]) is None
+    # Uneven samples: median of [10, 20, 30, 40] = 25; 3× = 75
+    assert providers.evaluate_latency_watchdog(75.0, [10, 20, 30, 40]) is None
+    assert providers.evaluate_latency_watchdog(76.0, [10, 20, 30, 40]) is not None
+
+
+def test_record_provider_call_emits_latency_watchdog_event():
+    ctx = providers.TelemetryContext(job_id="wd-job", phases_total=1, calls_planned=5, calls_done=0)
+    # Seed three normal calls (100ms median)
+    for _ in range(3):
+        ctx.record_provider_call(
+            {
+                "duration_ms": 100,
+                "host": "google-ais",
+                "attempts": 1,
+                "http_status_class": "2xx",
+                "phase": 1,
+                "activity_type": "cloze",
+            }
+        )
+    assert not any(t.get("event") == "latency_watchdog" for t in ctx.traces)
+
+    # Slow call: 5× median
+    ctx.record_provider_call(
+        {
+            "duration_ms": 500,
+            "host": "google-ais",
+            "attempts": 1,
+            "http_status_class": "2xx",
+            "phase": 1,
+            "activity_type": "cloze",
+        }
+    )
+    events = [t for t in ctx.traces if t.get("event") == "latency_watchdog"]
+    assert len(events) == 1
+    assert events[0]["duration_ms"] == 500
+    assert events[0]["rolling_median_ms"] == 100.0
+    assert events[0]["host"] == "google-ais"
+    assert events[0]["ratio"] == pytest.approx(5.0)
+    # Provider call traces still recorded (watchdog is additive)
+    call_traces = [t for t in ctx.traces if "duration_ms" in t and t.get("event") is None]
+    assert len(call_traces) == 4
 
 
 def test_provenance_stamp_fallback_fired(monkeypatch):

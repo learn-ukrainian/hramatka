@@ -6,6 +6,38 @@ Pilot deploy and smoke helpers. From a reviewed checkout:
 
 `deploy.sh` replaces the hand-rolled partial rsync (app dist + engine + api). It builds with CSP guard, rsyncs the whole `hramatka` package (explicit excludes), blocks restart during in-flight bakes unless `--force`, then restarts, polls readyz, prints migration version, runs `smoke.sh`, and prints bundle hash + git SHA. Preview locally: `./hramatka/ops/deploy.sh --dry-run /tmp/fake-deploy`.
 
+## JSON-mode hang probe (#171)
+
+`hramatka/ops/probe-json-mode.py` — **key-gated, not wired into CI**.
+
+Sends one minimal real generation per cell (google-ais `gemma-4-31b-it` and
+`gemma-4-26b-a4b-it`, each with and without `response_format: json_object`;
+OpenRouter ≤2 paid calls). Hard client timeout ~120s so a hang is a measurement.
+
+```bash
+# Keys are ENV-ONLY in the probe (no hardcoded home paths). Export before run:
+export HRAMATKA_AIS_API_KEY="$(cat /path/to/your/ais.key)"
+export HRAMATKA_GEMMA_FALLBACK_API_KEY="$(cat /path/to/your/openrouter.key)"  # optional
+# Or point at a directory that contains google-ais.key and openrouter.key
+# (HRAMATKA_SECRET_DIR has no home default — unset means env vars only):
+# export HRAMATKA_SECRET_DIR=/path/to/secret/dir
+
+.venv/bin/python hramatka/ops/probe-json-mode.py
+.venv/bin/python hramatka/ops/probe-json-mode.py --skip-openrouter
+```
+
+Keys: `HRAMATKA_AIS_API_KEY` / `HRAMATKA_GEMMA_FALLBACK_API_KEY` env vars, or
+files under optional `HRAMATKA_SECRET_DIR` (no default). Never prints key values.
+
+### Default configuration (post-#171)
+
+| Knob | Default | Notes |
+| --- | --- | --- |
+| `HRAMATKA_GEN_JSON_MODE` | unset / not `"1"` | Opt-in only. local-loop and local-soak force `0`. |
+| google-ais host | **hard-denied** | Even if env=`1`, transport never sends `response_format` to `google-ais`/`ais` hosts (production hang + probe: accept-but-thought-wrapped). |
+| openrouter host | allowed when env=`1` | Probe: pure JSON, ~1s, both modes. |
+| Latency watchdog | always on when telemetry ctx present | Emits `latency_watchdog` when a call exceeds 3× rolling median of prior samples in the bake. |
+
 ## Local Test Loop
 
 `./hramatka/ops/local-loop.sh`
