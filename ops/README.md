@@ -22,6 +22,11 @@ The entire loop (code -> build -> test -> bake) must run **locally** to protect 
 - `--anchor <file>`: Path to anchor text file (default: `hramatka/engine/tests/fixtures/anchor01.txt`)
 - `--focus <string>`: Focus parameter for lesson generation (default: no focus)
 - `--duration 45|60|90`: Duration of the lesson (default: `45`)
+- `--model <id>`: Model ID to use for generation (default: `google-ais/gemma-4-31b-it`). The supported values are:
+  - `google-ais/gemma-4-31b-it` (default Gemma model, $0)
+  - `google-ais/gemma-4-26b-a4b-it` (free Gemma MoE model, $0)
+  - `google-ais/gemini-3.1-pro-preview` (paid Gemini model; requires setting `HRAMATKA_PAID_MODEL_OK=1` acknowledgement env var)
+  - `deepseek/deepseek-v4-pro` (cheap DeepSeek API model; requires setting `HRAMATKA_DEEPSEEK_API_KEY` env var)
 - `--keep`: Keep the local uvicorn stack running and do not clean up the tmp database/logs.
 - `--stop`: Terminate any kept stacks and clean up their state.
 - `--dry-run`: Dry run to validate env assembly and resolved paths.

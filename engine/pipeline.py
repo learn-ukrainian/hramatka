@@ -48,6 +48,7 @@ from .generate import (
     generate,
 )
 from .prompts import load_extractive_template
+from .transport import activity_model_registry, generator_model_id
 
 # Production defaults are registry-derived so registering a future extractive
 # activity makes it eligible without introducing a pipeline type branch.
@@ -201,6 +202,7 @@ def fingerprint_inputs(
     atlas_override_digest: str | None = None,
     pipeline_mode: str = "candidate-bank.v1",
     prompt_pack_digest: str | None = None,
+    model: str | None = None,
 ) -> dict:
     """The FULL bake-identity input set (Sol defect #4 / review item 4).
 
@@ -211,9 +213,10 @@ def fingerprint_inputs(
     re-run on the same inputs is genuinely idempotent and any input change (data,
     prompt, package, OR gate code) reshuffles the fingerprint.
     """
+    active_model = model or os.environ.get("HRAMATKA_GEN_MODEL", GEMMA_MODEL) or GEMMA_MODEL
     return {
         "engine_version": ENGINE_VERSION,
-        "model": GEMMA_MODEL,
+        "model": active_model,
         "anchor_hash": anchor_hash,
         "level": level,
         "pedagogy": pedagogy,
@@ -328,15 +331,25 @@ def reject_raw_candidate(
     detail: str,
 ) -> schema.HramatkaActivity:
     """Retain an invalid raw candidate with a first-class rejection reason."""
+    actual_model = None
+    act_reg = activity_model_registry.get()
+    if act_reg is not None:
+        actual_model = act_reg.get(id(raw_activity))
+
     if isinstance(raw_activity, dict):
         clean, evidence = schema.parse_raw_activity(raw_activity)
         raw_copy = dict(raw_activity)
     else:
         clean, evidence, raw_copy = {"type": "unknown"}, [], {"value": raw_activity}
+
+    act_provenance = dict(provenance)
+    if actual_model:
+        act_provenance["generator"] = actual_model
+
     ir = schema.HramatkaActivity(
         activity=clean,
         evidence=evidence,
-        provenance=dict(provenance),
+        provenance=act_provenance,
         raw_candidate=raw_copy,
         candidate_id=candidate_id,
     )
@@ -364,12 +377,22 @@ def gate_activity(
     disposition: `rejected` == dropped; `ready` / `review_required` retain the
     (possibly-filtered) candidate for selection or the review tray.
     """
+    actual_model = None
+    act_reg = activity_model_registry.get()
+    if act_reg is not None:
+        actual_model = act_reg.get(id(raw_activity))
+    if not actual_model:
+        actual_model = provenance.get("generator")
+
     activity_type = raw_activity.get("type") if isinstance(raw_activity, dict) else None
     entry = registry.ACTIVITY_REGISTRY.get(activity_type)
     if entry is None:
+        act_provenance = dict(provenance)
+        if actual_model:
+            act_provenance["generator"] = actual_model
         return reject_raw_candidate(
             raw_activity,
-            provenance,
+            act_provenance,
             candidate_id=candidate_id or "candidate-unknown",
             detail=(
                 f"Unsupported activity type {activity_type!r} for registry "
@@ -378,9 +401,12 @@ def gate_activity(
         )
     contract_errors = entry.raw_validator(raw_activity)
     if contract_errors:
+        act_provenance = dict(provenance)
+        if actual_model:
+            act_provenance["generator"] = actual_model
         return reject_raw_candidate(
             raw_activity,
-            provenance,
+            act_provenance,
             candidate_id=candidate_id or "candidate-unknown",
             detail="; ".join(contract_errors),
         )
@@ -389,16 +415,24 @@ def gate_activity(
     if {evidence_item.locator for evidence_item in evidence} != set(
         entry.evidence_locator(raw_activity)
     ):
+        act_provenance = dict(provenance)
+        if actual_model:
+            act_provenance["generator"] = actual_model
         return reject_raw_candidate(
             raw_activity,
-            provenance,
+            act_provenance,
             candidate_id=candidate_id or "candidate-unknown",
             detail="evidence locators do not match the registered raw contract",
         )
+
+    act_provenance = dict(provenance)
+    if actual_model:
+        act_provenance["generator"] = actual_model
+
     ir = schema.HramatkaActivity(
         activity=clean,
         evidence=evidence,
-        provenance=dict(provenance),
+        provenance=act_provenance,
         raw_candidate=dict(raw_activity),
         candidate_id=candidate_id,
     )
@@ -522,6 +556,8 @@ def _run(
         raise ValueError("count_plan values must be positive integers")
     selection_policy = selector.SelectorPolicy(density_target=sum(plan.values()))
     atlas_override_digest = _file_sha256(atlas_db)
+    
+    activity_model_token = activity_model_registry.set({})
     # The prompt pack supplies these immutable shared blocks once per lesson;
     # every phase must use the same snapshot/grounding rather than rebuilding
     # divergent context in its worker thread.  Legacy callers retain the
@@ -536,11 +572,16 @@ def _run(
     )
     snap["lemmas"] = sorted(grounding["lemmas"])
     snap["numerals"] = grounding["numeral_inventory"]
+    active_model = getattr(generator, "_model", None)
+    if not active_model:
+        active_model = os.environ.get("HRAMATKA_GEN_MODEL", GEMMA_MODEL) or GEMMA_MODEL
+
     template = (
         prompt_pack.TEMPLATE_VERSION
         if prompt_pack_context is not None
         else load_extractive_template()
     )
+
     fp_inputs = fingerprint_inputs(
         anchor_hash=snap["hash"],
         level=level,
@@ -560,6 +601,7 @@ def _run(
             if prompt_pack_context is not None
             else None
         ),
+        model=active_model,
     )
     fingerprint = _sha(
         json.dumps(fp_inputs, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -583,7 +625,7 @@ def _run(
         "level": level,
         "pedagogy": pedagogy,
         "phase": phase,
-        "generator": GEMMA_MODEL,
+        "generator": active_model,
         "fingerprint": fingerprint,
         "prompt_pack": (
             prompt_pack_context.get("provenance", {}).get("injection_sha256")
@@ -656,15 +698,22 @@ def _run(
             }
             if prompt_pack_context is not None:
                 generation_kwargs["prompt_pack_context"] = prompt_pack_context
+            raw_gen = _candidate_generator(
+                snap["body_uk"],
+                level,
+                types,
+                **generation_kwargs,
+            )
+            actual_model = generator_model_id.get()
+            if actual_model:
+                # The divergence between the fingerprint (which uses the CONFIGURED model)
+                # and provenance (which uses the SERVED model) is intentional
+                # (fingerprint = cache identity, provenance = truth).
+                provenance["generator"] = actual_model
             raw_batches = [
                 (
                     types,
-                    _candidate_generator(
-                        snap["body_uk"],
-                        level,
-                        types,
-                        **generation_kwargs,
-                    ),
+                    raw_gen,
                 )
             ]
         except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
@@ -876,6 +925,12 @@ def _run(
                 list(deficits),
                 **repair_kwargs,
             )
+            actual_model = generator_model_id.get()
+            if actual_model:
+                # The divergence between the fingerprint (which uses the CONFIGURED model)
+                # and provenance (which uses the SERVED model) is intentional
+                # (fingerprint = cache identity, provenance = truth).
+                provenance["generator"] = actual_model
         except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
             result.generation_error_type = type(exc).__name__
@@ -950,6 +1005,7 @@ def _run(
         ctx.update_progress_db(step="assembly")
     if ctx_token is not None:
         telemetry_ctx.reset(ctx_token)
+    activity_model_registry.reset(activity_model_token)
     return result
 
 

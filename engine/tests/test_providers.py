@@ -478,33 +478,98 @@ def test_calls_done_never_regresses_under_concurrent_updates():
         assert history[i] >= history[i - 1], f"Regressed calls_done at index {i}: {history}"
 
 
-# --- DeepInfra Gemma provider ----------------------------------------------
-def test_make_generator_deepinfra_absent_raises(monkeypatch):
-    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+# --- Multi-model selectable generation -------------------------------------
+def test_make_generator_resolves_all_4_models(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_PAID_MODEL_OK", "1")
+    monkeypatch.setenv("HRAMATKA_DEEPSEEK_API_KEY", "test-ds-key")
+
+    for model_id in providers.ALLOWED_MODELS:
+        monkeypatch.setenv("HRAMATKA_GEN_MODEL", model_id)
+        is_gemma = model_id in ("google-ais/gemma-4-31b-it", "google-ais/gemma-4-26b-a4b-it")
+        if is_gemma:
+            gen = providers.make_generator("gemma-ais")
+            assert gen._model == model_id
+        else:
+            with pytest.raises(ValueError) as exc:
+                providers.make_generator("gemma-ais")
+            assert "Cannot construct legacy gemma provider route" in str(exc.value)
+
+        # Direct ID call resolves too
+        gen_direct = providers.make_generator(model_id)
+        assert gen_direct._model == model_id
+
+
+def test_make_generator_unknown_model_fails_closed(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/unknown-model-id")
     with pytest.raises(ValueError) as exc:
-        providers.make_generator("deepinfra")
-    assert "unknown generator 'deepinfra'" in str(exc.value)
+        providers.validate_and_get_model()
+    assert "Invalid HRAMATKA_GEN_MODEL" in str(exc.value)
+    for model_id in providers.ALLOWED_MODELS:
+        assert model_id in str(exc.value)
+
+    with pytest.raises(ValueError):
+        providers.make_generator("google-ais/unknown-model-id")
+
+
+def test_gemini_paid_model_gate(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemini-3.1-pro-preview")
+    monkeypatch.delenv("HRAMATKA_PAID_MODEL_OK", raising=False)
 
     with pytest.raises(ValueError) as exc:
-        providers.make_bake_generator(["deepinfra"])
-    assert "Bake providers must be one or more of google-ais, openrouter" in str(exc.value)
+        providers.validate_and_get_model()
+    assert "HRAMATKA_PAID_MODEL_OK=1 is not set" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        providers.make_generator("google-ais/gemini-3.1-pro-preview")
+    assert "HRAMATKA_PAID_MODEL_OK=1 is not set" in str(exc.value)
 
 
-def test_make_generator_deepinfra_present(monkeypatch):
-    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
-    monkeypatch.setenv("HRAMATKA_DEEPINFRA_BASE_URL", "https://di.example/v1")
-    gen = providers.make_generator("deepinfra")
-    assert gen._model == "google/gemma-4-31B-it"
-    assert gen._transport.base_url == "https://di.example/v1"
-    assert gen._resolve_key() == "test-key-di"
+def test_deepseek_key_gate(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "deepseek/deepseek-v4-pro")
+    monkeypatch.delenv("HRAMATKA_DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(ValueError) as exc:
+        providers.validate_and_get_model()
+    assert "HRAMATKA_DEEPSEEK_API_KEY is missing/empty" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        providers.make_generator("deepseek/deepseek-v4-pro")
+    assert "HRAMATKA_DEEPSEEK_API_KEY is missing/empty" in str(exc.value)
 
 
-def test_make_bake_generator_includes_deepinfra_when_enabled(monkeypatch):
-    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
-    selector = providers.make_bake_generator()
-    assert "deepinfra" in selector._generators
-    assert "google-ais" in selector._generators
-    assert "openrouter" in selector._generators
+def test_failover_isolation(monkeypatch):
+    # Gemma IDs must have failover engaged:
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemma-4-31b-it")
+    gen = providers.make_generator("gemma-ais")
+    assert isinstance(gen, providers.FailoverGeneratorPort)
+
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemma-4-26b-a4b-it")
+    gen = providers.make_generator("gemma-ais")
+    assert isinstance(gen, providers.FailoverGeneratorPort)
+
+    # Gemini and DeepSeek get NO failover (failover port does not engage):
+    monkeypatch.setenv("HRAMATKA_PAID_MODEL_OK", "1")
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemini-3.1-pro-preview")
+    gen = providers.make_generator("google-ais/gemini-3.1-pro-preview")
+    assert not isinstance(gen, providers.FailoverGeneratorPort)
+    assert isinstance(gen, AISGeneratorPort)
+    assert gen._model == "google-ais/gemini-3.1-pro-preview"
+
+    # Verify that trying to resolve legacy names fails for non-gemma models
+    with pytest.raises(ValueError) as exc:
+        providers.make_generator("gemma-ais")
+    assert "Cannot construct legacy gemma provider route" in str(exc.value)
+
+    monkeypatch.setenv("HRAMATKA_DEEPSEEK_API_KEY", "test-ds-key")
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "deepseek/deepseek-v4-pro")
+    gen = providers.make_generator("deepseek/deepseek-v4-pro")
+    assert not isinstance(gen, providers.FailoverGeneratorPort)
+    assert isinstance(gen, AISGeneratorPort)
+    assert gen._model == "deepseek/deepseek-v4-pro"
+
+    with pytest.raises(ValueError) as exc:
+        providers.make_generator("gemma-ais")
+    assert "Cannot construct legacy gemma provider route" in str(exc.value)
 
 
 def test_deepinfra_transport_request_shape(monkeypatch):
@@ -626,3 +691,71 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
         assert events[0]["model"] == "m"
     finally:
         providers.telemetry_ctx.reset(token)
+
+
+def test_provenance_stamp_fallback_fired(monkeypatch):
+    primary_calls = 0
+    fallback_calls = 0
+
+    def mock_primary_transport(prompt, *, api_key, model, timeout_s):
+        nonlocal primary_calls
+        primary_calls += 1
+        raise GeneratorUnavailable("primary outage", retry_exhausted=True)
+
+    def mock_fallback_transport(prompt, *, api_key, model, timeout_s):
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return '{"activities": []}'
+
+    # Clear/mock environment for fallback
+    monkeypatch.setenv("HRAMATKA_GEMMA_FALLBACK_API_KEY", "fallback-key")
+    monkeypatch.setenv("HRAMATKA_AIS_API_KEY", "ais-key")
+
+    primary = AISGeneratorPort(
+        api_key_env="HRAMATKA_AIS_API_KEY",
+        model="google-ais/gemma-4-31b-it",
+        transport=mock_primary_transport,
+    )
+    fallback = AISGeneratorPort(
+        api_key_env="HRAMATKA_GEMMA_FALLBACK_API_KEY",
+        model="google/gemma-4-31b-it",
+        transport=mock_fallback_transport,
+    )
+
+    port = providers._with_failover(primary, fallback)
+
+    # Reset ContextVar
+    from hramatka.engine.transport import generator_model_id
+    token = generator_model_id.set(None)
+    try:
+        res = port("test prompt")
+        assert res == '{"activities": []}'
+        assert primary_calls == 1
+        assert fallback_calls == 1
+        # The stamped generator must be the fallback model ID!
+        assert generator_model_id.get() == "google/gemma-4-31b-it"
+    finally:
+        generator_model_id.reset(token)
+
+
+def test_make_bake_generator_no_env_default(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GEN_MODEL", raising=False)
+    selector = providers.make_bake_generator()
+    assert "google-ais" in selector._generators
+    assert "openrouter" in selector._generators
+    assert len(selector._generators) == 2
+
+    # Check that settings.bake_providers is honored (passing provider_names explicitly)
+    selector_subset = providers.make_bake_generator(provider_names=("google-ais",))
+    assert "google-ais" in selector_subset._generators
+    assert len(selector_subset._generators) == 1
+
+
+def test_make_bake_generator_includes_deepinfra_when_enabled(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GEN_MODEL", raising=False)
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key-di")
+    selector = providers.make_bake_generator()
+    assert "deepinfra" in selector._generators
+    assert "google-ais" in selector._generators
+    assert "openrouter" in selector._generators
+    assert len(selector._generators) == 3

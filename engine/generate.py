@@ -24,6 +24,8 @@ from .transport import (
     GEMMA_MODEL,
     GenerationUnparseable,
     GeneratorUnavailable,
+    activity_model_registry,
+    generator_model_id,
 )
 
 __all__ = [
@@ -310,6 +312,12 @@ def _generate_from_prompt(
         if obj is not None:
             activities = _activities_from_parsed(obj)
             if activities is not None:
+                actual_model = generator_model_id.get()
+                if actual_model:
+                    registry = activity_model_registry.get()
+                    if registry is not None:
+                        for act in activities:
+                            registry[id(act)] = actual_model
                 if retain_all:
                     return activities
                 return [activity for activity in activities if isinstance(activity, dict)]
@@ -345,7 +353,14 @@ def generate_prompt_pack(
         raw = generator(prompt)
         parsed = extract_json(raw)
         try:
-            return prompt_pack.validate_response_envelope(parsed, context)
+            activities = prompt_pack.validate_response_envelope(parsed, context)
+            actual_model = generator_model_id.get()
+            if actual_model:
+                registry = activity_model_registry.get()
+                if registry is not None:
+                    for act in activities:
+                        registry[id(act)] = actual_model
+            return activities
         except prompt_pack.PromptPackError as exc:
             parse_error = str(exc)
             # ``parsed is None`` is genuinely malformed/raw-unparseable output.
@@ -358,6 +373,12 @@ def generate_prompt_pack(
                     payload, object_count = repaired
                     try:
                         activities = prompt_pack.validate_response_envelope(payload, context)
+                        actual_model = generator_model_id.get()
+                        if actual_model:
+                            registry = activity_model_registry.get()
+                            if registry is not None:
+                                for act in activities:
+                                    registry[id(act)] = actual_model
                     except prompt_pack.PromptPackError as repair_exc:
                         parse_error = str(repair_exc)
                         last_failure_was_envelope_validation = True

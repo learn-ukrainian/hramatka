@@ -14,6 +14,7 @@ Key values are never logged; only the env var NAME appears in messages.
 
 from __future__ import annotations
 
+import contextvars
 import os
 from pathlib import Path
 from typing import Protocol
@@ -21,6 +22,9 @@ from typing import Protocol
 GEMMA_MODEL = "google-ais/gemma-4-31b-it"
 GEMMA_TIMEOUT_S = 900
 AIS_API_KEY_ENV = "HRAMATKA_AIS_API_KEY"
+
+generator_model_id = contextvars.ContextVar("generator_model_id", default=None)
+activity_model_registry = contextvars.ContextVar("activity_model_registry", default=None)
 
 
 class GeneratorUnavailable(RuntimeError):
@@ -116,9 +120,11 @@ class AISGeneratorPort:
     def __call__(self, prompt: str) -> str:
         key = self._resolve_key()
         try:
-            return self._transport(
+            res = self._transport(
                 prompt, api_key=key, model=self._model, timeout_s=self._timeout_s
             )
+            generator_model_id.set(self._model)
+            return res
         except SystemExit as exc:  # a fail-closed transport guard must not crash the worker
             raise GeneratorUnavailable(
                 f"google-ais generation unavailable: {exc}"

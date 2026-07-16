@@ -608,39 +608,205 @@ class RoundRobinGeneratorSelector:
         return self.for_bake()(prompt)
 
 
+ALLOWED_MODELS = {
+    "google-ais/gemma-4-31b-it",
+    "google-ais/gemma-4-26b-a4b-it",
+    "google-ais/gemini-3.1-pro-preview",
+    "deepseek/deepseek-v4-pro",
+}
+
+
+def validate_and_get_model() -> str:
+    """Validate HRAMATKA_GEN_MODEL environment variable and return the selected model.
+
+    Raises ValueError for unknown models, paid-model authorization issues, or deepseek key absence.
+    """
+    model = os.environ.get("HRAMATKA_GEN_MODEL", "google-ais/gemma-4-31b-it")
+    if not model:
+        model = "google-ais/gemma-4-31b-it"
+    if model not in ALLOWED_MODELS:
+        raise ValueError(
+            f"Invalid HRAMATKA_GEN_MODEL {model!r}. "
+            f"Allowed values are: {', '.join(sorted(ALLOWED_MODELS))}"
+        )
+    if model == "google-ais/gemini-3.1-pro-preview":
+        if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
+            raise ValueError(
+                "Paid model 'google-ais/gemini-3.1-pro-preview' selected, "
+                "but HRAMATKA_PAID_MODEL_OK=1 is not set. Gemini 3.1 Pro is "
+                "a paid model and incurs API charges."
+            )
+    elif model == "deepseek/deepseek-v4-pro":
+        if not os.environ.get("HRAMATKA_DEEPSEEK_API_KEY"):
+            raise ValueError(
+                "DeepSeek model 'deepseek/deepseek-v4-pro' selected, "
+                "but HRAMATKA_DEEPSEEK_API_KEY is missing/empty."
+            )
+    return model
+
+
+# Run validation at import time to fail-closed during startup
+_ACTIVE_STARTUP_MODEL = validate_and_get_model()
+
+
+def _build_generator_port(model_id: str) -> AISGeneratorPort:
+    """Construct provider-native generator port for the selected model ID."""
+    if model_id == "google-ais/gemma-4-31b-it":
+        ais, openrouter, _ = _gemma_routes()
+        return _with_failover(ais, openrouter)
+
+    elif model_id == "google-ais/gemma-4-26b-a4b-it":
+        # Create routes with the specific model ID and fallback
+        ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+        openrouter_base = os.environ.get(
+            GEMMA_FALLBACK_BASE_URL_ENV, DEFAULT_GEMMA_FALLBACK_BASE_URL
+        )
+        fallback_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, "google/gemma-4-26b-a4b-it")
+        ais = AISGeneratorPort(
+            api_key_env=AIS_API_KEY_ENV,
+            model="google-ais/gemma-4-26b-a4b-it",
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+        )
+        openrouter = AISGeneratorPort(
+            api_key_env=GEMMA_FALLBACK_API_KEY_ENV,
+            api_key_file_env=GEMMA_FALLBACK_API_KEY_FILE_ENV,
+            model=fallback_model,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=openrouter_base,
+                host="openrouter",
+                strip_model_prefix=False,
+            ),
+        )
+        # Existing OpenRouter fallback applies to gemma ids
+        return _with_failover(ais, openrouter)
+
+    elif model_id == "google-ais/gemini-3.1-pro-preview":
+        # Gemini gets NO fallback/failover to OpenRouter
+        ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+        return AISGeneratorPort(
+            api_key_env=AIS_API_KEY_ENV,
+            model="google-ais/gemini-3.1-pro-preview",
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+        )
+
+    elif model_id == "deepseek/deepseek-v4-pro":
+        # DeepSeek gets NO fallback/failover to OpenRouter
+        base = os.environ.get(DEEPSEEK_BASE_URL_ENV, DEFAULT_DEEPSEEK_BASE_URL)
+        return AISGeneratorPort(
+            api_key_env=DEEPSEEK_API_KEY_ENV,
+            model="deepseek/deepseek-v4-pro",
+            transport=HttpChatTransport(base_url=base, host="deepseek"),
+        )
+    else:
+        raise ValueError(f"Unsupported model ID: {model_id}")
+
+
 def make_bake_generator(
     provider_names: tuple[str, ...] | list[str] | None = None,
 ) -> RoundRobinGeneratorSelector:
     """Create load-balanced primary routes, each with the opposite failover host."""
-    allowed = _get_bake_providers()
-    names = tuple(provider_names or allowed)
-    unknown = sorted(set(names) - set(allowed))
-    if not names or unknown:
-        raise ValueError(f"Bake providers must be one or more of {', '.join(allowed)}.")
-    ais, openrouter, deepinfra = _gemma_routes()
-    routes: dict[str, AISGeneratorPort] = {
-        "google-ais": _with_failover(ais, openrouter),
-        "openrouter": _with_failover(openrouter, ais),
-    }
-    if deepinfra is not None:
-        routes["deepinfra"] = _with_failover(deepinfra, ais)
-    return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(names)})
+    active_model = validate_and_get_model()
+    is_gemma = active_model in ("google-ais/gemma-4-31b-it", "google-ais/gemma-4-26b-a4b-it")
+    if is_gemma:
+        allowed = _get_bake_providers()
+        names = tuple(provider_names or allowed)
+        unknown = sorted(set(names) - set(allowed))
+        if not names or unknown:
+            raise ValueError(f"Bake providers must be one or more of {', '.join(allowed)}.")
+        
+        if active_model == "google-ais/gemma-4-26b-a4b-it":
+            ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+            openrouter_base = os.environ.get(
+                GEMMA_FALLBACK_BASE_URL_ENV, DEFAULT_GEMMA_FALLBACK_BASE_URL
+            )
+            fallback_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, "google/gemma-4-26b-a4b-it")
+            ais = AISGeneratorPort(
+                api_key_env=AIS_API_KEY_ENV,
+                model="google-ais/gemma-4-26b-a4b-it",
+                timeout_s=GEMMA_TIMEOUT_S,
+                transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+            )
+            openrouter = AISGeneratorPort(
+                api_key_env=GEMMA_FALLBACK_API_KEY_ENV,
+                api_key_file_env=GEMMA_FALLBACK_API_KEY_FILE_ENV,
+                model=fallback_model,
+                timeout_s=GEMMA_TIMEOUT_S,
+                transport=HttpChatTransport(
+                    base_url=openrouter_base,
+                    host="openrouter",
+                    strip_model_prefix=False,
+                ),
+            )
+            deepinfra = None
+            if DEEPINFRA_API_KEY_ENV in os.environ:
+                deepinfra_base = os.environ.get(DEEPINFRA_BASE_URL_ENV, DEFAULT_DEEPINFRA_BASE_URL)
+                deepinfra = AISGeneratorPort(
+                    api_key_env=DEEPINFRA_API_KEY_ENV,
+                    model=DEEPINFRA_MODEL,
+                    timeout_s=GEMMA_TIMEOUT_S,
+                    transport=HttpChatTransport(
+                        base_url=deepinfra_base,
+                        host="deepinfra",
+                        strip_model_prefix=False,
+                    ),
+                )
+        else:
+            ais, openrouter, deepinfra = _gemma_routes()
+            
+        routes: dict[str, AISGeneratorPort] = {
+            "google-ais": _with_failover(ais, openrouter),
+            "openrouter": _with_failover(openrouter, ais),
+        }
+        if deepinfra is not None:
+            routes["deepinfra"] = _with_failover(deepinfra, ais)
+        return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(names)})
+    else:
+        gen = _build_generator_port(active_model)
+        return RoundRobinGeneratorSelector({active_model: gen})
 
 
 def make_generator(name: str) -> AISGeneratorPort:
     """Name -> a configured generator (prompt -> raw text). The model bake-off
     swaps engines by name through this registry.
-
-      "gemma-ais" / "gemma" / "google-ais" -> AIS-primary Gemma, OpenRouter fallback
-      "openrouter"                           -> OpenRouter-primary Gemma, AIS fallback
-      "deepinfra"                            -> DeepInfra-primary Gemma, AIS fallback
-      "deepseek"                            -> deepseek-chat, HRAMATKA_DEEPSEEK_API_KEY + _BASE_URL
-      "deepseek-v4-flash" / "deepseek-v4-pro" -> explicit V4 tier, same DeepSeek route
     """
+    active_model = validate_and_get_model()
+    is_gemma = active_model in ("google-ais/gemma-4-31b-it", "google-ais/gemma-4-26b-a4b-it")
+
     key = name.lower()
+    legacy_gemma_names = {"gemma-ais", "gemma", "google-ais", "openrouter", "deepinfra"}
+    if not is_gemma and key in legacy_gemma_names:
+        raise ValueError(
+            f"Cannot construct legacy gemma provider route {name!r} when "
+            f"HRAMATKA_GEN_MODEL is set to non-gemma model {active_model!r}."
+        )
+
+    # If the requested name matches one of the legacy Gemma aliases,
+    # resolve it to the active model selected by HRAMATKA_GEN_MODEL.
     if key in ("gemma-ais", "gemma", "google-ais"):
-        ais, openrouter, deepinfra = _gemma_routes()
-        return _with_failover(ais, openrouter)
+        return _build_generator_port(active_model)
+
+    # If the requested name is one of the canonical 4 model IDs, build it directly.
+    for allowed_model in ALLOWED_MODELS:
+        if key == allowed_model.lower():
+            if allowed_model == "google-ais/gemini-3.1-pro-preview":
+                if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
+                    raise ValueError(
+                        "Paid model 'google-ais/gemini-3.1-pro-preview' selected, "
+                        "but HRAMATKA_PAID_MODEL_OK=1 is not set. Gemini 3.1 Pro is "
+                        "a paid model and incurs API charges."
+                    )
+            elif allowed_model == "deepseek/deepseek-v4-pro":
+                if not os.environ.get("HRAMATKA_DEEPSEEK_API_KEY"):
+                    raise ValueError(
+                        "DeepSeek model 'deepseek/deepseek-v4-pro' selected, "
+                        "but HRAMATKA_DEEPSEEK_API_KEY is missing/empty."
+                    )
+            return _build_generator_port(allowed_model)
+
+    # Support other legacy names for backward compatibility (e.g. in tests)
     if key == "openrouter":
         ais, openrouter, deepinfra = _gemma_routes()
         return _with_failover(openrouter, ais)
@@ -663,7 +829,6 @@ def make_generator(name: str) -> AISGeneratorPort:
             transport=HttpChatTransport(base_url=base),
         )
 
-    known = ["gemma-ais", "openrouter", "deepseek", "deepseek-v4-flash", "deepseek-v4-pro"]
-    if "DEEPINFRA_API_KEY" in os.environ:
-        known.append("deepinfra")
+    known = sorted(list(ALLOWED_MODELS))
     raise ValueError(f"unknown generator {name!r}; known: {', '.join(known)}")
+

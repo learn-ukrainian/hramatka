@@ -439,3 +439,73 @@ def test_snapshot_annotation_and_fingerprint_record_wave0_inputs():
     assert inputs["selector_policy"]["version"]
     assert "max_regeneration_attempts" in inputs
     assert inputs["model"] and inputs["grounding_digest"] and inputs["data_bundle"]
+
+
+def test_mixed_generator_bake_stamps(tmp_path, monkeypatch):
+    from hramatka.engine.transport import generator_model_id
+    call_count = 0
+    ev1 = "Третина українців за рік не прочитує жодної книжки"
+    ev2 = (
+        "На думку вчених, читання є одним з найскладніших "
+        "завдань для мозку"
+    )
+
+    def custom_generator(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            generator_model_id.set("google-ais/gemma-4-31b-it")
+            return json.dumps({
+                "activities": [
+                    {
+                        "type": "true-false",
+                        "instruction": "Познач правильне твердження.",
+                        "items": [
+                            {
+                                "statement": ev1,
+                                "correct": True,
+                                "evidence": ev1,
+                            }
+                        ]
+                    }
+                ]
+            })
+        else:
+            generator_model_id.set("openrouter/google/gemma-4-31b-it")
+            return json.dumps({
+                "activities": [
+                    {
+                        "type": "true-false",
+                        "instruction": "Познач правильне твердження.",
+                        "items": [
+                            {
+                                "statement": ev2,
+                                "correct": True,
+                                "evidence": ev2,
+                            }
+                        ]
+                    }
+                ]
+            })
+
+    # Reset ContextVar
+    token = generator_model_id.set(None)
+    try:
+        result = pipeline.run(
+            fixtures.load_anchor(),
+            types=["true-false"],
+            count_plan={"true-false": 2},
+            generator=custom_generator,
+            out_dir=tmp_path / "out",
+            cache_dir=tmp_path / "cache",
+            use_cache=False,
+            max_regeneration_attempts=1,
+        )
+        assert len(result.ready) == 2
+        # Check that they have different generator stamps and none were overwritten!
+        act0_model = result.activities[0].provenance["generator"]
+        act1_model = result.activities[1].provenance["generator"]
+        assert act0_model == "google-ais/gemma-4-31b-it"
+        assert act1_model == "openrouter/google/gemma-4-31b-it"
+    finally:
+        generator_model_id.reset(token)

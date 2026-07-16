@@ -860,7 +860,11 @@ class EngineLessonBaker:
             "level": "b1",
             "payload": payload,
             "answer_key": _answer_key(ir),
-            "provenance": {"source": "generated", "generator": GEMMA_MODEL, "gates": gates},
+            "provenance": {
+                "source": "generated",
+                "generator": ir.provenance.get("generator", GEMMA_MODEL),
+                "gates": gates,
+            },
         }
         note = (
             _teacher_note(ir)
@@ -894,7 +898,7 @@ class EngineLessonBaker:
             "edited": False,
             "provenance": {
                 "source": "generated",
-                "generator": GEMMA_MODEL,
+                "generator": ir.provenance.get("generator", GEMMA_MODEL),
                 "gates": gates,
                 "external_options": review,
             },
@@ -1077,7 +1081,7 @@ def _rejected_activity_document(ir, index: int) -> dict:
         "answer_key": _answer_key(ir),
         "provenance": {
             "source": "generated",
-            "generator": GEMMA_MODEL,
+            "generator": ir.provenance.get("generator", GEMMA_MODEL),
             "gates": ["gated"],
         },
     }
