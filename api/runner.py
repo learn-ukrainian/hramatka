@@ -20,10 +20,22 @@ from .validation import validate_lesson
 log = logging.getLogger(__name__)
 
 _SAFE_FAILURE_MESSAGE = "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
-_PROVIDER_RETRY_DELAY_SECONDS = 0.25
+_PROVIDER_RETRY_DELAY_SECONDS = 1.0
 _STOP_JOIN_TIMEOUT_SECONDS = 10
 _DEFAULT_WORKERS = 4
 _MAX_WORKERS = 8
+_SAFE_GENERATION_ERROR_TYPES = frozenset(
+    {
+        "GeneratorUnavailable",
+        "GenerationUnparseable",
+        "PromptPackError",
+        "NoEligibleActivities",
+        "DataConfigError",
+        "DataDriftError",
+        "mixed",
+    }
+)
+_SAFE_PROGRESS_STEPS = frozenset({"generation", "gates", "assembly"})
 
 
 class BakeRunner:
@@ -150,6 +162,7 @@ class BakeRunner:
         return None
     def _run_job(self, job) -> None:  # JobRecord is deliberately duck-typed for test seams.
         lesson = None
+        template = None
         try:
             template = self._bake_with_one_provider_retry(job)
             if not self._store.set_step(job.teacher_id, job.id, "перевірка"):
@@ -158,8 +171,10 @@ class BakeRunner:
             validate_lesson(lesson)
             self._store.complete(job.teacher_id, job.id, lesson)
         except BakeError as error:
+            self._log_safe_bake_error(job, error)
             self._fail_bake_error(job.teacher_id, job.id, error)
         except (ValidationError, ValueError) as error:
+            self._log_safe_bake_error(job, error)
             try:
                 latest_job = self._store.get(job.teacher_id, job.id)
                 progress = (
@@ -250,10 +265,41 @@ class BakeRunner:
         for attempt in range(2):
             try:
                 return self._baker.bake(request, job.duration, job.focus)
-            except ProviderUnavailable:
-                if attempt == 1 or self._stop.wait(_PROVIDER_RETRY_DELAY_SECONDS):
+            except ProviderUnavailable as error:
+                # The adapter preserves the underlying transport signal: retry
+                # a fresh bake only after its own bounded retry/failover path
+                # was exhausted.  Do not re-run auth, request-shape, or other
+                # explicitly non-retryable failures.
+                if (
+                    attempt == 1
+                    or not error.retry_exhausted
+                    or self._stop.wait(_PROVIDER_RETRY_DELAY_SECONDS * (2**attempt))
+                ):
                     raise
         raise AssertionError("Provider retry loop must return or raise.")  # pragma: no cover
+
+    def _log_safe_bake_error(self, job, error: Exception) -> None:
+        """Journal-only failure taxonomy; never render exception text or content."""
+        error_type = getattr(error, "generation_error_type", type(error).__name__)
+        if error_type not in _SAFE_GENERATION_ERROR_TYPES:
+            error_type = type(error).__name__
+        step = "unknown"
+        try:
+            latest = self._store.get(job.teacher_id, job.id)
+            progress = getattr(latest, "progress", None) if latest is not None else None
+            candidate = progress.get("step") if isinstance(progress, dict) else None
+            if candidate in _SAFE_PROGRESS_STEPS:
+                step = candidate
+        except Exception:
+            # Failure taxonomy is observability only; never interfere with the
+            # durable safe failure path when storage is impaired.
+            pass
+        log.warning(
+            "bake failure diagnostic error_type=%s step=%s retry_exhausted=%s",
+            error_type,
+            step,
+            bool(getattr(error, "retry_exhausted", False)),
+        )
 
     def _fail_bake_error(self, teacher_id: str, lesson_id: str, error: BakeError) -> None:
         # Classification uses only typed exceptions (isinstance). Never inspect

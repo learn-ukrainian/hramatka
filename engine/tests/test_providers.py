@@ -44,7 +44,11 @@ def _seq(steps: list, ok_body: dict | None = None):
 
 
 def _transport(handler) -> providers.HttpChatTransport:
-    return providers.HttpChatTransport(base_url="https://prov.example/v1", client=_client(handler))
+    return providers.HttpChatTransport(
+        base_url="https://prov.example/v1",
+        client=_client(handler),
+        retry_backoff_s=0,
+    )
 
 
 def _failover(
@@ -71,6 +75,7 @@ def _failover(
             client=_client(counted_fallback),
             host="openrouter",
             strip_model_prefix=False,
+            retry_backoff_s=0,
         ),
     )
     return (
@@ -78,7 +83,9 @@ def _failover(
             api_key="AIS-PRIMARY-KEY",
             fallback=fallback,
             transport=providers.HttpChatTransport(
-                base_url="https://ais.example/v1", client=_client(counted_primary)
+                base_url="https://ais.example/v1",
+                client=_client(counted_primary),
+                retry_backoff_s=0,
             ),
         ),
         primary_calls,
@@ -121,7 +128,7 @@ def test_wire_model_strips_our_provider_prefix():
     assert "/" not in seen["body"]["model"]
 
 
-# --- retry semantics: single retry on 5xx / timeout ------------------------
+# --- retry semantics: bounded backoff on transient provider failures --------
 def test_retries_once_on_5xx_then_succeeds():
     handler, calls = _seq([503, 200])
     out = _transport(handler)("p", api_key="k", model="m", timeout_s=5)
@@ -129,11 +136,11 @@ def test_retries_once_on_5xx_then_succeeds():
     assert calls["n"] == 2
 
 
-def test_two_5xx_raise_generator_unavailable_after_one_retry():
-    handler, calls = _seq([503, 500])
+def test_three_5xx_raise_generator_unavailable_after_bounded_retries():
+    handler, calls = _seq([503, 500, 502])
     with pytest.raises(GeneratorUnavailable):
         _transport(handler)("p", api_key="k", model="m", timeout_s=5)
-    assert calls["n"] == 2  # exactly one retry, no third attempt
+    assert calls["n"] == 3
 
 
 def test_retries_once_on_timeout_then_succeeds():
@@ -143,11 +150,24 @@ def test_retries_once_on_timeout_then_succeeds():
     assert calls["n"] == 2
 
 
-def test_two_timeouts_raise_generator_unavailable():
-    handler, calls = _seq(["timeout", "timeout"])
+def test_three_timeouts_raise_generator_unavailable():
+    handler, calls = _seq(["timeout", "timeout", "timeout"])
     with pytest.raises(GeneratorUnavailable):
         _transport(handler)("p", api_key="k", model="m", timeout_s=5)
-    assert calls["n"] == 2
+    assert calls["n"] == 3
+
+
+def test_connection_error_retries_with_the_same_bounded_policy():
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.ConnectError("simulated connection failure")
+        return httpx.Response(200, json=OK_BODY)
+
+    assert _transport(handler)("p", api_key="k", model="m", timeout_s=5) == '{"activities": []}'
+    assert calls["n"] == 3
 
 
 def test_4xx_is_unavailable_and_not_retried():
@@ -206,7 +226,7 @@ def test_ais_retry_exhaustion_uses_openrouter_once_and_never_logs_key_or_prompt(
     with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
         assert generator(sentinel_prompt) == '{"activities": []}'
 
-    assert primary_calls["n"] == 2  # existing primary retry discipline
+    assert primary_calls["n"] == 3  # bounded primary retry discipline
     assert fallback_calls["n"] == 1
     assert seen["body"]["model"] == providers.DEFAULT_GEMMA_FALLBACK_MODEL
     assert seen["body"]["messages"] == [{"role": "user", "content": sentinel_prompt}]
@@ -250,7 +270,7 @@ def test_ais_401_never_uses_openrouter_or_logs_429_warning(monkeypatch, caplog):
 
 def test_openrouter_429_after_ais_retry_exhaustion_is_sanitized(monkeypatch, caplog):
     monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
-    primary_handler, _ = _seq([503, 500])
+    primary_handler, _ = _seq([503, 500, 502])
     fallback_handler, _ = _seq([429])
     generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
 
@@ -260,7 +280,7 @@ def test_openrouter_429_after_ais_retry_exhaustion_is_sanitized(monkeypatch, cap
 
     assert str(exc.value) == "provider generation failed"
     assert not exc.value.retry_exhausted
-    assert primary_calls["n"] == 2
+    assert primary_calls["n"] == 3
     assert fallback_calls["n"] == 1  # do not retry a rate-limited fallback host
     assert "openrouter 429 model=google/gemma-4-31b-it fallback-eligible" in caplog.text
     assert "ais 429 model=" not in caplog.text
@@ -268,21 +288,21 @@ def test_openrouter_429_after_ais_retry_exhaustion_is_sanitized(monkeypatch, cap
 
 def test_ais_and_openrouter_retry_exhaustion_stays_generator_unavailable(monkeypatch):
     monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
-    primary_handler, _ = _seq([503, 500])
-    fallback_handler, _ = _seq([503, 500])
+    primary_handler, _ = _seq([503, 500, 502])
+    fallback_handler, _ = _seq([503, 500, 502])
     generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
 
     with pytest.raises(GeneratorUnavailable):
         generator("prompt")
 
-    assert primary_calls["n"] == 2
-    assert fallback_calls["n"] == 2  # fallback has the same one-retry discipline
+    assert primary_calls["n"] == 3
+    assert fallback_calls["n"] == 3  # fallback has the same bounded retry discipline
 
 
 def test_ais_retry_exhaustion_without_fallback_key_preserves_existing_failure(monkeypatch):
     monkeypatch.delenv(providers.GEMMA_FALLBACK_API_KEY_ENV, raising=False)
     monkeypatch.delenv(providers.GEMMA_FALLBACK_API_KEY_FILE_ENV, raising=False)
-    primary_handler, _ = _seq([503, 500])
+    primary_handler, _ = _seq([503, 500, 502])
     generator, primary_calls, fallback_calls = _failover(
         primary_handler, lambda _request: pytest.fail("fallback must stay disabled")
     )
@@ -290,7 +310,7 @@ def test_ais_retry_exhaustion_without_fallback_key_preserves_existing_failure(mo
     with pytest.raises(GeneratorUnavailable):
         generator("prompt")
 
-    assert primary_calls["n"] == 2
+    assert primary_calls["n"] == 3
     assert fallback_calls["n"] == 0
 
 

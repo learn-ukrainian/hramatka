@@ -41,7 +41,7 @@ from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
 
-from .port import BakeError, FloorUnmetError, ProviderUnavailable
+from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -425,7 +425,14 @@ class EngineLessonBaker:
             self._resolved_bundle = data.active_bundle()
         return self._resolved_bundle
 
-    def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
+    def bake(
+        self,
+        anchor: str | dict,
+        duration: int,
+        focus: str | None,
+        *,
+        _allow_prompt_pack: bool = True,
+    ) -> dict[str, Any]:
         """Run the engine and return a lu.lesson.v1 block template.
 
         The durable layer (`api.lesson.materialize_lesson`) binds id/anchor/
@@ -437,7 +444,7 @@ class EngineLessonBaker:
                 "Invalid bake duration (%s); using the 60-minute B1 sizing plan.", fallback_kind
             )
         plan = phase_plan(B1, resolved_duration)
-        prompt_pack_enabled = prompt_pack.enabled()
+        prompt_pack_enabled = _allow_prompt_pack and prompt_pack.enabled()
         phase_count_plans = (
             _prompt_pack_candidate_count_plan(plan)
             if prompt_pack_enabled
@@ -451,21 +458,33 @@ class EngineLessonBaker:
         if prompt_pack_enabled:
             # One immutable snapshot/grounding/kit pass is shared by all three
             # phase workers.  It is local, deterministic, and content-hashed.
-            with data.use_bundle(bundle):
-                precomputed_snapshot = pipeline.snapshot_anchor(anchor)
-                precomputed_grounding = retrieval.build_grounding_pack(
-                    precomputed_snapshot["body_uk"], B1
-                )
-                precomputed_snapshot["lemmas"] = sorted(precomputed_grounding["lemmas"])
-                precomputed_snapshot["numerals"] = precomputed_grounding["numeral_inventory"]
-                shared_pack = prompt_pack.build_shared_input(
-                    snapshot=precomputed_snapshot,
-                    grounding=precomputed_grounding,
-                    duration_minutes=resolved_duration,
-                    focus=focus,
-                    phase_count_plans=phase_count_plans,
-                    visible_slots_by_phase=Counter(plan),
-                )
+            try:
+                with data.use_bundle(bundle):
+                    precomputed_snapshot = pipeline.snapshot_anchor(anchor)
+                    precomputed_grounding = retrieval.build_grounding_pack(
+                        precomputed_snapshot["body_uk"], B1
+                    )
+                    precomputed_snapshot["lemmas"] = sorted(precomputed_grounding["lemmas"])
+                    precomputed_snapshot["numerals"] = precomputed_grounding["numeral_inventory"]
+                    shared_pack = prompt_pack.build_shared_input(
+                        snapshot=precomputed_snapshot,
+                        grounding=precomputed_grounding,
+                        duration_minutes=resolved_duration,
+                        focus=focus,
+                        phase_count_plans=phase_count_plans,
+                        visible_slots_by_phase=Counter(plan),
+                    )
+            except prompt_pack.PromptPackError:
+                # The pack is an output-quality protocol, not an availability
+                # dependency.  A deterministic preflight rejection must leave
+                # the ordinary generator/gate pipeline available; all normal
+                # gates still run on that fallback path.  Never log the error
+                # text because it may name a source-derived condition.
+                log.warning("Prompt-pack preflight rejected; using legacy generation path.")
+                prompt_pack_enabled = False
+                phase_count_plans = _candidate_count_plan(plan)
+                precomputed_snapshot = None
+                precomputed_grounding = None
 
         from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 
@@ -567,6 +586,25 @@ class EngineLessonBaker:
                 if result.generation_error
             }
             if errored:
+                error_results = [
+                    result for result in phase_results.values() if result.generation_error
+                ]
+                error_types = {
+                    result.generation_error_type or "Unknown" for result in error_results
+                }
+                error_type = next(iter(error_types)) if len(error_types) == 1 else "mixed"
+                if prompt_pack_enabled and error_types == {"PromptPackError"}:
+                    # Prompt-pack validation is a quality enhancement.  If all
+                    # phase responses violate that private envelope, retry the
+                    # same bake through the ordinary generator/gate path rather
+                    # than turning its stricter protocol into an outage.
+                    log.warning("Prompt-pack response rejected; using legacy generation path.")
+                    return self.bake(
+                        anchor,
+                        duration,
+                        focus,
+                        _allow_prompt_pack=False,
+                    )
                 if prompt_pack_enabled:
                     had_success = any(
                         (result.ready or result.review_required)
@@ -588,27 +626,44 @@ class EngineLessonBaker:
                     else:
                         # Total failure under pack: preserve classification
                         if any(
-                            (err or "").startswith("GeneratorUnavailable:")
-                            for err in errored.values()
+                            result.generation_error_type == "GeneratorUnavailable"
+                            for result in error_results
                         ):
                             raise ProviderUnavailable(
-                                "Bake failed: the lesson generator is unavailable."
+                                "Bake failed: the lesson generator is unavailable.",
+                                retry_exhausted=all(
+                                    result.generation_retry_exhausted
+                                    for result in error_results
+                                    if result.generation_error_type == "GeneratorUnavailable"
+                                ),
                             )
-                        raise BakeError("Bake failed: the lesson generator is unavailable.")
+                        raise GenerationFailed(
+                            "Bake failed: the lesson generator is unavailable.",
+                            generation_error_type=error_type,
+                        )
                 else:
                     # Legacy path (flag off): behavior UNCHANGED — any error aborts whole.
                     if any(
-                        (err or "").startswith("GeneratorUnavailable:")
-                        for err in errored.values()
+                        result.generation_error_type == "GeneratorUnavailable"
+                        for result in error_results
                     ):
                         raise ProviderUnavailable(
-                            "Bake failed: the lesson generator is unavailable."
+                            "Bake failed: the lesson generator is unavailable.",
+                            retry_exhausted=all(
+                                result.generation_retry_exhausted
+                                for result in error_results
+                                if result.generation_error_type == "GeneratorUnavailable"
+                            ),
                         )
-                    raise BakeError("Bake failed: the lesson generator is unavailable.")
+                    raise GenerationFailed(
+                        "Bake failed: the lesson generator is unavailable.",
+                        generation_error_type=error_type,
+                    )
 
             if not any(result.ready or result.review_required for result in phase_results.values()):
-                raise BakeError(
-                    "Bake produced no automatically includable activities from this anchor."
+                raise GenerationFailed(
+                    "Bake produced no automatically includable activities from this anchor.",
+                    generation_error_type="NoEligibleActivities",
                 )
 
             slots_by_phase = Counter(plan)
@@ -716,15 +771,29 @@ class EngineLessonBaker:
                 ),
             }
         except prompt_pack.PromptPackError as exc:
-            raise BakeError(
-                "Bake failed: prompt-pack preflight could not verify source material."
+            if prompt_pack_enabled:
+                # `phase_context()` can reject an unavailable slot before
+                # `pipeline.run()` has a result to classify.  Treat that just
+                # like a pack preflight/response rejection: retain the gated
+                # legacy generation path instead of failing the entire bake.
+                log.warning("Prompt-pack phase setup rejected; using legacy generation path.")
+                return self.bake(
+                    anchor,
+                    duration,
+                    focus,
+                    _allow_prompt_pack=False,
+                )
+            raise GenerationFailed(
+                "Bake failed: prompt-pack preflight could not verify source material.",
+                generation_error_type="PromptPackError",
             ) from exc
         except (data.DataConfigError, data.DataDriftError) as exc:
             # review-p46 nit 4: a misconfigured/drifted data bundle is a safe,
             # teacher-visible BakeError like any other bake failure — never a
             # raw stack trace, never a leaked path.
-            raise BakeError(
-                "Bake failed: the lesson data bundle is unavailable or has drifted."
+            raise GenerationFailed(
+                "Bake failed: the lesson data bundle is unavailable or has drifted.",
+                generation_error_type=type(exc).__name__,
             ) from exc
         finally:
             telemetry_ctx.reset(ctx_token)

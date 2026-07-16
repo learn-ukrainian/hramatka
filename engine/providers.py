@@ -307,17 +307,20 @@ def _extract_text(body: Any) -> str:
 class HttpChatTransport:
     """A `transport.Transport` over an OpenAI-compatible `/chat/completions` API.
 
-    One retry on 5xx/timeout; HTTP 429 is immediately availability-failing so a
-    caller may fail over without retrying the rate-limited host. Other 4xx,
-    connect errors, and malformed envelopes are immediate `GeneratorUnavailable`
-    failures. `client` is injectable so unit tests drive it with an
-    `httpx.MockTransport` and NEVER hit the network.
+    Retries transient 5xx, timeout, and connection failures with bounded
+    exponential backoff. HTTP 429 immediately becomes fallback-eligible rather
+    than sleeping on a known rate-limited host. Other 4xx and malformed
+    envelopes are immediate `GeneratorUnavailable` failures. `client` is
+    injectable so unit tests drive it with an `httpx.MockTransport` and NEVER
+    hit the network.
     """
 
     base_url: str
     client: Any | None = None  # httpx.Client | None (injected in tests)
     host: str = "ais"
     strip_model_prefix: bool = True
+    max_attempts: int = 3
+    retry_backoff_s: float = 0.75
 
     def __call__(self, prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
         import time
@@ -366,7 +369,7 @@ class HttpChatTransport:
         status_class = "error"
 
         try:
-            for attempt in (1, 2):  # single retry on 5xx/timeout
+            for attempt in range(1, self.max_attempts + 1):
                 attempts = attempt
                 log.info(
                     "%s request model=%s attempt=%d prompt_bytes=%d",
@@ -403,12 +406,26 @@ class HttpChatTransport:
                     log.warning("%s timeout model=%s attempt=%d", self.host, model, attempt)
                     last_error = GeneratorUnavailable(f"provider timed out after {timeout_s}s")
                     status_class = "timeout"
-                    continue
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
                 except httpx.HTTPError as exc:  # connect/transport error — not retriable
-                    status_class = "error"
-                    raise GeneratorUnavailable(
+                    log.warning(
+                        "%s transport error=%s model=%s attempt=%d",
+                        self.host,
+                        type(exc).__name__,
+                        model,
+                        attempt,
+                    )
+                    last_error = GeneratorUnavailable(
                         f"provider transport error: {type(exc).__name__}"
-                    ) from exc
+                    )
+                    status_class = "error"
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
                 finally:
                     if owned:
                         client.close()
@@ -424,7 +441,10 @@ class HttpChatTransport:
                     )
                     last_error = GeneratorUnavailable(f"provider returned HTTP {code}")
                     status_class = "5xx"
-                    continue
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
                 if code == 429:
                     # Rate limiting is an availability failure. Do not retry the
                     # same host, but expose the existing typed outage signal so an

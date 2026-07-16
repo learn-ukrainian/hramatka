@@ -643,7 +643,7 @@ def test_generator_unavailable_does_not_crash_pipeline(tmp_path):
 
 def test_parse_failures_persist_truncated_raw_output_in_phase_directory(tmp_path):
     rejected_json = '{"unexpected": true}'
-    raw_outputs = iter([rejected_json, "x" * (64 * 1024 + 1)])
+    raw_outputs = iter([rejected_json, "x" * (64 * 1024 + 1), "still not JSON"])
 
     res = pipeline.run(
         _anchor(),
@@ -658,6 +658,10 @@ def test_parse_failures_persist_truncated_raw_output_in_phase_directory(tmp_path
     first_raw = tmp_path / "out" / "generation-raw-attempt1.txt"
     assert first_raw.read_text(encoding="utf-8") == rejected_json
     assert len((tmp_path / "out" / "generation-raw-attempt2.txt").read_bytes()) == 64 * 1024
+    assert (
+        (tmp_path / "out" / "generation-raw-attempt3.txt").read_text(encoding="utf-8")
+        == "still not JSON"
+    )
 
 
 def test_no_cache_run_never_writes_the_cache_dir(tmp_path, monkeypatch):
@@ -841,5 +845,3 @@ def test_cloze_blank_removal_drops_entire_activity(tmp_path):
     assert len(res_bad.activities) == 1
     assert not res_bad.activities[0].gate_result.passed
     assert res_bad.activities[0].gate_result.status == schema.GATE_FAILED
-
-

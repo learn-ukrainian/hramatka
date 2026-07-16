@@ -18,6 +18,22 @@ class BakeError(RuntimeError):
 class ProviderUnavailable(BakeError):
     """A transient provider outage eligible for one fresh bake-level retry."""
 
+    def __init__(self, message: str, *, retry_exhausted: bool = True) -> None:
+        super().__init__(message)
+        # Preserve the provider transport's typed retry outcome across the
+        # private engine/API boundary.  This is in-memory control flow only;
+        # it is never written to the durable lesson record.
+        self.retry_exhausted = retry_exhausted
+
+
+class GenerationFailed(BakeError):
+    """A non-provider generation failure with a safe, allowlisted type tag."""
+
+    def __init__(self, message: str, *, generation_error_type: str) -> None:
+        super().__init__(message)
+        self.generation_error_type = generation_error_type
+        self.retry_exhausted = False
+
 
 class FloorUnmetError(BakeError):
     """Floor failure (lesson cannot reach 45-min density target).

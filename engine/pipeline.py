@@ -67,6 +67,8 @@ class PipelineResult:
     lesson_b1: list[dict] = field(default_factory=list)
     out_files: dict = field(default_factory=dict)
     generation_error: str | None = None
+    generation_error_type: str | None = None
+    generation_retry_exhausted: bool = False
     regeneration_attempts: int = 0
 
 
@@ -666,6 +668,8 @@ def _run(
             ]
         except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
+            result.generation_error_type = type(exc).__name__
+            result.generation_retry_exhausted = bool(getattr(exc, "retry_exhausted", False))
 
     if ctx is not None:
         ctx.update_progress_db(step="gates")
@@ -873,6 +877,8 @@ def _run(
             )
         except (GeneratorUnavailable, GenerationUnparseable, prompt_pack.PromptPackError) as exc:
             result.generation_error = f"{type(exc).__name__}: {exc}"
+            result.generation_error_type = type(exc).__name__
+            result.generation_retry_exhausted = bool(getattr(exc, "retry_exhausted", False))
             break
         if ctx is not None:
             ctx.update_progress_db(step="gates")

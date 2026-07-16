@@ -9,7 +9,7 @@ JSON — NO real Gemma in pytest.
 
 Robustness: a `SystemExit` from a transport guard becomes a typed
 `GeneratorUnavailable` (never crashes the pipeline); unparseable output is
-retried once, then raised as `GenerationUnparseable`.
+retried with a bounded budget, then raised as `GenerationUnparseable`.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ __all__ = [
 
 LEGACY_GENERATOR_VERSION = "extractive-v1"
 RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
+GENERATION_PARSE_ATTEMPTS = 3
 _ENVELOPE_SHAPE_ERROR = "Prompt-pack response requires activities and citations arrays."
 
 # The default real generator: the locked Gemma AIS route over the real HTTP
@@ -48,7 +49,7 @@ _ENVELOPE_SHAPE_ERROR = "Prompt-pack response requires activities and citations 
 call_gemma = make_generator("gemma-ais")
 
 
-def extract_json(text: str) -> dict | list | None:
+def _extract_json(text: str) -> dict | list | None:
     """Extract the best activity-shaped JSON object or array from `text`.
 
     Tolerates leading prose / a stripped <thought> block / trailing text.
@@ -85,6 +86,44 @@ def extract_json(text: str) -> dict | list | None:
             if first_dict_list is None:
                 first_dict_list = obj
     return first_dict if first_dict is not None else first_dict_list
+
+
+def _repair_trailing_commas(text: str) -> str:
+    """Remove only JSON trailing commas outside strings, preserving all content."""
+    repaired: list[str] = []
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            repaired.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            repaired.append(char)
+            continue
+        if char == ",":
+            next_index = index + 1
+            while next_index < len(text) and text[next_index].isspace():
+                next_index += 1
+            if next_index < len(text) and text[next_index] in "}]":
+                continue
+        repaired.append(char)
+    return "".join(repaired)
+
+
+def extract_json(text: str) -> dict | list | None:
+    """Extract JSON, then apply the narrow trailing-comma repair if needed."""
+    extracted = _extract_json(text)
+    if extracted is not None:
+        return extracted
+    repaired = _repair_trailing_commas(text)
+    return _extract_json(repaired) if repaired != text else None
 
 
 def _repair_split_envelope(raw: str) -> tuple[dict, int] | None:
@@ -264,7 +303,7 @@ def _generate_from_prompt(
 
     attempts = raw_attempt_counter if raw_attempt_counter is not None else [0]
     parsed_but_rejected = False
-    for _ in range(2):
+    for _ in range(GENERATION_PARSE_ATTEMPTS):
         attempts[0] += 1
         raw = generator(prompt)
         obj = extract_json(raw)
@@ -281,7 +320,7 @@ def _generate_from_prompt(
         raise GenerationUnparseable(
             "Parsed JSON has no 'activities' array and is not a single activity."
         )
-    raise GenerationUnparseable("Gemma output was not parseable JSON after one retry.")
+    raise GenerationUnparseable("Gemma output was not parseable JSON after bounded retries.")
 
 
 def generate_prompt_pack(
@@ -300,7 +339,7 @@ def generate_prompt_pack(
     prompt = prompt_pack.render_phase_prompt(context)
     attempts = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
     parse_error: str | None = None
-    for _ in range(2):
+    for _ in range(GENERATION_PARSE_ATTEMPTS):
         attempts[0] += 1
         raw = generator(prompt)
         parsed = extract_json(raw)
@@ -321,7 +360,7 @@ def generate_prompt_pack(
                         return activities
             _persist_raw_parse_failure(raw, out_dir, attempts[0])
     raise GenerationUnparseable(
-        "Prompt-pack response failed its JSON/citation envelope after one retry: "
+        "Prompt-pack response failed its JSON/citation envelope after bounded retries: "
         + (parse_error or "unparseable JSON")
     )
 

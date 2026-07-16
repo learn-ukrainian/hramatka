@@ -134,6 +134,18 @@ def test_generate_retries_once_then_succeeds():
     assert calls["n"] == 2
 
 
+def test_generate_repairs_trailing_commas_without_another_provider_call():
+    raw = '{"activities": [{"type": "cloze",},],}'
+    calls = {"n": 0}
+
+    def generator(_prompt):
+        calls["n"] += 1
+        return raw
+
+    assert G.generate("anchor", generator=generator, prompt_builder=_pb) == [{"type": "cloze"}]
+    assert calls["n"] == 1
+
+
 def test_generate_raises_unparseable_after_two_failures():
     with pytest.raises(G.GenerationUnparseable):
         G.generate("anchor", generator=lambda _p: "nope", prompt_builder=_pb)
