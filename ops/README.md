@@ -48,3 +48,39 @@ The entire loop (code -> build -> test -> bake) must run **locally** to protect 
    ./hramatka/ops/local-loop.sh --stop
    ```
 
+## Local soak baseline (18 anchors)
+
+`./hramatka/ops/local-soak.sh`
+
+Sequential focus-free soak of the 18 real anchors in `.agent/tmp/soak-anchors.json` against **one** local stack (same env/boot/auth pattern as `local-loop.sh`). Pilot host is off-limits.
+
+### What it writes (gitignored)
+
+Under `.agent/tmp/local-soak-<UTC-stamp>/`:
+
+| Path | Contents |
+| --- | --- |
+| `results.jsonl` | Per-anchor soak-v3 record shape + `focus: null` |
+| `summary.md` | ready/floor_unmet/error counts, per-bucket, block types, rejected reasons, delta vs 07-15 host soak |
+| `lessons/<anchor_id>.json` | Full `lesson_json` for ready bakes (kept for quality re-review) |
+| `failures/<anchor_id>.json` | **Mandatory retention**: `request` + full `progress` / `failure_detail` for every non-ready |
+
+Never commit anchors, lessons, failures, or results — only this script and README.
+
+### Options
+
+- `-h`, `--help`: Usage summary
+- `--anchors <file>`: Anchors JSON (default: `.agent/tmp/soak-anchors.json`)
+- `--out-root <dir>`: Output parent (default: `.agent/tmp`)
+- `--duration 45|60|90`: Lesson duration (default: `45`)
+- `--stop`: Stop any kept local-loop/local-soak stack (`local-loop.sh --stop`)
+- `--dry-run`: Validate env/anchors assembly and exit
+
+### Example
+
+```bash
+./hramatka/ops/local-soak.sh --dry-run   # env + anchors check
+./hramatka/ops/local-soak.sh             # full 18-anchor soak (~40–90 min)
+./hramatka/ops/local-soak.sh --stop      # if a stack was left running
+```
+
