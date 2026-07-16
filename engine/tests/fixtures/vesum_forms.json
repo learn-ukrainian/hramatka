@@ -2274,6 +2274,12 @@
   "pos": "verb"
  },
  {
+  "word_form": "українці",
+  "lemma": "українець",
+  "tags": "noun:anim:p:v_naz",
+  "pos": "noun"
+ },
+ {
   "word_form": "українців",
   "lemma": "українець",
   "tags": "noun:anim:p:v_rod",

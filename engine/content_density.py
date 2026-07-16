@@ -1,4 +1,31 @@
-"""Per-type content-density floors, sentence-ID dedup, and generation targets."""
+"""Per-type content-density floors, sentence-ID dedup, and generation targets.
+
+Layered Floors (Gate Floor vs. Content-Density Floor):
+To prevent low-quality or trivially guessable activities from reaching production,
+the engine enforces two distinct, layered sizing floors:
+
+1. Gate Floor (Activity-level Survivor Floor):
+   Defined per activity type in hramatka/engine/registry.py (via
+   `minimum_survivors` on `ActivityRegistryEntry`).
+   - If gating drops too many items/pairs (due to semantic/vesum/numeral checks)
+     such that fewer than `minimum_survivors` remain, the activity is rejected.
+   - For 'match-up', the gate floor is exactly 3 (`minimum_survivors=3` in registry.py).
+     An activity with 3 surviving pairs passes gating and is marked `ready` /
+     `review_required`, but is NOT yet deliverable for production lessons.
+
+2. Content-Density Floor (Lesson Selection Floor):
+   Enforced during composition and lesson selection in `meets_content_density` in
+   this module (`hramatka/engine/content_density.py`).
+   - For 'match-up', the selection floor requires at least 4 surviving pairs
+     (`len(pairs) >= 4`).
+   - Consequence: A 3-pair match-up board is technically `ready` in the review
+     tray (having survived gating), but is NOT select-eligible for a lesson
+     unless an operator repairs/adds a pair to meet the content-density floor.
+
+Cross-Reference Sites:
+- Gate Floors: registry.py (ACTIVITY_REGISTRY definitions, `minimum_survivors` parameters)
+- Selection Floors: content_density.py (`meets_content_density` function)
+"""
 
 from __future__ import annotations
 

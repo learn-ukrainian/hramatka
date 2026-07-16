@@ -47,7 +47,19 @@ def content_tokens(text: str) -> list[str]:
 
 
 def _is_anchor_verbatim(token: str, anchor_body_lower: str) -> bool:
-    return _lookup_form(token).lower() in anchor_body_lower
+    token_norm = _lookup_form(token).lower()
+    if not token_norm:
+        return False
+    pattern_parts = []
+    word_char_pat = r"[a-z0-9а-яґєії']"
+    if re.match(word_char_pat, token_norm[0]):
+        pattern_parts.append(f"(?<!{word_char_pat})")
+    pattern_parts.append(re.escape(token_norm))
+    if re.match(word_char_pat, token_norm[-1]):
+        pattern_parts.append(f"(?!{word_char_pat})")
+    pattern = "".join(pattern_parts)
+    return bool(re.search(pattern, anchor_body_lower))
+
 
 
 def _lookup_matches(tokens: list[str]) -> dict[str, list[dict]]:

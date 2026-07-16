@@ -370,11 +370,18 @@ def test_quiz_rejects_an_ambiguous_key_with_two_evidence_supported_options(tmp_p
 
 def test_quiz_accepts_substring_distractors(tmp_path):
     quiz = _ready_quiz()
-    # "моз" is a proper substring of "мозку" but not a token in the evidence.
-    # It should not count as supported, so the quiz passes.
+    # "на" is a proper substring of "насолоду" (which is in the item's evidence),
+    # but not a token in the evidence. Since "на" is a real word and also appears
+    # verbatim in the anchor ("На думку вчених"), it is not an external option
+    # and passes all gates. It should not count as supported, so the quiz passes.
     quiz["items"] = [
-        _brain_region_quiz_item(options=["ділянок", "моз", "книжки"]),
-        *quiz["items"][1:],
+        *quiz["items"][:2],
+        {
+            "question": "Що втратили багато людей?",
+            "options": ["насолоду", "на", "телевізор"],
+            "correct": 0,
+            "evidence": "Багато людей втратили насолоду від неспішного читання книжок",
+        },
     ]
 
     result = pipeline.run(

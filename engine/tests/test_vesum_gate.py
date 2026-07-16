@@ -77,3 +77,18 @@ def test_content_tokens_filters_short_and_nonword():
     assert "Мозок" in toks and "орган" in toks and "ділянок" in toks
     assert "17" not in toks  # digits excluded
     assert "і" not in toks   # len<=1 excluded
+
+
+def test_is_anchor_verbatim_harden_substrings():
+    # "на" is a substring of "насолода", but not a word in this anchor.
+    assert not VG.is_anchor_verbatim("на", "Тут велика насолода.")
+    assert VG.is_anchor_verbatim("на", "Стіл стоїть на підлозі.")
+
+    # "ми" is a substring of "милий", but not a word in this anchor.
+    assert not VG.is_anchor_verbatim("ми", "Який милий день!")
+    assert VG.is_anchor_verbatim("ми", "Ми прийшли вчасно.")
+
+    # "ясувати" is a substring of "з'ясувати" but not a standalone word.
+    assert not VG.is_anchor_verbatim("ясувати", "Треба з'ясувати це питання.")
+    assert VG.is_anchor_verbatim("з'ясувати", "Треба з'ясувати це питання.")
+
