@@ -371,7 +371,11 @@ paths:
     post:
       tags: [Lessons]
       operationId: acknowledgeWarningBlock
-      summary: Acknowledge one visible warning block
+      summary: Acknowledge one visible block that needs review
+      description: |
+        A block needs review when its `mark` is `warn` **or**
+        `provenance.external_options` is true (UI-aligned needs-review set).
+        Warn never auto-accepts: acknowledgement is always explicit.
       security:
         - PilotSession: []
       parameters:
@@ -1431,7 +1435,8 @@ components:
     WarningBlockNotFound:
       description: |
         An absent/other-owner lesson returns `lesson_not_found`; a present ready
-        lesson whose block is absent or not a visible warning returns
+        lesson whose block is absent or is not a visible needs-review block
+        (`mark` is `warn` or `provenance.external_options` is true) returns
         `warning_block_not_found`. A present non-ready lesson returns 409
         `lesson_state_conflict` instead.
       content:

@@ -112,6 +112,24 @@ class WarningAcknowledgementsRequired(ValueError):
 WarningBlocksUnacknowledged = WarningAcknowledgementsRequired
 
 
+def block_needs_review(block: Mapping[str, Any]) -> bool:
+    """Return whether a visible block requires teacher acknowledgement.
+
+    Mirrors the UI predicate ``blockNeedsReview`` in
+    ``hramatka/app/src/review-helpers.ts``: a block needs review when its mark
+    is ``warn`` **or** ``provenance.external_options`` is strictly true.
+
+    This is the single server-side definition used by both
+    ``acknowledge_warning`` (which ids may be acked) and ``accept_lesson``
+    (which ids are required before acceptance). Keep the two sites in lockstep
+    by routing them through this helper only.
+    """
+    if block.get("mark") == "warn":
+        return True
+    provenance = block.get("provenance")
+    return isinstance(provenance, Mapping) and provenance.get("external_options") is True
+
+
 @dataclass(frozen=True)
 class TeacherRecord:
     id: str
@@ -1171,10 +1189,8 @@ class JobStore:
             self._require_expected_revision(job, expected_revision)
             self._require_ready(job)
             lesson = self._require_lesson(job)
-            visible_warning_ids = {
-                block["id"] for block in self._visible_blocks(lesson) if block.get("mark") == "warn"
-            }
-            if block_id not in visible_warning_ids:
+            needs_review_ids = self._visible_needs_review_ids(lesson)
+            if block_id not in needs_review_ids:
                 raise WarningBlockNotFound("Warning block not found.")
             if block_id in job.warning_acknowledgements:
                 return job
@@ -1207,9 +1223,7 @@ class JobStore:
             if job.accepted:
                 raise LessonStateConflict("The lesson is already accepted.")
             lesson = self._require_lesson(job)
-            required = {
-                block["id"] for block in self._visible_blocks(lesson) if block.get("mark") == "warn"
-            }
+            required = self._visible_needs_review_ids(lesson)
             acknowledged = set(job.warning_acknowledgements)
             missing_acknowledgements = required - acknowledged
             if missing_acknowledgements:
@@ -1420,6 +1434,13 @@ class JobStore:
             return visible
         except (KeyError, TypeError, ValueError) as error:
             raise PersistenceUnavailable("SQLite contains an invalid ready lesson.") from error
+
+    @classmethod
+    def _visible_needs_review_ids(cls, lesson: Mapping[str, Any]) -> set[str]:
+        """Ids of visible blocks that require ack under ``block_needs_review``."""
+        return {
+            block["id"] for block in cls._visible_blocks(lesson) if block_needs_review(block)
+        }
 
     @staticmethod
     def _require_lesson(job: JobRecord) -> dict[str, Any]:

@@ -505,6 +505,194 @@ def test_same_owner_idempotency_reuses_without_second_bake_and_conflicts_on_new_
         baker.release.set()
 
 
+def _inject_stale_ok_external_options_lesson(
+    database_path: Path, lesson_id: str, *, stale_block_id: str, plain_ok_block_id: str
+) -> None:
+    """Bypass schema bake validation to plant latent mark:ok + external_options:true.
+
+    New bakes couple external_options→mark:warn (schema allOf), so the latent
+    asymmetry only appears via malformed/stale stored lesson JSON — same class
+    as #128. Tests inject that shape after a successful fixture bake.
+    """
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT lesson_json FROM lesson_jobs WHERE id = ?", (lesson_id,)
+        ).fetchone()
+        assert row is not None and row[0], "ready lesson_json must exist before injection"
+        lesson = json.loads(row[0])
+        for block in lesson["blocks"]:
+            block_id = block["id"]
+            if block_id == stale_block_id:
+                block["mark"] = "ok"
+                block.setdefault("provenance", {})
+                block["provenance"]["external_options"] = True
+            elif block_id == plain_ok_block_id:
+                block["mark"] = "ok"
+                block.setdefault("provenance", {})
+                block["provenance"]["external_options"] = False
+            else:
+                # Keep the rest out of the needs-review set so the stale block is
+                # the sole required ack (isolates the asymmetry under test).
+                block["mark"] = "ok"
+                block.setdefault("provenance", {})
+                block["provenance"]["external_options"] = False
+        connection.execute(
+            """
+            UPDATE lesson_jobs
+            SET lesson_json = ?, warning_acknowledgements_json = '[]'
+            WHERE id = ?
+            """,
+            (
+                json.dumps(lesson, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                lesson_id,
+            ),
+        )
+        connection.commit()
+
+
+def test_stale_ok_external_options_is_ackable_and_blocks_accept(app, client) -> None:
+    """#179: server warn-set must match UI blockNeedsReview for latent stale data.
+
+    mark:ok + provenance.external_options:true is schema-invalid for new bakes
+    but can exist in stored lessons. UI shows an ack chip; server must accept
+    that ack and require it before lesson accept. warn never auto-accepts.
+    """
+    _, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    lesson_id = str(uuid.uuid4())
+    created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+    assert created.status_code == 202, created.text
+    _wait_for_status(client, lesson_id, "ready")
+
+    stale_id = "block-1"
+    plain_ok_id = "block-2"
+    _inject_stale_ok_external_options_lesson(
+        app.state.settings.database_path,
+        lesson_id,
+        stale_block_id=stale_id,
+        plain_ok_block_id=plain_ok_id,
+    )
+
+    resource = client.get(f"/api/lessons/{lesson_id}")
+    assert resource.status_code == 200, resource.text
+    body = resource.json()
+    revision = body["revision"]
+    blocks_by_id = {block["id"]: block for block in body["lesson"]["blocks"]}
+    assert blocks_by_id[stale_id]["mark"] == "ok"
+    assert blocks_by_id[stale_id]["provenance"]["external_options"] is True
+    assert blocks_by_id[plain_ok_id]["mark"] == "ok"
+    assert blocks_by_id[plain_ok_id]["provenance"]["external_options"] is False
+
+    # (b) acceptance requires the stale external_options block's ack
+    # (sole needs-review block after injection — accept must refuse until acked)
+    blocked = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    _error(blocked, 409, "warning_acknowledgements_required", lesson_id=lesson_id)
+    assert client.get(f"/api/lessons/{lesson_id}").json()["revision"] == revision
+
+    # (a) acknowledge_warning ACCEPTS an ack for the stale block
+    ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/{stale_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert ack.status_code == 200, ack.text
+    ack_body = ack.json()
+    assert stale_id in ack_body["warning_acknowledgements"]
+    acknowledged_revision = ack_body["revision"]
+    assert acknowledged_revision == revision + 1
+
+    # Regression: plain mark:ok (no external_options) cannot be acked
+    plain_ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/{plain_ok_id}/accept",
+        headers=headers,
+        json={"expected_revision": acknowledged_revision},
+    )
+    _error(plain_ack, 404, "warning_block_not_found")
+
+    # (c) with the ack present, accept succeeds (plain ok needs no ack)
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": acknowledged_revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["accepted_at"] is not None
+    assert accepted.json()["lesson"]["accepted"] is True
+
+
+def test_plain_ok_blocks_need_no_ack_and_cannot_be_acked(app, client) -> None:
+    """Regression: mark:ok without external_options is outside the needs-review set."""
+    _, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    lesson_id = str(uuid.uuid4())
+    created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+    assert created.status_code == 202, created.text
+    _wait_for_status(client, lesson_id, "ready")
+
+    # Force every visible block to plain ok (no external_options honesty flag).
+    with sqlite3.connect(app.state.settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT lesson_json FROM lesson_jobs WHERE id = ?", (lesson_id,)
+        ).fetchone()
+        lesson = json.loads(row[0])
+        for block in lesson["blocks"]:
+            block["mark"] = "ok"
+            block.setdefault("provenance", {})
+            block["provenance"]["external_options"] = False
+        connection.execute(
+            """
+            UPDATE lesson_jobs
+            SET lesson_json = ?, warning_acknowledgements_json = '[]'
+            WHERE id = ?
+            """,
+            (
+                json.dumps(lesson, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                lesson_id,
+            ),
+        )
+        connection.commit()
+
+    resource = client.get(f"/api/lessons/{lesson_id}")
+    assert resource.status_code == 200, resource.text
+    revision = resource.json()["revision"]
+    plain_id = resource.json()["lesson"]["blocks"][0]["id"]
+
+    cannot_ack = client.post(
+        f"/api/lessons/{lesson_id}/blocks/{plain_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    _error(cannot_ack, 404, "warning_block_not_found")
+
+    accepted = client.post(
+        f"/api/lessons/{lesson_id}/accept",
+        headers=headers,
+        json={"expected_revision": revision},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["lesson"]["accepted"] is True
+
+
+def test_block_needs_review_predicate_matches_ui() -> None:
+    """Unit lock: server predicate mirrors review-helpers.ts blockNeedsReview."""
+    from hramatka.api.store import block_needs_review
+
+    assert block_needs_review({"mark": "warn", "provenance": {"external_options": False}}) is True
+    assert block_needs_review({"mark": "warn", "provenance": {"external_options": True}}) is True
+    assert block_needs_review({"mark": "ok", "provenance": {"external_options": True}}) is True
+    assert block_needs_review({"mark": "ok", "provenance": {"external_options": False}}) is False
+    assert block_needs_review({"mark": "ok", "provenance": {}}) is False
+    assert block_needs_review({"mark": "ok"}) is False
+    assert block_needs_review({"mark": "ok", "provenance": {"external_options": "true"}}) is False
+    assert block_needs_review({"mark": "ok", "provenance": None}) is False
+
+
 def test_revision_matrix_warning_ack_accept_and_draft_are_atomic(app, client) -> None:
     _, _, token = _issue_invite(app)
     session = _redeem(client, token)
