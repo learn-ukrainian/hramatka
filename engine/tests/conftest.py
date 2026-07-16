@@ -29,6 +29,7 @@ from hramatka.engine.fixtures import (  # noqa: F401
     _build_atlas_db,
     _build_fixture_bundle,
     _build_vesum_db,
+    _bundle_with_matchup_vocabulary,
     _seed,
     _sha_size,
 )
@@ -46,6 +47,26 @@ def _active_data_bundle(tmp_path_factory):
     else:
         root = tmp_path_factory.mktemp("lu-data-fixture")
         bundle = _build_fixture_bundle(root)
+    previous = data._active
+    data.set_active_bundle(bundle)
+    try:
+        yield bundle
+    finally:
+        data.set_active_bundle(previous)
+
+
+@pytest.fixture
+def active_matchup_vocabulary_bundle(tmp_path):
+    """Activate the bundle that carries GOOD_ACTIVITIES' right-side synonyms.
+
+    The base offline bundle omits «книга»/«непевність» — real forms (#M-4) that
+    production VESUM resolves — so the fixture match-up loses two pairs to
+    vesum_token and salvages down to a 2-pair board. Tests that assert on that
+    lesson need the production-faithful vocabulary; otherwise they measure a
+    fixture gap rather than the engine. `EngineLessonBaker` takes `bundle=`
+    directly; `pipeline.run`/`measure` read the active bundle, hence this.
+    """
+    bundle = _bundle_with_matchup_vocabulary(tmp_path / "matchup-data")
     previous = data._active
     data.set_active_bundle(bundle)
     try:

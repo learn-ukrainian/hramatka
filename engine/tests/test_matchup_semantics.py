@@ -131,8 +131,12 @@ def test_valid_but_unrelated_decoy_is_not_a_clean_semantic_match(monkeypatch, le
     assert "not semantic proof" in verdict["detail"]
 
 
-def test_two_valid_decoys_make_matchup_review_required_not_clean():
-    """The pipeline retains the pairs but blocks automatic acceptance honestly."""
+def test_valid_decoys_make_matchup_review_required_not_clean():
+    """The pipeline retains the pairs but blocks automatic acceptance honestly.
+
+    Three decoys, not two: a 2-pair board is now rejected outright by the #54
+    min-pairs floor, which would mask the disposition this test is about.
+    """
     decoys = {
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
@@ -147,6 +151,11 @@ def test_two_valid_decoys_make_matchup_review_required_not_clean():
                 "right": "велике задоволення",
                 "evidence": "ділянок головного мозку",
             },
+            {
+                "left": "телевізор",
+                "right": "пристрій",
+                "evidence": "увімкнути телевізор",
+            },
         ],
     }
 
@@ -155,7 +164,7 @@ def test_two_valid_decoys_make_matchup_review_required_not_clean():
     assert ir.gate_result.status == schema.GATE_REVIEW
     assert ir.flagged == []  # warn is visible/reviewable rather than silently dropped
     semantic_checks = [c for c in ir.gate_result.checks if c.gate == "matchup_semantics"]
-    assert len(semantic_checks) == 2
+    assert len(semantic_checks) == 3
     assert all(check.status == "warn" for check in semantic_checks)
     assert not any(check.gate == "vesum_token" for check in ir.gate_result.checks)
 
@@ -217,6 +226,9 @@ def test_matchup_semantic_fail_is_flagged_and_removed_by_the_pipeline(monkeypatc
             {"token": token, "status": "pass", "detail": "test VESUM pass"} for token in tokens
         ],
     )
+    # Four pairs so that three survive the salvage: the #54 min-pairs floor
+    # drops a match-up left with fewer, which would hide the per-item partition
+    # this test is about.
     activity = {
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
@@ -224,18 +236,19 @@ def test_matchup_semantic_fail_is_flagged_and_removed_by_the_pipeline(monkeypatc
             {"left": "подавати", "right": "давати", "evidence": "подавати"},
             {"left": "балакати", "right": "розмовляти", "evidence": "балакати"},
             {"left": "бажати", "right": "хотіти", "evidence": "бажати"},
+            {"left": "швидко", "right": "хутко", "evidence": "швидко"},
         ],
     }
 
     ir = pipeline.gate_activity(
         activity,
-        "подавати балакати бажати",
+        "подавати балакати бажати швидко",
         {},
         atlas_lookup=_AGY_ATLAS,
     )
 
     assert ir.gate_result.status == schema.GATE_REVIEW
-    assert [pair["left"] for pair in ir.activity["pairs"]] == ["балакати", "бажати"]
+    assert [pair["left"] for pair in ir.activity["pairs"]] == ["балакати", "бажати", "швидко"]
     assert ir.flagged[0]["locator"] == "pairs[0]"
     assert any(
         check.gate == "matchup_semantics" and check.status == "fail" and check.locator == "pairs[0]"

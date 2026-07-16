@@ -18,7 +18,12 @@ def _anchor():
     return fixtures.load_anchor()
 
 
-def test_full_pipeline_partitions_ready_and_review_candidates(tmp_path):
+def test_full_pipeline_partitions_ready_and_review_candidates(
+    tmp_path, active_matchup_vocabulary_bundle
+):
+    # The vocabulary bundle keeps this a test of the lesson: the base offline
+    # bundle lacks «книга»/«непевність», which would salvage the match-up to a
+    # 2-pair board and trip the #54 floor for a fixture reason.
     res = pipeline.run(
         _anchor(),
         generator=fixtures.mock_generator,
@@ -192,25 +197,45 @@ def test_partial_true_false_keeps_good_items_flags_bad(tmp_path):
     assert ir_json["activities"][0]["flagged"][0]["locator"] == "items[4]"
 
 
-def test_match_up_dropped_when_below_two_pairs(tmp_path):
-    # one good pair + one that fails BOTH sides (absent evidence + fabricated
-    # gloss) -> only 1 survives -> below match-up minItems=2 -> whole activity dropped.
-    mu = {
+def _match_up(pairs: list[dict]) -> dict:
+    return {
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
-        "pairs": [
-            {
-                "left": "насолода",
-                "right": "велике задоволення",
-                "evidence": "насолоду від неспішного читання книжок",
-            },
-            {
-                "left": "телевізор",
-                "right": "фейкословоxx",
-                "evidence": "немає такої цитати в опорі взагалі",
-            },
-        ],
+        "pairs": pairs,
     }
+
+
+# Pairs that survive gating offline, plus one that fails BOTH sides (absent
+# evidence + fabricated gloss) and is therefore salvaged out.
+_GOOD_PAIR_A = {
+    "left": "насолода",
+    "right": "велике задоволення",
+    "evidence": "насолоду від неспішного читання книжок",
+}
+_GOOD_PAIR_B = {
+    "left": "телевізор",
+    "right": "пристрій для перегляду передач",
+    "evidence": "увімкнути телевізор",
+}
+_GOOD_PAIR_C = {
+    "left": "ділянка",
+    "right": "пристрій",
+    "evidence": "17 ділянок головного мозку",
+}
+_FAILING_PAIR = {
+    "left": "телевізор",
+    "right": "фейкословоxx",
+    "evidence": "немає такої цитати в опорі взагалі",
+}
+
+
+def test_match_up_dropped_when_below_min_pairs_floor(tmp_path):
+    """#54 item 3: salvage must never deliver a 2-pair board.
+
+    The bake-off shipped exactly this (rent×deepseek, 2 pairs) — with two pairs
+    a learner gets the second for free once the first is placed.
+    """
+    mu = _match_up([_GOOD_PAIR_A, _GOOD_PAIR_B, _FAILING_PAIR])
 
     def gen(_p):
         return json.dumps({"activities": [mu]})
@@ -219,9 +244,29 @@ def test_match_up_dropped_when_below_two_pairs(tmp_path):
         _anchor(), generator=gen, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache"
     )
     ir = res.activities[0]
-    assert not ir.gate_result.passed
-    assert any(c.gate == "partition" and c.status == "fail" for c in ir.gate_result.checks)
-    assert res.lesson_b1 == []  # cannot ship a 1-pair match-up
+    assert ir.gate_result.status == schema.DISPOSITION_REJECTED
+    partition = [c for c in ir.gate_result.checks if c.gate == "partition" and c.status == "fail"]
+    assert partition and "requires >= 3" in partition[0].detail
+    assert res.lesson_b1 == []
+    assert res.review_required == []  # not merely downgraded — dropped
+
+
+def test_match_up_with_three_surviving_pairs_is_reviewable_never_auto_included(tmp_path):
+    """At the floor a salvaged board survives, but salvage still blocks accept."""
+    mu = _match_up([_GOOD_PAIR_A, _GOOD_PAIR_B, _GOOD_PAIR_C, _FAILING_PAIR])
+
+    def gen(_p):
+        return json.dumps({"activities": [mu]})
+
+    res = pipeline.run(
+        _anchor(), generator=gen, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache"
+    )
+    ir = res.activities[0]
+    assert ir.gate_result.status == schema.DISPOSITION_REVIEW
+    assert len(ir.activity["pairs"]) == 3
+    assert [f["locator"] for f in ir.flagged] == ["pairs[3]"]
+    assert res.ready == []  # salvaged -> teacher-confirm, never auto-included
+    assert res.lesson_b1 == []
 
 
 def test_all_warn_activity_ships_every_item(tmp_path):

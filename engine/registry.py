@@ -12,7 +12,14 @@ from typing import Any
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
 from . import content_density, retrieval, schema
-from .gates import evidence_span, matchup_semantics, numeral, vesum_tags
+from .gates import (
+    evidence_span,
+    matchup_lemma,
+    matchup_semantics,
+    numeral,
+    schema_tokens,
+    vesum_tags,
+)
 from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
 
@@ -476,6 +483,22 @@ def _warn_external_phrases(
     )
 
 
+def _gate_schema_tokens(
+    strings: list[object],
+    anchor_body: str,
+    gr: schema.GateResult,
+    locator: str,
+) -> None:
+    """Fail teacher-visible text that narrates the response schema (#54 item 1).
+
+    The VESUM token gate cannot see this: its tokenizer is Cyrillic-only, so a
+    leaked «(True)» is invisible rather than invalid.
+    """
+    verdict = schema_tokens.check_strings(strings, anchor_body)
+    if verdict["status"] != "pass":
+        gr.add("schema_tokens", verdict["status"], verdict["detail"], locator=locator)
+
+
 def _add_verified_vesum_tokens(
     tokens: list[str],
     anchor_body: str,
@@ -602,6 +625,7 @@ def _gate_true_false(
             bad = [v for v in token_verdicts if v["status"] == worst]
             gr.add("vesum_token", worst, "; ".join(v["detail"] for v in bad), locator=loc)
         _run_numeral_gate(statement, gr, loc)
+        _gate_schema_tokens([statement, item.get("explanation")], anchor_body, gr, loc)
         if item.get("correct") is False:
             gr.add(
                 "false_statement",
@@ -696,6 +720,7 @@ def _gate_quiz(
                 )
         distractors = [option for index, option in enumerate(options) if index != correct_index]
         _warn_external_phrases(distractors, anchor_body, gr, loc)
+        _gate_schema_tokens([item.get("question"), *options], anchor_body, gr, loc)
         _run_numeral_gate(item.get("question", ""), gr, loc)
         _run_numeral_gate(" ".join(options), gr, loc)
 
@@ -724,6 +749,8 @@ def _gate_error_correction(
         sentence = item.get("sentence", "")
         error = item.get("error", "")
         correction = item.get("correction", "")
+        # Before any early exit below: the explanation is teacher-visible prose.
+        _gate_schema_tokens([item.get("explanation")], anchor_body, gr, loc)
         error_word = _single_ua_word(error)
         correction_word = _single_ua_word(correction)
         if error_word is None or correction_word is None:
@@ -834,6 +861,8 @@ def _gate_fill_in(
         quote = _set_evidence_verdict(evidence_by_locator.get(loc), anchor_body, gr, loc)
         sentence = item.get("sentence", "")
         answer = item.get("answer", "")
+        # Before any early exit below: the explanation is teacher-visible prose.
+        _gate_schema_tokens([item.get("explanation")], anchor_body, gr, loc)
         markers = list(_FILL_BLANK_RE.finditer(sentence))
         if len(markers) != 1:
             gr.add(
@@ -936,6 +965,9 @@ def _gate_text_questions(
     for index, item in enumerate(activity.get("items", [])):
         loc = f"items[{index}]"
         quote = _set_evidence_verdict(evidence_by_locator.get(loc), anchor_body, gr, loc)
+        _gate_schema_tokens(
+            [item.get("question"), item.get("model_answer")], anchor_body, gr, loc
+        )
         _check_open_task_stem(
             item.get("question", ""),
             quote,
@@ -956,6 +988,12 @@ def _gate_short_writing(
     loc = "text"
     evidence_item = next((item for item in evidence if item.locator == loc), None)
     quote = _set_evidence_verdict(evidence_item, anchor_body, gr, loc)
+    _gate_schema_tokens(
+        [activity.get("prompt"), activity.get("model_answer"), activity.get("rubric_hint")],
+        anchor_body,
+        gr,
+        loc,
+    )
     _check_open_task_stem(
         activity.get("prompt", ""),
         quote,
@@ -1015,6 +1053,7 @@ def _gate_cloze(
                 locator=f"blanks[{index}]",
             )
         _warn_external_phrases(distractors, anchor_body, gr, f"blanks[{index}]")
+        _gate_schema_tokens([answer, *options], anchor_body, gr, f"blanks[{index}]")
 
 
 def _gate_mark_the_words(
@@ -1178,20 +1217,17 @@ def _gate_match_up(
             ev.char_start = verdict["char_start"]
             ev.char_end = verdict["char_end"]
             ev.kind = verdict["kind"]
-        if (
-            verdict["status"] == "pass"
-            and left
-            and not vesum_gate.is_anchor_verbatim(left, anchor_body)
-        ):
-            gr.add(
-                "matchup_left",
-                "warn",
-                (
-                    f"Left word '{left}' is not verbatim in the anchor — "
-                    "verify grounding before accepting."
-                ),
-                locator=loc,
-            )
+        if verdict["status"] == "pass" and left:
+            # Lemma-level: the left side must be the CITATION form of an anchor
+            # word, so a surface-verbatim test would contradict the requirement
+            # it now carries (#54 item 2).
+            left_verdict = matchup_lemma.check_left_side(left, anchor_body)
+            if left_verdict["status"] != "pass":
+                gr.add("matchup_left", left_verdict["status"], left_verdict["detail"], locator=loc)
+        # Both sides: the right side is an EN-tolerant gloss the VESUM gate
+        # tolerates Latin in, so «true»/«false» could ship as a "gloss" if the
+        # schema-token check only covered the left (PR #193 review, nit #1).
+        _gate_schema_tokens([left, right], anchor_body, gr, loc)
         token_verdicts = vesum_gate.check_tokens(
             vesum_gate.content_tokens(right), anchor_body, atlas_lookup=atlas_lookup
         )
@@ -1355,9 +1391,13 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         evidence_answer_pairs=_match_up_evidence_answer_pairs,
         assessment_mode="auto_gradable",
         gate_chain="match-up.extractive.v1",
-        gate_version="match-up.gates.v3",
+        gate_version="match-up.gates.v4",
         partition_key="pairs",
-        minimum_survivors=2,
+        # A 2-pair board is trivially guessable — the second pair is decided by
+        # the first (#54 item 3). Salvage must drop such an activity outright
+        # rather than deliver it; the public schema still permits 2 (minItems),
+        # so this engine floor is what refuses it.
+        minimum_survivors=3,
         ttt_phases=(1, 2),
         item_budget=4,
         is_puzzle=True,

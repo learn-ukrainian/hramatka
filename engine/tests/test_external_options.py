@@ -42,7 +42,11 @@ def test_cloze_word_bank_distractors_require_review():
 
 
 def test_match_up_non_anchor_left_word_warns_when_evidence_is_anchor_literal():
-    """Audit lesson3 (Борщ): left-words «власний/родина» not verbatim in anchor."""
+    """Audit lesson3 (Борщ): left-words «власний/родина» not verbatim in anchor.
+
+    The third pair only clears the #54 min-pairs floor (>=3 survivors) so this
+    stays a test of the left-word warn, not of the floor.
+    """
     match_up = {
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
@@ -57,6 +61,11 @@ def test_match_up_non_anchor_left_word_warns_when_evidence_is_anchor_literal():
                 "right": "головного",
                 "evidence": "17 ділянок головного мозку",
             },
+            {
+                "left": "телевізор",
+                "right": "пристрій для перегляду передач",
+                "evidence": "увімкнути телевізор",
+            },
         ],
     }
 
@@ -68,6 +77,7 @@ def test_match_up_non_anchor_left_word_warns_when_evidence_is_anchor_literal():
 
 
 def test_match_up_non_anchor_synonym_right_requires_review():
+    # The third pair only clears the #54 min-pairs floor (>=3 survivors).
     match_up = {
         "type": "match-up",
         "instruction": "З'єднай слово з опори з його значенням.",
@@ -81,6 +91,11 @@ def test_match_up_non_anchor_synonym_right_requires_review():
                 "left": "головний",
                 "right": "велике задоволення",
                 "evidence": "ділянок головного мозку",
+            },
+            {
+                "left": "телевізор",
+                "right": "пристрій для перегляду передач",
+                "evidence": "увімкнути телевізор",
             },
         ],
     }

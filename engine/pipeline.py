@@ -359,7 +359,8 @@ def gate_activity(
     WARN items still ship (teacher-confirm). Activity-level gates (schema
     validity, cloze gap/answer structure) stay all-or-nothing; the whole
     activity is dropped only when an activity-level gate fails or too few
-    items survive (match-up needs >=2). `gate_result.status` is the tri-state
+    items survive (each type's `minimum_survivors`; match-up needs >=3, since a
+    2-pair board is trivially guessable). `gate_result.status` is the tri-state
     disposition: `rejected` == dropped; `ready` / `review_required` retain the
     (possibly-filtered) candidate for selection or the review tray.
     """

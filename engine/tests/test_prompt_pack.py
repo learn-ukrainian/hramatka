@@ -542,3 +542,56 @@ def test_legacy_flag_off_error_path_aborts_whole_unchanged(monkeypatch, tmp_path
     )
     with pytest.raises(BakeError, match="generator response was not valid JSON"):
         baker.bake(fixtures.load_anchor(), duration=60, focus=None)
+
+
+# ---------------------------------------------------------------------------
+# #54: the pack must not invite schema vocabulary, and it builds match-up
+# boards itself — so IT owns the citation-form requirement, not the model.
+# ---------------------------------------------------------------------------
+def test_pack_certifies_match_up_pairs_on_the_lemma_not_the_sentence_form():
+    """#54 item 2: the pack picks the left side, so it must pick the lemma.
+
+    The anchor says «людей»; a board must teach «людина». The surface form is
+    retained as `anchor_form` so the evidence link stays inspectable.
+    """
+    pairs = prompt_pack._match_pairs(  # noqa: SLF001
+        [{"id": "S01", "text": "Багато людей втратили насолоду."}],
+        {"людей": [{"lemma": "людина", "pos": "noun"}]},
+        {"людина": {"synonyms": ["особа"]}},
+    )
+
+    assert [pair["left"] for pair in pairs] == ["людина"]
+    assert pairs[0]["anchor_form"] == "людей"
+    assert pairs[0]["right"] == "особа"
+
+
+def test_pack_dedupes_two_inflections_of_one_lemma_into_a_single_pair():
+    """«книжки» and «книжок» are one lemma — one board pair, not two."""
+    pairs = prompt_pack._match_pairs(  # noqa: SLF001
+        [
+            {"id": "S01", "text": "Не прочитує жодної книжки."},
+            {"id": "S02", "text": "Насолода від читання книжок."},
+        ],
+        {
+            "книжки": [{"lemma": "книжка", "pos": "noun"}],
+            "книжок": [{"lemma": "книжка", "pos": "noun"}],
+        },
+        {"книжка": {"synonyms": ["книга"]}},
+    )
+
+    assert [pair["left"] for pair in pairs] == ["книжка"]
+
+
+def test_pack_shared_policy_forbids_schema_vocabulary_in_teacher_visible_text():
+    policy = _shared()["shared_form_policy"]
+
+    assert {"true", "false", "correct"} <= set(policy["forbidden_teacher_visible_vocabulary"])
+    assert "ніколи true/false" in policy["true_false_wording"]
+
+
+def test_pack_phase_prompt_states_the_ua_only_rule():
+    shared = _shared()
+    prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(shared, phase=1))
+
+    assert "машинні ключі" in prompt
+    assert "«правильно»/«неправильно» (П/Н)" in prompt

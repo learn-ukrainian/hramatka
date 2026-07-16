@@ -129,7 +129,11 @@ def test_extractive_v1_baseline_and_registry_generation_are_equivalent():
     assert [_project(raw) for raw in typed] == [_project(raw) for raw in baseline]
 
 
-def test_baseline_pipeline_and_candidate_bank_preserve_gated_public_content(tmp_path):
+def test_baseline_pipeline_and_candidate_bank_preserve_gated_public_content(
+    tmp_path, active_matchup_vocabulary_bundle
+):
+    # Vocabulary bundle: the base offline one lacks «книга»/«непевність», which
+    # would salvage the match-up to a 2-pair board and trip the #54 floor.
     anchor = fixtures.load_anchor()
     baseline = pipeline.run_baseline_v1(
         anchor,

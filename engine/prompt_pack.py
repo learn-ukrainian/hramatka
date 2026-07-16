@@ -17,7 +17,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .gates import matchup_semantics, vesum_tags
+from .gates import matchup_semantics, schema_tokens, vesum_tags
 
 PROMPT_PACK_VERSION = "PromptPackInput.v2"
 TEMPLATE_VERSION = "gemma-phase-pack.v2"
@@ -218,11 +218,18 @@ def _match_pairs(
     parsed_forms: Mapping[str, Sequence[Mapping[str, Any]]],
     atlas_lookup: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    """Certify Atlas-pass pairs, keyed and presented on the LEMMA (#54 item 2).
+
+    The board's left side is the citation form, never the sentence form the
+    token happened to take: «привітною» in the anchor becomes «привітний» here.
+    Keying on the lemma also collapses two inflections of one word (книжки /
+    книжок) into a single pair instead of two boards' worth of the same lemma.
+    """
     pairs: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for sentence in inventory:
-        for left in _TOKEN_RE.findall(str(sentence["text"])):
-            parses = parsed_forms.get(left, ())
+        for surface in _TOKEN_RE.findall(str(sentence["text"])):
+            parses = parsed_forms.get(surface, ())
             lemmas = {str(parse.get("lemma", "")).casefold() for parse in parses}
             for lemma in lemmas:
                 record = atlas_lookup.get(lemma)
@@ -231,16 +238,17 @@ def _match_pairs(
                 for right in record.get("synonyms", []) or []:
                     if not isinstance(right, str) or not right.strip():
                         continue
-                    verdict = matchup_semantics.check_pair(left, right, atlas_lookup=atlas_lookup)
-                    key = (left.casefold(), right.casefold())
+                    verdict = matchup_semantics.check_pair(lemma, right, atlas_lookup=atlas_lookup)
+                    key = (lemma, right.casefold())
                     if verdict.get("status") == "pass" and key not in seen:
                         pairs.append(
                             {
                                 "evidence_id": sentence["id"],
                                 "evidence": sentence["text"],
-                                "left": left,
+                                "left": lemma,
                                 "right": right,
                                 "semantic_status": "pass",
+                                "anchor_form": surface,
                                 "atlas_lemma_pair": [lemma, right],
                             }
                         )
@@ -677,6 +685,10 @@ def _shared_form_policy() -> dict[str, Any]:
         "allowed_question_stems": ["Що", "Хто", "Коли", "Чому", "Як"],
         "error_correction_instruction": _ERROR_CORRECTION_INSTRUCTION,
         "forbidden_global": sorted(_FORBIDDEN_ACTIVITY_KEYS),
+        # #54 item 1: both bake-off engines narrated the schema into the
+        # learner-facing instruction («правдивими (True), чи хибними (False)»).
+        "forbidden_teacher_visible_vocabulary": sorted(schema_tokens.SCHEMA_TOKENS),
+        "true_false_wording": "правильно/неправильно (П/Н), ніколи true/false і не «правдивий»",
     }
 
 
@@ -877,7 +889,7 @@ _CERTIFIED_KIT_GUIDE = r"""
 - quiz: для кожного items[i] дослівно перенесіть evidence, options і correct із quiz.items[i]. Лише question можна сформулювати самостійно. Рівно один option має бути в його evidence.
 - cloze: дослівно перенесіть cloze.display_text у text, cloze.evidence у evidence та весь cloze.blanks. Це один суцільний фрагмент із 2+ речень і трьома {gapN}; не скорочуйте речення.
 - fill-in: для кожного items[i] дослівно перенесіть sentence, answer, options і evidence із fill_in.items[i]. Це вже VESUM-перевірені варіанти однієї частини мови.
-- match-up: дослівно перенесіть усі Atlas-pass pairs; не додавайте п'яту пару і не перефразуйте right.
+- match-up: дослівно перенесіть усі Atlas-pass pairs; не додавайте п'яту пару і не перефразуйте right. left уже подано в словниковій формі — не змінюйте його на форму з речення.
 - mark-the-words: дослівно перенесіть mark.text у text і evidence, mark.criterion у criteria та ПОВНИЙ список mark.expected_target_words у target_words. Це точний список для двох речень, без пропусків, перестановок і повторів.
 - short-writing: вставте ОБИДВА short_writing.required_prompt_fragments дослівно в публічне поле prompt; не створюйте поле requirements. Дослівно перенесіть evidence і word_count_guidance з short_writing.
 - citations: для кожної activity дослівно скопіюйте її citation_plan у citations[i].sentence_ids. Один locator text для cloze/mark може містити 2+ ID; не скорочуйте цей список до одного allowed ID.
@@ -910,6 +922,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
             "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
             "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
+            "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
             block("ПОВНИЙ ПЛАН УРОКУ", context["lesson_plan"]),
             block("ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ", context["phase_request"]),
             block("ПОВНИЙ НУМЕРОВАНИЙ ТЕКСТ-ОПОРА", context["shared"]["anchor_sentence_inventory"]),

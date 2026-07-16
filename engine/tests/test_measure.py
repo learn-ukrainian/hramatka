@@ -21,7 +21,11 @@ def _measure(tmp_path, anchors=None, **kwargs):
     )
 
 
-def test_measure_reports_tri_state_header_and_bake_observability(tmp_path):
+def test_measure_reports_tri_state_header_and_bake_observability(
+    tmp_path, active_matchup_vocabulary_bundle
+):
+    # Vocabulary bundle: the base offline one lacks «книга»/«непевність», which
+    # would salvage the match-up to a 2-pair board and trip the #54 floor.
     report = _measure(tmp_path)
 
     counts = report["kpi"]["tri_state_counts"]
