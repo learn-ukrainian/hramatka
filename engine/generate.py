@@ -98,7 +98,7 @@ def _repair_trailing_commas(text: str) -> str:
             repaired.append(char)
             if escaped:
                 escaped = False
-            elif char == "\\\\":
+            elif char == "\\":
                 escaped = True
             elif char == '"':
                 in_string = False
@@ -339,6 +339,7 @@ def generate_prompt_pack(
     prompt = prompt_pack.render_phase_prompt(context)
     attempts = _raw_attempt_counter if _raw_attempt_counter is not None else [0]
     parse_error: str | None = None
+    last_failure_was_envelope_validation = False
     for _ in range(GENERATION_PARSE_ATTEMPTS):
         attempts[0] += 1
         raw = generator(prompt)
@@ -347,6 +348,10 @@ def generate_prompt_pack(
             return prompt_pack.validate_response_envelope(parsed, context)
         except prompt_pack.PromptPackError as exc:
             parse_error = str(exc)
+            # ``parsed is None`` is genuinely malformed/raw-unparseable output.
+            # Any parsed response that violates the private pack contract stays
+            # a PromptPackError so the adapter can take its legacy fallback.
+            last_failure_was_envelope_validation = parsed is not None
             if parse_error == _ENVELOPE_SHAPE_ERROR:
                 repaired = _repair_split_envelope(raw)
                 if repaired is not None:
@@ -355,12 +360,18 @@ def generate_prompt_pack(
                         activities = prompt_pack.validate_response_envelope(payload, context)
                     except prompt_pack.PromptPackError as repair_exc:
                         parse_error = str(repair_exc)
+                        last_failure_was_envelope_validation = True
                     else:
                         _record_envelope_repaired(context, object_count)
                         return activities
             _persist_raw_parse_failure(raw, out_dir, attempts[0])
+    if last_failure_was_envelope_validation:
+        raise prompt_pack.PromptPackError(
+            "Prompt-pack response failed its citation envelope after bounded retries: "
+            + (parse_error or "invalid response envelope")
+        )
     raise GenerationUnparseable(
-        "Prompt-pack response failed its JSON/citation envelope after bounded retries: "
+        "Prompt-pack response was not parseable JSON after bounded retries: "
         + (parse_error or "unparseable JSON")
     )
 

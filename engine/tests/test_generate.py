@@ -34,6 +34,16 @@ def test_extract_json_ignores_braces_in_strings():
     assert G.extract_json('{"s": "a { b } c", "ok": true}') == {"s": "a { b } c", "ok": True}
 
 
+def test_extract_json_trailing_comma_repair_preserves_escaped_quotes():
+    # Regression: _repair_trailing_commas must track backslash escapes so an
+    # escaped quote inside a string does not prematurely end the string. The
+    # in-string ",]" here must be preserved, only the real trailing comma in
+    # "[1,]" stripped. (Prior bug: `char == "\\\\"` compared a 1-char string to
+    # a 2-backslash literal and never matched, so escapes were untracked.)
+    raw = '{"s": "x\\",]", "n": [1,]}'
+    assert G.extract_json(raw) == {"s": 'x",]', "n": [1]}
+
+
 def test_extract_json_returns_none_on_garbage():
     assert G.extract_json("no json here") is None
     assert G.extract_json("") is None
@@ -146,7 +156,7 @@ def test_generate_repairs_trailing_commas_without_another_provider_call():
     assert calls["n"] == 1
 
 
-def test_generate_raises_unparseable_after_two_failures():
+def test_generate_raises_unparseable_after_three_failures():
     with pytest.raises(G.GenerationUnparseable):
         G.generate("anchor", generator=lambda _p: "nope", prompt_builder=_pb)
 

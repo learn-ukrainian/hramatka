@@ -959,6 +959,8 @@ components:
         - lesson_floor_unmet
         - lesson_schema_invalid
         - unknown_safe_failure
+        - generation_failed
+        - no_eligible_activities
     LessonStatus:
       type: object
       additionalProperties: false

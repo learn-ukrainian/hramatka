@@ -42,6 +42,8 @@ _FAILURE_CODES = frozenset(
         "lesson_schema_invalid",
         "unknown_safe_failure",
         "lesson_floor_unmet",
+        "generation_failed",
+        "no_eligible_activities",
     }
 )
 _STEP_RECEIVED = "текст отримано"

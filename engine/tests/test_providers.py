@@ -279,22 +279,23 @@ def test_openrouter_429_after_ais_retry_exhaustion_is_sanitized(monkeypatch, cap
             generator("prompt")
 
     assert str(exc.value) == "provider generation failed"
-    assert not exc.value.retry_exhausted
+    assert exc.value.retry_exhausted
     assert primary_calls["n"] == 3
     assert fallback_calls["n"] == 1  # do not retry a rate-limited fallback host
     assert "openrouter 429 model=google/gemma-4-31b-it fallback-eligible" in caplog.text
     assert "ais 429 model=" not in caplog.text
 
 
-def test_ais_and_openrouter_retry_exhaustion_stays_generator_unavailable(monkeypatch):
+def test_ais_and_openrouter_retry_exhaustion_preserves_retry_exhausted(monkeypatch):
     monkeypatch.setenv(providers.GEMMA_FALLBACK_API_KEY_ENV, "fallback-key")
     primary_handler, _ = _seq([503, 500, 502])
     fallback_handler, _ = _seq([503, 500, 502])
     generator, primary_calls, fallback_calls = _failover(primary_handler, fallback_handler)
 
-    with pytest.raises(GeneratorUnavailable):
+    with pytest.raises(GeneratorUnavailable) as exc:
         generator("prompt")
 
+    assert exc.value.retry_exhausted is True
     assert primary_calls["n"] == 3
     assert fallback_calls["n"] == 3  # fallback has the same bounded retry discipline
 

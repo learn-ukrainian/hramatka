@@ -410,7 +410,7 @@ class HttpChatTransport:
                         time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
                         continue
                     break
-                except httpx.HTTPError as exc:  # connect/transport error — not retriable
+                except httpx.HTTPError as exc:  # transport error — retried w/ backoff
                     log.warning(
                         "%s transport error=%s model=%s attempt=%d",
                         self.host,
@@ -527,8 +527,12 @@ class FailoverGeneratorPort(AISGeneratorPort):
                 return self._fallback(prompt)
             except GeneratorUnavailable as fallback_error:
                 # Keep the existing typed boundary and avoid surfacing either
-                # provider's detail in durable job state.
-                raise GeneratorUnavailable("provider generation failed") from fallback_error
+                # provider's detail in durable job state. The final fallback
+                # outcome controls whether a fresh bake is eligible to retry.
+                raise GeneratorUnavailable(
+                    "provider generation failed",
+                    retry_exhausted=bool(fallback_error.retry_exhausted),
+                ) from fallback_error
 
 
 def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPort | None]:

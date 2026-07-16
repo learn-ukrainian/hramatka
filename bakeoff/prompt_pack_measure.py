@@ -438,7 +438,7 @@ def _call_pack(
 ) -> PackCallResult:
     try:
         return PackCallResult(generate_prompt_pack(dict(context), generator=captured))
-    except GenerationUnparseable as exc:
+    except (GenerationUnparseable, prompt_pack.PromptPackError) as exc:
         return PackCallResult([], envelope_error=str(exc))
 
 

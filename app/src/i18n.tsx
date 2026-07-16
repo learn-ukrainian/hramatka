@@ -222,6 +222,14 @@ const DICT = {
     uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
     en: 'The lesson could not be created. Try again — your text is already saved.',
   },
+  'recovery.body.generation_failed': {
+    uk: 'Не вдалося обробити відповідь генератора. Спробуйте ще раз — текст уже збережено.',
+    en: 'Could not process the generator response. Try again — your text is already saved.',
+  },
+  'recovery.body.no_eligible_activities': {
+    uk: 'Не вдалося підібрати вправи для цього тексту. Додайте більше деталей або оберіть інший текст — текст уже збережено.',
+    en: 'Could not select exercises for this text. Add more detail or choose different text — your text is already saved.',
+  },
   'recovery.retry': {
     uk: 'Створити урок ще раз із цим текстом',
     en: 'Create the lesson again from this text',
@@ -799,6 +807,10 @@ export function recoveryBodyKey(failureCode: string | null | undefined): ChromeK
       return 'recovery.body.worker_restarted';
     case 'unknown_safe_failure':
       return 'recovery.body.unknown_safe_failure';
+    case 'generation_failed':
+      return 'recovery.body.generation_failed';
+    case 'no_eligible_activities':
+      return 'recovery.body.no_eligible_activities';
     default:
       return 'recovery.body';
   }

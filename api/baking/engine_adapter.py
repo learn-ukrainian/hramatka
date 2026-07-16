@@ -60,6 +60,26 @@ _MAX_REGENERATION_ATTEMPTS = 2
 _ENGINE_OUT_RETENTION_DAYS = 14
 
 
+def _generation_failure_message(error_type: str) -> str:
+    """Return an operator-safe, type-specific adapter message.
+
+    The runner deliberately replaces these with its frozen teacher-facing
+    wording before durable storage. Keeping the typed message here prevents
+    pipeline traces from collapsing parse/content/pack failures into an outage.
+    """
+    messages = {
+        "GenerationUnparseable": "Bake failed: generator response was not valid JSON.",
+        "PromptPackError": (
+            "Bake failed: prompt-pack response did not meet validation requirements."
+        ),
+        "NoEligibleActivities": "Bake failed: no eligible activities were generated.",
+        "DataConfigError": "Bake failed: lesson data configuration is unavailable.",
+        "DataDriftError": "Bake failed: lesson data validation detected drift.",
+        "mixed": "Bake failed: generation produced mixed unusable outcomes.",
+    }
+    return messages.get(error_type, "Bake failed: generation did not yield usable activities.")
+
+
 def _candidate_count_plan(phases: list[int]) -> dict[int, dict[str, int]]:
     """Plan a mixed candidate bank independently for every TTT phase.
 
@@ -638,7 +658,7 @@ class EngineLessonBaker:
                                 ),
                             )
                         raise GenerationFailed(
-                            "Bake failed: the lesson generator is unavailable.",
+                            _generation_failure_message(error_type),
                             generation_error_type=error_type,
                         )
                 else:
@@ -656,7 +676,7 @@ class EngineLessonBaker:
                             ),
                         )
                     raise GenerationFailed(
-                        "Bake failed: the lesson generator is unavailable.",
+                        _generation_failure_message(error_type),
                         generation_error_type=error_type,
                     )
 

@@ -1271,8 +1271,8 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
     assert store.get_teacher_default_duration("t-pop-1") == 90
 
 
-def test_migration_v004_extends_failure_code_check_and_preserves_data(tmp_path: Path) -> None:
-    """v4 migration: v3 data survives; 'lesson_floor_unmet' accepted by extended CHECK."""
+def test_migration_v005_extends_failure_code_check_and_preserves_data(tmp_path: Path) -> None:
+    """v5 migration preserves v3 data and accepts the new generation codes."""
     from hramatka.api.migrations import (
         EXPECTED_SCHEMA_VERSION,
         apply_migrations,
@@ -1367,14 +1367,14 @@ def test_migration_v004_extends_failure_code_check_and_preserves_data(tmp_path: 
             (ts, ts, ts),
         )
         conn.commit()
-        # apply full (now includes v4)
+        # Apply every later migration, including v4 and the new v5 CHECK.
         apply_migrations(conn)
         assert current_schema_version(conn) == EXPECTED_SCHEMA_VERSION
         # data preserved
         lrow = conn.execute("SELECT * FROM lesson_jobs WHERE id='l-v4'").fetchone()
         assert lrow is not None
         assert lrow["teacher_id"] == "t-pop-v4"
-        # Now prove the new code is accepted by the extended CHECK (would have failed pre-v4)
+        # Every additive code is accepted by the final CHECK.
         conn.execute(
             """
             UPDATE lesson_jobs
@@ -1387,6 +1387,15 @@ def test_migration_v004_extends_failure_code_check_and_preserves_data(tmp_path: 
         conn.commit()
         updated = conn.execute("SELECT failure_code FROM lesson_jobs WHERE id='l-v4'").fetchone()
         assert updated["failure_code"] == "lesson_floor_unmet"
+        for failure_code in ("generation_failed", "no_eligible_activities"):
+            conn.execute(
+                "UPDATE lesson_jobs SET failure_code=? WHERE id='l-v4'", (failure_code,)
+            )
+            conn.commit()
+            updated = conn.execute(
+                "SELECT failure_code FROM lesson_jobs WHERE id='l-v4'"
+            ).fetchone()
+            assert updated["failure_code"] == failure_code
     finally:
         conn.close()
 

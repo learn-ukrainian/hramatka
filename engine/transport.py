@@ -37,7 +37,7 @@ class GeneratorUnavailable(RuntimeError):
 
 
 class GenerationUnparseable(RuntimeError):
-    """Model output could not be parsed as JSON after one retry."""
+    """Model output could not be parsed as JSON after bounded retries."""
 
 
 class Transport(Protocol):

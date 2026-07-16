@@ -98,6 +98,16 @@ describe('i18n translation layer', () => {
         mustNotIncludeUk: 'перевантажений',
       },
       {
+        code: 'generation_failed',
+        mustIncludeUk: 'відповідь генератора',
+        mustNotIncludeUk: 'перевантажений',
+      },
+      {
+        code: 'no_eligible_activities',
+        mustIncludeUk: 'підібрати вправи',
+        mustNotIncludeUk: 'перевантажений',
+      },
+      {
         code: null,
         mustIncludeUk: 'перевантажений', // generic fallback keeps prior overload framing
       },

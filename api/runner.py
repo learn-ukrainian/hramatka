@@ -20,6 +20,13 @@ from .validation import validate_lesson
 log = logging.getLogger(__name__)
 
 _SAFE_FAILURE_MESSAGE = "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
+_SAFE_GENERATION_FAILURE_MESSAGE = (
+    "Не вдалося обробити відповідь генератора. Спробуйте, будь ласка, ще раз."
+)
+_SAFE_NO_ELIGIBLE_ACTIVITIES_MESSAGE = (
+    "Не вдалося підібрати вправи для цього тексту. "
+    "Спробуйте додати більше деталей або обрати інший текст."
+)
 _PROVIDER_RETRY_DELAY_SECONDS = 1.0
 _STOP_JOIN_TIMEOUT_SECONDS = 10
 _DEFAULT_WORKERS = 4
@@ -312,6 +319,13 @@ class BakeRunner:
             failure_message = (
                 str(error) if error.blames_source else FLOOR_SHORTFALL_UA_MESSAGE
             )
+        elif isinstance(error, BakeError) and getattr(error, "generation_error_type", None):
+            if error.generation_error_type == "NoEligibleActivities":
+                failure_code = "no_eligible_activities"
+                failure_message = _SAFE_NO_ELIGIBLE_ACTIVITIES_MESSAGE
+            else:
+                failure_code = "generation_failed"
+                failure_message = _SAFE_GENERATION_FAILURE_MESSAGE
         else:
             failure_code = "engine_unavailable"
             failure_message = _SAFE_FAILURE_MESSAGE

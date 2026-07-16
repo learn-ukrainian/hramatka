@@ -15,7 +15,6 @@ from hramatka.engine import fixtures, pipeline, prompt_pack, providers, retrieva
 from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
 from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
 from hramatka.engine.generate import (
-    GenerationUnparseable,
     GeneratorUnavailable,
     generate_prompt_pack,
 )
@@ -161,7 +160,7 @@ def test_pack_retries_a_bad_citation_envelope_and_keeps_raw_activities_clean():
     responses = iter([json.dumps(bad, ensure_ascii=False), json.dumps(good, ensure_ascii=False)])
     assert generate_prompt_pack(context, generator=lambda _prompt: next(responses)) == activities
 
-    with pytest.raises(GenerationUnparseable):
+    with pytest.raises(prompt_pack.PromptPackError):
         generate_prompt_pack(context, generator=lambda _prompt: json.dumps(bad, ensure_ascii=False))
 
 
@@ -203,7 +202,10 @@ def test_pack_does_not_merge_split_objects_with_overlapping_keys():
     telemetry = providers.TelemetryContext(phase=1)
     token = providers.telemetry_ctx.set(telemetry)
     try:
-        with pytest.raises(GenerationUnparseable, match="requires activities and citations arrays"):
+        with pytest.raises(
+            prompt_pack.PromptPackError,
+            match="requires activities and citations arrays",
+        ):
             generate_prompt_pack(context, generator=lambda _prompt: raw)
     finally:
         providers.telemetry_ctx.reset(token)
@@ -373,7 +375,7 @@ def test_unsupported_focus_is_an_honest_ukrainian_notice():
 def _make_phase_failing_generator(bad_phase: int):
     """Return a generator that produces valid pack responses for good phases
     (using the file-local scaffolding) but always-bad envelopes for bad_phase
-    (causing GenerationUnparseable after its internal retry).
+    (causing GenerationUnparseable after bounded JSON parsing retries).
     """
     counters: Counter[str] = Counter()
 
@@ -391,9 +393,7 @@ def _make_phase_failing_generator(bad_phase: int):
             except Exception:
                 phase = 0
         if phase == bad_phase:
-            # bad envelope -> fails validate both attempts -> GenerationUnparseable
-            bad = {"activities": [{"type": "quiz", "items": []}], "citations": []}
-            return json.dumps(bad, ensure_ascii=False)
+            return "not JSON"
         return _pack_fixture_generator(prompt, counters)
 
     return generator
@@ -402,7 +402,7 @@ def _make_phase_failing_generator(bad_phase: int):
 def test_pack_partial_phase_unparseable_ships_with_shortfall_and_degraded_telemetry(
     monkeypatch, tmp_path: Path
 ):
-    """Case 1: partial unparseable + survivors >=floor (60min) -> ships + shortfall + telemetry."""
+    """Case 1: partial unparseable + survivors >=floor -> ships + telemetry."""
 
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
     engine_out = tmp_path / "engine-out"
@@ -470,20 +470,43 @@ def test_pack_partial_phase_unparseable_below_floor_raises_floorunmet_nonblaming
     assert "З цього тексту не вдалося скласти повний урок" not in failure_message
 
 
-def test_pack_all_phases_unparseable_raises_bakeerror(monkeypatch, tmp_path: Path):
-    """Case 3: ALL unparseable (pack) -> BakeError (engine_unavailable path)."""
+def test_pack_response_rejection_falls_back_to_legacy_full_bake(monkeypatch, tmp_path: Path):
+    """A real pack response failure takes the adapter's legacy full-bake path."""
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+    pack_prompts: list[str] = []
+    legacy_prompts: list[str] = []
+    legacy_counts: Counter[str] = Counter()
 
-    def always_bad(prompt: str) -> str:
-        return json.dumps({"activities": [], "citations": []}, ensure_ascii=False)
+    def generator(prompt: str) -> str:
+        if "ПОВНИЙ ПЛАН УРОКУ" in prompt:
+            pack_prompts.append(prompt)
+            # This is parseable JSON but fails the real pack envelope contract.
+            return json.dumps({"activities": [], "citations": []}, ensure_ascii=False)
+        legacy_prompts.append(prompt)
+        return json.dumps(
+            {"activities": fixtures.activities_for_prompt(prompt, legacy_counts)},
+            ensure_ascii=False,
+        )
 
     baker = EngineLessonBaker(
-        generator=always_bad,
+        generator=generator,
         bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
         cache_dir=tmp_path / "cache",
     )
-    with pytest.raises(BakeError, match="the lesson generator is unavailable"):
-        baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+    real_bake = baker.bake
+    bake_flags: list[bool] = []
+
+    def recording_bake(*args, **kwargs):
+        bake_flags.append(kwargs.get("_allow_prompt_pack", True))
+        return real_bake(*args, **kwargs)
+
+    monkeypatch.setattr(baker, "bake", recording_bake)
+    baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
+
+    assert bake_flags == [True, False]
+    assert pack_prompts
+    assert legacy_prompts
+    assert baked["blocks"]
 
 
 def test_pack_all_phases_generator_unavailable_raises_provider_unavailable(
@@ -517,5 +540,5 @@ def test_legacy_flag_off_error_path_aborts_whole_unchanged(monkeypatch, tmp_path
         bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
         cache_dir=tmp_path / "cache",
     )
-    with pytest.raises(BakeError, match="the lesson generator is unavailable"):
+    with pytest.raises(BakeError, match="generator response was not valid JSON"):
         baker.bake(fixtures.load_anchor(), duration=60, focus=None)
