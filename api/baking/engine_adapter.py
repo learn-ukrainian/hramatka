@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import time
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -33,6 +34,7 @@ from hramatka.engine import (
     pipeline,
     prompt_pack,
     registry,
+    repair,
     retrieval,
     schema,
     selector,
@@ -493,7 +495,11 @@ class EngineLessonBaker:
                 "Invalid bake duration (%s); using the 60-minute B1 sizing plan.", fallback_kind
             )
         plan = phase_plan(B1, resolved_duration)
-        prompt_pack_enabled = _allow_prompt_pack and prompt_pack.enabled()
+        slot_repair_enabled = _allow_prompt_pack and repair.enabled()
+        # Slot repair needs the same immutable kit as the first pass.  The
+        # repair flag intentionally enables that protocol as one atomic,
+        # feature-gated path; without it the legacy path is untouched.
+        prompt_pack_enabled = _allow_prompt_pack and (prompt_pack.enabled() or slot_repair_enabled)
         phase_count_plans = (
             _prompt_pack_candidate_count_plan(plan)
             if prompt_pack_enabled
@@ -531,6 +537,10 @@ class EngineLessonBaker:
                 # text because it may name a source-derived condition.
                 log.warning("Prompt-pack preflight rejected; using legacy generation path.")
                 prompt_pack_enabled = False
+                # Repair is inseparable from the immutable prompt pack.  Once
+                # its preflight falls back, retain the legacy regeneration
+                # policy rather than suppressing it under the repair flag.
+                slot_repair_enabled = False
                 phase_count_plans = _candidate_count_plan(plan)
                 precomputed_snapshot = None
                 precomputed_grounding = None
@@ -605,7 +615,14 @@ class EngineLessonBaker:
                             cache_dir=self._cache_dir,
                             out_dir=(job_out / f"phase-{phase}") if job_out else None,
                             count_plan=count_plan,
-                            max_regeneration_attempts=_MAX_REGENERATION_ATTEMPTS,
+                            # The repair feature replaces the legacy
+                            # pre-selection type-deficit loop with its bounded
+                            # post-selection exact-slot loop below.
+                            max_regeneration_attempts=(
+                                0
+                                if slot_repair_enabled and shared_pack is not None
+                                else _MAX_REGENERATION_ATTEMPTS
+                            ),
                             prompt_pack_context=pack_context,
                             precomputed_snapshot=precomputed_snapshot,
                             precomputed_grounding=precomputed_grounding,
@@ -742,6 +759,270 @@ class EngineLessonBaker:
                 for phase in sorted(slots_by_phase)
                 for candidate in selected_by_phase[phase]
             ]
+            # The ordinary path deliberately ends here.  The feature-gated
+            # path owns a ledger of gate-passing candidates and only invokes
+            # repair after the *whole* selector exposes a structural/floor
+            # deficit.  Every returned candidate comes back through
+            # ``pipeline.run`` (the normal gates) and this same selector.
+            if slot_repair_enabled and shared_pack is not None:
+                planner = repair.RepairPlanner(shared_pack, hard_deadline=repair.hard_deadline())
+                candidates_by_phase = {
+                    phase: list(result.ready) for phase, result in phase_results.items()
+                }
+
+                def partial_matchup_pairs(phase: int) -> list[dict[str, Any]]:
+                    """Keep a two-pair remainder private until a merged re-gate."""
+                    for candidate in phase_results[phase].rejected:
+                        if candidate.activity.get("type") != "match-up":
+                            continue
+                        # ``activity`` is the public projection and omits
+                        # match-up evidence.  Merge the raw retained pairs so
+                        # the normal re-gate receives the complete contract.
+                        raw_candidate = candidate.raw_candidate
+                        pairs = (
+                            raw_candidate.get("pairs")
+                            if isinstance(raw_candidate, dict)
+                            else None
+                        )
+                        if not isinstance(pairs, list):
+                            continue
+                        failed = {
+                            str(row.get("locator"))
+                            for row in candidate.flagged
+                            if isinstance(row, dict)
+                        }
+                        kept = [
+                            pair
+                            for index, pair in enumerate(pairs)
+                            if f"pairs[{index}]" not in failed and isinstance(pair, dict)
+                        ]
+                        if len(kept) == 2:
+                            return kept
+                    return []
+
+                def compose_repair_pool() -> tuple[dict[int, list[Any]], list[Any]]:
+                    amended = selector.select_composed_lesson(
+                        candidates_by_phase,
+                        slots_by_phase=slots_by_phase,
+                        count_plan=total_count_plan,
+                        policy=selector.SelectorPolicy(
+                            density_target=len(plan),
+                            require_productive=bool(floor and floor.require_productive),
+                        ),
+                        anchor=anchor_snapshot,
+                        focus_context=prompt_pack.focus_selector_context(shared_pack),
+                    )
+                    return amended, [
+                        candidate
+                        for phase in sorted(slots_by_phase)
+                        for candidate in amended[phase]
+                    ]
+
+                repair_stopped = False
+                for repair_round in range(1, repair.MAX_ROUNDS + 1):
+                    if repair.floor_ready(
+                        selected,
+                        selected_by_phase,
+                        duration=resolved_duration,
+                        planned_blocks=len(plan),
+                    ):
+                        break
+                    requests = planner.plan(
+                        round=repair_round,
+                        selected_by_phase=selected_by_phase,
+                        slots_by_phase=slots_by_phase,
+                    )
+                    if not requests:
+                        tel_ctx.record_event(
+                            {
+                                "event": "slot_repair_stopped",
+                                "round": repair_round,
+                                "reason": "budget_or_deadline",
+                            }
+                        )
+                        break
+                    for request in requests:
+                        # A batch can span multiple provider calls.  Re-check
+                        # both repair clocks before every call, not just when
+                        # the round was planned, so a slow first request does
+                        # not start a stale second/third request.
+                        if planner._expired(time.monotonic()):  # noqa: SLF001
+                            tel_ctx.record_event(
+                                {
+                                    "event": "slot_repair_stopped",
+                                    "round": repair_round,
+                                    "reason": "budget_or_deadline",
+                                }
+                            )
+                            repair_stopped = True
+                            break
+                        density_before = len(selected)
+                        started = datetime.now(UTC)
+                        failure_details = repair.bounded_gate_failures(
+                            phase_results[request.phase].activities
+                        )
+                        repair_failures = [
+                            {
+                                "slot_id": slot.slot_id,
+                                "gate_codes": failure_details.get(slot.activity_type, [])[:2],
+                                **(
+                                    {
+                                        "preserved_subitems": 2,
+                                        "required_fix": "add_2_disjoint_pairs",
+                                    }
+                                    if slot.activity_type == "match-up"
+                                    and len(partial_matchup_pairs(request.phase)) == 2
+                                    else {}
+                                ),
+                            }
+                            for slot in request.slots
+                        ]
+                        repair_context = prompt_pack.phase_context(
+                            shared_pack,
+                            phase=request.phase,
+                            requested_slot_ids=[slot.slot_id for slot in request.slots],
+                            repair_failures=repair_failures,
+                        )
+                        repair_counts = Counter(slot.activity_type for slot in request.slots)
+                        tel_ctx.increase_calls_planned()
+                        repair_result = pipeline.run(
+                            anchor,
+                            level="B1",
+                            pedagogy="ttt",
+                            phase=str(request.phase),
+                            types=list(repair_counts),
+                            generator=generator,
+                            use_cache=False,
+                            cache_dir=self._cache_dir,
+                            out_dir=(
+                                job_out / f"repair-{repair_round}-phase-{request.phase}"
+                                if job_out
+                                else None
+                            ),
+                            count_plan=dict(repair_counts),
+                            max_regeneration_attempts=0,
+                            prompt_pack_context=repair_context,
+                            precomputed_snapshot=precomputed_snapshot,
+                            precomputed_grounding=precomputed_grounding,
+                        )
+                        latency_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
+                        if repair_result.generation_error:
+                            # A transport/parse failure is provider-owned. It
+                            # consumes wall time but not this slot's content
+                            # attempt budget.
+                            tel_ctx.record_event(
+                                {
+                                    "event": "slot_repair_attempt",
+                                    "phase": request.phase,
+                                    "round": repair_round,
+                                    "slot_ids": [slot.slot_id for slot in request.slots],
+                                    "types": [slot.activity_type for slot in request.slots],
+                                    "provider_status": (
+                                        repair_result.generation_error_type or "failed"
+                                    ),
+                                    "latency_ms": latency_ms,
+                                    "disposition": "provider_failure",
+                                }
+                            )
+                            continue
+                        preserved_pairs = partial_matchup_pairs(request.phase)
+                        if len(preserved_pairs) == 2:
+                            for index, candidate in enumerate(repair_result.activities):
+                                raw = candidate.raw_candidate
+                                if not isinstance(raw, dict) or raw.get("type") != "match-up":
+                                    continue
+                                additions = raw.get("pairs")
+                                if not isinstance(additions, list):
+                                    continue
+                                merged_raw = dict(raw)
+                                merged_raw["pairs"] = repair.merge_matchup_pairs(
+                                    preserved_pairs,
+                                    [pair for pair in additions if isinstance(pair, dict)],
+                                )
+                                base_lookup = (
+                                    precomputed_grounding.get("atlas_lookup", {})
+                                    if isinstance(precomputed_grounding, dict)
+                                    else {}
+                                )
+                                with data.use_bundle(bundle):
+                                    merged_lookup = retrieval.augmented_atlas_lookup(
+                                        anchor_snapshot["body_uk"],
+                                        [merged_raw],
+                                        base_lookup,
+                                    )
+                                merged = pipeline.gate_activity(
+                                    merged_raw,
+                                    anchor_snapshot["body_uk"],
+                                    candidate.provenance,
+                                    atlas_lookup=merged_lookup,
+                                    candidate_id=f"{candidate.candidate_id}-merged",
+                                )
+                                repair_result.activities[index] = merged
+                            repair_result.ready = [
+                                candidate
+                                for candidate in repair_result.activities
+                                if candidate.gate_result.status == schema.DISPOSITION_READY
+                            ]
+                            repair_result.review_required = [
+                                candidate
+                                for candidate in repair_result.activities
+                                if candidate.gate_result.status == schema.DISPOSITION_REVIEW
+                            ]
+                            repair_result.rejected = [
+                                candidate
+                                for candidate in repair_result.activities
+                                if candidate.gate_result.status == schema.DISPOSITION_REJECTED
+                            ]
+                        planner.scheduled(request)
+                        phase_results[request.phase].activities.extend(repair_result.activities)
+                        phase_results[request.phase].ready.extend(repair_result.ready)
+                        phase_results[request.phase].review_required.extend(repair_result.review_required)
+                        phase_results[request.phase].rejected.extend(repair_result.rejected)
+                        candidates_by_phase[request.phase].extend(repair_result.ready)
+                        selected_by_phase, selected = compose_repair_pool()
+                        original_model = next(
+                            (
+                                str(candidate.provenance.get("generator"))
+                                for candidate in selected
+                                if candidate.provenance.get("generator")
+                            ),
+                            getattr(generator, "_model", GEMMA_MODEL),
+                        )
+                        repair_model = next(
+                            (
+                                str(candidate.provenance.get("generator"))
+                                for candidate in repair_result.activities
+                                if candidate.provenance.get("generator")
+                            ),
+                            getattr(generator, "_model", GEMMA_MODEL),
+                        )
+                        tel_ctx.record_event(
+                            {
+                                "event": "slot_repair_attempt",
+                                "phase": request.phase,
+                                "round": repair_round,
+                                "slot_ids": [slot.slot_id for slot in request.slots],
+                                "types": [slot.activity_type for slot in request.slots],
+                                "models": {"original": original_model, "repair": repair_model},
+                                "provider_status": "ok",
+                                "candidates_generated": len(repair_result.activities),
+                                "gate_outcomes": {
+                                    "ready": len(repair_result.ready),
+                                    "review": len(repair_result.review_required),
+                                    "rejected": len(repair_result.rejected),
+                                },
+                                "selection_result": len(selected),
+                                "focus_support": bool(
+                                    prompt_pack.focus_selector_context(shared_pack)
+                                ),
+                                "density_before": density_before,
+                                "density_after": len(selected),
+                                "latency_ms": latency_ms,
+                                "disposition": "amended",
+                            }
+                        )
+                    if repair_stopped:
+                        break
             blocks = [
                 self._block(candidate, slot, phase)
                 for slot, (phase, candidate) in enumerate(

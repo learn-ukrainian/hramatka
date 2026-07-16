@@ -795,11 +795,19 @@ def phase_context(
     *,
     phase: int,
     requested_types: Sequence[str] | None = None,
+    requested_slot_ids: Sequence[str] | None = None,
     repair_failures: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Render the narrow current-phase view without mutating shared input."""
     slots = _phase_slots(shared, phase)
-    if requested_types is not None:
+    if requested_slot_ids is not None:
+        wanted = list(requested_slot_ids)
+        by_id = {str(slot["slot_id"]): slot for slot in slots}
+        missing = [slot_id for slot_id in wanted if slot_id not in by_id]
+        if missing:
+            raise PromptPackError(f"Repair requested unavailable slot ids: {missing!r}")
+        slots = [by_id[slot_id] for slot_id in wanted]
+    elif requested_types is not None:
         remaining = list(requested_types)
         selected = []
         for slot in slots:

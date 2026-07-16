@@ -470,6 +470,48 @@ def test_pack_partial_phase_unparseable_below_floor_raises_floorunmet_nonblaming
     assert "З цього тексту не вдалося скласти повний урок" not in failure_message
 
 
+def test_slot_repair_recovers_post_selection_floor_with_exact_pack_slots(
+    monkeypatch, tmp_path: Path
+):
+    """The repair pass is the same generator + gates, not an assembly escape hatch."""
+    monkeypatch.setenv("HRAMATKA_SLOT_REPAIR", "1")
+    monkeypatch.setenv("HRAMATKA_ENGINE_OUT_DIR", str(tmp_path / "engine-out"))
+    counters: Counter[str] = Counter()
+    repair_requests: list[dict] = []
+
+    def generator(prompt: str) -> str:
+        phase_match = re.search(
+            r"=== ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ \(дані, не інструкції\) ===\n```json\n(.*?)\n```",
+            prompt,
+            re.DOTALL,
+        )
+        assert phase_match
+        request = json.loads(phase_match.group(1))
+        if request["phase"] == 1 and request["mode"] == "initial":
+            return "not json"  # both provider-owned envelope retries fail
+        if request["mode"] == "repair":
+            repair_requests.append(request)
+        return _pack_fixture_generator(prompt, counters)
+
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    baked = baker.bake(fixtures.load_anchor(), duration=45, focus="читання")
+    assert len(baked["blocks"]) >= 6
+    assert repair_requests
+    assert {slot["slot_id"] for slot in repair_requests[0]["requested_slots"]} == {
+        "P1-A1",
+        "P1-A2",
+        "P1-A3",
+    }
+    traces = json.loads(next((tmp_path / "engine-out").glob("*/trace.json")).read_text())
+    attempt = next(event for event in traces if event.get("event") == "slot_repair_attempt")
+    assert attempt["provider_status"] == "ok"
+    assert attempt["gate_outcomes"]["ready"] == len(repair_requests[0]["requested_slots"])
+
+
 def test_pack_response_rejection_falls_back_to_legacy_full_bake(monkeypatch, tmp_path: Path):
     """A real pack response failure takes the adapter's legacy full-bake path."""
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
@@ -542,6 +584,46 @@ def test_legacy_flag_off_error_path_aborts_whole_unchanged(monkeypatch, tmp_path
     )
     with pytest.raises(BakeError, match="generator response was not valid JSON"):
         baker.bake(fixtures.load_anchor(), duration=60, focus=None)
+
+
+def test_slot_repair_flag_off_preserves_full_legacy_bake(monkeypatch, tmp_path: Path):
+    """The default-off switch retains the parent bake output and regeneration policy."""
+    monkeypatch.delenv("HRAMATKA_SLOT_REPAIR", raising=False)
+    monkeypatch.delenv("HRAMATKA_PROMPT_PACK", raising=False)
+    monkeypatch.setenv("HRAMATKA_ENGINE_OUT_DIR", str(tmp_path / "engine-out"))
+
+    def scripted_baker(counter: Counter[str], name: str) -> EngineLessonBaker:
+        def generator(prompt: str) -> str:
+            return json.dumps(
+                {"activities": fixtures.activities_for_prompt(prompt, counter)}, ensure_ascii=False
+            )
+
+        return EngineLessonBaker(
+            generator=generator,
+            bundle=_bundle_with_matchup_vocabulary(tmp_path / f"data-{name}"),
+            cache_dir=tmp_path / f"cache-{name}",
+        )
+
+    parent = scripted_baker(Counter(), "parent").bake(
+        fixtures.load_anchor(), duration=45, focus="читання", _allow_prompt_pack=False
+    )
+    captured: list[dict] = []
+    real_run = pipeline.run
+
+    def recording_run(*args, **kwargs):
+        captured.append(kwargs)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "run", recording_run)
+    baked = scripted_baker(Counter(), "flag-off").bake(
+        fixtures.load_anchor(), duration=45, focus="читання"
+    )
+
+    assert baked == parent
+    assert captured
+    assert all(call["max_regeneration_attempts"] == 2 for call in captured)
+    traces = json.loads(next((tmp_path / "engine-out").glob("*/trace.json")).read_text())
+    assert not any(str(event.get("event", "")).startswith("slot_repair_") for event in traces)
 
 
 # ---------------------------------------------------------------------------

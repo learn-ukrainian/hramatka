@@ -264,12 +264,17 @@ class BakeRunner:
                 )
 
     def _bake_with_one_provider_retry(self, job) -> dict:  # JobRecord is deliberately duck-typed.
+        # The runner supplies cancellation/deadline context once, but remains
+        # deliberately blind to slots, selection, density, and floor policy.
+        from hramatka.engine import repair
+
         request = {
             "anchor_id": job.id,
             "body_uk": job.anchor_text,
             "source": job.anchor_source,
         }
         for attempt in range(2):
+            deadline_token = repair.set_hard_deadline(time.monotonic() + self._hard_timeout_seconds)
             try:
                 return self._baker.bake(request, job.duration, job.focus)
             except ProviderUnavailable as error:
@@ -283,6 +288,8 @@ class BakeRunner:
                     or self._stop.wait(_PROVIDER_RETRY_DELAY_SECONDS * (2**attempt))
                 ):
                     raise
+            finally:
+                repair.reset_hard_deadline(deadline_token)
         raise AssertionError("Provider retry loop must return or raise.")  # pragma: no cover
 
     def _log_safe_bake_error(self, job, error: Exception) -> None:
