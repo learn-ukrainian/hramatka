@@ -156,6 +156,24 @@ def test_e4_both_on_pack_carries_modes_and_empty_kit_notice(monkeypatch):
     assert "порожній або відсутній" in prompt
 
 
+def test_grounding_only_pack_still_exposes_derived_contract(monkeypatch):
+    """The runtime mode contract cannot depend on writer_prompt_v2 being on."""
+    _clear_slice5_flags(monkeypatch)
+    monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
+    monkeypatch.setenv("HRAMATKA_KIT_ENRICHMENT_V1", "1")
+
+    shared = prompt_pack.build_shared_input(**_shared_kwargs())
+    assert shared["authoring"]["mode"] == "grounding-mode-v1"
+    assert shared["authoring"]["grounding_modes"]["fill-in"] == "derived"
+    assert "writer_prompt_version" not in shared["authoring"]
+
+    prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(shared, phase=1))
+    assert "fill-in [derived]" in prompt
+    assert "fill-in НІКОЛИ не quote-restore" in prompt
+    assert "kit_anchors, а не evidence" in prompt
+    assert "KIT ENRICHMENT" in prompt
+
+
 def test_mode_split_with_kit_enrichment_references_kit_banks(monkeypatch):
     _clear_slice5_flags(monkeypatch)
     monkeypatch.setenv("HRAMATKA_WRITER_PROMPT_V2", "1")

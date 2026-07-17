@@ -113,6 +113,7 @@ def _short_writing_kit_shape() -> dict:
             "lemmas": ["читання", "мозок"],
             "witness_span": "читання є одним з найскладніших завдань для мозку",
         },
+        "constraints": ["Використайте обидві зазначені вимоги."],
     }
 
 
@@ -181,6 +182,14 @@ def test_every_registry_entry_has_grounding_mode_from_spec_tables():
         entry = registry.ACTIVITY_REGISTRY[activity_type]
         assert entry.grounding_mode == mode
         assert entry.fingerprint()["grounding_mode"] == mode
+
+
+def test_effective_grounding_mode_retains_legacy_quoting_until_flag_is_on(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GROUNDING_MODE_V1", raising=False)
+    assert registry.effective_grounding_mode("fill-in") == registry.GROUNDING_QUOTING
+
+    monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
+    assert registry.effective_grounding_mode("fill-in") == registry.GROUNDING_DERIVED
 
 
 def test_registry_fingerprint_changes_when_grounding_mode_flips():
@@ -345,6 +354,45 @@ def test_derived_validators_reject_evidence_only_quote_restore(monkeypatch):
     assert (
         registry.ACTIVITY_REGISTRY["short-writing"].raw_validator(_short_writing_kit_shape()) == []
     )
+
+    missing_constraints = _short_writing_kit_shape()
+    del missing_constraints["constraints"]
+    errors = registry.ACTIVITY_REGISTRY["short-writing"].raw_validator(missing_constraints)
+    assert any("constraints" in error for error in errors)
+
+
+def test_derived_short_writing_constraints_stay_private_to_b1_projection(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
+    raw = _short_writing_kit_shape()
+    assert registry.ACTIVITY_REGISTRY["short-writing"].raw_validator(raw) == []
+
+    legacy_clean, _legacy_evidence, _legacy_kit_anchors = schema.parse_raw_activity(raw)
+    assert "constraints" in legacy_clean
+    legacy_gr = schema.GateResult()
+    assert (
+        pipeline._project_and_validate(
+            legacy_clean,
+            legacy_gr,
+            registry.ACTIVITY_REGISTRY["short-writing"].public_projector,
+        )
+        is None
+    )
+    assert any(check.gate == "schema" for check in legacy_gr.checks)
+
+    clean, _evidence, _kit_anchors = schema.parse_raw_activity(
+        raw,
+        strip_private_constraints=True,
+    )
+    assert "constraints" not in clean
+    gr = schema.GateResult()
+    projected = pipeline._project_and_validate(
+        clean,
+        gr,
+        registry.ACTIVITY_REGISTRY["short-writing"].public_projector,
+    )
+    assert projected is not None
+    assert "constraints" not in projected
+    assert all(check.gate != "schema" for check in gr.checks)
 
 
 def test_sentence_builder_always_derived_kit_anchors():

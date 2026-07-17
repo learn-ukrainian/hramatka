@@ -399,6 +399,36 @@ def test_e1_validators_and_gates_agree_on_derived_ir(monkeypatch):
     assert ka3 and derived.check_witness_span(ka3[0])["status"] == "fail"
 
 
+def test_derived_short_writing_gate_requires_constraints():
+    """The derived gate protects direct callers that bypass pack validation."""
+    activity = {
+        "type": "short-writing",
+        "instruction": "Напишіть короткий текст.",
+        "prompt": "Читання розвиває мозок.",
+        "source_ref": "Текст-опора",
+        "word_count_guidance": "30–40 слів",
+    }
+    anchors = [
+        schema.KitAnchors(
+            lemmas=["читання", "мозок"],
+            witness_span="читання є одним з найскладніших завдань для мозку",
+            locator="text",
+        )
+    ]
+    gr = schema.GateResult()
+    derived.gate_derived_activity(
+        activity,
+        anchors,
+        _kit_from_lemmas("читання", "мозок"),
+        ANCHOR,
+        gr,
+    )
+    assert any(
+        check.gate == "short_writing_constraints" and check.status == "fail"
+        for check in gr.checks
+    )
+
+
 def test_e1_error_correction_rule_id_validator_and_gate(monkeypatch):
     monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
     item = _error_correction_kit_item(

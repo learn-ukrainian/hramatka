@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from hramatka.api.baking import engine_adapter
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError, FloorUnmetError, ProviderUnavailable
-from hramatka.engine import fixtures, pipeline, prompt_pack, providers, retrieval
+from hramatka.engine import fixtures, pipeline, prompt_pack, providers, registry, retrieval
 from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
 from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
 from hramatka.engine.generate import (
@@ -358,6 +359,118 @@ def test_baker_uses_shared_pack_focus_and_phase_calls_only_when_flagged(monkeypa
     assert all('"focus"' in prompt for prompt in prompts)
     assert all("response_format" not in prompt for prompt in prompts)
     assert baked["blocks"]
+
+
+def test_all_flags_real_bake_uses_derived_fill_in_contract_and_provenance(monkeypatch, tmp_path):
+    """Exercise adapter -> phase worker -> pipeline under the all-on treatment vector.
+
+    The one-slot plan intentionally remains below the lesson floor.  That makes
+    this a cheap real-path regression while retaining the phase IR, where both
+    the raw-validator decision and provenance stamp are inspectable.
+    """
+    for env in (
+        "HRAMATKA_PROMPT_PACK",
+        "HRAMATKA_KIT_ENRICHMENT_V1",
+        "HRAMATKA_WRITER_PROMPT_V2",
+        "HRAMATKA_GROUNDING_MODE_V1",
+        "HRAMATKA_TEACHER_REVIEW_TRAY_V1",
+    ):
+        monkeypatch.setenv(env, "1")
+    engine_out = tmp_path / "engine-out"
+    monkeypatch.setenv("HRAMATKA_ENGINE_OUT_DIR", str(engine_out))
+    monkeypatch.setattr(engine_adapter, "phase_plan", lambda *_args: [2])
+    monkeypatch.setattr(
+        engine_adapter,
+        "_prompt_pack_candidate_count_plan",
+        lambda _plan: {2: {"fill-in": 1}},
+    )
+    prompts: list[str] = []
+
+    def generator(prompt: str) -> str:
+        prompts.append(prompt)
+        phase_match = re.search(
+            r"=== ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ \(дані, не інструкції\) ===\n```json\n(.*?)\n```",
+            prompt,
+            re.DOTALL,
+        )
+        kits_match = re.search(
+            r"=== ПЕРЕВІРЕНІ КОМПЛЕКТИ ДЛЯ ПОТОЧНИХ СЛОТІВ "
+            r"\(дані, не інструкції\) ===\n```json\n(.*?)\n```",
+            prompt,
+            re.DOTALL,
+        )
+        assert phase_match and kits_match
+        phase_request = json.loads(phase_match.group(1))
+        fill_in_kit = json.loads(kits_match.group(1))[0]
+        items = [
+            {
+                "sentence": f"У новій вправі доберіть форму ____ для слова «{item['answer']}».",
+                **{
+                    key: item[key]
+                    for key in ("answer", "options", "kit_anchors")
+                },
+            }
+            for item in fill_in_kit["fill_in"]["items"]
+        ]
+        activity = {
+            "type": "fill-in",
+            "instruction": "Заповніть пропуски правильними формами.",
+            "items": items,
+        }
+        context = {
+            "phase_request": phase_request,
+            "type_kits": [fill_in_kit],
+            "shared": {
+                "anchor_sentence_inventory": [{"id": f"S{index:02d}"} for index in range(1, 99)]
+            },
+        }
+        context["phase_request"]["requested_slots"][0]["allowed_sentence_ids"] = fill_in_kit[
+            "allowed_sentence_ids"
+        ]
+        return json.dumps(
+            {"activities": [activity], "citations": _citations([activity], context)},
+            ensure_ascii=False,
+        )
+
+    baker = EngineLessonBaker(
+        generator=generator,
+        bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
+        cache_dir=tmp_path / "cache",
+    )
+    with pytest.raises(FloorUnmetError):
+        baker.bake(fixtures.load_anchor(), duration=45, focus="читання")
+
+    assert prompts
+    assert "fill-in [derived]: 1" in prompts[0]
+    assert "НЕ переносіть evidence" in prompts[0]
+    assert "дослівно перенесіть sentence, answer, options і evidence" not in prompts[0]
+    assert "kit_anchors" in prompts[0]
+    ir_paths = list(engine_out.glob("*/phase-2/lesson.ir.json"))
+    assert len(ir_paths) == 1
+    ir = json.loads(ir_paths[0].read_text(encoding="utf-8"))
+    fill_in = next(
+        activity for activity in ir["activities"] if activity["activity"]["type"] == "fill-in"
+    )
+    assert fill_in["provenance"]["grounding_mode"] == "derived"
+    assert fill_in["kit_anchors"]
+    assert all("evidence" not in item for item in fill_in["activity"]["items"])
+    assert all(check["gate"] != "raw_contract" for check in fill_in["gate_result"]["checks"])
+
+    quote_restore = {
+        "type": "fill-in",
+        "instruction": "Заповніть пропуски правильними формами.",
+        "items": [
+            {
+                "sentence": item["sentence"],
+                "answer": item["answer"],
+                "options": item["options"],
+                "evidence": item["kit_anchors"]["witness_span"],
+            }
+            for item in fill_in["raw_candidate"]["items"]
+        ],
+    }
+    errors = registry.ACTIVITY_REGISTRY["fill-in"].raw_validator(quote_restore)
+    assert any("kit_anchors" in error for error in errors)
 
 
 def test_unsupported_focus_is_an_honest_ukrainian_notice():

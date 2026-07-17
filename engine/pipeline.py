@@ -417,11 +417,24 @@ def gate_activity(
                 f"{registry.REGISTRY_VERSION}."
             ),
         )
+    from . import flags as engine_flags
+    from .gates import derived as derived_gates
+
+    effective_mode = registry.effective_grounding_mode(entry.activity_type)
+    act_provenance = dict(provenance)
+    if actual_model:
+        act_provenance["generator"] = actual_model
+    # Preserve the flags-off IR exactly: legacy quoting validation historically
+    # recorded the registry declaration only after a raw candidate survived.
+    # Under grounding-mode v1, stamp the *effective* mode before raw validation
+    # so rejected candidates remain an honest audit trail.
+    if engine_flags.grounding_mode_v1_enabled():
+        act_provenance["grounding_mode"] = effective_mode
+        if effective_mode == registry.GROUNDING_DERIVED:
+            act_provenance["tag"] = "generated"
+
     contract_errors = entry.raw_validator(raw_activity)
     if contract_errors:
-        act_provenance = dict(provenance)
-        if actual_model:
-            act_provenance["generator"] = actual_model
         return reject_raw_candidate(
             raw_activity,
             act_provenance,
@@ -429,22 +442,17 @@ def gate_activity(
             detail="; ".join(contract_errors),
         )
 
-    clean, evidence, kit_anchors = schema.parse_raw_activity(raw_activity)
-    from . import flags as engine_flags
-    from .gates import derived as derived_gates
-
-    # Dual-path locator contract (grounding-mode v1 slice 1): under the flag,
+    # Dual-path locator contract (grounding-mode v1 slice 1): effective
     # derived types use kit_anchors locators instead of evidence quotes.
-    derived_path = (
-        engine_flags.grounding_mode_v1_enabled() and entry.grounding_mode == "derived"
+    derived_path = effective_mode == registry.GROUNDING_DERIVED
+    clean, evidence, kit_anchors = schema.parse_raw_activity(
+        raw_activity,
+        strip_private_constraints=derived_path,
     )
     if derived_path:
         expected_locs = set(entry.evidence_locator(raw_activity))
         actual_locs = {ka.locator for ka in kit_anchors}
         if actual_locs != expected_locs:
-            act_provenance = dict(provenance)
-            if actual_model:
-                act_provenance["generator"] = actual_model
             return reject_raw_candidate(
                 raw_activity,
                 act_provenance,
@@ -454,9 +462,6 @@ def gate_activity(
     elif {evidence_item.locator for evidence_item in evidence} != set(
         entry.evidence_locator(raw_activity)
     ):
-        act_provenance = dict(provenance)
-        if actual_model:
-            act_provenance["generator"] = actual_model
         return reject_raw_candidate(
             raw_activity,
             act_provenance,
@@ -464,13 +469,8 @@ def gate_activity(
             detail="evidence locators do not match the registered raw contract",
         )
 
-    act_provenance = dict(provenance)
-    if actual_model:
-        act_provenance["generator"] = actual_model
-    if derived_path:
-        act_provenance = {**act_provenance, "grounding_mode": "derived", "tag": "generated"}
-    else:
-        act_provenance = {**act_provenance, "grounding_mode": entry.grounding_mode}
+    if not engine_flags.grounding_mode_v1_enabled():
+        act_provenance["grounding_mode"] = entry.grounding_mode
 
     ir = schema.HramatkaActivity(
         activity=clean,
@@ -487,8 +487,14 @@ def gate_activity(
     # Type-specific extractive gates dual-path inside registry when flag is on.
     entry.gate(clean, evidence, anchor_body, gr, atlas_lookup)
     if derived_path:
+        # ``constraints`` is a derived short-writing control field, not public
+        # B1 activity data. Keep it available to the private gate after
+        # parse_raw_activity removes it from the projection candidate.
+        derived_gate_input = clean
+        if entry.activity_type == "short-writing" and "constraints" in raw_activity:
+            derived_gate_input = {**clean, "constraints": raw_activity["constraints"]}
         derived_gates.gate_derived_activity(
-            clean,
+            derived_gate_input,
             kit_anchors,
             kit,
             anchor_body,

@@ -15,19 +15,10 @@ from hramatka.engine import flags
 
 _PROMPTS_DIR = Path(__file__).resolve().parent
 
-# Quoting / derived labels for the mode-split request list (registry §4).
-_MODE_BY_TYPE: dict[str, str] = {
-    "true-false": "quoting",
-    "quiz": "quoting",
-    "text-questions": "quoting",
-    "mark-the-words": "quoting",
-    "cloze": "quoting",
-    "match-up": "quoting",
-    "fill-in": "derived",
-    "error-correction": "derived",
-    "short-writing": "derived",
-    "sentence-builder": "derived",
-}
+# ``sentence-builder`` is intentionally specified for authoring before it is
+# registered in the production pilot. Registered types resolve through the
+# registry-owned effective-mode helper below.
+_UNREGISTERED_AUTHORING_MODES: dict[str, str] = {"sentence-builder": "derived"}
 
 
 def load_extractive_template() -> str:
@@ -90,7 +81,7 @@ def format_request_lines(
     for activity_type in types:
         count = requested_counts[activity_type]
         if include_modes:
-            mode = _MODE_BY_TYPE.get(activity_type, "quoting")
+            mode = grounding_mode_for_type(activity_type)
             lines.append(f"- {activity_type} [{mode}]: {count}")
         else:
             lines.append(f"- {activity_type}: {count}")
@@ -98,4 +89,13 @@ def format_request_lines(
 
 
 def grounding_mode_for_type(activity_type: str) -> str:
-    return _MODE_BY_TYPE.get(activity_type, "quoting")
+    """Return the effective authoring mode for *activity_type*.
+
+    The import is local because ``registry`` imports prompt helpers to build
+    prompts; this function is called only after registry construction.
+    """
+    from hramatka.engine import registry
+
+    if activity_type in registry.ACTIVITY_REGISTRY:
+        return registry.effective_grounding_mode(activity_type)
+    return _UNREGISTERED_AUTHORING_MODES.get(activity_type, "quoting")

@@ -213,14 +213,18 @@ def _pop_kit_anchors(obj: dict) -> object | None:
     return None
 
 
-def parse_raw_activity(raw: dict) -> tuple[dict, list[Evidence], list[KitAnchors]]:
+def parse_raw_activity(
+    raw: dict, *, strip_private_constraints: bool = False
+) -> tuple[dict, list[Evidence], list[KitAnchors]]:
     """Split a model-emitted SUPERSET activity into a clean activities-b1
     item plus Evidence and KitAnchors (with per-item locators).
 
     Evidence may sit at the activity level (cloze) or on each item/pair
     (true-false / match-up). Derived items may carry ``kit_anchors`` at the
-    activity level (short-writing) or per item. All 'evidence' and
-    'kit_anchors' keys are removed so the returned activity is a pure b1
+    activity level (short-writing) or per item. Derived short-writing can also
+    carry private ``constraints`` for its raw/gate contract; callers must opt
+    into removing those only after selecting the derived path. Evidence and
+    kit-anchor keys are always removed so the returned activity is a pure b1
     subset (`additionalProperties: false` safe).
     """
     activity = copy.deepcopy(raw)
@@ -235,6 +239,8 @@ def parse_raw_activity(raw: dict) -> tuple[dict, list[Evidence], list[KitAnchors
         coerced = _coerce_kit_anchors(top_ka, "text")
         if coerced is not None:
             kit_anchors.append(coerced)
+    if strip_private_constraints and activity.get("type") == "short-writing":
+        activity.pop("constraints", None)
 
     for coll_key in ("items", "pairs", "blanks"):
         coll = activity.get(coll_key)
@@ -258,7 +264,7 @@ def parse_raw_activity(raw: dict) -> tuple[dict, list[Evidence], list[KitAnchors
 
 def project_to_b1(ir: HramatkaActivity) -> dict:
     """Return the pure activities-b1 item for the renderer — a defensive
-    deep copy of `ir.activity` with any stray 'evidence' / 'kit_anchors' keys stripped.
+    deep copy of `ir.activity` with private raw-contract keys stripped.
     """
     clean, _, _ = parse_raw_activity(ir.activity)
     return instruction_bank.apply_instruction_bank(clean)

@@ -385,6 +385,16 @@ def _validate_short_writing(raw: object) -> list[str]:
                 "quote-restore shape; provide kit_anchors with witness_span"
             )
         errors.extend(_validate_kit_anchors_object(raw.get("kit_anchors"), where="short-writing"))
+        constraints = raw.get("constraints")
+        if not isinstance(constraints, list) or not constraints:
+            errors.append("short-writing grounding_mode=derived requires non-empty constraints")
+        elif any(
+            not isinstance(constraint, str) or not constraint.strip()
+            for constraint in constraints
+        ):
+            errors.append(
+                "short-writing grounding_mode=derived constraints must contain non-empty strings"
+            )
     else:
         if not isinstance(raw.get("evidence"), str) or not raw["evidence"].strip():
             errors.append("short-writing requires a non-empty evidence")
@@ -1812,6 +1822,22 @@ def entries_for(types: list[str]) -> list[ActivityRegistryEntry]:
     if unknown:
         raise ValueError(f"Unsupported activity type(s): {', '.join(unknown)}")
     return [ACTIVITY_REGISTRY[activity_type] for activity_type in types]
+
+
+def effective_grounding_mode(activity_type: str) -> str:
+    """Return the runtime grounding mode for one registered activity type.
+
+    Registry entries declare their target v1 mode, but derived entries retain
+    the legacy quoting contract while ``grounding_mode_v1`` is off. Prompting,
+    validation, and gating must use this function rather than independently
+    combining the registry and flag.
+    """
+    entry = ACTIVITY_REGISTRY.get(activity_type)
+    if entry is None:
+        raise ValueError(f"Unknown activity type {activity_type!r}")
+    if entry.grounding_mode == GROUNDING_DERIVED and not flags.grounding_mode_v1_enabled():
+        return GROUNDING_QUOTING
+    return entry.grounding_mode
 
 
 def registry_fingerprint(types: list[str]) -> dict[str, Any]:

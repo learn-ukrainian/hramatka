@@ -535,24 +535,24 @@ def gate_derived_activity(
         _add(gr, "g1_entity_numeral", check_g1_entity_numeral_bound(texts, kit, anchor_body), loc)
         lemmas = list(ka.lemmas) if ka is not None else []
         cluster_ids.append(core_lemma_cluster(lemmas))
-        # short-writing: machine-checkable constraints[] when present
+        # short-writing: machine-checkable constraints[] are mandatory in the
+        # derived contract, including model output that bypassed the pack.
         if activity_type == "short-writing":
             constraints = activity.get("constraints")
-            if constraints is not None:
-                if not isinstance(constraints, list) or not constraints:
-                    gr.add(
-                        "short_writing_constraints",
-                        "fail",
-                        "short-writing constraints[] must be a non-empty list when present.",
-                        locator=loc,
-                    )
-                elif any(not isinstance(c, str) or not c.strip() for c in constraints):
-                    gr.add(
-                        "short_writing_constraints",
-                        "fail",
-                        "short-writing constraints[] entries must be non-empty strings.",
-                        locator=loc,
-                    )
+            if not isinstance(constraints, list) or not constraints:
+                gr.add(
+                    "short_writing_constraints",
+                    "fail",
+                    "short-writing constraints[] must be a non-empty list.",
+                    locator=loc,
+                )
+            elif any(not isinstance(c, str) or not c.strip() for c in constraints):
+                gr.add(
+                    "short_writing_constraints",
+                    "fail",
+                    "short-writing constraints[] entries must be non-empty strings.",
+                    locator=loc,
+                )
         _add(gr, "diversity_g5", check_batch_diversity(cluster_ids), loc)
         return
 

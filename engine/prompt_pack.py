@@ -403,8 +403,10 @@ def _fill_in_kit(
     source_forms: Sequence[str],
     parsed_forms: Mapping[str, Sequence[Mapping[str, Any]]],
     slot_index: int,
+    *,
+    derived: bool,
 ) -> dict[str, Any] | None:
-    """Precompute literal fill-in restorations and same-POS option sets."""
+    """Precompute fill-in form plans and their mode-specific proof fields."""
     items = []
     for row_index, row in enumerate(evidence_rows):
         row_forms = _row_tokens(row, parsed_forms)
@@ -423,15 +425,37 @@ def _fill_in_kit(
         display = _replace_first_token(str(row["text"]), answer, "____")
         if display is None or len(distractors) < 2:
             continue
-        items.append(
-            {
+        if derived:
+            answer_lemmas = sorted(
+                {
+                    str(parse.get("lemma", "")).strip()
+                    for parse in parsed_forms.get(answer, ())
+                    if str(parse.get("lemma", "")).strip()
+                }
+            )
+            if not answer_lemmas:
+                continue
+            item = {
+                "evidence_id": row["id"],
+                "evidence": row["text"],
+                "answer": answer,
+                "options": [answer, *distractors[:2]],
+                "kit_anchors": {
+                    "lemmas": answer_lemmas,
+                    "witness_span": row["text"],
+                },
+            }
+        else:
+            # Keep the legacy injection payload (including mapping order) byte
+            # stable while grounding-mode v1 is disabled.
+            item = {
                 "evidence_id": row["id"],
                 "evidence": row["text"],
                 "sentence": display,
                 "answer": answer,
                 "options": [answer, *distractors[:2]],
             }
-        )
+        items.append(item)
     return {"items": items} if len(items) >= 3 else None
 
 
@@ -439,6 +463,8 @@ def _short_writing_kit(
     evidence_rows: Sequence[Mapping[str, Any]],
     source_forms: Sequence[str],
     parsed_forms: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    derived: bool,
 ) -> dict[str, Any] | None:
     if not evidence_rows or not source_forms:
         return None
@@ -453,16 +479,35 @@ def _short_writing_kit(
         f"(1) Опишіть «{requirements[0]}».",
         f"(2) Поясніть «{requirements[1]}».",
     ]
-    return {
+    kit = {
         "evidence_id": evidence_rows[0]["id"],
         "evidence": evidence_rows[0]["text"],
         "required_prompt_fragments": fragments,
         "prompt_exemplar": f"{topic}. {fragments[0]} {fragments[1]}",
         "word_count_guidance": "30–40 слів",
     }
+    if derived:
+        topic_lemmas = sorted(
+            {
+                str(parse.get("lemma", "")).strip()
+                for parse in parsed_forms.get(topic, ())
+                if str(parse.get("lemma", "")).strip()
+            }
+        )
+        if not topic_lemmas:
+            return None
+        kit["kit_anchors"] = {
+            "lemmas": topic_lemmas,
+            "witness_span": evidence_rows[0]["text"],
+        }
+        kit["constraints"] = [
+            "Використайте обидві зазначені вимоги.",
+            "Напишіть 30–40 слів.",
+        ]
+    return kit
 
 
-def _density_contract(activity_type: str) -> dict[str, Any]:
+def _density_contract(activity_type: str, *, grounding_mode: str) -> dict[str, Any]:
     """Return the pack-level counterpart of the runtime density floor."""
     contracts = {
         "true-false": {"collection": "items", "minimum": 1, "evidence_sentence_minimum": 1},
@@ -491,14 +536,30 @@ def _density_contract(activity_type: str) -> dict[str, Any]:
             "exact_target_set": True,
         },
         "error-correction": {"collection": "items", "minimum": 2, "evidence_sentence_minimum": 2},
-        "fill-in": {
-            "collection": "items",
-            "minimum": 3,
-            "evidence_sentence_minimum": 3,
-            "literal_item_plan": True,
-        },
+        "fill-in": (
+            {
+                "collection": "items",
+                "minimum": 3,
+                "kit_anchor_item_plan": True,
+            }
+            if grounding_mode == "derived"
+            else {
+                "collection": "items",
+                "minimum": 3,
+                "evidence_sentence_minimum": 3,
+                "literal_item_plan": True,
+            }
+        ),
         "text-questions": {"collection": "items", "minimum": 3, "evidence_sentence_minimum": 3},
-        "short-writing": {"prompt_requirements": 2, "prompt_requirement_strings": True},
+        "short-writing": {
+            "prompt_requirements": 2,
+            "prompt_requirement_strings": True,
+            **(
+                {"kit_anchor_plan": True, "constraints_required": True}
+                if grounding_mode == "derived"
+                else {}
+            ),
+        },
     }
     return {"version": "DensityContract.v1", **contracts[activity_type]}
 
@@ -525,15 +586,24 @@ def _preflight_density_contract(kit: Mapping[str, Any]) -> list[str]:
         if len(cloze.get("blanks", [])) < 3 or _sentence_count(cloze.get("display_text")) < 2:
             return ["cloze slot lacks a three-gap multi-sentence display plan"]
     if activity_type == "fill-in" and len(kit.get("fill_in", {}).get("items", [])) < 3:
-        return ["fill-in slot lacks three same-POS restoration plans"]
+        return ["fill-in slot lacks three same-POS item plans"]
     if activity_type == "mark-the-words":
         mark = kit.get("mark", {})
         if len(mark.get("expected_target_words", [])) < 4 or _sentence_count(mark.get("text")) < 2:
             return ["mark-the-words slot lacks its exact two-sentence target set"]
-    if activity_type == "short-writing" and len(
-        kit.get("short_writing", {}).get("required_prompt_fragments", [])
-    ) != 2:
-        return ["short-writing slot lacks two output prompt requirements"]
+    if activity_type == "short-writing":
+        short_writing = kit.get("short_writing", {})
+        if len(short_writing.get("required_prompt_fragments", [])) != 2:
+            return ["short-writing slot lacks two output prompt requirements"]
+        if contract.get("constraints_required") and (
+            not isinstance(short_writing.get("constraints"), list)
+            or not short_writing["constraints"]
+            or any(
+                not isinstance(constraint, str) or not constraint.strip()
+                for constraint in short_writing["constraints"]
+            )
+        ):
+            return ["derived short-writing slot lacks non-empty constraints"]
     return []
 
 
@@ -570,6 +640,7 @@ def _type_kit(
     evidence_rows = _contiguous_evidence_rows(inventory, slot_index + evidence_offset)
     forms = _allowed_forms(evidence_rows, parsed_forms)
     source_forms = _source_forms(inventory, parsed_forms)
+    grounding_mode = grounding_mode_for_type(activity_type)
     kit: dict[str, Any] = {
         "slot_id": slot_id,
         "type": activity_type,
@@ -579,7 +650,7 @@ def _type_kit(
             {"evidence_id": row["id"], "evidence": row["text"]} for row in evidence_rows
         ],
         "allowed_forms": forms,
-        "density_contract": _density_contract(activity_type),
+        "density_contract": _density_contract(activity_type, grounding_mode=grounding_mode),
         "forbidden": [
             {"pattern": "invented-source", "reason": "evidence must be literal inventory text"},
             {"key": "learner_response", "reason": "not in the public raw activity contract"},
@@ -661,7 +732,13 @@ def _type_kit(
             "citation_plan": {"text": cloze["sentence_ids"]},
         }
     if activity_type == "fill-in":
-        fill_in = _fill_in_kit(evidence_rows, source_forms, parsed_forms, slot_index)
+        fill_in = _fill_in_kit(
+            evidence_rows,
+            source_forms,
+            parsed_forms,
+            slot_index,
+            derived=grounding_mode == "derived",
+        )
         if fill_in is None:
             return {**kit, "available": False, "unsupported_reason": "no same-POS fill-in option plan"}
         return {
@@ -674,7 +751,12 @@ def _type_kit(
             },
         }
     if activity_type == "short-writing":
-        short_writing = _short_writing_kit(evidence_rows, source_forms, parsed_forms)
+        short_writing = _short_writing_kit(
+            evidence_rows,
+            source_forms,
+            parsed_forms,
+            derived=grounding_mode == "derived",
+        )
         if short_writing is None:
             return {**kit, "available": False, "unsupported_reason": "no grounded writing requirement plan"}
         return {
@@ -803,19 +885,24 @@ def build_shared_input(
     # byte-identical.
     if flags.kit_enrichment_v1_enabled():
         base["kit_enrichment"] = grounding.get("kit")
-    # Slice 5 / E4: mode-split authoring identity only when both flags are on.
-    # writer_prompt_v2 alone must not alter the pack shape (force extractive copy).
-    if mode_split_authoring_active():
+    # A derived type needs the effective mode map even in the grounding-only
+    # composition.  ``writer_prompt_v2`` still controls the template identity;
+    # it must not hide the runtime contract selected by grounding_mode_v1.
+    has_derived_types = any(
+        grounding_mode_for_type(str(row["type"])) == "derived" for row in slot_rows
+    )
+    if mode_split_authoring_active() or has_derived_types:
         base["authoring"] = {
-            "mode": "mode-split-v2",
-            "writer_prompt_version": active_writer_prompt_version(
-                extractive_fallback="extractive-v5:unused"
-            ),
+            "mode": "mode-split-v2" if mode_split_authoring_active() else "grounding-mode-v1",
             "grounding_modes": {
                 str(row["type"]): grounding_mode_for_type(str(row["type"]))
                 for row in slot_rows
             },
         }
+        if mode_split_authoring_active():
+            base["authoring"]["writer_prompt_version"] = active_writer_prompt_version(
+                extractive_fallback="extractive-v5:unused"
+            )
     base["provenance"]["injection_sha256"] = _sha(base)
     return base
 
@@ -948,9 +1035,70 @@ _CERTIFIED_KIT_GUIDE = r"""
 - error-correction: не вигадуйте зміну; якщо kit unavailable, цього типу в response_order немає.
 """.strip()
 
+_LEGACY_FILL_IN_GUIDE = (
+    "- fill-in: для кожного items[i] дослівно перенесіть sentence, answer, options і evidence "
+    "із fill_in.items[i]. Це вже VESUM-перевірені варіанти однієї частини мови."
+)
+_DERIVED_FILL_IN_GUIDE = (
+    "- fill-in [derived]: складіть нове sentence з пропуском ____ лише з матеріалу KIT; "
+    "використайте answer, options і kit_anchors із fill_in.items[i]; НЕ переносіть evidence. "
+    "Стебло не може бути відновленням речення опори."
+)
+_LEGACY_SHORT_WRITING_GUIDE = (
+    "- short-writing: вставте ОБИДВА short_writing.required_prompt_fragments дослівно в публічне "
+    "поле prompt; не створюйте поле requirements. Дослівно перенесіть evidence і "
+    "word_count_guidance з short_writing."
+)
+_DERIVED_SHORT_WRITING_GUIDE = (
+    "- short-writing [derived]: вставте ОБИДВА short_writing.required_prompt_fragments дослівно "
+    "в prompt та перенесіть word_count_guidance, constraints і kit_anchors; НЕ емітуйте evidence."
+)
+
+
+def _certified_kit_guide() -> str:
+    """Render the response contract for the currently effective type modes."""
+    if grounding_mode_for_type("fill-in") != "derived":
+        return _CERTIFIED_KIT_GUIDE
+    return (
+        _CERTIFIED_KIT_GUIDE.replace(_LEGACY_FILL_IN_GUIDE, _DERIVED_FILL_IN_GUIDE)
+        .replace(_LEGACY_SHORT_WRITING_GUIDE, _DERIVED_SHORT_WRITING_GUIDE)
+    )
+
+
+_LEGACY_FILL_IN_EXAMPLE = (
+    '{"type":"fill-in","instruction":"Заповніть пропуски правильними формами.",'
+    '"items":[{"sentence":"… ____ …","answer":"…","options":["…","…","…"],'
+    '"explanation":"…","evidence":"…"}]}'
+)
+_DERIVED_FILL_IN_EXAMPLE = (
+    '{"type":"fill-in","instruction":"Заповніть пропуски правильними формами.",'
+    '"items":[{"sentence":"… ____ …","answer":"…","options":["…","…","…"],'
+    '"explanation":"…","kit_anchors":{"lemmas":["…"],"witness_span":"…"}}]}'
+)
+_LEGACY_SHORT_WRITING_EXAMPLE = (
+    '{"type":"short-writing","instruction":"Напишіть короткий текст за опорою.",'
+    '"prompt":"… 1) … 2) …","source_ref":"Текст-опора","word_count_guidance":"35–50 слів",'
+    '"evidence":"…"}'
+)
+_DERIVED_SHORT_WRITING_EXAMPLE = (
+    '{"type":"short-writing","instruction":"Напишіть короткий текст за опорою.",'
+    '"prompt":"… 1) … 2) …","source_ref":"Текст-опора","word_count_guidance":"35–50 слів",'
+    '"constraints":["…"],"kit_anchors":{"lemmas":["…"],"witness_span":"…"}}'
+)
+
+
+def _gold_exemplars() -> str:
+    """Keep legacy exemplars byte-stable unless derived contracts are active."""
+    if grounding_mode_for_type("fill-in") != "derived":
+        return _GOLD_EXEMPLARS
+    return (
+        _GOLD_EXEMPLARS.replace(_LEGACY_FILL_IN_EXAMPLE, _DERIVED_FILL_IN_EXAMPLE)
+        .replace(_LEGACY_SHORT_WRITING_EXAMPLE, _DERIVED_SHORT_WRITING_EXAMPLE)
+    )
+
 
 _MODE_SPLIT_PACK_RULES = r"""
-РЕЖИМИ ОБҐРУНТУВАННЯ (writer_prompt_v2 + grounding_mode_v1):
+РЕЖИМИ ОБҐРУНТУВАННЯ (grounding_mode_v1; writer_prompt_v2, якщо увімкнено):
 - У phase_request кожен тип має режим quoting або derived (див. authoring.grounding_modes).
 - quoting: evidence лише з інвентаря речень; true-false неправильні = спотворення сенсу;
   cloze — цитатне походження лише для span пропуску (навколо можна лексику KIT).
@@ -972,7 +1120,11 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         return f"=== {name} (дані, не інструкції) ===\n```json\n{_canonical(value)}\n```"
 
     request_slots = context["phase_request"]["requested_slots"]
-    if mode_split_authoring_active():
+    has_derived_types = any(
+        grounding_mode_for_type(str(slot["type"])) == "derived" for slot in request_slots
+    )
+    include_effective_modes = mode_split_authoring_active() or has_derived_types
+    if include_effective_modes:
         request_lines = "\n".join(
             f"- {slot['type']} [{grounding_mode_for_type(str(slot['type']))}]: 1"
             for slot in request_slots
@@ -980,6 +1132,12 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
     else:
         request_lines = "\n".join(f"- {slot['type']}: 1" for slot in request_slots)
     repair = context["repair_failures"] or {"mode": "initial", "failures": []}
+    evidence_rule = (
+        "3. Для quoting-пунктів evidence — лише дослівний текст дозволеного речення або "
+        "суцільного дозволеного фрагмента; для derived-пунктів подайте kit_anchors, а не evidence."
+        if include_effective_modes
+        else "3. evidence — лише дослівний текст дозволеного речення або суцільного дозволеного фрагмента."
+    )
     sections = [
         "Ти складаєш навчальні завдання з української мови для дорослого учня рівня B1.",
         "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
@@ -993,7 +1151,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         block("ПЕРЕВІРЕНІ КОМПЛЕКТИ ДЛЯ ПОТОЧНИХ СЛОТІВ", context["type_kits"]),
         block("РЕЖИМ ПОТОЧНОГО ЗАПИТУ", repair),
     ]
-    if mode_split_authoring_active():
+    if include_effective_modes:
         authoring = context["shared"].get("authoring")
         if authoring is not None:
             sections.append(block("РЕЖИМИ ТА ВЕРСІЯ АВТОРИНГУ", authoring))
@@ -1011,15 +1169,15 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             "ПРАВИЛА СКЛАДАННЯ:\n"
             "1. Створіть рівно одну activity для кожного slot_id у response_order, у тому ж порядку.\n"
             "2. Виконайте density_contract і точні поля відповідного kit; сертифіковані значення не перефразуйте.\n"
-            "3. evidence — лише дослівний текст дозволеного речення або суцільного дозволеного фрагмента.\n"
+            f"{evidence_rule}\n"
             "4. Не додавайте slot_id, source_sentence_ids, requirements, learner_answer, learner_response або інших полів.\n"
             "5. Дотримуйтеся щільності: quiz/cloze/fill-in 3+, match-up 4+, mark 4+ у 2+ реченнях, error-correction 2+, text-questions рівно 3, short-writing має 2 вимоги в prompt.\n"
             "6. Відповідайте рівно одним JSON-об'єктом без Markdown чи пояснення.",
             "ВІДПОВІДЬ МАЄ МАТИ РІВНО ЦЮ ОБОЛОНКУ:\n"
             '{"activities":[...],"citations":[{"activity_index":0,"sentence_ids":{"items[0]":["S01"]}}]}\n'
             "Для cloze, mark-the-words і short-writing locator — text; для item/pair — items[i]/pairs[i].",
-            _CERTIFIED_KIT_GUIDE,
-            _GOLD_EXEMPLARS,
+            _certified_kit_guide(),
+            _gold_exemplars(),
             "ТЕСТОВИЙ ПЛАН КІЛЬКОСТІ (дані):\n" + request_lines,
         ]
     )
@@ -1105,9 +1263,25 @@ def _validate_post_density_contract(activity: Mapping[str, Any], kit: Mapping[st
         for actual, expected in zip(actual_items, expected_items, strict=True):
             if not isinstance(actual, Mapping):
                 raise PromptPackError("density_contract fill-in item must be an object.")
-            _require_exact_fields(
-                actual, expected, ("sentence", "answer", "options", "evidence"), "fill-in"
-            )
+            if grounding_mode_for_type("fill-in") == "derived":
+                if "evidence" in actual:
+                    raise PromptPackError(
+                        "density_contract derived fill-in must use kit_anchors, not evidence."
+                    )
+                _require_exact_fields(
+                    actual,
+                    expected,
+                    ("answer", "options", "kit_anchors"),
+                    "derived fill-in",
+                )
+                if not isinstance(actual.get("sentence"), str) or "____" not in actual["sentence"]:
+                    raise PromptPackError(
+                        "density_contract derived fill-in requires a new sentence with one blank."
+                    )
+            else:
+                _require_exact_fields(
+                    actual, expected, ("sentence", "answer", "options", "evidence"), "fill-in"
+                )
     elif activity_type == "match-up":
         expected_pairs = [
             {field: pair[field] for field in ("left", "right", "evidence")}
@@ -1132,7 +1306,18 @@ def _validate_post_density_contract(activity: Mapping[str, Any], kit: Mapping[st
             raise PromptPackError("density_contract mark-the-words needs its two-sentence display.")
     elif activity_type == "short-writing":
         short_writing = kit["short_writing"]
-        if activity.get("evidence") != short_writing["evidence"]:
+        if grounding_mode_for_type("short-writing") == "derived":
+            if "evidence" in activity:
+                raise PromptPackError(
+                    "density_contract derived short-writing must use kit_anchors, not evidence."
+                )
+            _require_exact_fields(
+                activity,
+                short_writing,
+                ("word_count_guidance", "constraints", "kit_anchors"),
+                "derived short-writing",
+            )
+        elif activity.get("evidence") != short_writing["evidence"]:
             raise PromptPackError("density_contract short-writing must retain its literal evidence.")
         if activity.get("word_count_guidance") != short_writing["word_count_guidance"]:
             raise PromptPackError("density_contract short-writing must retain its word guidance.")
