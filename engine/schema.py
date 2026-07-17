@@ -50,6 +50,20 @@ class Evidence:
     kind: str = "literal"  # literal | inference | absent
 
 
+@dataclass
+class KitAnchors:
+    """Derived-mode provenance (grounding-mode v1 §6.4).
+
+    ``witness_span`` is REQUIRED — the anchor substring that justified lemma/rule
+    choice. It is *not* a fake restored quote for old extractive validators.
+    """
+
+    lemmas: list[str]
+    witness_span: str
+    locator: str  # e.g. "items[0]", "text"
+    rule_id: str | None = None
+
+
 # Candidate disposition.  This is deliberately not a boolean: a candidate can
 # be valid enough for a teacher to inspect while still being unsafe to place in
 # a lesson automatically.  In particular, an extractive FALSE statement has
@@ -114,6 +128,8 @@ class HramatkaActivity:
 
     activity: dict  # the projected activities-b1 item (evidence already stripped)
     evidence: list[Evidence] = field(default_factory=list)
+    # Derived-mode provenance (kit_anchors); empty for quoting-only items.
+    kit_anchors: list[KitAnchors] = field(default_factory=list)
     provenance: dict = field(default_factory=dict)
     gate_result: GateResult = field(default_factory=GateResult)
     # Per-item verdicts: items/pairs a per-statement/per-pair gate FAILED, so
@@ -139,6 +155,15 @@ class HramatkaActivity:
                 }
                 for e in self.evidence
             ],
+            "kit_anchors": [
+                {
+                    "lemmas": list(k.lemmas),
+                    "witness_span": k.witness_span,
+                    "locator": k.locator,
+                    "rule_id": k.rule_id,
+                }
+                for k in self.kit_anchors
+            ],
             "provenance": self.provenance,
             "gate_result": self.gate_result.as_dict(),
             "flagged": self.flagged,
@@ -148,7 +173,7 @@ class HramatkaActivity:
 
 
 # ---------------------------------------------------------------------------
-# Evidence stripping / projection
+# Evidence / kit_anchors stripping / projection
 # ---------------------------------------------------------------------------
 def _pop_evidence(obj: dict) -> str | None:
     """Remove and return the 'evidence' key from a dict (None if absent)."""
@@ -157,38 +182,85 @@ def _pop_evidence(obj: dict) -> str | None:
     return None
 
 
-def parse_raw_activity(raw: dict) -> tuple[dict, list[Evidence]]:
+def _coerce_kit_anchors(raw_ka: object, locator: str) -> KitAnchors | None:
+    """Parse one kit_anchors object; return None if missing/unusable shape."""
+    if not isinstance(raw_ka, dict):
+        return None
+    witness = raw_ka.get("witness_span")
+    if not isinstance(witness, str) or not witness.strip():
+        # Still materialize a shell so callers can see a missing witness later;
+        # raw validators are the fail-closed contract for witness_span.
+        witness = ""
+    lemmas_raw = raw_ka.get("lemmas", [])
+    lemmas: list[str] = []
+    if isinstance(lemmas_raw, list):
+        lemmas = [str(lemma) for lemma in lemmas_raw if isinstance(lemma, str) and lemma.strip()]
+    rule_id = raw_ka.get("rule_id")
+    if rule_id is not None and not isinstance(rule_id, str):
+        rule_id = None
+    return KitAnchors(
+        lemmas=lemmas,
+        witness_span=witness.strip() if isinstance(witness, str) else "",
+        locator=locator,
+        rule_id=rule_id if isinstance(rule_id, str) and rule_id.strip() else None,
+    )
+
+
+def _pop_kit_anchors(obj: dict) -> object | None:
+    """Remove and return the 'kit_anchors' key from a dict (None if absent)."""
+    if isinstance(obj, dict) and "kit_anchors" in obj:
+        return obj.pop("kit_anchors")
+    return None
+
+
+def parse_raw_activity(raw: dict) -> tuple[dict, list[Evidence], list[KitAnchors]]:
     """Split a model-emitted SUPERSET activity into a clean activities-b1
-    item plus a list of Evidence (with per-item locators).
+    item plus Evidence and KitAnchors (with per-item locators).
 
     Evidence may sit at the activity level (cloze) or on each item/pair
-    (true-false / match-up). All 'evidence' keys are removed so the returned
-    activity is a pure b1 subset (`additionalProperties: false` safe).
+    (true-false / match-up). Derived items may carry ``kit_anchors`` at the
+    activity level (short-writing) or per item. All 'evidence' and
+    'kit_anchors' keys are removed so the returned activity is a pure b1
+    subset (`additionalProperties: false` safe).
     """
     activity = copy.deepcopy(raw)
     evidence: list[Evidence] = []
+    kit_anchors: list[KitAnchors] = []
 
     top_ev = _pop_evidence(activity)
     if isinstance(top_ev, str) and top_ev.strip():
         evidence.append(Evidence(quote=top_ev, locator="text"))
+    top_ka = _pop_kit_anchors(activity)
+    if top_ka is not None:
+        coerced = _coerce_kit_anchors(top_ka, "text")
+        if coerced is not None:
+            kit_anchors.append(coerced)
 
     for coll_key in ("items", "pairs", "blanks"):
         coll = activity.get(coll_key)
         if not isinstance(coll, list):
             continue
         for i, element in enumerate(coll):
-            ev = _pop_evidence(element) if isinstance(element, dict) else None
+            if not isinstance(element, dict):
+                continue
+            loc = f"{coll_key}[{i}]"
+            ev = _pop_evidence(element)
             if isinstance(ev, str) and ev.strip():
-                evidence.append(Evidence(quote=ev, locator=f"{coll_key}[{i}]"))
+                evidence.append(Evidence(quote=ev, locator=loc))
+            ka = _pop_kit_anchors(element)
+            if ka is not None:
+                coerced = _coerce_kit_anchors(ka, loc)
+                if coerced is not None:
+                    kit_anchors.append(coerced)
 
-    return activity, evidence
+    return activity, evidence, kit_anchors
 
 
 def project_to_b1(ir: HramatkaActivity) -> dict:
     """Return the pure activities-b1 item for the renderer — a defensive
-    deep copy of `ir.activity` with any stray 'evidence' keys stripped.
+    deep copy of `ir.activity` with any stray 'evidence' / 'kit_anchors' keys stripped.
     """
-    clean, _ = parse_raw_activity(ir.activity)
+    clean, _, _ = parse_raw_activity(ir.activity)
     return instruction_bank.apply_instruction_bank(clean)
 
 

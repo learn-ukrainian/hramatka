@@ -318,7 +318,7 @@ def test_pilot_gate_submitted_fields_pin(monkeypatch) -> None:
 
     for name, loader in fixtures._READY_CANDIDATES.items():
         raw = loader(0)
-        clean, evidence = schema.parse_raw_activity(raw)
+        clean, evidence, _kit_anchors = schema.parse_raw_activity(raw)
         gr = schema.GateResult()
         
         schema_tokens_calls.clear()

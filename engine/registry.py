@@ -11,7 +11,7 @@ from typing import Any
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
-from . import content_density, retrieval, schema
+from . import content_density, flags, retrieval, schema
 from .gates import (
     evidence_span,
     matchup_lemma,
@@ -23,8 +23,13 @@ from .gates import (
 from .gates import vesum as vesum_gate
 from .prompts import load_extractive_template
 
-REGISTRY_VERSION = "wave1b.registry.v1"
+REGISTRY_VERSION = "wave1b.registry.v2"
 EXTRACTIVE_PROMPT_VERSION = "extractive-v5:89b97c528e30"
+
+# Per-type grounding mode (grounding-mode v1 §4). Required on every entry.
+GROUNDING_QUOTING = "quoting"
+GROUNDING_DERIVED = "derived"
+GROUNDING_MODES = frozenset({GROUNDING_QUOTING, GROUNDING_DERIVED})
 
 PromptBuilder = Callable[..., str]
 EvidenceLocator = Callable[[dict[str, Any]], tuple[str, ...]]
@@ -202,6 +207,39 @@ def _validate_mark_the_words(raw: object) -> list[str]:
     return errors
 
 
+def _use_derived_raw_path() -> bool:
+    """Derived kit_anchors path is active only under ``grounding_mode_v1`` (§0/§7).
+
+    Flags-off remains the production extractive path and must stay byte-identical
+    for quoting types; derived types keep the legacy evidence contract until the
+    flag is on.
+    """
+    return flags.grounding_mode_v1_enabled()
+
+
+def _validate_kit_anchors_object(raw_ka: object, *, where: str) -> list[str]:
+    """Fail-closed kit_anchors contract: required witness_span (spec §6.4 G3)."""
+    if not isinstance(raw_ka, dict):
+        return [f"{where} requires kit_anchors object when grounding_mode=derived"]
+    errors: list[str] = []
+    witness = raw_ka.get("witness_span")
+    if not isinstance(witness, str) or not witness.strip():
+        errors.append(f"{where} kit_anchors requires non-empty witness_span")
+    lemmas = raw_ka.get("lemmas")
+    if not isinstance(lemmas, list):
+        errors.append(f"{where} kit_anchors.lemmas must be a list")
+    elif any(not isinstance(lemma, str) or not lemma.strip() for lemma in lemmas):
+        errors.append(f"{where} kit_anchors.lemmas must be non-empty strings")
+    if "rule_id" in raw_ka and raw_ka["rule_id"] is not None:
+        if not isinstance(raw_ka["rule_id"], str) or not raw_ka["rule_id"].strip():
+            errors.append(f"{where} kit_anchors.rule_id must be a non-empty string when present")
+    return errors
+
+
+def _has_evidence_quote(item: dict) -> bool:
+    return isinstance(item.get("evidence"), str) and bool(item["evidence"].strip())
+
+
 def _validate_error_correction(raw: object) -> list[str]:
     if errors := _validate_basics(raw, "error-correction"):
         return errors
@@ -211,11 +249,12 @@ def _validate_error_correction(raw: object) -> list[str]:
     if not isinstance(items, list) or not items:
         errors.append("error-correction requires a non-empty items list")
     else:
+        derived = _use_derived_raw_path()
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 errors.append(f"items[{index}] must be an object")
                 continue
-            for field in ("sentence", "error", "correction", "explanation", "evidence"):
+            for field in ("sentence", "error", "correction", "explanation"):
                 if not isinstance(item.get(field), str) or not item[field].strip():
                     errors.append(f"items[{index}] requires a non-empty {field}")
             options = item.get("options")
@@ -223,6 +262,21 @@ def _validate_error_correction(raw: object) -> list[str]:
                 errors.append(f"items[{index}] requires 3–4 correction options")
             elif any(not isinstance(option, str) or not option.strip() for option in options):
                 errors.append(f"items[{index}] options must be non-empty strings")
+            if derived:
+                # Reject evidence-only quote-restore shapes; require kit_anchors.
+                if _has_evidence_quote(item) and "kit_anchors" not in item:
+                    errors.append(
+                        f"items[{index}] grounding_mode=derived rejects evidence-only "
+                        "quote-restore shape; provide kit_anchors with witness_span"
+                    )
+                errors.extend(
+                    _validate_kit_anchors_object(
+                        item.get("kit_anchors"), where=f"items[{index}]"
+                    )
+                )
+            else:
+                if not _has_evidence_quote(item):
+                    errors.append(f"items[{index}] requires a non-empty evidence")
     return errors
 
 
@@ -235,11 +289,12 @@ def _validate_fill_in(raw: object) -> list[str]:
     if not isinstance(items, list) or not items:
         errors.append("fill-in requires a non-empty items list")
     else:
+        derived = _use_derived_raw_path()
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 errors.append(f"items[{index}] must be an object")
                 continue
-            for field in ("sentence", "answer", "evidence"):
+            for field in ("sentence", "answer"):
                 if not isinstance(item.get(field), str) or not item[field].strip():
                     errors.append(f"items[{index}] requires a non-empty {field}")
             options = item.get("options")
@@ -247,6 +302,21 @@ def _validate_fill_in(raw: object) -> list[str]:
                 errors.append(f"items[{index}] requires 3–4 options")
             elif any(not isinstance(option, str) or not option.strip() for option in options):
                 errors.append(f"items[{index}] options must be non-empty strings")
+            if derived:
+                # P3: fill-in stems are kit-derived, never quote restoration.
+                if _has_evidence_quote(item) and "kit_anchors" not in item:
+                    errors.append(
+                        f"items[{index}] grounding_mode=derived rejects evidence-only "
+                        "quote-restore fill-in shape; provide kit_anchors with witness_span"
+                    )
+                errors.extend(
+                    _validate_kit_anchors_object(
+                        item.get("kit_anchors"), where=f"items[{index}]"
+                    )
+                )
+            else:
+                if not _has_evidence_quote(item):
+                    errors.append(f"items[{index}] requires a non-empty evidence")
     return errors
 
 
@@ -288,7 +358,7 @@ def _validate_short_writing(raw: object) -> list[str]:
         return errors
     assert isinstance(raw, dict)
     errors = []
-    for field in ("prompt", "source_ref", "word_count_guidance", "evidence"):
+    for field in ("prompt", "source_ref", "word_count_guidance"):
         if not isinstance(raw.get(field), str) or not raw[field].strip():
             errors.append(f"short-writing requires a non-empty {field}")
     for field in ("model_answer", "rubric_hint", "teacher_guidance"):
@@ -296,6 +366,43 @@ def _validate_short_writing(raw: object) -> list[str]:
             errors.append(f"short-writing {field} must be a non-empty string when present")
     if {"learner_answer", "learner_response"} & set(raw):
         errors.append("short-writing must not carry a learner response")
+    if _use_derived_raw_path():
+        if _has_evidence_quote(raw) and "kit_anchors" not in raw:
+            errors.append(
+                "short-writing grounding_mode=derived rejects evidence-only "
+                "quote-restore shape; provide kit_anchors with witness_span"
+            )
+        errors.extend(_validate_kit_anchors_object(raw.get("kit_anchors"), where="short-writing"))
+    else:
+        if not isinstance(raw.get("evidence"), str) or not raw["evidence"].strip():
+            errors.append("short-writing requires a non-empty evidence")
+    return errors
+
+
+def _validate_sentence_builder(raw: object) -> list[str]:
+    """Raw contract for sentence-builder (derived; registry+mode ahead of polish).
+
+    Not in the pilot type freeze yet; exported for dual-path unit tests and the
+    day the type is registered (spec §4.3 P1).
+    """
+    if errors := _validate_basics(raw, "sentence-builder"):
+        return errors
+    assert isinstance(raw, dict)
+    errors = []
+    starters = raw.get("starters")
+    if not isinstance(starters, list) or not starters:
+        errors.append("sentence-builder requires a non-empty starters list")
+    elif any(not isinstance(starter, str) or not starter.strip() for starter in starters):
+        errors.append("sentence-builder starters must be non-empty strings")
+    if not isinstance(raw.get("instruction"), str) or not raw["instruction"].strip():
+        errors.append("sentence-builder requires a non-empty instruction")
+    # Always derived: kit_anchors with witness_span (no quoting half-measure).
+    if _has_evidence_quote(raw) and "kit_anchors" not in raw:
+        errors.append(
+            "sentence-builder grounding_mode=derived rejects evidence-only "
+            "quote-restore shape; provide kit_anchors with witness_span"
+        )
+    errors.extend(_validate_kit_anchors_object(raw.get("kit_anchors"), where="sentence-builder"))
     return errors
 
 
@@ -1267,6 +1374,15 @@ class ActivityRegistryEntry:
     item_budget: int
     is_puzzle: bool
     public_projector: Callable[[schema.HramatkaActivity], dict]
+    # Mandatory per-type mode (grounding-mode v1 §4.1): "quoting" | "derived".
+    grounding_mode: str
+
+    def __post_init__(self) -> None:
+        if self.grounding_mode not in GROUNDING_MODES:
+            raise ValueError(
+                f"ActivityRegistryEntry {self.activity_type!r} grounding_mode must be "
+                f"one of {sorted(GROUNDING_MODES)}, got {self.grounding_mode!r}"
+            )
 
     def fingerprint(self) -> dict[str, Any]:
         return {
@@ -1281,6 +1397,7 @@ class ActivityRegistryEntry:
             "ttt_phases": self.ttt_phases,
             "item_budget": self.item_budget,
             "is_puzzle": self.is_puzzle,
+            "grounding_mode": self.grounding_mode,
         }
 
 
@@ -1303,6 +1420,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=5,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,
     ),
     "quiz": ActivityRegistryEntry(
         activity_type="quiz",
@@ -1322,6 +1440,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=4,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,
     ),
     "error-correction": ActivityRegistryEntry(
         activity_type="error-correction",
@@ -1341,6 +1460,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=4,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_DERIVED,
     ),
     "fill-in": ActivityRegistryEntry(
         activity_type="fill-in",
@@ -1360,6 +1480,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=4,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_DERIVED,
     ),
     "cloze": ActivityRegistryEntry(
         activity_type="cloze",
@@ -1379,6 +1500,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=3,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,
     ),
     "match-up": ActivityRegistryEntry(
         activity_type="match-up",
@@ -1402,6 +1524,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=4,
         is_puzzle=True,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,  # E2: quoting in v1; derived later
     ),
     "mark-the-words": ActivityRegistryEntry(
         activity_type="mark-the-words",
@@ -1421,6 +1544,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=4,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,
     ),
     "text-questions": ActivityRegistryEntry(
         activity_type="text-questions",
@@ -1440,6 +1564,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=3,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_QUOTING,
     ),
     "short-writing": ActivityRegistryEntry(
         activity_type="short-writing",
@@ -1459,6 +1584,7 @@ _ACTIVITY_ENTRIES: dict[str, ActivityRegistryEntry] = {
         item_budget=1,
         is_puzzle=False,
         public_projector=schema.project_to_b1,
+        grounding_mode=GROUNDING_DERIVED,
     ),
 }
 

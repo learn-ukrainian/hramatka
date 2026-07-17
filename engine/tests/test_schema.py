@@ -19,13 +19,14 @@ def test_parse_raw_activity_strips_evidence_true_false():
             {"statement": "B", "correct": False, "evidence": "цитата B"},
         ],
     }
-    clean, evidence = S.parse_raw_activity(raw)
+    clean, evidence, kit_anchors = S.parse_raw_activity(raw)
     # evidence removed from the projected item
     assert all("evidence" not in it for it in clean["items"])
     assert [(e.quote, e.locator) for e in evidence] == [
         ("цитата A", "items[0]"),
         ("цитата B", "items[1]"),
     ]
+    assert kit_anchors == []
 
 
 def test_parse_raw_activity_strips_top_level_cloze_evidence():
@@ -36,9 +37,10 @@ def test_parse_raw_activity_strips_top_level_cloze_evidence():
         "blanks": [{"id": 1, "answer": "мозку", "options": ["мозку", "серця"]}],
         "evidence": "речення-опора",
     }
-    clean, evidence = S.parse_raw_activity(raw)
+    clean, evidence, kit_anchors = S.parse_raw_activity(raw)
     assert "evidence" not in clean
     assert [(e.quote, e.locator) for e in evidence] == [("речення-опора", "text")]
+    assert kit_anchors == []
 
 
 def test_project_to_b1_defensively_strips_and_validates():

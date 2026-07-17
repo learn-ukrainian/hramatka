@@ -227,6 +227,7 @@ def test_registration_contract_fake_type_needs_only_registry_entry(tmp_path, mon
         item_budget=1,
         is_puzzle=False,
         public_projector=project_quiz,
+        grounding_mode=registry.GROUNDING_QUOTING,
     )
     monkeypatch.setitem(registry.ACTIVITY_REGISTRY, "quiz", fake_entry)
 

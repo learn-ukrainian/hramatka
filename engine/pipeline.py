@@ -177,6 +177,10 @@ def _gate_impl_digest() -> str:
         paths.ENGINE_DIR / "registry.py",
         paths.ENGINE_DIR / "selector.py",
         paths.ENGINE_DIR / "prompt_pack.py",
+        # E3 / grounding-mode v1: reuse/density and derived-gate stubs must
+        # reshuffle bake identity when their logic changes.
+        paths.ENGINE_DIR / "content_density.py",
+        paths.ENGINE_DIR / "flags.py",
     ]
     h = hashlib.sha256()
     for fp in sorted(gate_files, key=lambda p: p.relative_to(paths.ENGINE_DIR).as_posix()):
@@ -203,16 +207,20 @@ def fingerprint_inputs(
     pipeline_mode: str = "candidate-bank.v1",
     prompt_pack_digest: str | None = None,
     model: str | None = None,
+    flag_vector: dict[str, bool] | None = None,
 ) -> dict:
     """The FULL bake-identity input set (Sol defect #4 / review item 4).
 
     Covers anchor + level + pedagogy + phase + requested types + prompt digest +
     package versions + engine version + model + gate-implementation digest +
-    vendored-artifact digests + data-bundle content digests. DBs are identified
-    by CONTENT (sha256 from the pinned data manifest), never size/mtime — so a
-    re-run on the same inputs is genuinely idempotent and any input change (data,
-    prompt, package, OR gate code) reshuffles the fingerprint.
+    vendored-artifact digests + data-bundle content digests + active flag
+    vector (grounding-mode v1 §7). DBs are identified by CONTENT (sha256 from
+    the pinned data manifest), never size/mtime — so a re-run on the same
+    inputs is genuinely idempotent and any input change (data, prompt, package,
+    flags, OR gate code) reshuffles the fingerprint.
     """
+    from . import flags as engine_flags
+
     active_model = model or os.environ.get("HRAMATKA_GEN_MODEL", GEMMA_MODEL) or GEMMA_MODEL
     return {
         "engine_version": ENGINE_VERSION,
@@ -231,6 +239,9 @@ def fingerprint_inputs(
         "pipeline_mode": pipeline_mode,
         "prompt_pack_injection_digest": prompt_pack_digest,
         "gate_impl_digest": _gate_impl_digest(),
+        "flag_vector": (
+            flag_vector if flag_vector is not None else engine_flags.active_flag_vector()
+        ),
         "packages": _package_versions(),
         "vendor": vendoring.artifact_versions(),
         "data_bundle": data.active_bundle().digests(),
@@ -337,10 +348,15 @@ def reject_raw_candidate(
         actual_model = act_reg.get(id(raw_activity))
 
     if isinstance(raw_activity, dict):
-        clean, evidence = schema.parse_raw_activity(raw_activity)
+        clean, evidence, kit_anchors = schema.parse_raw_activity(raw_activity)
         raw_copy = dict(raw_activity)
     else:
-        clean, evidence, raw_copy = {"type": "unknown"}, [], {"value": raw_activity}
+        clean, evidence, kit_anchors, raw_copy = (
+            {"type": "unknown"},
+            [],
+            [],
+            {"value": raw_activity},
+        )
 
     act_provenance = dict(provenance)
     if actual_model:
@@ -349,6 +365,7 @@ def reject_raw_candidate(
     ir = schema.HramatkaActivity(
         activity=clean,
         evidence=evidence,
+        kit_anchors=kit_anchors,
         provenance=act_provenance,
         raw_candidate=raw_copy,
         candidate_id=candidate_id,
@@ -411,8 +428,28 @@ def gate_activity(
             detail="; ".join(contract_errors),
         )
 
-    clean, evidence = schema.parse_raw_activity(raw_activity)
-    if {evidence_item.locator for evidence_item in evidence} != set(
+    clean, evidence, kit_anchors = schema.parse_raw_activity(raw_activity)
+    from . import flags as engine_flags
+
+    # Dual-path locator contract (grounding-mode v1 slice 1): under the flag,
+    # derived types use kit_anchors locators instead of evidence quotes.
+    derived_path = (
+        engine_flags.grounding_mode_v1_enabled() and entry.grounding_mode == "derived"
+    )
+    if derived_path:
+        expected_locs = set(entry.evidence_locator(raw_activity))
+        actual_locs = {ka.locator for ka in kit_anchors}
+        if actual_locs != expected_locs:
+            act_provenance = dict(provenance)
+            if actual_model:
+                act_provenance["generator"] = actual_model
+            return reject_raw_candidate(
+                raw_activity,
+                act_provenance,
+                candidate_id=candidate_id or "candidate-unknown",
+                detail="kit_anchors locators do not match the registered raw contract",
+            )
+    elif {evidence_item.locator for evidence_item in evidence} != set(
         entry.evidence_locator(raw_activity)
     ):
         act_provenance = dict(provenance)
@@ -432,12 +469,27 @@ def gate_activity(
     ir = schema.HramatkaActivity(
         activity=clean,
         evidence=evidence,
+        kit_anchors=kit_anchors,
         provenance=act_provenance,
         raw_candidate=dict(raw_activity),
         candidate_id=candidate_id,
     )
     gr = ir.gate_result
     a_type = clean.get("type")
+
+    # Slice 1: derived path is dual-path validators + IR only. Semantic derived
+    # gates land in slice 3; until then derived survivors must not publish as
+    # lesson-ready (spec §0 E1/E7, slice-1 acceptance).
+    if derived_path and not engine_flags.derived_publish_allowed():
+        gr.add(
+            "derived_publish",
+            "fail",
+            "grounding_mode=derived is not lesson-ready until slice-3 gates "
+            "+ teacher_review_tray_v1 (grounding-mode v1 slice 1 hold)",
+        )
+        gr.status = schema.DISPOSITION_REJECTED
+        return ir
+
     entry.gate(clean, evidence, anchor_body, gr, atlas_lookup)
     per_item, activity_status = _locator_statuses(gr)
 
