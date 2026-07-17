@@ -832,6 +832,86 @@ def _gate_quiz(
         _run_numeral_gate(" ".join(options), gr, loc)
 
 
+def _gate_error_correction_derived(
+    activity: dict[str, Any],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
+) -> None:
+    """Derived-mode structure gates for error-correction (no evidence restore).
+
+    RULE_REGISTRY / MOAT / kit-closure live in ``gates.derived``; this path only
+    keeps form, option, and VESUM hardness that still apply without quotes.
+    """
+    for index, item in enumerate(activity.get("items", [])):
+        loc = f"items[{index}]"
+        sentence = item.get("sentence", "")
+        error = item.get("error", "")
+        correction = item.get("correction", "")
+        _gate_schema_tokens([item.get("explanation")], anchor_body, gr, loc)
+        error_word = _single_ua_word(error)
+        correction_word = _single_ua_word(correction)
+        if error_word is None or correction_word is None:
+            gr.add(
+                "error_correction_form",
+                "fail",
+                "Error and correction must each be one Ukrainian word form.",
+                locator=loc,
+            )
+            continue
+        restored = _replace_single_word(sentence, error_word, correction_word)
+        if restored is None:
+            gr.add(
+                "error_correction_single",
+                "fail",
+                "Sentence must contain the declared erroneous form exactly once.",
+                locator=loc,
+            )
+            continue
+        options = item.get("options", [])
+        option_words = [_single_ua_word(option) for option in options]
+        if any(option is None for option in option_words):
+            gr.add(
+                "error_correction_options",
+                "fail",
+                "Every correction option must be exactly one Ukrainian word form.",
+                locator=loc,
+            )
+            continue
+        words = [option for option in option_words if option is not None]
+        normalized = [_signature_value(option) for option in words]
+        if len(set(normalized)) != len(normalized):
+            gr.add(
+                "error_correction_options",
+                "fail",
+                "Correction options repeat a form, so the key is ambiguous.",
+                locator=loc,
+            )
+        if normalized.count(_signature_value(correction_word)) != 1:
+            gr.add(
+                "error_correction_options",
+                "fail",
+                "The declared correction must occur exactly once in the options.",
+                locator=loc,
+            )
+        error_is_non_vesum = not vesum_tags.parse_word(error_word)
+        # Correction + non-error options must be VESUM (§6.2.4). Error may be
+        # non-VESUM only under a proved malformation for the active rule_id.
+        vesum_words = (
+            [word for word in words if _signature_value(word) != _signature_value(error_word)]
+            if error_is_non_vesum
+            else words
+        )
+        _add_verified_vesum_tokens(
+            vesum_words,
+            anchor_body,
+            gr,
+            loc,
+            missing_gate="error_correction_vesum",
+            atlas_lookup=atlas_lookup,
+        )
+
+
 def _gate_error_correction(
     activity: dict[str, Any],
     evidence: list[schema.Evidence],
@@ -847,7 +927,14 @@ def _gate_error_correction(
     phrase wrong and the correction restores an evidence sentence that passes.
     This deliberately fails closed for agreement/word errors outside a rule the
     engine can actually decide.
+
+    Under ``grounding_mode_v1`` the derived dual-path skips evidence restore;
+    RULE_REGISTRY handles government proof (gates.derived).
     """
+    if flags.grounding_mode_v1_enabled():
+        _gate_error_correction_derived(activity, anchor_body, gr, atlas_lookup)
+        return
+
     evidence_by_locator = {item.locator: item for item in evidence}
     for index, item in enumerate(activity.get("items", [])):
         loc = f"items[{index}]"
@@ -955,6 +1042,75 @@ def _gate_error_correction(
             )
 
 
+def _gate_fill_in_derived(
+    activity: dict[str, Any],
+    anchor_body: str,
+    gr: schema.GateResult,
+    atlas_lookup: dict | None = None,
+) -> None:
+    """Derived-mode fill-in: kit stems, never quote restoration (P3)."""
+    for index, item in enumerate(activity.get("items", [])):
+        loc = f"items[{index}]"
+        sentence = item.get("sentence", "")
+        answer = item.get("answer", "")
+        _gate_schema_tokens([item.get("explanation")], anchor_body, gr, loc)
+        markers = list(_FILL_BLANK_RE.finditer(sentence))
+        if len(markers) != 1:
+            gr.add(
+                "fill_in_blank",
+                "fail",
+                "Fill-in sentence must contain exactly one ____ or {answer} marker.",
+                locator=loc,
+            )
+            continue
+        answer_word = _single_ua_word(answer)
+        option_words = [_single_ua_word(option) for option in item.get("options", [])]
+        if answer_word is None or any(option is None for option in option_words):
+            gr.add(
+                "fill_in_options",
+                "fail",
+                "The key and every option must be exactly one Ukrainian word form.",
+                locator=loc,
+            )
+            continue
+        words = [option for option in option_words if option is not None]
+        normalized = [_signature_value(option) for option in words]
+        if len(set(normalized)) != len(normalized):
+            gr.add(
+                "fill_in_options",
+                "fail",
+                "Fill-in options repeat a form, so the key is ambiguous.",
+                locator=loc,
+            )
+        if normalized.count(_signature_value(answer_word)) != 1:
+            gr.add(
+                "fill_in_options",
+                "fail",
+                "The answer must occur exactly once in its option list.",
+                locator=loc,
+            )
+        _add_verified_vesum_tokens(
+            words,
+            anchor_body,
+            gr,
+            loc,
+            missing_gate="fill_in_vesum",
+            atlas_lookup=atlas_lookup,
+        )
+        answer_pos = {parsed["pos"] for parsed in vesum_tags.parse_word(answer_word)}
+        for option in words:
+            if _signature_value(option) == _signature_value(answer_word):
+                continue
+            option_pos = {parsed["pos"] for parsed in vesum_tags.parse_word(option)}
+            if not answer_pos.intersection(option_pos):
+                gr.add(
+                    "fill_in_pos",
+                    "fail",
+                    f"Distractor '{option}' does not share a VESUM part of speech with the key.",
+                    locator=loc,
+                )
+
+
 def _gate_fill_in(
     activity: dict[str, Any],
     evidence: list[schema.Evidence],
@@ -962,6 +1118,10 @@ def _gate_fill_in(
     gr: schema.GateResult,
     atlas_lookup: dict | None = None,
 ) -> None:
+    if flags.grounding_mode_v1_enabled():
+        _gate_fill_in_derived(activity, anchor_body, gr, atlas_lookup)
+        return
+
     evidence_by_locator = {item.locator: item for item in evidence}
     for index, item in enumerate(activity.get("items", [])):
         loc = f"items[{index}]"
@@ -1093,6 +1253,36 @@ def _gate_short_writing(
     atlas_lookup: dict | None = None,
 ) -> None:
     loc = "text"
+    if flags.grounding_mode_v1_enabled():
+        # Derived short-writing: no evidence restore; stem length + VESUM only.
+        # Kit closure / constraints / G1 run in gates.derived.
+        _gate_schema_tokens(
+            [activity.get("prompt"), activity.get("model_answer"), activity.get("rubric_hint")],
+            anchor_body,
+            gr,
+            loc,
+        )
+        tokens = vesum_gate.content_tokens(activity.get("prompt", "") or "")
+        if not 2 <= len(tokens) <= _OPEN_STEM_MAX_TOKENS:
+            gr.add(
+                "open_task_b1",
+                "fail",
+                (
+                    f"Task stem needs 2–{_OPEN_STEM_MAX_TOKENS} content tokens "
+                    "for the B1 task contract."
+                ),
+                locator=loc,
+            )
+        _add_verified_vesum_tokens(
+            tokens,
+            anchor_body,
+            gr,
+            loc,
+            missing_gate="open_task_vesum",
+            atlas_lookup=atlas_lookup,
+        )
+        return
+
     evidence_item = next((item for item in evidence if item.locator == loc), None)
     quote = _set_evidence_verdict(evidence_item, anchor_body, gr, loc)
     _gate_schema_tokens(

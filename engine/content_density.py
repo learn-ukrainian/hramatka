@@ -243,6 +243,17 @@ def _density_evidence_available(candidate: schema.HramatkaActivity) -> bool:
     return bool(activity.get("evidence"))
 
 
+def _is_derived_mode_candidate(candidate: schema.HramatkaActivity) -> bool:
+    """Under grounding_mode_v1, derived types skip quoting density/reuse (slice 3)."""
+    from . import flags, registry
+
+    if not flags.grounding_mode_v1_enabled():
+        return False
+    activity_type = candidate.activity.get("type", "")
+    entry = registry.ACTIVITY_REGISTRY.get(activity_type)
+    return entry is not None and entry.grounding_mode == registry.GROUNDING_DERIVED
+
+
 def meets_content_density(
     candidate: schema.HramatkaActivity,
     anchor: dict | None = None,
@@ -250,13 +261,17 @@ def meets_content_density(
     """Return whether a ready candidate satisfies the canonical composition floor."""
     activity = candidate.activity
     activity_type = activity.get("type", "")
+    # Slice 3: derived under grounding_mode_v1 — count floors only; sentence-id
+    # density is a quoting contract (lemma/novelty floors land in slice 4).
+    derived_mode = _is_derived_mode_candidate(candidate)
 
     if activity_type == "quiz":
         items = activity.get("items", [])
         if not isinstance(items, list) or len(items) < 3:
             return False
         if (
-            anchor is None
+            derived_mode
+            or anchor is None
             or not AnchorSentences.from_anchor(anchor).sentences
             or not _density_evidence_available(candidate)
         ):
@@ -269,7 +284,8 @@ def meets_content_density(
         if not isinstance(items, list) or len(items) < 2:
             return False
         if (
-            anchor is None
+            derived_mode
+            or anchor is None
             or not AnchorSentences.from_anchor(anchor).sentences
             or not _density_evidence_available(candidate)
         ):
@@ -290,7 +306,8 @@ def meets_content_density(
         if not isinstance(items, list) or len(items) < 3:
             return False
         if (
-            anchor is None
+            derived_mode
+            or anchor is None
             or not AnchorSentences.from_anchor(anchor).sentences
             or not _density_evidence_available(candidate)
         ):
@@ -319,7 +336,12 @@ def itemized_sentence_ids_are_distinct(
     candidate: schema.HramatkaActivity,
     anchor: dict | None = None,
 ) -> bool:
-    """Itemized activities must anchor each item on a distinct evidence sentence."""
+    """Itemized activities must anchor each item on a distinct evidence sentence.
+
+    Under ``grounding_mode_v1``, derived types are exempt (quoting primaries only).
+    """
+    if _is_derived_mode_candidate(candidate):
+        return True
     ids = [sentence_id for sentence_id in item_sentence_ids(candidate, anchor) if sentence_id]
     return len(ids) == len(set(ids))
 
@@ -379,13 +401,18 @@ def composition_eligible(
     evidence_answers: set[tuple[str, str]],
     evidence_answer_pairs: list[tuple[str, str]],
 ) -> bool:
-    """Density + sentence-ID dedup checks used by the selector."""
+    """Density + sentence-ID dedup checks used by the selector.
+
+    Sentence-reuse caps apply to **quoting** primary sentence IDs only under
+    ``grounding_mode_v1`` (spec §4.2 / §5.3). Derived candidates skip reuse.
+    """
     if not meets_content_density(candidate, anchor):
         return False
     if not itemized_sentence_ids_are_distinct(candidate, anchor):
         return False
 
-    primary = primary_sentence_id(candidate, anchor)
+    derived_mode = _is_derived_mode_candidate(candidate)
+    primary = None if derived_mode else primary_sentence_id(candidate, anchor)
     if primary and state.last_primary == primary:
         return False
 
@@ -399,11 +426,13 @@ def composition_eligible(
     ):
         return False
 
-    pair_set = set(evidence_answer_pairs)
-    if forbid_duplicate_evidence_answer and (
-        len(pair_set) != len(evidence_answer_pairs) or pair_set & evidence_answers
-    ):
-        return False
+    # Evidence-answer de-dup is a quoting contract; derived uses kit stems.
+    if not derived_mode:
+        pair_set = set(evidence_answer_pairs)
+        if forbid_duplicate_evidence_answer and (
+            len(pair_set) != len(evidence_answer_pairs) or pair_set & evidence_answers
+        ):
+            return False
     return True
 
 

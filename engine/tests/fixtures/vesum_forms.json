@@ -654,6 +654,12 @@
   "pos": "noun"
  },
  {
+  "word_form": "книга",
+  "lemma": "книга",
+  "tags": "noun:inanim:f:v_naz",
+  "pos": "noun"
+ },
+ {
   "word_form": "книги",
   "lemma": "книга",
   "tags": "noun:inanim:f:v_rod",

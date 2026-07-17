@@ -382,6 +382,7 @@ def gate_activity(
     atlas_lookup: dict | None = None,
     *,
     candidate_id: str | None = None,
+    kit: dict | None = None,
 ) -> schema.HramatkaActivity:
     """Run the per-type gate chain, then PER-ITEM granularity (approved
     design): a per-statement/per-pair gate FAIL drops only that item/pair
@@ -430,6 +431,7 @@ def gate_activity(
 
     clean, evidence, kit_anchors = schema.parse_raw_activity(raw_activity)
     from . import flags as engine_flags
+    from .gates import derived as derived_gates
 
     # Dual-path locator contract (grounding-mode v1 slice 1): under the flag,
     # derived types use kit_anchors locators instead of evidence quotes.
@@ -465,6 +467,10 @@ def gate_activity(
     act_provenance = dict(provenance)
     if actual_model:
         act_provenance["generator"] = actual_model
+    if derived_path:
+        act_provenance = {**act_provenance, "grounding_mode": "derived", "tag": "generated"}
+    else:
+        act_provenance = {**act_provenance, "grounding_mode": entry.grounding_mode}
 
     ir = schema.HramatkaActivity(
         activity=clean,
@@ -477,20 +483,35 @@ def gate_activity(
     gr = ir.gate_result
     a_type = clean.get("type")
 
-    # Slice 1: derived path is dual-path validators + IR only. Semantic derived
-    # gates land in slice 3; until then derived survivors must not publish as
-    # lesson-ready (spec §0 E1/E7, slice-1 acceptance).
-    if derived_path and not engine_flags.derived_publish_allowed():
-        gr.add(
-            "derived_publish",
-            "fail",
-            "grounding_mode=derived is not lesson-ready until slice-3 gates "
-            "+ teacher_review_tray_v1 (grounding-mode v1 slice 1 hold)",
-        )
-        gr.status = schema.DISPOSITION_REJECTED
-        return ir
-
+    # Slice 3: fail-closed derived semantic gates under grounding_mode_v1.
+    # Type-specific extractive gates dual-path inside registry when flag is on.
     entry.gate(clean, evidence, anchor_body, gr, atlas_lookup)
+    if derived_path:
+        derived_gates.gate_derived_activity(
+            clean,
+            kit_anchors,
+            kit,
+            anchor_body,
+            gr,
+            atlas_lookup=atlas_lookup,
+        )
+        # G4: publish path hard-refuses derived content without an operational
+        # teacher review tray — explicit dependency error, not a warning.
+        if not engine_flags.derived_publish_allowed():
+            try:
+                engine_flags.assert_derived_publish_allowed()
+            except engine_flags.DerivedPublishDependencyError as exc:
+                gr.add("derived_publish", "fail", str(exc), locator=None)
+            else:
+                gr.add(
+                    "derived_publish",
+                    "fail",
+                    "dependency error: derived-mode publish is not allowed",
+                    locator=None,
+                )
+            gr.status = schema.DISPOSITION_REJECTED
+            return ir
+
     per_item, activity_status = _locator_statuses(gr)
 
     # Activity-level FAIL (cloze text gates, etc.) -> drop the whole activity.
@@ -543,9 +564,10 @@ def gate_activity(
 
     filtered = dict(clean)
     filtered[coll_key] = kept
-    # The public activity has compacted collection indices.  Keep evidence in
-    # the same coordinate system and omit discarded-item spans so selector
-    # coverage and evidence/answer de-duplication describe only survivors.
+    # The public activity has compacted collection indices.  Keep evidence /
+    # kit_anchors in the same coordinate system and omit discarded-item spans
+    # so selector coverage and evidence/answer de-duplication describe only
+    # survivors.
     remapped_evidence: list[schema.Evidence] = []
     original_to_filtered = {
         f"{coll_key}[{original}]": f"{coll_key}[{filtered_index}]"
@@ -559,6 +581,15 @@ def gate_activity(
         elif not _ITEM_LOCATOR_RE.match(evidence_item.locator):
             remapped_evidence.append(evidence_item)
     ir.evidence = remapped_evidence
+    remapped_kit: list[schema.KitAnchors] = []
+    for ka in kit_anchors:
+        remapped_locator = original_to_filtered.get(ka.locator)
+        if remapped_locator is not None:
+            ka.locator = remapped_locator
+            remapped_kit.append(ka)
+        elif not _ITEM_LOCATOR_RE.match(ka.locator):
+            remapped_kit.append(ka)
+    ir.kit_anchors = remapped_kit
     projected = _project_and_validate(filtered, gr, entry.public_projector)
     if projected is None:
         gr.status = schema.GATE_FAILED
@@ -799,6 +830,10 @@ def _run(
         snap["body_uk"], atlas_lookup=atlas_lookup
     )
 
+    # Slice-2 kit substrate for derived gates (empty when enrichment is off —
+    # derived then fail closed via kit_is_empty).
+    active_kit = grounding.get("kit") if isinstance(grounding, dict) else None
+
     def make_candidate(
         raw: object,
         candidate_id: str,
@@ -829,6 +864,7 @@ def _run(
                 provenance,
                 atlas_lookup=lookup,
                 candidate_id=candidate_id,
+                kit=active_kit if isinstance(active_kit, dict) else None,
             )
         return ir
 

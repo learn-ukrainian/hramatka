@@ -402,8 +402,10 @@ def test_hramatka_activity_as_dict_carries_kit_anchors():
 # ---------------------------------------------------------------------------
 # No production publish path treats derived survivors as lesson-ready
 # ---------------------------------------------------------------------------
-def test_derived_publish_allowed_is_false_in_slice1():
+def test_derived_publish_allowed_is_false_by_default():
+    """Default env: tray off ⇒ derived publish refused (slice 3 G4)."""
     assert flags.derived_publish_allowed() is False
+
 
 
 def test_derived_kit_path_not_lesson_ready_under_flag(monkeypatch, tmp_path):
@@ -430,7 +432,7 @@ def test_derived_kit_path_not_lesson_ready_under_flag(monkeypatch, tmp_path):
         cache_dir=tmp_path / "cache",
         use_cache=False,
     )
-    # Dual-path raw contract accepts kit_anchors, but slice-1 publish hold rejects.
+    # Dual-path raw contract accepts kit_anchors, but tray-off publish hold rejects (G4).
     assert result.lesson_b1 == []
     assert all(
         ir.gate_result.status == schema.DISPOSITION_REJECTED
@@ -441,6 +443,12 @@ def test_derived_kit_path_not_lesson_ready_under_flag(monkeypatch, tmp_path):
         check.gate == "derived_publish" and check.status == "fail"
         for ir in result.activities
         for check in ir.gate_result.checks
+    )
+    assert any(
+        "teacher_review_tray_v1" in check.detail
+        for ir in result.activities
+        for check in ir.gate_result.checks
+        if check.gate == "derived_publish"
     )
 
 
