@@ -27,6 +27,19 @@ _WORD_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", re.UNICODE)
 _DIGIT_RE = re.compile(r"\d+(?:[.,]\d+)?")
 _SPACE_RE = re.compile(r"\s+")
 
+# #228: these VESUM-verified function words carry no independently verifiable
+# content fact. Keep this list deliberately short; it is a surface allowlist
+# because ``треба`` and ``можна`` are VESUM ``noninfl`` forms, not ``adv``.
+KIT_CLOSURE_FUNCTION_ADVERBS = frozenset(
+    {"дуже", "також", "вже", "ще", "потім", "тепер", "тоді", "майже", "треба", "можна"}
+)
+_KIT_CLOSURE_EXEMPT_POS = frozenset({"part", "conj", "prep", "intj"})
+
+# #228: these invariant indefinite quantifiers do not assert a fact-numeral.
+# VESUM parses some as ``numr`` and some only as ``adv``, so G1 must use the
+# explicit audited set rather than a POS/tag heuristic.
+G1_INDEFINITE_QUANTIFIERS = frozenset({"багато", "мало", "кілька", "декілька", "чимало"})
+
 
 def _sig(value: object) -> str:
     return _SPACE_RE.sub(" ", str(value or "").casefold()).strip()
@@ -89,7 +102,11 @@ def kit_lemma_closure(kit: Mapping[str, Any] | None) -> set[str]:
 
 
 def content_lemmas_for_text(text: str) -> set[str]:
-    """Content lemmas (noun/adj/verb/adv) for kit-closure comparison."""
+    """Flattened content candidates, retained for callers needing a set view.
+
+    ``check_kit_closure`` deliberately does not use this lossy view: candidate
+    lemmas belong to surfaces, and membership is an ANY relation per surface.
+    """
     return {
         lemma.casefold()
         for lemmas in retrieval.lemmatize(text or "").values()
@@ -97,11 +114,36 @@ def content_lemmas_for_text(text: str) -> set[str]:
     }
 
 
+def _has_pronominal_marker(parsed: Mapping[str, Any]) -> bool:
+    """Return whether a VESUM parse carries the ``&pron`` / ``pron`` marker."""
+    raw = parsed.get("raw")
+    if not isinstance(raw, str):
+        return False
+    # The issue names VESUM's logical marker ``&pron``. Persisted VESUM rows
+    # encode it as the colon segment ``pron`` (for example ``...:pron:dem``).
+    return any(part.lstrip("&") == "pron" for part in raw.split(":"))
+
+
+def _is_kit_closure_exempt(surface: str, parses: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a token is a decidable closed-class exception to kit closure."""
+    if surface.casefold() in KIT_CLOSURE_FUNCTION_ADVERBS:
+        return True
+    for parsed in parses:
+        if _has_pronominal_marker(parsed):
+            return True
+        if parsed.get("pos") in _KIT_CLOSURE_EXEMPT_POS:
+            return True
+        lemma = parsed.get("lemma")
+        if isinstance(lemma, str) and lemma.casefold() == "бути":
+            return True
+    return False
+
+
 def check_kit_closure(
     texts: Sequence[str],
     kit: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Fail closed when any content lemma is outside the kit lemma closure."""
+    """Fail closed when a non-exempt token has no lemma in kit closure."""
     if retrieval.kit_is_empty(kit):
         return _fail(
             "kit_closure_empty",
@@ -116,16 +158,21 @@ def check_kit_closure(
 
     offenders: list[str] = []
     for text in texts:
-        for lemma in sorted(content_lemmas_for_text(text)):
-            if lemma not in closed:
-                offenders.append(lemma)
+        for surface, candidate_lemmas in retrieval.lemmatize(text or "").items():
+            parses = vesum_tags.parse_word(surface)
+            if _is_kit_closure_exempt(surface, parses):
+                continue
+            if not any(lemma.casefold() in closed for lemma in candidate_lemmas):
+                # Keep the user-visible sample tied to the offending token;
+                # showing every alternative candidate caused the #228 inversion.
+                offenders.append(surface)
     if offenders:
         sample = ", ".join(sorted(set(offenders), key=str.casefold)[:8])
         return _fail(
             "kit_closure",
             f"Derived tokens outside kit lemma closure: {sample}.",
         )
-    return _pass("kit_closure", "All content lemmas ⊆ kit lemma closure.")
+    return _pass("kit_closure", "Every non-exempt token has a kit-closure lemma candidate.")
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +230,17 @@ def _kit_allowed_surfaces(kit: Mapping[str, Any] | None, anchor_body: str) -> se
     return allowed
 
 
+def _is_indefinite_quantifier(token: str, parses: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether *token* is one of G1's audited non-factual quantifiers."""
+    if token.casefold() in G1_INDEFINITE_QUANTIFIERS:
+        return True
+    return any(
+        isinstance(parsed.get("lemma"), str)
+        and parsed["lemma"].casefold() in G1_INDEFINITE_QUANTIFIERS
+        for parsed in parses
+    )
+
+
 def check_g1_entity_numeral_bound(
     texts: Sequence[str],
     kit: Mapping[str, Any] | None,
@@ -210,6 +268,8 @@ def check_g1_entity_numeral_bound(
                 bad_entities.append(token)
             # Spelled-out numerals (VESUM numr) outside kit/anchor.
             parses = vesum_tags.parse_word(token)
+            if _is_indefinite_quantifier(token, parses):
+                continue
             if any(p.get("pos") == "numr" for p in parses) and low not in allowed:
                 bad_numerals.append(token)
 

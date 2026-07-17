@@ -171,6 +171,110 @@ def test_tokens_inside_kit_closure_pass():
     assert result["status"] == "pass"
 
 
+def test_kit_closure_uses_any_candidate_lemma_for_duzhe_duzhyi(monkeypatch):
+    """#228: «дуже» may also parse as adjective lemma «дужий»."""
+    monkeypatch.setattr(
+        derived.retrieval,
+        "lemmatize",
+        lambda _text: {"дуже": {"дуже", "дужий"}},
+    )
+    monkeypatch.setattr(
+        derived.vesum_tags,
+        "parse_word",
+        lambda _surface: [
+            {"lemma": "дуже", "pos": "adv", "raw": "adv:compb"},
+            {"lemma": "дужий", "pos": "adj", "raw": "adj:n:v_naz:compb"},
+        ],
+    )
+    # Isolate the candidate-lemma rule from the #228 function-adverb exemption.
+    monkeypatch.setattr(derived, "KIT_CLOSURE_FUNCTION_ADVERBS", frozenset(), raising=False)
+
+    result = derived.check_kit_closure(["дуже"], _kit_from_lemmas("дуже"))
+
+    assert result["status"] == "pass"
+
+
+def test_kit_closure_allows_natural_sentence_with_closed_class_words(monkeypatch):
+    """#228: closed-class words do not consume kit-closure vocabulary budget."""
+    monkeypatch.setattr(
+        derived.retrieval,
+        "lemmatize",
+        lambda _text: {
+            "це": {"це", "цей"},
+            "дуже": {"дуже", "дужий"},
+            "важливо": {"важливо"},
+        },
+    )
+    parses = {
+        "це": [
+            {"lemma": "це", "pos": "noun", "raw": "noun:inanim:n:v_naz:pron:dem"},
+            {"lemma": "це", "pos": "part", "raw": "part"},
+        ],
+        "дуже": [
+            {"lemma": "дуже", "pos": "adv", "raw": "adv:compb"},
+            {"lemma": "дужий", "pos": "adj", "raw": "adj:n:v_naz:compb"},
+        ],
+        "важливо": [{"lemma": "важливо", "pos": "adv", "raw": "adv:compb:predic"}],
+    }
+    monkeypatch.setattr(derived.vesum_tags, "parse_word", lambda surface: parses[surface])
+
+    result = derived.check_kit_closure(["Це дуже важливо…"], _kit_from_lemmas("важливо"))
+
+    assert result["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("surface", "legacy_candidates", "parses"),
+    [
+        (
+            "він",
+            {"він"},
+            [{"lemma": "він", "pos": "noun", "raw": "noun:unanim:m:v_naz:pron:pers:3"}],
+        ),
+        ("бо", {"бо"}, [{"lemma": "бо", "pos": "conj", "raw": "conj:subord"}]),
+        ("від", {"від"}, [{"lemma": "від", "pos": "prep", "raw": "prep"}]),
+        ("ой", {"ой"}, [{"lemma": "ой", "pos": "intj", "raw": "intj"}]),
+        (
+            "був",
+            {"булий"},
+            [{"lemma": "бути", "pos": "verb", "raw": "verb:imperf:past:m"}],
+        ),
+    ],
+)
+def test_kit_closure_exempts_closed_class_vesum_parses(
+    monkeypatch, surface, legacy_candidates, parses
+):
+    """#228 exemption predicates use VESUM tags/lemma, never semantic guesses."""
+    monkeypatch.setattr(
+        derived.retrieval,
+        "lemmatize",
+        lambda _text: {surface: legacy_candidates},
+    )
+    monkeypatch.setattr(derived.vesum_tags, "parse_word", lambda _surface: parses)
+
+    result = derived.check_kit_closure([surface], _kit_from_lemmas("важливо"))
+
+    assert result["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "surface",
+    ["дуже", "також", "вже", "ще", "потім", "тепер", "тоді", "майже", "треба", "можна"],
+)
+def test_kit_closure_exempts_curated_function_adverbs(monkeypatch, surface):
+    """#228 keeps the VESUM-verified surface allowlist deliberately small."""
+    monkeypatch.setattr(
+        derived.retrieval,
+        "lemmatize",
+        lambda _text: {surface: {f"outside-{surface}"}},
+    )
+    monkeypatch.setattr(derived.vesum_tags, "parse_word", lambda _surface: [])
+
+    result = derived.check_kit_closure([surface], _kit_from_lemmas("важливо"))
+
+    assert result["status"] == "pass"
+
+
 # ---------------------------------------------------------------------------
 # G5 diversity
 # ---------------------------------------------------------------------------
@@ -232,6 +336,37 @@ def test_g1_allows_kit_numeral():
         anchor_body="активізуються одразу 17 ділянок головного мозку",
     )
     assert result["status"] == "pass"
+
+
+def test_g1_exempts_indefinite_quantifiers(monkeypatch):
+    """#228: indefinite quantifiers are not verifiable fact-numerals."""
+    parses = {
+        "багато": [{"lemma": "багато", "pos": "numr", "raw": "numr:p:v_naz:pron:ind"}],
+        "мало": [{"lemma": "мало", "pos": "adv", "raw": "adv:compb:predic"}],
+        "кілька": [{"lemma": "кілька", "pos": "numr", "raw": "numr:p:v_naz:pron:ind"}],
+        "декілька": [{"lemma": "декілька", "pos": "numr", "raw": "numr:p:v_naz:pron:ind"}],
+        "чимало": [{"lemma": "чимало", "pos": "adv", "raw": "adv"}],
+    }
+    monkeypatch.setattr(derived.vesum_tags, "parse_word", lambda token: parses[token.casefold()])
+
+    result = derived.check_g1_entity_numeral_bound(
+        ["Багато мало кілька декілька чимало"],
+        _kit_from_lemmas("читання"),
+        anchor_body="читання зміцнює мозок",
+    )
+
+    assert result["status"] == "pass"
+
+
+def test_g1_still_rejects_unlisted_word_numeral():
+    result = derived.check_g1_entity_numeral_bound(
+        ["двадцять ділянок"],
+        _kit_from_lemmas("ділянка"),
+        anchor_body="читання зміцнює мозок",
+    )
+
+    assert result["status"] == "fail"
+    assert "двадцять" in result["detail"]
 
 
 # ---------------------------------------------------------------------------
