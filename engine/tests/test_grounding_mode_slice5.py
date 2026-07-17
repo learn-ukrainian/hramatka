@@ -14,6 +14,7 @@ import pytest
 
 from hramatka.engine import flags, pipeline, prompt_pack, registry, retrieval
 from hramatka.engine.fixtures import load_anchor
+from hramatka.engine.gates import derived
 from hramatka.engine.prompts import (
     load_active_writer_template,
     load_extractive_template,
@@ -187,6 +188,36 @@ def test_mode_split_with_kit_enrichment_references_kit_banks(monkeypatch):
     prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(shared, phase=1))
     assert "KIT ENRICHMENT" in prompt
     assert "anchor_lemmas" in prompt
+
+
+def test_derived_prompt_contains_the_real_closed_vocabulary(monkeypatch):
+    """#230: the writer receives the exact, sorted closure it must obey."""
+    _clear_slice5_flags(monkeypatch)
+    monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
+    monkeypatch.setenv("HRAMATKA_KIT_ENRICHMENT_V1", "1")
+
+    shared = prompt_pack.build_shared_input(**_shared_kwargs())
+    prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(shared, phase=1))
+    expected = sorted(derived.kit_lemma_closure(shared["kit_enrichment"]), key=str.casefold)
+
+    assert "ДОЗВОЛЕНА ЛЕКСИКА (закритий список)" in prompt
+    assert '"lemmas":' + json.dumps(expected, ensure_ascii=False, separators=(",", ":")) in prompt
+    assert '"total_lemmas":' + str(len(expected)) in prompt
+    assert '"truncated":false' in prompt
+
+
+def test_derived_vocabulary_cap_has_an_honest_truncation_note():
+    kit = {
+        "status": "available",
+        "anchor_lemmas": [f"лема-{index:03d}" for index in range(401)],
+    }
+
+    data = prompt_pack._derived_allowed_vocabulary_data(kit)
+
+    assert len(data["lemmas"]) == prompt_pack.DERIVED_ALLOWED_VOCABULARY_CAP
+    assert data["total_lemmas"] == 401
+    assert data["truncated"] is True
+    assert data["truncation_note"] == "Показано перші 400 з 401 лем; список обрізано."
 
 
 def test_sentence_builder_instructions_when_type_requested(monkeypatch):

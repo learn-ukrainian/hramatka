@@ -18,7 +18,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from . import flags
-from .gates import matchup_semantics, schema_tokens, vesum_tags
+from .gates import derived, matchup_semantics, schema_tokens, vesum_tags
 from .prompts import (
     active_writer_prompt_version,
     grounding_mode_for_type,
@@ -28,6 +28,7 @@ from .prompts import (
 PROMPT_PACK_VERSION = "PromptPackInput.v2"
 TEMPLATE_VERSION = "gemma-phase-pack.v2"
 INPUT_TOKEN_CEILING = 16_000
+DERIVED_ALLOWED_VOCABULARY_CAP = 400
 _TOKEN_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
 _CLOZE_GAP_RE = re.compile(r"\{gap(?:\d+)?\}|\{\{\d+\}\}")
 _FORBIDDEN_ACTIVITY_KEYS = {
@@ -1113,6 +1114,22 @@ _MODE_SPLIT_PACK_RULES = r"""
 """.strip()
 
 
+def _derived_allowed_vocabulary_data(kit: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Serialize the real derived closure without pretending it is unbounded."""
+    lemmas = sorted(derived.kit_lemma_closure(kit), key=str.casefold)
+    shown = lemmas[:DERIVED_ALLOWED_VOCABULARY_CAP]
+    data: dict[str, Any] = {
+        "lemmas": shown,
+        "total_lemmas": len(lemmas),
+        "truncated": len(lemmas) > DERIVED_ALLOWED_VOCABULARY_CAP,
+    }
+    if data["truncated"]:
+        data["truncation_note"] = (
+            f"Показано перші {DERIVED_ALLOWED_VOCABULARY_CAP} з {len(lemmas)} лем; список обрізано."
+        )
+    return data
+
+
 def render_phase_prompt(context: Mapping[str, Any]) -> str:
     """Render one self-contained, data-fenced engineered phase request."""
 
@@ -1163,6 +1180,12 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             )
         else:
             sections.append(block("KIT ENRICHMENT (похідний субстрат)", kit))
+            sections.append(
+                block(
+                    "ДОЗВОЛЕНА ЛЕКСИКА (закритий список)",
+                    _derived_allowed_vocabulary_data(kit),
+                )
+            )
         sections.append(_MODE_SPLIT_PACK_RULES)
     sections.extend(
         [

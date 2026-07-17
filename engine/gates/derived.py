@@ -35,6 +35,41 @@ KIT_CLOSURE_FUNCTION_ADVERBS = frozenset(
 )
 _KIT_CLOSURE_EXEMPT_POS = frozenset({"part", "conj", "prep", "intj"})
 
+# #230: these VESUM-verified grammar-metalanguage lemmas are needed in B1
+# instructions and explanations, but cannot be learned from an anchor kit.
+# This exception belongs exclusively to ``check_kit_closure``: VESUM form
+# validity and G1 entity/numeral bounds still apply.  Audit command:
+# ``verify_words(METALANGUAGE_ALLOWLIST, db_path=paths.vesum_db())`` → 25/25.
+METALANGUAGE_ALLOWLIST = frozenset(
+    {
+        "іменник",
+        "прикметник",
+        "дієслово",
+        "прислівник",
+        "займенник",
+        "числівник",
+        "відмінок",
+        "називний",
+        "родовий",
+        "давальний",
+        "знахідний",
+        "орудний",
+        "місцевий",
+        "кличний",
+        "однина",
+        "множина",
+        "рід",
+        "форма",
+        "речення",
+        "слово",
+        "наголос",
+        "помилка",
+        "правильний",
+        "виправити",
+        "текст",
+    }
+)
+
 # #228: these invariant indefinite quantifiers do not assert a fact-numeral.
 # VESUM parses some as ``numr`` and some only as ``adv``, so G1 must use the
 # explicit audited set rather than a POS/tag heuristic.
@@ -128,12 +163,16 @@ def _is_kit_closure_exempt(surface: str, parses: Sequence[Mapping[str, Any]]) ->
     """Whether a token is a decidable closed-class exception to kit closure."""
     if surface.casefold() in KIT_CLOSURE_FUNCTION_ADVERBS:
         return True
+    if surface.casefold() in METALANGUAGE_ALLOWLIST:
+        return True
     for parsed in parses:
         if _has_pronominal_marker(parsed):
             return True
         if parsed.get("pos") in _KIT_CLOSURE_EXEMPT_POS:
             return True
         lemma = parsed.get("lemma")
+        if isinstance(lemma, str) and lemma.casefold() in METALANGUAGE_ALLOWLIST:
+            return True
         if isinstance(lemma, str) and lemma.casefold() == "бути":
             return True
     return False
@@ -230,6 +269,20 @@ def _kit_allowed_surfaces(kit: Mapping[str, Any] | None, anchor_body: str) -> se
     return allowed
 
 
+def _kit_allowed_entity_lemmas(kit: Mapping[str, Any] | None, anchor_body: str) -> set[str]:
+    """Return kit and anchor lemma candidates permitted for G1 entities.
+
+    Literal surface permission remains separate for numerals and exact anchor
+    mentions.  For an inflected proper noun, however, G1 must compare its
+    VESUM lemma candidates with this closed set rather than reject solely
+    because the surface is novel.
+    """
+    allowed = kit_lemma_closure(kit)
+    if isinstance(anchor_body, str):
+        allowed.update(content_lemmas_for_text(anchor_body))
+    return allowed
+
+
 def _is_indefinite_quantifier(token: str, parses: Sequence[Mapping[str, Any]]) -> bool:
     """Whether *token* is one of G1's audited non-factual quantifiers."""
     if token.casefold() in G1_INDEFINITE_QUANTIFIERS:
@@ -251,6 +304,7 @@ def check_g1_entity_numeral_bound(
     Decidable subset only — no semantic-facts claims.
     """
     allowed = _kit_allowed_surfaces(kit, anchor_body)
+    allowed_entity_lemmas = _kit_allowed_entity_lemmas(kit, anchor_body)
     bad_entities: list[str] = []
     bad_numerals: list[str] = []
 
@@ -265,7 +319,13 @@ def check_g1_entity_numeral_bound(
         for token in vesum.content_tokens(text):
             low = token.casefold()
             if _is_named_entity_token(token) and low not in allowed:
-                bad_entities.append(token)
+                candidate_lemmas = retrieval.lemmatize(token).get(low, set())
+                if not candidate_lemmas or not any(
+                    lemma.casefold() in allowed_entity_lemmas for lemma in candidate_lemmas
+                ):
+                    # A named entity with no VESUM content-lemma candidate is
+                    # unknown for this purpose and remains fail-closed.
+                    bad_entities.append(token)
             # Spelled-out numerals (VESUM numr) outside kit/anchor.
             parses = vesum_tags.parse_word(token)
             if _is_indefinite_quantifier(token, parses):

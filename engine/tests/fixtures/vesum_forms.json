@@ -2440,5 +2440,41 @@
   "lemma": "що",
   "tags": "noun:inanim:n:v_naz:pron:int:rel",
   "pos": "noun"
+ },
+ {
+  "word_form": "Січі",
+  "lemma": "Січ",
+  "tags": "noun:inanim:f:v_rod:prop",
+  "pos": "noun"
+ },
+ {
+  "word_form": "січі",
+  "lemma": "січ",
+  "tags": "noun:inanim:f:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "правильний",
+  "lemma": "правильний",
+  "tags": "adj:m:v_naz:compb",
+  "pos": "adj"
+ },
+ {
+  "word_form": "відмінок",
+  "lemma": "відмінок",
+  "tags": "noun:inanim:m:v_naz",
+  "pos": "noun"
+ },
+ {
+  "word_form": "множини",
+  "lemma": "множина",
+  "tags": "noun:inanim:f:v_rod",
+  "pos": "noun"
+ },
+ {
+  "word_form": "іменника",
+  "lemma": "іменник",
+  "tags": "noun:inanim:m:v_rod",
+  "pos": "noun"
  }
 ]

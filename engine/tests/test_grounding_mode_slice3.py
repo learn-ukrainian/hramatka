@@ -171,6 +171,47 @@ def test_tokens_inside_kit_closure_pass():
     assert result["status"] == "pass"
 
 
+def test_kit_closure_allows_inflected_grammar_metalanguage():
+    """#230: teaching grammar needs this audited, closure-only exception."""
+    result = derived.check_kit_closure(
+        ["Правильний відмінок множини іменника."],
+        _kit_from_lemmas("читання"),
+    )
+    assert result["status"] == "pass"
+
+
+def test_metalanguage_allowlist_is_the_audited_25_term_set():
+    assert derived.METALANGUAGE_ALLOWLIST == frozenset(
+        {
+            "іменник",
+            "прикметник",
+            "дієслово",
+            "прислівник",
+            "займенник",
+            "числівник",
+            "відмінок",
+            "називний",
+            "родовий",
+            "давальний",
+            "знахідний",
+            "орудний",
+            "місцевий",
+            "кличний",
+            "однина",
+            "множина",
+            "рід",
+            "форма",
+            "речення",
+            "слово",
+            "наголос",
+            "помилка",
+            "правильний",
+            "виправити",
+            "текст",
+        }
+    )
+
+
 def test_kit_closure_uses_any_candidate_lemma_for_duzhe_duzhyi(monkeypatch):
     """#228: «дуже» may also parse as adjective lemma «дужий»."""
     monkeypatch.setattr(
@@ -315,6 +356,37 @@ def test_g1_rejects_new_named_entity_outside_kit():
     )
     assert result["status"] == "fail"
     assert "named entities" in result["detail"]
+
+
+def test_g1_allows_inflected_kit_entity_by_lemma():
+    """#230: exact VESUM proper-name form «Січі» resolves to kit lemma «січ»."""
+    result = derived.check_g1_entity_numeral_bound(
+        ["Січі"],
+        _kit_from_lemmas("січ"),
+        anchor_body="Про Січ згадано в тексті.",
+    )
+    assert result["status"] == "pass"
+
+
+def test_g1_rejects_entity_when_vesum_has_no_content_lemma(monkeypatch):
+    """#230: a detected entity without a lemmatization candidate stays closed."""
+    parses = [{"lemma": "Вигаданий", "pos": "noun", "raw": "noun:m:v_naz:prop"}]
+    monkeypatch.setattr(
+        derived.vesum,
+        "content_tokens",
+        lambda text: ["Вигаданий"] if text == "Вигаданий" else [],
+    )
+    monkeypatch.setattr(derived.vesum_tags, "parse_word", lambda _token: parses)
+    monkeypatch.setattr(derived.retrieval, "lemmatize", lambda _text: {})
+
+    result = derived.check_g1_entity_numeral_bound(
+        ["Вигаданий"],
+        _kit_from_lemmas("читання"),
+        anchor_body="читання",
+    )
+
+    assert result["status"] == "fail"
+    assert "Вигаданий" in result["detail"]
 
 
 def test_g1_rejects_numeral_outside_kit():
