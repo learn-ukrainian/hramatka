@@ -254,6 +254,74 @@ def _is_derived_mode_candidate(candidate: schema.HramatkaActivity) -> bool:
     return entry is not None and entry.grounding_mode == registry.GROUNDING_DERIVED
 
 
+def _derived_stem_values(candidate: schema.HramatkaActivity) -> tuple[str, ...]:
+    """Return normalized learner-facing stems for derived selection only.
+
+    Quote evidence is deliberately absent here: a derived item's novelty is
+    about the exercise it asks the learner to do, not about where its kit
+    witness happened to occur in the anchor.
+    """
+    activity = candidate.activity
+    activity_type = activity.get("type", "")
+    raw_stems: list[object] = []
+    if activity_type in {"fill-in", "error-correction"}:
+        raw_stems.extend(
+            item.get("sentence")
+            for item in activity.get("items", [])
+            if isinstance(item, Mapping)
+        )
+    elif activity_type == "short-writing":
+        raw_stems.append(activity.get("prompt"))
+    elif activity_type == "sentence-builder":
+        starters = activity.get("starters")
+        if isinstance(starters, list):
+            raw_stems.extend(starters)
+    return tuple(
+        _SPACE_RE.sub(" ", stem.casefold()).strip()
+        for stem in raw_stems
+        if isinstance(stem, str) and stem.strip()
+    )
+
+
+def _derived_stems(candidate: schema.HramatkaActivity) -> frozenset[str]:
+    return frozenset(_derived_stem_values(candidate))
+
+
+def derived_core_lemmas(candidate: schema.HramatkaActivity) -> frozenset[str]:
+    """Return the declared core lemma coverage of a derived candidate."""
+    return frozenset(
+        lemma.casefold().strip()
+        for kit_anchor in candidate.kit_anchors
+        for lemma in kit_anchor.lemmas
+        if isinstance(lemma, str) and lemma.strip()
+    )
+
+
+def derived_lemma_budget_met(candidate: schema.HramatkaActivity) -> bool:
+    """Require one non-empty kit-lemma declaration per derived exercise stem.
+
+    This is the selection-layer lemma budget.  The gate already establishes
+    closure; selection refuses to treat a candidate with fewer declared core
+    anchors than learner-facing stems as dense enough merely because it cites
+    sentence IDs.
+    """
+    stem_values = _derived_stem_values(candidate)
+    stems = frozenset(stem_values)
+    if not stems or not candidate.kit_anchors:
+        return False
+    # A candidate must not disguise a repeated exercise as density.  This is
+    # deliberately checked inside the candidate as well as across selection.
+    if len(stems) != len(stem_values):
+        return False
+    nonempty_anchors = sum(bool(anchor.lemmas) for anchor in candidate.kit_anchors)
+    return nonempty_anchors >= len(stem_values) and bool(derived_core_lemmas(candidate))
+
+
+def derived_stems(candidate: schema.HramatkaActivity) -> frozenset[str]:
+    """Public selector helper for the derived duplicate-stem ban."""
+    return _derived_stems(candidate)
+
+
 def meets_content_density(
     candidate: schema.HramatkaActivity,
     anchor: dict | None = None,
@@ -261,8 +329,8 @@ def meets_content_density(
     """Return whether a ready candidate satisfies the canonical composition floor."""
     activity = candidate.activity
     activity_type = activity.get("type", "")
-    # Slice 3: derived under grounding_mode_v1 — count floors only; sentence-id
-    # density is a quoting contract (lemma/novelty floors land in slice 4).
+    # Slice 4: derived under grounding_mode_v1 uses its kit-lemma budget;
+    # sentence-id density is a quoting contract.
     derived_mode = _is_derived_mode_candidate(candidate)
 
     if activity_type == "quiz":
@@ -283,9 +351,10 @@ def meets_content_density(
         items = activity.get("items", [])
         if not isinstance(items, list) or len(items) < 2:
             return False
+        if derived_mode:
+            return derived_lemma_budget_met(candidate)
         if (
-            derived_mode
-            or anchor is None
+            anchor is None
             or not AnchorSentences.from_anchor(anchor).sentences
             or not _density_evidence_available(candidate)
         ):
@@ -305,9 +374,10 @@ def meets_content_density(
         items = activity.get("items", [])
         if not isinstance(items, list) or len(items) < 3:
             return False
+        if derived_mode:
+            return derived_lemma_budget_met(candidate)
         if (
-            derived_mode
-            or anchor is None
+            anchor is None
             or not AnchorSentences.from_anchor(anchor).sentences
             or not _density_evidence_available(candidate)
         ):
@@ -327,9 +397,11 @@ def meets_content_density(
         return isinstance(items, list) and len(items) >= 3
 
     if activity_type == "short-writing":
-        return _short_writing_meets_density(activity)
+        return _short_writing_meets_density(activity) and (
+            derived_lemma_budget_met(candidate) if derived_mode else True
+        )
 
-    return True
+    return derived_lemma_budget_met(candidate) if derived_mode else True
 
 
 def itemized_sentence_ids_are_distinct(
@@ -436,8 +508,8 @@ def composition_eligible(
     return True
 
 
-def source_lacks_lesson_evidence(anchor: dict | None) -> bool:
-    """Deterministic pre-analysis: anchor too thin to ever reach the bake floor."""
+def _legacy_quoting_inventory_is_thin(anchor: dict | None) -> bool:
+    """Historical Wave-0 source-blame precheck, kept only for flags-off."""
     snapshot = AnchorSentences.from_anchor(anchor)
     sentence_count = len(snapshot.sentences)
     char_len = int((anchor or {}).get("char_len") or 0)
@@ -447,6 +519,40 @@ def source_lacks_lesson_evidence(anchor: dict | None) -> bool:
     if isinstance(terms, list) and len(terms) < 12:
         return sentence_count < 4
     return False
+
+
+def source_lacks_lesson_evidence(
+    anchor: dict | None,
+    *,
+    kit: Mapping[str, object] | None = None,
+    quoting_slots_required: int | None = None,
+    quoting_slots_selected: int | None = None,
+) -> bool:
+    """Return whether a floor shortfall is attributable to the source.
+
+    Flags off preserve the historical Wave-0 check exactly.  Under
+    grounding_mode_v1, source blame is narrow: the quotation quota must be
+    unmet *and* Slice-2's explicit kit API must report an empty kit.
+    """
+    if not _is_grounding_mode_enabled():
+        return _legacy_quoting_inventory_is_thin(anchor)
+    from . import retrieval
+
+    # The v1 path deliberately needs observed selector evidence; a raw
+    # sentence-count heuristic alone must never blame a teacher's source.
+    quota_unmet = (
+        isinstance(quoting_slots_required, int)
+        and isinstance(quoting_slots_selected, int)
+        and quoting_slots_selected < quoting_slots_required
+    )
+    return quota_unmet and retrieval.kit_is_empty(kit)
+
+
+def _is_grounding_mode_enabled() -> bool:
+    """Keep the thin-source flag check local to avoid a module import cycle."""
+    from . import flags
+
+    return flags.grounding_mode_v1_enabled()
 
 
 @dataclass(frozen=True)
@@ -464,7 +570,32 @@ LESSON_FLOORS: Final[dict[int, LessonFloor]] = {
         min_types=4,
         require_productive=True,
     ),
+    60: LessonFloor(
+        min_blocks=9,
+        phase_minimums={1: 2, 2: 5, 3: 2},
+        min_types=4,
+        require_productive=True,
+    ),
+    90: LessonFloor(
+        min_blocks=12,
+        phase_minimums={1: 4, 2: 5, 3: 3},
+        min_types=4,
+        require_productive=True,
+    ),
 }
+
+
+def floor_oracle_record() -> dict[str, dict[str, object]]:
+    """Stable §5.1 floor record embedded in the forthcoming A/B harness."""
+    return {
+        str(duration): {
+            "min_blocks": floor.min_blocks,
+            "phase_minimums": dict(floor.phase_minimums),
+            "min_types": floor.min_types,
+            "require_productive": floor.require_productive,
+        }
+        for duration, floor in sorted(LESSON_FLOORS.items())
+    }
 
 
 def meets_lesson_floor(

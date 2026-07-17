@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import paths, pipeline, retrieval, schema
+from . import content_density, paths, pipeline, retrieval, schema
 from .gates import numeral
 from .generate import call_gemma
 
@@ -778,6 +778,9 @@ def _report_header(
         "vendor_artifact_digests": inputs.get("vendor", {}),
         "data_bundle_digests": inputs.get("data_bundle", {}),
         "cache_enabled_for_anchor_bakes": cache_enabled,
+        # §5.1/E6: A/B consumers receive the frozen duration floor oracle,
+        # rather than duplicating mutable values in a run notebook.
+        "floor_oracle_v1": content_density.floor_oracle_record(),
     }
     pin_fields = (
         "engine_sha",

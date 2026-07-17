@@ -399,10 +399,10 @@ def _make_phase_failing_generator(bad_phase: int):
     return generator
 
 
-def test_pack_partial_phase_unparseable_ships_with_shortfall_and_degraded_telemetry(
+def test_pack_partial_phase_unparseable_60min_rejects_under_floor_with_degraded_telemetry(
     monkeypatch, tmp_path: Path
 ):
-    """Case 1: partial unparseable + survivors >=floor -> ships + telemetry."""
+    """Slice 4: a partial 60-minute bake cannot ship below its new floor."""
 
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
     engine_out = tmp_path / "engine-out"
@@ -422,15 +422,10 @@ def test_pack_partial_phase_unparseable_ships_with_shortfall_and_degraded_teleme
         anchor = dict(anchor)
         anchor.setdefault("anchor_id", "hramatka-181-partial-ship")
 
-    baked = baker.bake(anchor, duration=60, focus="читання")
-    assert baked.get("blocks"), "partial success must ship blocks from surviving phases"
-    # honest shortfall
-    shortfall_notes = [
-        r.get("reason", "")
-        for r in baked.get("rejected", [])
-        if "shortfall:" in str(r.get("reason", ""))
-    ]
-    assert shortfall_notes, "expected shortfall: annotation for honest candidate deficit"
+    with pytest.raises(FloorUnmetError) as exc_info:
+        baker.bake(anchor, duration=60, focus="читання")
+    assert exc_info.value.blames_source is False
+    assert "could not reach the minimum activity density." in str(exc_info.value)
 
     # telemetry durable via trace
     trace_paths = list(engine_out.glob("*/trace.json"))

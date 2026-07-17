@@ -1109,7 +1109,29 @@ class EngineLessonBaker:
                 duration=resolved_duration,
                 selected_by_phase=selected_by_phase,
             ):
-                if content_density.source_lacks_lesson_evidence(anchor_snapshot):
+                kit = (
+                    precomputed_grounding.get("kit")
+                    if isinstance(precomputed_grounding, dict)
+                    else None
+                )
+                # Slice 2 absent=empty: kit-off + grounding-on treats a missing kit as empty.
+                # Candidate-bank counts are survival-inflated generation
+                # capacity, not lesson slots. The real quoting quota is the
+                # duration floor that must survive selection when the kit is
+                # empty and derived activities cannot contribute.
+                quoting_slots_required = floor.min_blocks
+                quoting_slots_selected = sum(
+                    1
+                    for candidate in selected
+                    if registry.ACTIVITY_REGISTRY[candidate.activity["type"]].grounding_mode
+                    == registry.GROUNDING_QUOTING
+                )
+                if content_density.source_lacks_lesson_evidence(
+                    anchor_snapshot,
+                    kit=kit,
+                    quoting_slots_required=quoting_slots_required,
+                    quoting_slots_selected=quoting_slots_selected,
+                ):
                     raise FloorUnmetError(
                         content_density.THIN_SOURCE_UA_MESSAGE, blames_source=True
                     )

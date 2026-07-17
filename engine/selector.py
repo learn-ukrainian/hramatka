@@ -17,7 +17,7 @@ from typing import Any
 from . import content_density, schema
 from .registry import ACTIVITY_REGISTRY
 
-SELECTOR_POLICY_VERSION = "wave0.selector.v3"
+SELECTOR_POLICY_VERSION = "grounding-mode-v1.selector.v5"
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,8 @@ class _SelectionState:
     sentence_reuse: content_density.SentenceReuseState = field(
         default_factory=content_density.SentenceReuseState
     )
+    derived_lemmas: set[str] = field(default_factory=set)
+    derived_stems: set[str] = field(default_factory=set)
     last_type: str | None = None
 
 
@@ -80,6 +82,9 @@ def _focus_score(
     # conservative five-character stem still makes the signal deterministic,
     # and sentence IDs are the stronger source-grounded component below.
     term_matches = sum(term[:5] in text for term in terms if len(term) >= 5)
+    if content_density._is_derived_mode_candidate(candidate):
+        # Derived selection must not rank via sentence IDs or quote metrics.
+        return term_matches
     focus_ids = {str(sentence_id) for sentence_id in focus_context.get("sentence_ids", [])}
     cited_ids = content_density.evidence_sentence_ids(candidate, anchor)
     return term_matches + 3 * len(focus_ids & cited_ids)
@@ -108,7 +113,7 @@ def _select(
     selected: list[schema.HramatkaActivity] = []
 
     while remaining and len(selected) < density_target:
-        ranked: list[tuple[tuple[int, int, int, int, str], int, schema.HramatkaActivity]] = []
+        ranked: list[tuple[tuple[Any, ...], int, schema.HramatkaActivity]] = []
         for original_index, candidate in remaining:
             activity_type = candidate.activity["type"]
             entry = ACTIVITY_REGISTRY[activity_type]
@@ -136,6 +141,22 @@ def _select(
                 evidence_answer_pairs=pairs,
             ):
                 continue
+            derived_mode = content_density._is_derived_mode_candidate(candidate)
+            candidate_stems = (
+                content_density.derived_stems(candidate) if derived_mode else frozenset()
+            )
+            if derived_mode and candidate_stems & state.derived_stems:
+                # A same-stem rewrite is not a novel derived exercise.
+                continue
+            core_lemmas = (
+                content_density.derived_core_lemmas(candidate) if derived_mode else frozenset()
+            )
+            novelty = len(core_lemmas - state.derived_lemmas)
+            if derived_mode and state.derived_lemmas and novelty == 0:
+                # Derived slots need a new core lemma after the first one;
+                # repeated paradigms are blocked rather than merely deprioritized.
+                continue
+            lemma_budget = len(core_lemmas)
             new_coverage = len(_coverage(candidate) - state.covered)
             variety = int(activity_type not in state.selected_types)
             productive_boost = int(
@@ -149,13 +170,24 @@ def _select(
                 anchor=anchor,
             )
             tie_break = candidate.candidate_id or f"{original_index:06d}"
-            ranked.append(
+            # Keep one fixed-width, all-comparable key.  The discriminator
+            # makes derived win an otherwise equal cross-mode comparison;
+            # neutral padding preserves quoting-only ordering byte-for-byte.
+            score = (
                 (
-                    (-focus_boost, -productive_boost, -new_coverage, -variety, tie_break),
-                    original_index,
-                    candidate,
+                    -focus_boost,
+                    -productive_boost,
+                    0,
+                    0,
+                    -novelty,
+                    -lemma_budget,
+                    -variety,
+                    tie_break,
                 )
+                if derived_mode
+                else (-focus_boost, -productive_boost, 1, -new_coverage, 0, 0, -variety, tie_break)
             )
+            ranked.append((score, original_index, candidate))
 
         if not ranked:
             break
@@ -163,19 +195,25 @@ def _select(
         selected.append(winner)
         activity_type = winner.activity["type"]
         state.selected_types[activity_type] = state.selected_types.get(activity_type, 0) + 1
-        state.covered |= _coverage(winner)
-        state.evidence_answers |= set(
-            ACTIVITY_REGISTRY[activity_type].evidence_answer_pairs(winner)
-        )
+        derived_mode = content_density._is_derived_mode_candidate(winner)
+        if derived_mode:
+            state.derived_lemmas |= set(content_density.derived_core_lemmas(winner))
+            state.derived_stems |= set(content_density.derived_stems(winner))
+        else:
+            state.covered |= _coverage(winner)
+            state.evidence_answers |= set(
+                ACTIVITY_REGISTRY[activity_type].evidence_answer_pairs(winner)
+            )
         state.activity_identities.add(_activity_identity(winner))
-        primary = content_density.primary_sentence_id(winner, anchor)
-        content_density.register_sentence_use(
-            sentence_ids=frozenset({primary}) if primary else frozenset(),
-            primary=primary,
-            phase=phase,
-            operation=content_density.COGNITIVE_OPERATION.get(activity_type, activity_type),
-            state=state.sentence_reuse,
-        )
+        if not derived_mode:
+            primary = content_density.primary_sentence_id(winner, anchor)
+            content_density.register_sentence_use(
+                sentence_ids=frozenset({primary}) if primary else frozenset(),
+                primary=primary,
+                phase=phase,
+                operation=content_density.COGNITIVE_OPERATION.get(activity_type, activity_type),
+                state=state.sentence_reuse,
+            )
         state.last_type = activity_type
         if ACTIVITY_REGISTRY[activity_type].is_puzzle:
             state.puzzle_types.add(activity_type)
