@@ -1,5 +1,9 @@
 # Hramatka ops
 
+> **Pilot host connection + full ops runbook: [`pilot-vps.md`](pilot-vps.md)** — address, login,
+> services, DB, deploy recipe, teacher CLIs, and the safety rules. The same box carries the
+> private repo's self-hosted CI runner.
+
 Pilot deploy and smoke helpers. From a reviewed checkout:
 
 `./hramatka/ops/deploy.sh <user@pilot-host>`
