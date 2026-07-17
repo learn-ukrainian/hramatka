@@ -21,7 +21,12 @@ from .gates import (
     vesum_tags,
 )
 from .gates import vesum as vesum_gate
-from .prompts import load_extractive_template
+from .prompts import (
+    active_writer_prompt_version,
+    format_request_lines,
+    load_active_writer_template,
+    mode_split_authoring_active,
+)
 
 REGISTRY_VERSION = "wave1b.registry.v2"
 EXTRACTIVE_PROMPT_VERSION = "extractive-v5:89b97c528e30"
@@ -53,20 +58,27 @@ def build_extractive_v1_prompt(
     counts: dict[str, int] | None = None,
     anchor_snapshot: dict | None = None,
 ) -> str:
-    """Build the count-aware extractive prompt shared by registered types."""
+    """Build the count-aware writer prompt shared by registered types.
+
+    Under E4, mode-split text is used only when ``writer_prompt_v2`` and
+    ``grounding_mode_v1`` are both on; otherwise the extractive-v5 copy is
+    forced (including ``writer_prompt_v2`` alone).
+    """
     requested_counts = counts or {activity_type: 1 for activity_type in types}
-    request_lines = "\n".join(
-        f"- {activity_type}: {requested_counts[activity_type]}" for activity_type in types
-    )
+    request_lines = format_request_lines(types, requested_counts)
     density_lines = []
     for activity_type in types:
-        entry = ACTIVITY_REGISTRY[activity_type]
+        entry = ACTIVITY_REGISTRY.get(activity_type)
+        if entry is None:
+            continue
         target = content_density.scaled_generation_target(entry, anchor_snapshot)
         if target > entry.minimum_survivors:
             density_lines.append(
                 f"- {activity_type}: орієнтир {target} пунктів/пар/пропусків на одне завдання"
             )
-    template = load_extractive_template().replace("{{REQUESTED_ACTIVITY_COUNTS}}", request_lines)
+    template = load_active_writer_template().replace(
+        "{{REQUESTED_ACTIVITY_COUNTS}}", request_lines
+    )
     density_block = ""
     if density_lines:
         density_block = (
@@ -1575,9 +1587,13 @@ class ActivityRegistryEntry:
             )
 
     def fingerprint(self) -> dict[str, Any]:
+        # Prompt identity tracks the template actually injected (slice 5 E4).
+        prompt_version = active_writer_prompt_version(
+            extractive_fallback=self.prompt_version
+        )
         return {
             "type": self.activity_type,
-            "prompt_version": self.prompt_version,
+            "prompt_version": prompt_version,
             "raw_schema_version": self.raw_schema_version,
             "gate_chain": self.gate_chain,
             "gate_version": self.gate_version,
@@ -1588,6 +1604,11 @@ class ActivityRegistryEntry:
             "item_budget": self.item_budget,
             "is_puzzle": self.is_puzzle,
             "grounding_mode": self.grounding_mode,
+            **(
+                {"authoring_mode": "mode-split-v2"}
+                if mode_split_authoring_active()
+                else {}
+            ),
         }
 
 

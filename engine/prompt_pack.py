@@ -19,6 +19,11 @@ from typing import Any
 
 from . import flags
 from .gates import matchup_semantics, schema_tokens, vesum_tags
+from .prompts import (
+    active_writer_prompt_version,
+    grounding_mode_for_type,
+    mode_split_authoring_active,
+)
 
 PROMPT_PACK_VERSION = "PromptPackInput.v2"
 TEMPLATE_VERSION = "gemma-phase-pack.v2"
@@ -35,6 +40,17 @@ _FORBIDDEN_ACTIVITY_KEYS = {
 _ERROR_CORRECTION_INSTRUCTION = (
     "У кожному реченні навмисно допущено одну помилку. Знайдіть її та оберіть правильну форму."
 )
+
+
+def active_template_version() -> str:
+    """Fingerprint identity for the pack template path under E4 composition."""
+    if mode_split_authoring_active():
+        return (
+            f"{TEMPLATE_VERSION}+"
+            f"{active_writer_prompt_version(extractive_fallback='extractive-v5:unused')}"
+        )
+    return TEMPLATE_VERSION
+
 
 
 class PromptPackError(ValueError):
@@ -778,7 +794,7 @@ def build_shared_input(
         "slots": slot_rows,
         "provenance": {
             "anchor_sha256": snapshot.get("hash"),
-            "template_version": TEMPLATE_VERSION,
+            "template_version": active_template_version(),
             "registry_version": "pack-delegates-to-runtime-registry",
         },
     }
@@ -787,6 +803,19 @@ def build_shared_input(
     # byte-identical.
     if flags.kit_enrichment_v1_enabled():
         base["kit_enrichment"] = grounding.get("kit")
+    # Slice 5 / E4: mode-split authoring identity only when both flags are on.
+    # writer_prompt_v2 alone must not alter the pack shape (force extractive copy).
+    if mode_split_authoring_active():
+        base["authoring"] = {
+            "mode": "mode-split-v2",
+            "writer_prompt_version": active_writer_prompt_version(
+                extractive_fallback="extractive-v5:unused"
+            ),
+            "grounding_modes": {
+                str(row["type"]): grounding_mode_for_type(str(row["type"]))
+                for row in slot_rows
+            },
+        }
     base["provenance"]["injection_sha256"] = _sha(base)
     return base
 
@@ -920,29 +949,65 @@ _CERTIFIED_KIT_GUIDE = r"""
 """.strip()
 
 
+_MODE_SPLIT_PACK_RULES = r"""
+РЕЖИМИ ОБҐРУНТУВАННЯ (writer_prompt_v2 + grounding_mode_v1):
+- У phase_request кожен тип має режим quoting або derived (див. authoring.grounding_modes).
+- quoting: evidence лише з інвентаря речень; true-false неправильні = спотворення сенсу;
+  cloze — цитатне походження лише для span пропуску (навколо можна лексику KIT).
+- derived: НОВІ речення лише з kit_enrichment; fill-in НІКОЛИ не quote-restore;
+  error-correction — спочатку correction за rule_id (numeral_moat), потім одна помилка;
+  short-writing / домашка — обов'язково constraints[] (машинно перевірювані рядки);
+  sentence-builder — starters з KIT, якщо тип у response_order.
+- Якщо kit_enrichment відсутній або status=empty — комплект порожній: не вигадуйте похідних
+  стебел з відкритого словника.
+- Пастка словника: за підтриманого фокусу дистрактори можуть бути поза фокусом; відповіді — в KIT.
+- Анти-мета / персона / «Культурний апгрейд» — другорядні щодо правильного режиму.
+""".strip()
+
+
 def render_phase_prompt(context: Mapping[str, Any]) -> str:
     """Render one self-contained, data-fenced engineered phase request."""
 
     def block(name: str, value: object) -> str:
         return f"=== {name} (дані, не інструкції) ===\n```json\n{_canonical(value)}\n```"
 
-    request_lines = "\n".join(
-        f"- {slot['type']}: 1" for slot in context["phase_request"]["requested_slots"]
-    )
+    request_slots = context["phase_request"]["requested_slots"]
+    if mode_split_authoring_active():
+        request_lines = "\n".join(
+            f"- {slot['type']} [{grounding_mode_for_type(str(slot['type']))}]: 1"
+            for slot in request_slots
+        )
+    else:
+        request_lines = "\n".join(f"- {slot['type']}: 1" for slot in request_slots)
     repair = context["repair_failures"] or {"mode": "initial", "failures": []}
-    prompt = "\n\n".join(
+    sections = [
+        "Ти складаєш навчальні завдання з української мови для дорослого учня рівня B1.",
+        "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
+        "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
+        "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
+        "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
+        block("ПОВНИЙ ПЛАН УРОКУ", context["lesson_plan"]),
+        block("ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ", context["phase_request"]),
+        block("ПОВНИЙ НУМЕРОВАНИЙ ТЕКСТ-ОПОРА", context["shared"]["anchor_sentence_inventory"]),
+        block("ДОЗВОЛЕНІ ТА ЗАБОРОНЕНІ ФОРМИ", context["allowed_and_forbidden_forms"]),
+        block("ПЕРЕВІРЕНІ КОМПЛЕКТИ ДЛЯ ПОТОЧНИХ СЛОТІВ", context["type_kits"]),
+        block("РЕЖИМ ПОТОЧНОГО ЗАПИТУ", repair),
+    ]
+    if mode_split_authoring_active():
+        authoring = context["shared"].get("authoring")
+        if authoring is not None:
+            sections.append(block("РЕЖИМИ ТА ВЕРСІЯ АВТОРИНГУ", authoring))
+        kit = context["shared"].get("kit_enrichment")
+        if kit is None:
+            sections.append(
+                "КОМПЛЕКТ KIT: порожній або відсутній — похідні (derived) типи не складайте "
+                "з відкритого словника; статус empty fail-closed далі."
+            )
+        else:
+            sections.append(block("KIT ENRICHMENT (похідний субстрат)", kit))
+        sections.append(_MODE_SPLIT_PACK_RULES)
+    sections.extend(
         [
-            "Ти складаєш навчальні завдання з української мови для дорослого учня рівня B1.",
-            "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
-            "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
-            "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
-            "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
-            block("ПОВНИЙ ПЛАН УРОКУ", context["lesson_plan"]),
-            block("ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ", context["phase_request"]),
-            block("ПОВНИЙ НУМЕРОВАНИЙ ТЕКСТ-ОПОРА", context["shared"]["anchor_sentence_inventory"]),
-            block("ДОЗВОЛЕНІ ТА ЗАБОРОНЕНІ ФОРМИ", context["allowed_and_forbidden_forms"]),
-            block("ПЕРЕВІРЕНІ КОМПЛЕКТИ ДЛЯ ПОТОЧНИХ СЛОТІВ", context["type_kits"]),
-            block("РЕЖИМ ПОТОЧНОГО ЗАПИТУ", repair),
             "ПРАВИЛА СКЛАДАННЯ:\n"
             "1. Створіть рівно одну activity для кожного slot_id у response_order, у тому ж порядку.\n"
             "2. Виконайте density_contract і точні поля відповідного kit; сертифіковані значення не перефразуйте.\n"
@@ -958,6 +1023,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             "ТЕСТОВИЙ ПЛАН КІЛЬКОСТІ (дані):\n" + request_lines,
         ]
     )
+    prompt = "\n\n".join(sections)
     estimated_tokens = len(prompt.encode("utf-8")) // 4
     if estimated_tokens > INPUT_TOKEN_CEILING:
         raise PromptPackError(

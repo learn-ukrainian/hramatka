@@ -47,7 +47,7 @@ from .generate import (
     call_gemma,
     generate,
 )
-from .prompts import load_extractive_template
+from .prompts import load_active_writer_template
 from .transport import activity_model_registry, generator_model_id
 
 # Production defaults are registry-derived so registering a future extractive
@@ -660,9 +660,9 @@ def _run(
         active_model = os.environ.get("HRAMATKA_GEN_MODEL", GEMMA_MODEL) or GEMMA_MODEL
 
     template = (
-        prompt_pack.TEMPLATE_VERSION
+        prompt_pack.active_template_version()
         if prompt_pack_context is not None
-        else load_extractive_template()
+        else load_active_writer_template()
     )
 
     fp_inputs = fingerprint_inputs(
