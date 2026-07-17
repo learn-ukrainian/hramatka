@@ -13,12 +13,15 @@ remains permissible for lemmatization elsewhere but is unnecessary here.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import unicodedata
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import quote
 
-from . import paths
+from . import flags, paths
 from .linguistics import verify_words
 
 # Cyrillic word token (keeps apostrophe + soft signs; excludes digits).
@@ -403,12 +406,200 @@ def extract_numeral_inventory(text: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Grounding pack
 # ---------------------------------------------------------------------------
+_KIT_VERSION = "kit_enrichment_v1"
+_KIT_EMPTY = "empty"
+_KIT_AVAILABLE = "available"
+
+
+def _verified_synonym_banks(lookup: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return deterministic, disjoint Atlas+VESUM synonym banks.
+
+    Atlas is the verified source for the semantic relation; VESUM confirms the
+    emitted synonym is an attested Ukrainian form.  A synonym may belong to at
+    most one anchor lemma, and anchor lemmas themselves never spill into a
+    synonym bank.  This is deliberately a compact closed substrate, never a
+    lookup fallback over the Atlas lexicon.
+    """
+    anchor_lemma_keys = set(lookup)
+    assigned: set[str] = set()
+    banks: list[dict[str, Any]] = []
+    for key in sorted(lookup):
+        record = lookup[key]
+        raw = record.get("synonyms") or []
+        candidates = sorted(
+            {
+                synonym.strip()
+                for synonym in raw
+                if isinstance(synonym, str)
+                and re.fullmatch(_WORD_SURFACE, synonym.strip()) is not None
+            },
+            key=str.casefold,
+        )
+        attested = verify_words(candidates, db_path=paths.vesum_db()) if candidates else {}
+        synonyms = [
+            synonym
+            for synonym in candidates
+            if attested.get(synonym)
+            and synonym.casefold() not in anchor_lemma_keys
+            and synonym.casefold() not in assigned
+        ]
+        assigned.update(synonym.casefold() for synonym in synonyms)
+        banks.append(
+            {
+                "anchor_lemma": record["lemma"],
+                "synonyms": synonyms,
+                "status": _KIT_AVAILABLE if synonyms else _KIT_EMPTY,
+            }
+        )
+    return banks
+
+
+def _focus_citation_forms(
+    anchor_body: str,
+    anchor_lemma_set: set[str],
+    focus: str | None,
+) -> dict[str, Any]:
+    """Return VESUM citation forms for focus terms actually anchored in text."""
+    if not isinstance(focus, str) or not focus.strip():
+        return {"status": "not-requested", "forms": []}
+    focus_lemmas = anchor_lemmas(focus) & anchor_lemma_set
+    if not focus_lemmas:
+        return {"status": _KIT_EMPTY, "forms": []}
+
+    # The lemma comes from a VESUM reverse lookup of literal anchor forms, so
+    # it is a verified citation form rather than a model-normalized spelling.
+    forms = sorted(
+        {
+            lemma
+            for lemmas in lemmatize(anchor_body).values()
+            for lemma in lemmas
+            if lemma in focus_lemmas
+        },
+        key=str.casefold,
+    )
+    return {
+        "status": _KIT_AVAILABLE if forms else _KIT_EMPTY,
+        "forms": forms,
+    }
+
+
+def _numeral_tuples(inventory: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project anchor numeral inventory into source-attested MOAT tuples.
+
+    ``value`` and ``trigger`` remain literal anchor strings.  Case/gender are
+    represented as VESUM possibilities (not guessed single values), which lets
+    Slice 3's Python oracle make the final decision without a hidden model
+    inference step.
+    """
+    tuples: list[dict[str, Any]] = []
+    for item in inventory:
+        noun = item.get("following_noun")
+        numeral = item.get("numeral")
+        raw_span = item.get("raw_span")
+        if not all(isinstance(value, str) and value for value in (noun, numeral, raw_span)):
+            continue
+        noun_rows = verify_words([noun], pos_filter="noun", db_path=paths.vesum_db()).get(noun, [])
+        if not noun_rows:
+            continue
+        trigger, _, _ = raw_span.partition(numeral)
+        cases: set[str] = set()
+        genders: set[str] = set()
+        lemmas: set[str] = set()
+        for row in noun_rows:
+            lemmas.add(row["lemma"])
+            parts = row["tags"].split(":")
+            cases.update(
+                code
+                for code in ("v_naz", "v_rod", "v_dav", "v_zna", "v_oru", "v_mis", "v_kly")
+                if code in parts
+            )
+            genders.update(gender for gender in ("m", "f", "n") if gender in parts)
+        tuples.append(
+            {
+                "value": numeral,
+                "case": sorted(cases),
+                "gender": sorted(genders),
+                "trigger": trigger.strip() or None,
+                "noun_lemma": sorted(lemmas, key=str.casefold),
+                "witness_span": raw_span,
+            }
+        )
+    return tuples
+
+
+def build_enrichment_kit(
+    anchor_body: str,
+    *,
+    lemmas: set[str],
+    atlas_lookup: Mapping[str, Mapping[str, Any]],
+    numeral_inventory: list[dict[str, Any]],
+    focus: str | None = None,
+) -> dict[str, Any]:
+    """Build the deterministic Slice-2 feed-forward substrate.
+
+    Every facet declares ``available`` or ``empty``.  An empty kit is an
+    explicit state, not permission to substitute a broader lexicon.  Aspect
+    pairs/stress remain explicitly absent until a verified stress source lands
+    (#5368); no stress marks or aspect partners are fabricated here.
+    """
+    synonym_banks = _verified_synonym_banks(atlas_lookup)
+    cefr_tags = [
+        {"lemma": record["lemma"], "cefr": record["cefr"]}
+        for _key, record in sorted(atlas_lookup.items())
+        if isinstance(record.get("cefr"), str) and record["cefr"]
+    ]
+    focus_forms = _focus_citation_forms(anchor_body, lemmas, focus)
+    numeral_tuples = _numeral_tuples(numeral_inventory)
+    facets = {
+        "synonym_banks": _KIT_AVAILABLE
+        if any(bank["synonyms"] for bank in synonym_banks)
+        else _KIT_EMPTY,
+        "cefr_tags": _KIT_AVAILABLE if cefr_tags else _KIT_EMPTY,
+        # #5368: no verified stress tool/source exists yet.  Do not invent
+        # aspect partners or stress marks from morphology heuristics.
+        "aspect_stress": "absent",
+        "focus_citation_forms": focus_forms["status"],
+        "numeral_tuples": _KIT_AVAILABLE if numeral_tuples else _KIT_EMPTY,
+    }
+    usable = any(
+        status == _KIT_AVAILABLE
+        for name, status in facets.items()
+        if name != "focus_citation_forms" or status != "not-requested"
+    )
+    return {
+        "version": _KIT_VERSION,
+        "status": _KIT_AVAILABLE if usable else _KIT_EMPTY,
+        "anchor_lemmas": sorted(lemmas, key=str.casefold),
+        "facets": facets,
+        "synonym_banks": synonym_banks,
+        "cefr_tags": cefr_tags,
+        "aspect_stress": {
+            "status": "absent",
+            "pairs": [],
+            "stress": [],
+            "reason": "No verified aspect-pair/stress source is available (#5368).",
+        },
+        "focus_citation_forms": focus_forms,
+        "numeral_tuples": numeral_tuples,
+    }
+
+
+def kit_is_empty(kit: Mapping[str, Any] | None) -> bool:
+    """Return whether a Slice-2 kit is explicitly empty.
+
+    This is the later-gate API: absent, malformed, or disabled kit material is
+    *not* treated as a populated kit.  It deliberately has no lexicon fallback.
+    """
+    return not isinstance(kit, Mapping) or kit.get("status") != _KIT_AVAILABLE
+
+
 def build_grounding_pack(
     anchor_body: str,
     level: str = "B1",
     *,
     atlas_db=None,
     max_lemmas: int = 40,
+    focus: str | None = None,
 ) -> dict:
     """Assemble the compact grounding pack (verified lexicon + numeral
     inventory). Returns {text, lemmas, atlas_lookup, numeral_inventory}. Only
@@ -446,9 +637,28 @@ def build_grounding_pack(
             "Числа в опорі (для звірки керування числівника):\n" + "\n".join(num_lines)
         )
 
-    return {
+    legacy_pack = {
         "text": "\n\n".join(text_blocks),
         "lemmas": lemmas,
         "atlas_lookup": lookup,
         "numeral_inventory": inventory,
+    }
+    # The default path must remain byte-identical: do not add keys, query
+    # additional sources, or alter rendered context unless the Slice-2 flag is
+    # explicitly enabled.
+    if not flags.kit_enrichment_v1_enabled():
+        return legacy_pack
+
+    kit = build_enrichment_kit(
+        anchor_body,
+        lemmas=lemmas,
+        atlas_lookup=lookup,
+        numeral_inventory=inventory,
+        focus=focus,
+    )
+    kit_text = json.dumps(kit, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        **legacy_pack,
+        "text": legacy_pack["text"] + "\n\n=== KIT ENRICHMENT V1 ===\n" + kit_text,
+        "kit": kit,
     }

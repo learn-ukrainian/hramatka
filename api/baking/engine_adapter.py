@@ -31,6 +31,7 @@ from hramatka.contracts import PILOT_ACTIVITY_TYPES
 from hramatka.engine import (
     content_density,
     data,
+    flags,
     pipeline,
     prompt_pack,
     registry,
@@ -553,25 +554,34 @@ class EngineLessonBaker:
         shared_pack: dict[str, Any] | None = None
         precomputed_snapshot: dict[str, Any] | None = None
         precomputed_grounding: dict[str, Any] | None = None
-        if prompt_pack_enabled:
+        kit_enrichment_enabled = flags.kit_enrichment_v1_enabled()
+        if prompt_pack_enabled or kit_enrichment_enabled:
             # One immutable snapshot/grounding/kit pass is shared by all three
             # phase workers.  It is local, deterministic, and content-hashed.
             try:
                 with data.use_bundle(bundle):
                     precomputed_snapshot = pipeline.snapshot_anchor(anchor)
-                    precomputed_grounding = retrieval.build_grounding_pack(
-                        precomputed_snapshot["body_uk"], B1
-                    )
+                    if kit_enrichment_enabled:
+                        precomputed_grounding = retrieval.build_grounding_pack(
+                            precomputed_snapshot["body_uk"], B1, focus=focus
+                        )
+                    else:
+                        # Preserve the legacy call shape as well as output for
+                        # prompt-pack-only callers while the kit flag is off.
+                        precomputed_grounding = retrieval.build_grounding_pack(
+                            precomputed_snapshot["body_uk"], B1
+                        )
                     precomputed_snapshot["lemmas"] = sorted(precomputed_grounding["lemmas"])
                     precomputed_snapshot["numerals"] = precomputed_grounding["numeral_inventory"]
-                    shared_pack = prompt_pack.build_shared_input(
-                        snapshot=precomputed_snapshot,
-                        grounding=precomputed_grounding,
-                        duration_minutes=resolved_duration,
-                        focus=focus,
-                        phase_count_plans=phase_count_plans,
-                        visible_slots_by_phase=Counter(plan),
-                    )
+                    if prompt_pack_enabled:
+                        shared_pack = prompt_pack.build_shared_input(
+                            snapshot=precomputed_snapshot,
+                            grounding=precomputed_grounding,
+                            duration_minutes=resolved_duration,
+                            focus=focus,
+                            phase_count_plans=phase_count_plans,
+                            visible_slots_by_phase=Counter(plan),
+                        )
             except prompt_pack.PromptPackError:
                 # The pack is an output-quality protocol, not an availability
                 # dependency.  A deterministic preflight rejection must leave

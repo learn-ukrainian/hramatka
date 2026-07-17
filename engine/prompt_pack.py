@@ -17,6 +17,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from . import flags
 from .gates import matchup_semantics, schema_tokens, vesum_tags
 
 PROMPT_PACK_VERSION = "PromptPackInput.v2"
@@ -781,6 +782,11 @@ def build_shared_input(
             "registry_version": "pack-delegates-to-runtime-registry",
         },
     }
+    # Slice 2 adds the closed, pre-verified kit to the generated phase context
+    # only when its own flag is on.  The legacy prompt-pack payload is otherwise
+    # byte-identical.
+    if flags.kit_enrichment_v1_enabled():
+        base["kit_enrichment"] = grounding.get("kit")
     base["provenance"]["injection_sha256"] = _sha(base)
     return base
 
