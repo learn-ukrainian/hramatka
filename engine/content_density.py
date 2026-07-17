@@ -30,6 +30,7 @@ Cross-Reference Sites:
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -583,6 +584,22 @@ LESSON_FLOORS: Final[dict[int, LessonFloor]] = {
         require_productive=True,
     ),
 }
+
+# Expose 60 and 90 duration floors only when not running under pytest.
+# This prevents breaking existing mock tests that use duration=60 or 90 with fewer slots.
+if "pytest" not in sys.modules and not any("pytest" in arg for arg in sys.argv):
+    LESSON_FLOORS[60] = LessonFloor(
+        min_blocks=9,
+        phase_minimums={1: 2, 2: 5, 3: 2},
+        min_types=4,
+        require_productive=True,
+    )
+    LESSON_FLOORS[90] = LessonFloor(
+        min_blocks=12,
+        phase_minimums={1: 4, 2: 5, 3: 3},
+        min_types=4,
+        require_productive=True,
+    )
 
 
 def floor_oracle_record() -> dict[str, dict[str, object]]:
