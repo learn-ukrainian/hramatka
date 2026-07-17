@@ -1,0 +1,13 @@
+[Unit]
+Description=Hramatka nightly database backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=hramatka
+Group=hramatka
+ExecStart=/opt/hramatka/current/hramatka/ops/backup-db.sh
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hramatka
+ProtectHome=yes
+NoNewPrivileges=yes

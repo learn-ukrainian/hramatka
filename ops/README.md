@@ -10,6 +10,11 @@ Pilot deploy and smoke helpers. From a reviewed checkout:
 
 `deploy.sh` replaces the hand-rolled partial rsync (app dist + engine + api). It builds with CSP guard, rsyncs the whole `hramatka` package (explicit excludes), blocks restart during in-flight bakes unless `--force`, then restarts, polls readyz, prints migration version, runs `smoke.sh`, and prints bundle hash + git SHA. Preview locally: `./hramatka/ops/deploy.sh --dry-run /tmp/fake-deploy`.
 
+`./hramatka/ops/backup-db.sh --db <db-path> --dest-dir <dest-dir> --keep-days <days>`
+
+`backup-db.sh` creates a consistent online SQLite backup snapshot via `.backup`, performs a `PRAGMA quick_check;` integrity check, and prunes old backups older than keep-days based on mtime.
+
+
 ## JSON-mode hang probe (#171)
 
 `hramatka/ops/probe-json-mode.py` — **key-gated, not wired into CI**.
