@@ -418,7 +418,9 @@ def _verified_synonym_banks(lookup: Mapping[str, Mapping[str, Any]]) -> list[dic
     emitted synonym is an attested Ukrainian form.  A synonym may belong to at
     most one anchor lemma, and anchor lemmas themselves never spill into a
     synonym bank.  This is deliberately a compact closed substrate, never a
-    lookup fallback over the Atlas lexicon.
+    lookup fallback over the Atlas lexicon.  If VESUM rejects a lexical form,
+    it is intentionally omitted from both the bank and any non-kit fallback text;
+    verified re-introduction is not a behavior this subsystem supports.
     """
     anchor_lemma_keys = set(lookup)
     assigned: set[str] = set()
@@ -593,6 +595,53 @@ def kit_is_empty(kit: Mapping[str, Any] | None) -> bool:
     return not isinstance(kit, Mapping) or kit.get("status") != _KIT_AVAILABLE
 
 
+def _render_grounding_text(
+    lookup: Mapping[str, Mapping[str, Any]],
+    inventory: list[dict[str, Any]],
+    *,
+    level: str,
+    max_lemmas: int,
+    include_legacy_synonyms: bool,
+) -> str:
+    """Render the legacy grounding fields, optionally without synonym payloads.
+
+    A populated enrichment kit is the single source for verified synonym
+    banks.  Its non-kit prefix keeps the lemma, CEFR, and numeral fields, but
+    omits the older Atlas synonym list so that the same relation has no second
+    injection route.  The flag-off caller always passes ``True`` to preserve
+    the historical bytes exactly.
+    """
+    lex_lines: list[str] = []
+    for lemma in sorted(lookup)[:max_lemmas]:
+        rec = lookup[lemma]
+        parts = [rec["lemma"]]
+        if rec.get("cefr"):
+            parts.append(rec["cefr"])
+        syns = rec.get("synonyms") or []
+        if include_legacy_synonyms and syns:
+            parts.append("синоніми: " + ", ".join(syns[:4]))
+        lex_lines.append(" — ".join(parts))
+
+    num_lines = [
+        f"{d['numeral']} → {d['following_noun']}" if d["following_noun"] else d["numeral"]
+        for d in inventory
+    ]
+
+    text_blocks = [f"Рівень: {level}."]
+    if lex_lines:
+        heading = (
+            "Перевірена лексика опори (лема — рівень CEFR — синоніми):"
+            if include_legacy_synonyms
+            else "Перевірена лексика опори (лема — рівень CEFR):"
+        )
+        text_blocks.append(heading + "\n" + "\n".join(lex_lines))
+    if num_lines:
+        text_blocks.append(
+            "Числа в опорі (для звірки керування числівника):\n" + "\n".join(num_lines)
+        )
+    return "\n\n".join(text_blocks)
+
+
 def build_grounding_pack(
     anchor_body: str,
     level: str = "B1",
@@ -610,35 +659,14 @@ def build_grounding_pack(
     lookup = build_atlas_lookup(lemmas, db_path=atlas_db)
     inventory = extract_numeral_inventory(anchor_body)
 
-    lex_lines: list[str] = []
-    for lemma in sorted(lookup)[:max_lemmas]:
-        rec = lookup[lemma]
-        parts = [rec["lemma"]]
-        if rec.get("cefr"):
-            parts.append(rec["cefr"])
-        syns = rec.get("synonyms") or []
-        if syns:
-            parts.append("синоніми: " + ", ".join(syns[:4]))
-        lex_lines.append(" — ".join(parts))
-
-    num_lines = [
-        f"{d['numeral']} → {d['following_noun']}" if d["following_noun"] else d["numeral"]
-        for d in inventory
-    ]
-
-    text_blocks = [f"Рівень: {level}."]
-    if lex_lines:
-        text_blocks.append(
-            "Перевірена лексика опори (лема — рівень CEFR — синоніми):\n"
-            + "\n".join(lex_lines)
-        )
-    if num_lines:
-        text_blocks.append(
-            "Числа в опорі (для звірки керування числівника):\n" + "\n".join(num_lines)
-        )
-
     legacy_pack = {
-        "text": "\n\n".join(text_blocks),
+        "text": _render_grounding_text(
+            lookup,
+            inventory,
+            level=level,
+            max_lemmas=max_lemmas,
+            include_legacy_synonyms=True,
+        ),
         "lemmas": lemmas,
         "atlas_lookup": lookup,
         "numeral_inventory": inventory,
@@ -657,8 +685,19 @@ def build_grounding_pack(
         focus=focus,
     )
     kit_text = json.dumps(kit, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    non_kit_text = (
+        legacy_pack["text"]
+        if kit_is_empty(kit)
+        else _render_grounding_text(
+            lookup,
+            inventory,
+            level=level,
+            max_lemmas=max_lemmas,
+            include_legacy_synonyms=False,
+        )
+    )
     return {
         **legacy_pack,
-        "text": legacy_pack["text"] + "\n\n=== KIT ENRICHMENT V1 ===\n" + kit_text,
+        "text": non_kit_text + "\n\n=== KIT ENRICHMENT V1 ===\n" + kit_text,
         "kit": kit,
     }
