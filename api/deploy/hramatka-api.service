@@ -12,6 +12,12 @@ WorkingDirectory=/opt/hramatka/current
 EnvironmentFile=/etc/hramatka/api.env
 Environment=PYTHONUNBUFFERED=1
 
+# The source PEM is root:root 0600. systemd exposes a private read-only copy to
+# this unprivileged unit; the application never receives the root-owned source
+# path and the private key never belongs in EnvironmentFile or process args.
+LoadCredential=review-attestation-signing-key.pem:/etc/hramatka/review-attestation-signing-key.pem
+Environment=HRAMATKA_REVIEW_ATTESTATION_SIGNING_KEY_FILE=%d/review-attestation-signing-key.pem
+
 # The pilot owns its runner in-process.  --workers 1 is mandatory: multiple
 # Uvicorn workers would each run a baker and violate the frozen durability
 # contract.  Caddy is the only public listener; Uvicorn stays loopback-only.

@@ -19,6 +19,47 @@
 		Content-Security-Policy "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
 	}
 
+	# This is intentionally a public HTTPS endpoint: GitHub Actions presents an
+	# OIDC assertion and the API validates it. It is not browser-facing, so CORS
+	# remains absent. Keep this matcher exact; neighbouring /api paths must not
+	# inherit its larger request budget or its provider-call timeout.
+	@review_attestation {
+		method POST
+		path /api/internal/review-attestations
+	}
+	@review_attestation_path path /api/internal/review-attestations
+	handle @review_attestation {
+		# Do not add a site access logger for attestation requests. Caddy does not
+		# log bodies by default; log_skip also protects this route if one is added.
+		log_skip
+		request_body {
+			max_size 64KB
+		}
+		header {
+			Cache-Control "no-store"
+			-Access-Control-Allow-Origin
+			-Access-Control-Allow-Credentials
+		}
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_down -Access-Control-Allow-Origin
+			header_down -Access-Control-Allow-Credentials
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 180s
+				read_timeout 180s
+				write_timeout 180s
+			}
+		}
+	}
+
+	# No method other than the exact POST above reaches the API handler.
+	handle @review_attestation_path {
+		respond "not found" 404
+	}
+
 	@api path /api/*
 	handle @api {
 		reverse_proxy 127.0.0.1:8080 {

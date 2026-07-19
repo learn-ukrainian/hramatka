@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import json
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -18,6 +19,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hramatka.engine import data
@@ -37,6 +39,7 @@ from .models import (
     TeacherPreferences,
     UrlImportRequest,
 )
+from .review_attestation import ReviewAttestationError, ReviewAttestor
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
 from .store import (
@@ -246,6 +249,16 @@ def _lesson_id(value: UUID) -> str:
     return str(value)
 
 
+def _github_bearer_token(authorization: str | None) -> str:
+    """Return one exact standard Bearer credential without retaining the header."""
+    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+        raise ReviewAttestationError("github_token_required", status_code=401)
+    token = authorization.removeprefix("Bearer ")
+    if not token or any(character.isspace() for character in token) or "," in token:
+        raise ReviewAttestationError("github_token_required", status_code=401)
+    return token
+
+
 def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = None) -> FastAPI:
     """Create the one-process application; it deliberately exposes no bearer path."""
     settings = settings or Settings.from_env()
@@ -283,6 +296,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     app.state.store = store
     app.state.runner = runner
     app.state.baker = baker
+    app.state.review_attestor = ReviewAttestor(settings)
 
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
@@ -310,6 +324,16 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             },
         )
 
+    @app.exception_handler(ReviewAttestationError)
+    async def review_attestation_error(_: Request, error: ReviewAttestationError) -> JSONResponse:
+        # This endpoint accepts ephemeral machine credentials.  Its public
+        # response is intentionally tiny and never includes token, provider,
+        # GitHub, or OIDC validation detail.
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"code": error.code, "retryable": error.retryable},
+        )
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_: Request, __: StarletteHTTPException) -> JSONResponse:
         # The frozen API never returns FastAPI's default ``detail`` envelope.
@@ -325,9 +349,11 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     @app.middleware("http")
     async def sensitive_no_store(request: Request, call_next):  # type: ignore[no-untyped-def]
         response = await call_next(request)
-        if request.url.path.startswith("/api/session") or request.url.path.startswith(
-            "/api/lessons"
-        ) or request.url.path.startswith("/api/anchor"):
+        if (
+            request.url.path.startswith("/api/session")
+            or request.url.path.startswith("/api/lessons")
+            or request.url.path.startswith("/api/anchor")
+        ):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -335,6 +361,34 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         content_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
         if content_type != "application/json":
             raise PilotError(422, "invalid_input", "Запит містить помилку.")
+
+    @app.post("/api/internal/review-attestations")
+    async def create_review_attestation(
+        request: Request,
+        _: None = Depends(require_json),
+        oidc_token: Annotated[str | None, Header(alias="X-GitHub-OIDC-Token")] = None,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    ) -> dict[str, object]:
+        content_length = request.headers.get("content-length")
+        if content_length is not None and (
+            not content_length.isdigit() or int(content_length) > 65_536
+        ):
+            raise ReviewAttestationError("invalid_request", status_code=422)
+        body = await request.body()
+        if len(body) > 65_536:
+            raise ReviewAttestationError("invalid_request", status_code=422)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise ReviewAttestationError("invalid_request", status_code=422) from error
+        attestor: ReviewAttestor = app.state.review_attestor
+        github_token = _github_bearer_token(authorization)
+        return await run_in_threadpool(
+            attestor.attest,
+            payload,
+            oidc_token=oidc_token,
+            github_token=github_token,
+        )
 
     def require_origin(origin: Annotated[str | None, Header()] = None) -> None:
         if origin != settings.pilot_origin:
@@ -457,9 +511,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
         """Owner-scoped upsert; requires Origin + X-CSRF-Token (per #113 patterns)."""
-        store.set_teacher_default_duration(
-            session.teacher_id, request_body.default_duration
-        )
+        store.set_teacher_default_duration(session.teacher_id, request_body.default_duration)
         return {"default_duration": request_body.default_duration}
 
     @app.post("/api/anchor/import-url")

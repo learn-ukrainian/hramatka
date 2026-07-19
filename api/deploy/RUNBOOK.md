@@ -19,6 +19,10 @@ change, provisioning, or disclosure of any secret.
   release directory. Never copy a live SQLite database as a deployment step.
 - `/etc/hramatka/api.env` is root-owned secret/config material. Do not `cat`,
   print, commit, copy into a release, or include it in deployment evidence.
+- `/etc/hramatka/review-attestation-signing-key.pem` is an Ed25519 private PEM,
+  owned by `root:root` with mode `0600`. The unprivileged API reads only the
+  private systemd credential copy configured by `hramatka-api.service`; the
+  source PEM never enters the service environment, repository, or Actions.
 - The corpus data release is read-only at `/srv/hramatka-data/<data-stamp>`.
   Its own `data-manifest.json` is the deployment authority; the application
   receives both its directory and manifest path through `/etc/hramatka/api.env`.
@@ -47,6 +51,62 @@ change, provisioning, or disclosure of any secret.
    host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
    `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Both routes are active round-robin
    primaries; the other route is outage-only failover. Never print a key or its file.
+5. For review attestation, first verify that `/etc/hramatka/api.env` contains
+   the assigned `HRAMATKA_REVIEW_ATTESTATION_*` names from
+   [`api.env.example`](api.env.example). The endpoint remains disabled unless
+   `HRAMATKA_REVIEW_ATTESTATION_ENABLED` and
+   `HRAMATKA_REVIEW_ATTESTATION_PAID_REVIEW_ENABLED` are both set to the literal
+   `1`. These flags accept only `0` (disabled) or `1` (enabled); `true` and
+   `false` are startup errors, not aliases. Its
+   expected OIDC audience must equal the exact HTTPS URL held in the repository
+   variable `HRAMATKA_REVIEW_ATTESTOR_URL`; do not put that URL in a workflow,
+   source file, Caddy variable, or shell history. The trusted repository ID,
+   workflow ref, and workflow-content digest are allow-list inputs, not hints.
+   Review calls use the host's existing `HRAMATKA_AIS_API_KEY`; GitHub Actions
+   receives no Google credential. The default reviewer is
+   `google-ais/gemini-3.5-flash`. It never falls back automatically to Pro or
+   another paid model. The signing-key path is the exception: do not assign it
+   in `api.env`. The service unit sets
+   `HRAMATKA_REVIEW_ATTESTATION_SIGNING_KEY_FILE` to its `%d` systemd credential
+   copy, sourced from the root-only PEM.
+6. The attestation body cap uses Caddy's native `request_body` handler, which
+   is supported by the live-probed Caddy 2.11.4. Before reloading the proxy,
+   run `caddy validate --config <root-owned-caddyfile> --adapter caddyfile` on
+   the host. A missing handler or failed validation blocks the release; do not
+   remove the cap or substitute a third-party rate-limit plugin. Stock Caddy
+   has no native rate-limit handler. OIDC JWKS caching and the attestor's
+   process-local concurrency limit of one are application-level defenses;
+   Caddy independently enforces exact method/path, body size, timeouts, no
+   cache, no CORS, and skipped access logging.
+7. Generate and install the signing key only in a root shell on the host. Never
+   redirect its contents to a terminal, paste it into a ticket, or copy it to a
+   checkout:
+
+   ```sh
+   umask 077
+   openssl genpkey -algorithm Ed25519 \
+     -out /etc/hramatka/review-attestation-signing-key.pem
+   chown root:root /etc/hramatka/review-attestation-signing-key.pem
+   chmod 0600 /etc/hramatka/review-attestation-signing-key.pem
+   ```
+
+   Derive only the public PEM. Base64-encode that public output and set it as
+   the non-secret GitHub repository variable
+   `HRAMATKA_REVIEW_ATTESTATION_PUBLIC_KEY_B64`; never set the private PEM as an
+   Actions secret or variable. Record the SHA-256 public-key fingerprint in the
+   coordinated deployment record:
+
+   ```sh
+   openssl pkey -in /etc/hramatka/review-attestation-signing-key.pem \
+     -pubout -outform PEM | base64 -w 0
+   openssl pkey -in /etc/hramatka/review-attestation-signing-key.pem \
+     -pubout -outform DER | openssl dgst -sha256
+   ```
+
+   Install the reviewed service unit, run `systemctl daemon-reload`, and require
+   `systemd-analyze verify /etc/systemd/system/hramatka-api.service` before the
+   application deploy. The unit's `LoadCredential` is what makes a private
+   read-only copy available to `User=hramatka` without weakening source mode.
 
 ## Deploy
 
@@ -66,13 +126,38 @@ change, provisioning, or disclosure of any secret.
 
 2. Create the release-specific virtual environment from that exact checkout.
    This is done before activation so a dependency failure leaves `current`
-   unchanged and a later rollback restores the prior dependency set too:
+   unchanged and a later rollback restores the prior dependency set too. The
+   package installation reads the exact reviewed checkout's `pyproject.toml`:
 
    ```sh
    python3 -m venv /opt/hramatka/releases/<stamp>/.venv
    /opt/hramatka/releases/<stamp>/.venv/bin/python -m pip install --upgrade pip
    /opt/hramatka/releases/<stamp>/.venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
    ```
+
+   The current live pilot has not yet migrated to this target per-release venv
+   layout. Its reviewed `hramatka/ops/deploy.sh HOST` path first confirms that
+   the deployed `/opt/hramatka/venv/bin/python` can import `jwt` and
+   `cryptography`, then transfers code only if that bounded preflight passes.
+   This prevents an attestation deploy from failing after a restart because of
+   missing runtime dependencies; it is transitional proof, not a claim that
+   the shared pilot venv is immutable or release-bound.
+
+   If the live shared venv does not yet contain `jwt` and `cryptography`, first
+   create the exact detached, reviewed checkout from step 1 and verify its HEAD
+   and cleanliness. Then install from that immutable checkout—not the
+   operator's working tree—and rerun the import probe before `deploy.sh`:
+
+   ```sh
+   test "$(git -C /opt/hramatka/releases/<stamp> rev-parse HEAD)" = "<reviewed-commit>"
+   test -z "$(git -C /opt/hramatka/releases/<stamp> status --porcelain)"
+   /opt/hramatka/venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
+   /opt/hramatka/venv/bin/python -c 'import jwt, cryptography'
+   ```
+
+   This is an explicit prerequisite change to the transitional shared venv. It
+   is never performed automatically by the deploy script and must use the same
+   reviewed commit being deployed.
 
 3. Build the reviewed teacher frontend in the release. Caddy serves the
    same-origin `/teacher/` path beneath `current`, so it will activate with the
@@ -104,6 +189,29 @@ change, provisioning, or disclosure of any secret.
 
    Record only the probe’s concise status lines and release identifiers. A
    failed readiness probe is a failed deploy, even if `/api/healthz` is green.
+
+6. Before enabling review attestation, make one bounded OIDC-authenticated
+   request through the configured repository variable URL and verify only its
+   HTTP status and attestation receipt identifier. Do not capture request
+   bodies, assertions, diff content, or provider output. The endpoint is public
+   HTTPS by transport design, but rejects requests without the exact trusted
+   OIDC claims and content digest. Its provider billing is charged to the
+   project/Cloud billing pool behind `HRAMATKA_AIS_API_KEY`; it is separate from
+   an operator's Antigravity weekly quota. Keep the paid-review opt-in false
+   until this dry verification and release review are recorded.
+
+## Signing-key rotation
+
+Rotation is a coordinated deployment, never a timer or silent host mutation.
+Disable new attestation calls, let the one active application slot drain,
+generate a new root-only key, record its public fingerprint, update
+`HRAMATKA_REVIEW_ATTESTATION_PUBLIC_KEY_B64`, restart the service with the new
+credential, and complete one signed receipt verification before re-enabling
+paid review. The current single-public-key design has no overlap window: after
+the GitHub variable changes, previously issued receipts no longer verify. Clear
+or regenerate affected open-PR receipts during the same maintenance record.
+Supporting old and new receipts simultaneously requires a separately reviewed
+multi-key design; do not improvise overlap or retain untracked private keys.
 
 ## Rollback
 
