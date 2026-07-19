@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -59,6 +60,71 @@ from .url_import import UrlImportError, fetch_url_text
 
 _SESSION_COOKIE = "__Host-hramatka_session"
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+_TEACHER_PROGRESS_STEPS = frozenset({"generation", "gates", "assembly"})
+_TEACHER_PROGRESS_FIELDS = (
+    "phase",
+    "phases_total",
+    "step",
+    "calls_done",
+    "calls_planned",
+    "updated_at",
+)
+_RFC3339_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def _is_rfc3339_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or _RFC3339_TIMESTAMP_RE.fullmatch(value) is None:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _teacher_safe_progress(progress: object) -> dict[str, object] | None:
+    """Project durable telemetry onto the small, browser-safe progress contract.
+
+    Durable ``progress_json`` is operator telemetry and is intentionally
+    extensible.  The teacher browser receives only the scalar fields it needs
+    to render an honest bake-progress line; unknown keys and all nested data
+    stay in SQLite for operator diagnosis.
+    """
+    if not isinstance(progress, dict) or any(
+        field not in progress for field in _TEACHER_PROGRESS_FIELDS
+    ):
+        return None
+
+    phase = progress.get("phase")
+    phases_total = progress.get("phases_total")
+    step = progress.get("step")
+    calls_done = progress.get("calls_done")
+    calls_planned = progress.get("calls_planned")
+    updated_at = progress.get("updated_at")
+
+    if type(phase) is not int or phase < 1:
+        return None
+    if type(phases_total) is not int or phases_total < 1:
+        return None
+    if step is not None and (not isinstance(step, str) or step not in _TEACHER_PROGRESS_STEPS):
+        return None
+    if calls_done is not None and (type(calls_done) is not int or calls_done < 0):
+        return None
+    if calls_planned is not None and (type(calls_planned) is not int or calls_planned < 0):
+        return None
+    if not _is_rfc3339_timestamp(updated_at):
+        return None
+
+    return {
+        "phase": phase,
+        "phases_total": phases_total,
+        "step": step,
+        "calls_done": calls_done,
+        "calls_planned": calls_planned,
+        "updated_at": updated_at,
+    }
 
 
 class PilotError(Exception):
@@ -128,8 +194,9 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }
-    if job.progress is not None:
-        payload["progress"] = job.progress
+    progress = _teacher_safe_progress(job.progress)
+    if progress is not None:
+        payload["progress"] = progress
     return payload
 
 

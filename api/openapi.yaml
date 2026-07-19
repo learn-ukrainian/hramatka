@@ -1006,6 +1006,41 @@ components:
         updated_at:
           type: string
           format: date-time
+        progress:
+          $ref: '#/components/schemas/TeacherSafeProgress'
+    TeacherSafeProgress:
+      type: object
+      additionalProperties: false
+      required:
+        - phase
+        - phases_total
+        - step
+        - calls_done
+        - calls_planned
+        - updated_at
+      description: >
+        Optional bounded bake snapshot for the teacher UI. It deliberately
+        excludes provider routing, watchdogs, failure diagnostics, and other
+        durable operator telemetry.
+      properties:
+        phase:
+          type: integer
+          minimum: 1
+        phases_total:
+          type: integer
+          minimum: 1
+        step:
+          type: [string, 'null']
+          enum: [generation, gates, assembly, null]
+        calls_done:
+          type: [integer, 'null']
+          minimum: 0
+        calls_planned:
+          type: [integer, 'null']
+          minimum: 0
+        updated_at:
+          type: string
+          format: date-time
     LessonCatalogItem:
       type: object
       additionalProperties: false

@@ -34,6 +34,14 @@ from hramatka.engine.content_density import (
 
 ORIGIN = "https://pilot.example.test"
 CSRF_KEY = b"test-only-hmac-key-that-is-not-a-deployment-secret"
+_TEACHER_PROGRESS_FIELDS = {
+    "phase",
+    "phases_total",
+    "step",
+    "calls_done",
+    "calls_planned",
+    "updated_at",
+}
 
 
 def _fixture_template() -> dict[str, Any]:
@@ -276,6 +284,201 @@ def _wait_for_status(client: TestClient, lesson_id: str, expected: str) -> dict[
             return status
         time.sleep(0.01)
     pytest.fail(f"lesson {lesson_id} did not become {expected}")
+
+
+def _keys_recursively(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | set().union(*(_keys_recursively(item) for item in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_keys_recursively(item) for item in value))
+    return set()
+
+
+def _valid_teacher_progress() -> dict[str, object]:
+    return {
+        "phase": 2,
+        "phases_total": 3,
+        "step": "generation",
+        "calls_done": 4,
+        "calls_planned": 6,
+        "updated_at": "2026-07-19T00:00:00Z",
+    }
+
+
+def _create_progress_job(app, client):
+    teacher, _, token = _issue_invite(app)
+    lesson_id = str(uuid.uuid4())
+    job, created = app.state.store.create_or_get(
+        teacher.id,
+        lesson_id,
+        anchor_text="Учні читають український текст.",
+        duration=45,
+        focus=None,
+    )
+    assert created
+    _redeem(client, token)
+    return teacher, lesson_id, job
+
+
+def _write_raw_progress(app, lesson_id: str, progress: object) -> None:
+    with sqlite3.connect(app.state.store.database_path) as connection:
+        connection.execute(
+            "UPDATE lesson_jobs SET progress_json = ? WHERE id = ?",
+            (json.dumps(progress), lesson_id),
+        )
+
+
+def _teacher_progress_openapi_contract() -> tuple[set[str], set[str], str]:
+    source = (Path(__file__).parents[1] / "hramatka/api/openapi.yaml").read_text(
+        encoding="utf-8"
+    )
+    schema_block = source.split("    TeacherSafeProgress:\n", maxsplit=1)[1].split(
+        "    LessonCatalogItem:\n", maxsplit=1
+    )[0]
+    required_block = schema_block.split("      required:\n", maxsplit=1)[1].split(
+        "      description:\n", maxsplit=1
+    )[0]
+    required = {
+        line.removeprefix("        - ")
+        for line in required_block.splitlines()
+        if line.startswith("        - ")
+    }
+    properties_block = schema_block.split("      properties:\n", maxsplit=1)[1]
+    properties = {
+        line.strip().removesuffix(":")
+        for line in properties_block.splitlines()
+        if line.startswith("        ")
+        and not line.startswith("          ")
+        and line.rstrip().endswith(":")
+    }
+    return required, properties, schema_block
+
+
+def test_status_projects_only_teacher_safe_durable_progress(app, client) -> None:
+    teacher, lesson_id, job = _create_progress_job(app, client)
+    rich_progress = {
+        **_valid_teacher_progress(),
+        "latency_watchdogs": [
+            {
+                "host": "provider.internal.example",
+                "route": "primary-to-fallback",
+                "repair": {"raw_response": "private diagnostic"},
+            }
+        ],
+        "model_route": {"provider": "internal-provider", "model": "internal-model"},
+        "failure_detail": {"errors": ["raw failure detail"]},
+        "future_internal_key": {"reflection": {"nested": "must not echo"}},
+    }
+    assert app.state.store.update_progress(job.id, rich_progress)
+
+    response = client.get(f"/api/lessons/{lesson_id}/status")
+    assert response.status_code == 200, response.text
+    status = response.json()
+    assert status["progress"] == _valid_teacher_progress()
+    returned_keys = _keys_recursively(status["progress"])
+    assert returned_keys == _TEACHER_PROGRESS_FIELDS
+    assert not any(
+        key in returned_keys
+        for key in {
+            "host",
+            "route",
+            "provider",
+            "model",
+            "latency_watchdogs",
+            "repair",
+            "raw_response",
+            "failure_detail",
+            "errors",
+            "future_internal_key",
+            "reflection",
+            "nested",
+        }
+    )
+    stored = app.state.store.get(teacher.id, lesson_id)
+    assert stored is not None
+    assert stored.progress == rich_progress
+
+
+def test_status_omits_mixed_validity_progress_instead_of_partial_subset(app, client) -> None:
+    _, lesson_id, job = _create_progress_job(app, client)
+    mixed_progress = {
+        **_valid_teacher_progress(),
+        "step": {"raw": "generation"},
+        "calls_done": True,
+        "future_internal_key": {"provider_host": "private.example"},
+    }
+    assert app.state.store.update_progress(job.id, mixed_progress)
+
+    malformed = client.get(f"/api/lessons/{lesson_id}/status")
+    assert malformed.status_code == 200, malformed.text
+    assert "progress" not in malformed.json()
+
+
+@pytest.mark.parametrize("missing_field", sorted(_TEACHER_PROGRESS_FIELDS))
+def test_status_omits_progress_when_any_safe_field_is_missing(
+    app, client, missing_field: str
+) -> None:
+    _, lesson_id, _ = _create_progress_job(app, client)
+    progress = _valid_teacher_progress()
+    del progress[missing_field]
+    _write_raw_progress(app, lesson_id, progress)
+
+    response = client.get(f"/api/lessons/{lesson_id}/status")
+    assert response.status_code == 200, response.text
+    assert "progress" not in response.json()
+
+
+@pytest.mark.parametrize("integer_field", ["phase", "phases_total", "calls_done", "calls_planned"])
+def test_status_rejects_boolean_progress_integers(app, client, integer_field: str) -> None:
+    _, lesson_id, job = _create_progress_job(app, client)
+    progress = {**_valid_teacher_progress(), integer_field: True}
+    assert app.state.store.update_progress(job.id, progress)
+
+    response = client.get(f"/api/lessons/{lesson_id}/status")
+    assert response.status_code == 200, response.text
+    assert "progress" not in response.json()
+
+
+@pytest.mark.parametrize(
+    "invalid_updated_at",
+    ["not-a-time", "2026-07-19T00:00:00", True, {"nested": "private timestamp"}],
+)
+def test_status_omits_progress_with_invalid_updated_at(
+    app, client, invalid_updated_at: object
+) -> None:
+    _, lesson_id, job = _create_progress_job(app, client)
+    progress = {**_valid_teacher_progress(), "updated_at": invalid_updated_at}
+    assert app.state.store.update_progress(job.id, progress)
+
+    response = client.get(f"/api/lessons/{lesson_id}/status")
+    assert response.status_code == 200, response.text
+    assert "progress" not in response.json()
+
+
+def test_status_omits_none_and_non_object_durable_progress(app, client) -> None:
+    _, lesson_id, _ = _create_progress_job(app, client)
+    _write_raw_progress(app, lesson_id, ["legacy telemetry", {"host": "private.example"}])
+    legacy_list = client.get(f"/api/lessons/{lesson_id}/status")
+    assert legacy_list.status_code == 200, legacy_list.text
+    assert "progress" not in legacy_list.json()
+
+    with sqlite3.connect(app.state.store.database_path) as connection:
+        connection.execute("UPDATE lesson_jobs SET progress_json = NULL WHERE id = ?", (lesson_id,))
+    none_progress = client.get(f"/api/lessons/{lesson_id}/status")
+    assert none_progress.status_code == 200, none_progress.text
+    assert "progress" not in none_progress.json()
+
+
+def test_teacher_progress_openapi_and_runtime_contracts_are_exactly_aligned(app, client) -> None:
+    _, lesson_id, job = _create_progress_job(app, client)
+    assert app.state.store.update_progress(job.id, _valid_teacher_progress())
+    response = client.get(f"/api/lessons/{lesson_id}/status")
+    assert response.status_code == 200, response.text
+
+    runtime_fields = set(response.json()["progress"])
+    schema_required, schema_properties, schema_block = _teacher_progress_openapi_contract()
+    assert runtime_fields == schema_required == schema_properties == _TEACHER_PROGRESS_FIELDS
+    assert "      additionalProperties: false" in schema_block
 
 
 def _set_invite_expired(database_path: Path, invite_id: str) -> None:
