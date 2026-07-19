@@ -146,3 +146,39 @@ Never commit anchors, lessons, failures, or results — only this script and REA
 ./hramatka/ops/local-soak.sh             # full 18-anchor soak (~40–90 min)
 ./hramatka/ops/local-soak.sh --stop      # if a stack was left running
 ```
+
+## Local teacher application
+
+Run the complete teacher UI and real baker locally with one foreground command:
+
+```bash
+./hramatka/ops/local-teacher.sh
+```
+
+The launcher builds the frontend, starts Uvicorn on `127.0.0.1:8788`, and serves the
+same-origin teacher application over temporary HTTPS on `127.0.0.1:8443`. It prints one fresh,
+unredeemed invite URL once and does not open a browser. The browser will warn about the
+short-lived self-signed certificate; the launcher does not modify the system trust store.
+Both loopback ports are reserved before the build begins and handed directly to the child
+servers, so another process cannot claim either port during startup.
+
+Prerequisites:
+
+- the repository `.venv` and its exact `.venv/bin/python` interpreter;
+- Node.js, npm, and OpenSSL;
+- a verified data release selected by `HRAMATKA_DATA_DIR` plus
+  `HRAMATKA_DATA_MANIFEST`, or available beneath `HRAMATKA_DATA_RELEASES_ROOT`;
+- `HRAMATKA_AIS_API_KEY`, or a local `~/.secret/google-ais.key` file.
+
+OpenRouter is optional. If its environment credential or configured key file is absent, the
+launcher explicitly uses Google AI Studio only. If `HRAMATKA_BAKE_PROVIDERS` requests a route
+whose credential is absent, startup fails instead of silently changing routes.
+
+Use `--model <provider/model>` to select a model that has passed the separate qualification
+gate. The launcher passes that value to the baker and deliberately does not maintain a second
+model allowlist. `--api-port` and `--https-port` override the loopback ports when necessary.
+
+Press Ctrl-C to interrupt any startup phase and stop every owned process group. The temporary
+database, CSRF material, certificate, key, and logs are mode-private and are removed on normal
+exit, child failure, or a termination signal. A new invocation always creates a new database
+and one-use invite.
