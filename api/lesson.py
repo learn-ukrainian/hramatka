@@ -205,15 +205,96 @@ def replace_block_activity(
         raise ValueError("Replacement activity is incomplete.") from error
     blocks = _require_blocks(lesson)
     block = blocks[_block_index(blocks, block_id)]
+    # Capture outer intent before the overwrite. The inner lu.activity.v1 envelope
+    # cannot legally carry `corrections` (#163), so only the block key holds it.
+    previous_key = block.get("answer_key")
     block["type"] = activity_type
     block["activity"] = copy.deepcopy(replacement)
     block["answer_key"] = copy.deepcopy(answer_key)
+    # #208: carry an existing corrections triple only when it still structurally
+    # describes the edited error-correction payload and corrected answers. Never
+    # reconstruct or guess Ukrainian intent; drop stale triples.
+    if activity_type == "error-correction":
+        preserved = _preserved_error_correction_intent(
+            previous_key, replacement, answer_key
+        )
+        if preserved is not None:
+            new_key = block["answer_key"]
+            if isinstance(new_key, dict) and "corrections" not in new_key:
+                block["answer_key"] = {**new_key, "corrections": preserved}
     block["edited"] = True
     is_warning = block.get("mark") == "warn"
     if is_warning:
         # A teacher edit is never an acknowledgement of a warning.
         block["note"] = EDITED_WARNING_NOTE
     return is_warning
+
+
+def _preserved_error_correction_intent(
+    previous_key: Any,
+    activity: dict[str, Any],
+    new_answer_key: Any,
+) -> list[dict[str, str]] | None:
+    """Filter existing outer corrections that still match the edited activity.
+
+    A triple is kept only when every check is deterministic and structural:
+    non-empty string legs, the error substring is present in its sentence, the
+    wrong sentence is still a payload item, and replacing the first error
+    occurrence yields a corrected sentence still present in the answer key.
+
+    Returns ``None`` when nothing can honestly be carried (no prior metadata,
+    all stale, or the new key is not an object). Callers must not invent triples.
+    """
+    if not isinstance(previous_key, dict):
+        return None
+    raw = previous_key.get("corrections")
+    if not isinstance(raw, list) or not raw:
+        return None
+    if not isinstance(activity, dict):
+        return None
+    payload = activity.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    payload_items = payload.get("items")
+    if not isinstance(payload_items, list):
+        return None
+    wrong_sentences = {item for item in payload_items if isinstance(item, str) and item}
+    if not isinstance(new_answer_key, dict):
+        return None
+    answer_items = new_answer_key.get("items")
+    if not isinstance(answer_items, list):
+        return None
+    corrected_sentences = {
+        item for item in answer_items if isinstance(item, str) and item
+    }
+
+    kept: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        sentence = entry.get("sentence")
+        error = entry.get("error")
+        correction = entry.get("correction")
+        if not (
+            isinstance(sentence, str)
+            and isinstance(error, str)
+            and isinstance(correction, str)
+            and sentence
+            and error
+            and correction
+        ):
+            continue
+        if error not in sentence:
+            continue
+        if sentence not in wrong_sentences:
+            continue
+        derived = sentence.replace(error, correction, 1)
+        if derived not in corrected_sentences:
+            continue
+        kept.append(
+            {"sentence": sentence, "error": error, "correction": correction}
+        )
+    return kept if kept else None
 
 
 def select_duration(lesson: dict[str, Any], duration: int) -> None:

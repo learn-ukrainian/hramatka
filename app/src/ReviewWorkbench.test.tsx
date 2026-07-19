@@ -119,6 +119,74 @@ const mockResource: LessonResourceView = {
   }
 };
 
+describe('ReviewWorkbench deliberate-error affordance (#208 / #164)', () => {
+  it('renders the existing badge for an enriched error-correction block key', () => {
+    const SENTENCE = 'Я живу в Києв.';
+    const ERROR = 'Києв';
+    const CORRECTION = 'Києві';
+    const CORRECTED = 'Я живу в Києві.';
+    const resource: LessonResourceView = {
+      ...mockResource,
+      lesson: {
+        ...mockResource.lesson,
+        blocks: [
+          {
+            id: 'block-ec-enriched',
+            phase: 1,
+            type: 'error-correction',
+            mode: 'письмово',
+            activity: {
+              id: 'activity-error-correction-1',
+              type: 'error-correction',
+              title: 'Виправте помилку',
+              level: 'b1',
+              payload: {
+                type: 'error-correction',
+                instruction: 'Виправте помилку в кожному реченні.',
+                items: [SENTENCE],
+              },
+              answer_key: { items: [CORRECTED] },
+              provenance: { source: 'generated', generator: 'gemma', gates: ['vesum'] },
+            },
+            answer_key: {
+              items: [CORRECTED],
+              corrections: [{ sentence: SENTENCE, error: ERROR, correction: CORRECTION }],
+            },
+            mark: 'ok',
+            note: null,
+            edited: false,
+          },
+        ],
+      },
+    };
+
+    render(
+      <LangProvider>
+        <ReviewWorkbench
+          resource={resource}
+          showAnswers={false}
+          loading={false}
+          onDurationChange={vi.fn()}
+          onMoveBlock={vi.fn()}
+          onRemoveBlock={vi.fn()}
+          onIncludeReserve={vi.fn()}
+          onRestoreRejected={vi.fn()}
+          onAckWarning={vi.fn()}
+          onSaveActivity={vi.fn()}
+          onAcceptLesson={vi.fn()}
+          onReturnToDraft={vi.fn()}
+          allWarningsAcked={true}
+        />
+      </LangProvider>,
+    );
+
+    // Production workbench wiring: badge before activity content, answers hidden.
+    expect(screen.getByTestId('deliberate-error-badge')).toBeTruthy();
+    expect(screen.queryByTestId('deliberate-error-list')).toBeNull();
+    expect(screen.queryByTestId('teacher-answer-key')).toBeNull();
+  });
+});
+
 describe('ReviewWorkbench honesty flags', () => {
   it('surfaces external_options blocks with warn chip and margin note', () => {
     const resource: LessonResourceView = {

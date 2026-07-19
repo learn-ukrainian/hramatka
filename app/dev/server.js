@@ -32,6 +32,95 @@ try {
   goldenActivities = [];
 }
 
+/**
+ * Outer block answer_key for stub lessons.
+ *
+ * The frozen vendored golden activity envelope stays contract-pure (items only).
+ * Teacher-only deliberate-error intent (#164 / #208) lives on the BLOCK key as
+ * `corrections: [{sentence, error, correction}]`. Derive a valid triple from the
+ * golden error-correction payload when the legs match structurally.
+ */
+function blockAnswerKeyFromActivity(type, act) {
+  const envelopeKey = act?.answer_key;
+  if (type === 'error-correction' && envelopeKey && typeof envelopeKey === 'object') {
+    const items = Array.isArray(envelopeKey.items) ? envelopeKey.items : [];
+    const payloadItems = Array.isArray(act?.payload?.items) ? act.payload.items : [];
+    const outer = { items: JSON.parse(JSON.stringify(items)) };
+    const triple = deriveErrorCorrectionTriple(payloadItems, items);
+    if (triple) outer.corrections = [triple];
+    return outer;
+  }
+  // Other types keep the historical stub display string (not the proof surface).
+  if (typeof envelopeKey === 'string') return envelopeKey;
+  if (envelopeKey && typeof envelopeKey === 'object') {
+    return JSON.stringify(envelopeKey).slice(0, 80);
+  }
+  return 'Ключ відповіді';
+}
+
+/**
+ * Representative triple for the golden error-correction fixture:
+ * wrong "Це моя стіл." → corrected "Це мій стіл." (моя → мій).
+ * Only emits when error is a substring of sentence and replace yields a key item.
+ */
+function deriveErrorCorrectionTriple(payloadItems, answerItems) {
+  const wrong = payloadItems.find((s) => typeof s === 'string' && s);
+  const corrected = answerItems.find((s) => typeof s === 'string' && s);
+  if (!wrong || !corrected) return null;
+  // Smallest representative pair matching the vendored golden fixture wording.
+  const candidates = [
+    { error: 'моя', correction: 'мій' },
+    { error: 'Києв', correction: 'Києві' },
+  ];
+  for (const { error, correction } of candidates) {
+    if (!error || !correction) continue;
+    if (!wrong.includes(error)) continue;
+    if (wrong.replace(error, correction) === corrected) {
+      return { sentence: wrong, error, correction };
+    }
+  }
+  return null;
+}
+
+/**
+ * #208: carry prior outer corrections only when they still structurally describe
+ * the edited activity (mirrors hramatka/api/lesson.py::_preserved_error_correction_intent).
+ */
+function preservedErrorCorrectionIntent(previousKey, activity, newAnswerKey) {
+  if (!previousKey || typeof previousKey !== 'object' || Array.isArray(previousKey)) return null;
+  const raw = previousKey.corrections;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  if (!activity || typeof activity !== 'object') return null;
+  const payload = activity.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  const payloadItems = Array.isArray(payload.items) ? payload.items : null;
+  if (!payloadItems) return null;
+  const wrongSentences = new Set(payloadItems.filter((s) => typeof s === 'string' && s));
+  if (!newAnswerKey || typeof newAnswerKey !== 'object' || Array.isArray(newAnswerKey)) return null;
+  const answerItems = Array.isArray(newAnswerKey.items) ? newAnswerKey.items : null;
+  if (!answerItems) return null;
+  const correctedSentences = new Set(answerItems.filter((s) => typeof s === 'string' && s));
+
+  const kept = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const sentence = entry.sentence;
+    const error = entry.error;
+    const correction = entry.correction;
+    if (
+      typeof sentence !== 'string' || !sentence
+      || typeof error !== 'string' || !error
+      || typeof correction !== 'string' || !correction
+    ) continue;
+    if (!sentence.includes(error)) continue;
+    if (!wrongSentences.has(sentence)) continue;
+    const derived = sentence.replace(error, correction);
+    if (!correctedSentences.has(derived)) continue;
+    kept.push({ sentence, error, correction });
+  }
+  return kept.length ? kept : null;
+}
+
 // Build a deterministic full 9-type golden lesson document for the pilot (one per type)
 function buildGoldenLesson(id, opts = {}) {
   const now = new Date().toISOString();
@@ -60,21 +149,23 @@ function buildGoldenLesson(id, opts = {}) {
     };
     const blockId = `block-${t}-${i}`;
     const isWarn = (i % 3 === 1); // two or three warns for ack flow
+    const activity = {
+      id: act.id || blockId,
+      type: t,
+      title: act.title || t,
+      level: 'b1',
+      payload: act.payload || { type: t, instruction: `Інструкція для ${t}` },
+      // Envelope stays pure (no corrections) — intentional contract boundary.
+      answer_key: act.answer_key || {},
+      provenance: act.provenance || { source: 'generated', generator: 'stub', gates: ['schema'] }
+    };
     blocks.push({
       id: blockId,
       phase: ((i % 3) + 1),
       type: t,
       mode: ['усно', 'письмово', 'вдома'][i % 3],
-      activity: {
-        id: act.id || blockId,
-        type: t,
-        title: act.title || t,
-        level: 'b1',
-        payload: act.payload || { type: t, instruction: `Інструкція для ${t}` },
-        answer_key: act.answer_key || {},
-        provenance: act.provenance || { source: 'generated', generator: 'stub', gates: ['schema'] }
-      },
-      answer_key: typeof act.answer_key === 'string' ? act.answer_key : (act.answer_key ? JSON.stringify(act.answer_key).slice(0, 80) : 'Ключ відповіді'),
+      activity,
+      answer_key: blockAnswerKeyFromActivity(t, activity),
       mark: isWarn ? 'warn' : 'ok',
       note: isWarn ? 'Перевірте уважно — можливе спрощення.' : null,
       edited: false,
@@ -254,9 +345,24 @@ function replaceBlockActivity(lesson, blockId, replacement) {
   const index = blockIndex(blocks, blockId);
   if (index < 0) throw new Error('block_not_found');
   const block = blocks[index];
+  // Capture outer intent before overwrite; inner envelope cannot carry corrections.
+  const previousKey = block.answer_key;
   block.type = replacement.type;
   block.activity = JSON.parse(JSON.stringify(replacement));
   block.answer_key = JSON.parse(JSON.stringify(replacement.answer_key || {}));
+  // #208: preserve consistent deliberate-error triples on the outer block key only.
+  if (replacement.type === 'error-correction') {
+    const preserved = preservedErrorCorrectionIntent(
+      previousKey,
+      replacement,
+      replacement.answer_key,
+    );
+    if (preserved && block.answer_key && typeof block.answer_key === 'object' && !Array.isArray(block.answer_key)) {
+      if (!Object.prototype.hasOwnProperty.call(block.answer_key, 'corrections')) {
+        block.answer_key = { ...block.answer_key, corrections: preserved };
+      }
+    }
+  }
   block.edited = true;
   if (block.mark === 'warn') {
     block.note = EDITED_WARNING_NOTE;

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import './conductor.css';
+import { DeliberateErrorBadge } from './DeliberateError';
 import { useT, type TFn, type ChromeKey } from './i18n';
-import { formatAnswerKeyDisplay } from './review-helpers';
+import { deliberateErrors, formatAnswerKeyDisplay } from './review-helpers';
 
 // Minimal shape for the lesson document (from app contract; no new API)
 export interface ConductorLessonDoc {
@@ -464,6 +465,10 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
       <span className="chip ok">{t('cond.markVerified')}</span>
     );
     const resTag = ''; // no explicit reserve tag in real data; shorten logic uses last-in-phase
+    // #208 / #164: teacher-only conduct panel. Badge answers "is this a bug?" so it
+    // stays visible even with answers hidden. Never put this in renderShared() —
+    // student preview reuses that surface and must not receive intent in the DOM.
+    const intent = deliberateErrors(curB.answer_key);
     return (
       <div className="cond-panel">
         <div className="cond-panellabel">{t('cond.panelLabel')}</div>
@@ -473,6 +478,7 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
           {resTag}
           {markChip}
         </div>
+        {intent.length > 0 && <DeliberateErrorBadge />}
         {curB.note && <div className="cond-note">⚠ {curB.note}</div>}
         {c.showAns && curB.answer_key != null && (
           <div className="cond-answer" data-testid="cond-answer-key">
