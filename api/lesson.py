@@ -73,7 +73,10 @@ def _normalize_rejected_entries(lesson: dict[str, Any]) -> None:
         activity = entry.get("activity") or {}
         activity_type = activity.get("type")
         entry_type = activity_type if entry.get("type") == "gate-failed" else entry.get("type")
-        normalized.append({"type": entry_type, "activity": activity, "reason": entry["reason"]})
+        frozen = {"type": entry_type, "activity": activity, "reason": entry["reason"]}
+        if entry_type == "error-correction" and "answer_key" in entry:
+            frozen["answer_key"] = copy.deepcopy(entry["answer_key"])
+        normalized.append(frozen)
     lesson["rejected"] = normalized
 
 
@@ -131,13 +134,19 @@ def remove_block_to_rejected(lesson: dict[str, Any], block_id: str) -> None:
     rejected = lesson.get("rejected")
     if not isinstance(rejected, list):
         raise ValueError("Lesson rejected tray must be a list.")
-    rejected.append(
-        {
-            "type": removed["type"],
-            "activity": copy.deepcopy(removed["activity"]),
-            "reason": TEACHER_REMOVAL_REASON,
-        }
-    )
+    entry = {
+        "type": removed["type"],
+        "activity": copy.deepcopy(removed["activity"]),
+        "reason": TEACHER_REMOVAL_REASON,
+    }
+    outer_key = removed.get("answer_key")
+    if (
+        removed["type"] == "error-correction"
+        and isinstance(outer_key, dict)
+        and "corrections" in outer_key
+    ):
+        entry["answer_key"] = copy.deepcopy(outer_key)
+    rejected.append(entry)
 
 
 def include_reserve_block(lesson: dict[str, Any], block_id: str) -> None:
@@ -169,6 +178,7 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
         rejected.insert(rejected_index, entry)
         raise ValueError("A notice cannot be restored as an activity.")
     activity = copy.deepcopy(entry["activity"])
+    answer_key = entry.get("answer_key", activity["answer_key"])
     block_id = f"restored-{uuid.uuid4().hex}"
     blocks = _require_blocks(lesson)
     blocks.insert(
@@ -179,7 +189,7 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
             "type": activity["type"],
             "mode": "письмово",
             "activity": activity,
-            "answer_key": copy.deepcopy(activity["answer_key"]),
+            "answer_key": copy.deepcopy(answer_key),
             "mark": "warn",
             "note": RESTORED_WARNING_NOTE,
             "edited": False,

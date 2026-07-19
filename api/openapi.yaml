@@ -1189,18 +1189,76 @@ components:
         `type` MUST equal `activity.type`. If `provenance.external_options` is
         true, `mark` MUST be `warn`. Auto-checkable types MUST carry an answer key.
     RejectedDraft:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, activity, reason]
+          properties:
+            type:
+              type: string
+              const: error-correction
+            activity:
+              $ref: '#/components/schemas/ActivityDocument'
+            reason:
+              type: string
+              minLength: 1
+            answer_key:
+              $ref: '#/components/schemas/RejectedDraftAnswerKey'
+        - type: object
+          additionalProperties: false
+          required: [type, activity, reason]
+          properties:
+            type:
+              type: string
+              enum:
+                - true-false
+                - cloze
+                - match-up
+                - text-questions
+                - quiz
+                - mark-the-words
+                - fill-in
+                - short-writing
+            activity:
+              $ref: '#/components/schemas/ActivityDocument'
+            reason:
+              type: string
+              minLength: 1
+      description: |
+        `type` MUST equal `activity.type`. Only error-correction drafts may
+        carry the optional outer answer key; the inner activity remains a pure
+        `lu.activity.v1` document.
+    RejectedDraftAnswerKey:
       type: object
       additionalProperties: false
-      required: [type, activity, reason]
+      required: [items, corrections]
       properties:
-        type:
-          $ref: '#/components/schemas/PilotActivityType'
-        activity:
-          $ref: '#/components/schemas/ActivityDocument'
-        reason:
-          type: string
-          minLength: 1
-      description: '`type` MUST equal `activity.type`.'
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+        corrections:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [sentence, error, correction]
+            properties:
+              sentence:
+                type: string
+                minLength: 1
+                pattern: '\S'
+              error:
+                type: string
+                minLength: 1
+                pattern: '\S'
+              correction:
+                type: string
+                minLength: 1
+                pattern: '\S'
     LessonDocument:
       type: object
       additionalProperties: false
@@ -1273,7 +1331,7 @@ components:
           format: date-time
       description: |
         Pilot-constrained `lu.lesson.v1`. It matches the verbatim public schema
-        pinned at `hramatka/vendor/lu.lesson.v1@1.1.0-96f4b1b1/`, narrows the
+        pinned at `hramatka/vendor/lu.lesson.v1@1.2.0-ffed19d/`, narrows the
         anchor to teacher-paste, and narrows blocks to PILOT_ACTIVITY_TYPES.
     FocusStatus:
       type: object

@@ -14,6 +14,7 @@ promoted into a visible warning block to hide a density shortfall.
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
@@ -230,6 +231,16 @@ def _error_correction_intent(ir) -> list[dict[str, str]]:
             continue  # Cannot highlight a form the printed sentence does not contain.
         intent.append({"sentence": sentence, "error": error, "correction": correction})
     return intent
+
+
+def _error_correction_outer_key(ir) -> dict | None:
+    """Return the teacher-only correction key without contaminating the activity."""
+    if ir.activity.get("type") != "error-correction":
+        return None
+    intent = _error_correction_intent(ir)
+    if not intent:
+        return None
+    return {**_answer_key(ir), "corrections": intent}
 
 
 def _answer_key(ir) -> dict:
@@ -1245,9 +1256,7 @@ class EngineLessonBaker:
         # #164: teacher-only intent metadata rides the block key, never `envelope`
         # (frozen `itemsAnswerKey` forbids it). Additive — `items` stays untouched.
         if a_type == "error-correction" and isinstance(block_key, dict):
-            intent = _error_correction_intent(ir)
-            if intent:
-                block_key = {**block_key, "corrections": intent}
+            block_key = _error_correction_outer_key(ir) or block_key
 
         return {
             "id": f"block-{slot + 1}",
@@ -1342,6 +1351,7 @@ def rejected_entries(activities: list) -> list[dict]:
                     "type": "gate-failed",
                     "activity": _rejected_activity_document(ir, index),
                     "reason": f"gate-failed:{_failed_gate(ir)}",
+                    **_rejected_answer_key(ir),
                 }
             )
             continue
@@ -1360,6 +1370,7 @@ def rejected_entries(activities: list) -> list[dict]:
                     "type": "gate-failed",
                     "activity": _rejected_activity_document(ir, index),
                     "reason": f"gate-failed:{gate}",
+                    **_rejected_answer_key(ir),
                 }
             )
     return out
@@ -1378,6 +1389,7 @@ def reserve_entries(activities: list, *, reason: str) -> list[dict]:
             "type": activity.activity["type"],
             "activity": _rejected_activity_document(activity, index),
             "reason": reason,
+            **_rejected_answer_key(activity),
         }
         for index, activity in enumerate(activities, start=1)
     ]
@@ -1402,6 +1414,13 @@ def _annotate_shortfall(rejected: list[dict], *, blocks: list[dict], planned: in
             "type": block["type"],
             "activity": block["activity"],
             "reason": f"shortfall-notice: {reason}; informational, not a restore candidate",
+            **(
+                {"answer_key": copy.deepcopy(block["answer_key"])}
+                if block["type"] == "error-correction"
+                and isinstance(block["answer_key"], dict)
+                and "corrections" in block["answer_key"]
+                else {}
+            ),
         }
     )
 
@@ -1448,6 +1467,12 @@ def _rejected_activity_document(ir, index: int) -> dict:
             "gates": ["gated"],
         },
     }
+
+
+def _rejected_answer_key(ir) -> dict[str, dict]:
+    """Optional outer carrier for one rejected error-correction draft."""
+    answer_key = _error_correction_outer_key(ir)
+    return {"answer_key": answer_key} if answer_key is not None else {}
 
 
 def bake_accounting(result) -> dict[str, int]:

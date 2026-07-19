@@ -1,0 +1,18 @@
+{
+  "artifact": "lu.lesson.v1",
+  "version": "1.2.0",
+  "kind": "json-schema",
+  "description": "Verbatim public lesson contract; adds the optional error-correction answer key on rejected drafts.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "packages/activity-kit/src/lu.lesson.v1.schema.json",
+    "commit": "ffed19d00d939fa0885ec8af372997c60834873f"
+  },
+  "adapted": false,
+  "files": {
+    "lu.lesson.v1.schema.json": {
+      "sha256": "a29196f1202758510af48ab9519d4ad0f787b26126ab7f15abf88f797a9f6594",
+      "size": 11223
+    }
+  }
+}

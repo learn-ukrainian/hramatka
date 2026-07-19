@@ -82,6 +82,55 @@ class ReserveFixtureBaker(FixtureBaker):
         return template
 
 
+class ErrorCorrectionFixtureBaker(FixtureBaker):
+    """Fixture baker with an outer-only, multiplicity-preserving correction key."""
+
+    def bake(
+        self, anchor: str | dict[str, Any], duration: int, focus: str | None
+    ) -> dict[str, Any]:
+        template = super().bake(anchor, duration, focus)
+        sentence = "Я живу в Києв."
+        correction = {"sentence": sentence, "error": "Києв", "correction": "Києві"}
+        activity = {
+            "id": "activity-error-correction-1",
+            "type": "error-correction",
+            "title": "Виправте помилку",
+            "level": "b1",
+            "payload": {
+                "type": "error-correction",
+                "instruction": "Виправте помилку в кожному реченні.",
+                "items": [sentence],
+            },
+            "answer_key": {"items": ["Я живу в Києві."]},
+            "provenance": {
+                "source": "generated",
+                "generator": "fixture",
+                "gates": ["vesum"],
+            },
+        }
+        template["blocks"][0] = {
+            "id": "block-error-correction",
+            "phase": 1,
+            "type": "error-correction",
+            "mode": "письмово",
+            "activity": activity,
+            "answer_key": {
+                "items": ["Я живу в Києві.", "Я живу в Києві."],
+                "corrections": [correction, copy.deepcopy(correction)],
+            },
+            "mark": "ok",
+            "note": None,
+            "edited": False,
+            "provenance": {
+                "source": "generated",
+                "generator": "fixture",
+                "gates": ["vesum"],
+                "external_options": False,
+            },
+        }
+        return template
+
+
 class BlockingBaker(FixtureBaker):
     def __init__(self) -> None:
         self.calls = 0
@@ -1316,6 +1365,75 @@ def test_removal_restore_requires_fresh_warning_acknowledgement(app, client) -> 
         json={"expected_revision": revision},
     )
     assert accepted.status_code == 200, accepted.text
+
+
+def test_error_correction_key_survives_api_edit_remove_restore_round_trip(
+    tmp_path: Path,
+) -> None:
+    app = create_app(settings=_settings(tmp_path), baker=ErrorCorrectionFixtureBaker())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        headers = _mutation_headers(session["csrf_token"])
+        lesson_id = str(uuid.uuid4())
+        created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+        assert created.status_code == 202, created.text
+        _wait_for_status(client, lesson_id, "ready")
+        resource = client.get(f"/api/lessons/{lesson_id}").json()
+        block = next(
+            item
+            for item in resource["lesson"]["blocks"]
+            if item["id"] == "block-error-correction"
+        )
+        corrections = copy.deepcopy(block["answer_key"]["corrections"])
+        assert len(corrections) == 2
+        assert corrections[0] == corrections[1]
+        assert "corrections" not in block["activity"]["answer_key"]
+
+        replacement = copy.deepcopy(block["activity"])
+        replacement["title"] = "Оновлена вправа"
+        edited = client.put(
+            f"/api/lessons/{lesson_id}/blocks/block-error-correction/activity",
+            headers=headers,
+            json={"expected_revision": resource["revision"], "activity": replacement},
+        )
+        assert edited.status_code == 200, edited.text
+        edited_resource = edited.json()
+        edited_block = next(
+            item
+            for item in edited_resource["lesson"]["blocks"]
+            if item["id"] == "block-error-correction"
+        )
+        assert edited_block["answer_key"] == {
+            "items": replacement["answer_key"]["items"],
+            "corrections": corrections,
+        }
+        assert "corrections" not in edited_block["activity"]["answer_key"]
+
+        removed = client.post(
+            f"/api/lessons/{lesson_id}/blocks/block-error-correction/remove",
+            headers=headers,
+            json={"expected_revision": edited_resource["revision"]},
+        )
+        assert removed.status_code == 200, removed.text
+        removed_resource = removed.json()
+        rejected = removed_resource["lesson"]["rejected"][-1]
+        assert rejected["answer_key"] == edited_block["answer_key"]
+        assert "corrections" not in rejected["activity"]["answer_key"]
+
+        restored = client.post(
+            f"/api/lessons/{lesson_id}/rejected/0/restore",
+            headers=headers,
+            json={"expected_revision": removed_resource["revision"], "phase": 2},
+        )
+        assert restored.status_code == 200, restored.text
+        restored_block = next(
+            item
+            for item in restored.json()["lesson"]["blocks"]
+            if item["id"].startswith("restored-")
+        )
+        assert restored_block["answer_key"] == edited_block["answer_key"]
+        assert "corrections" not in restored_block["activity"]["answer_key"]
 
 
 def test_duration_reserve_include_and_activity_replacement_preserve_review_safety(
