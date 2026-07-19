@@ -71,6 +71,7 @@ The entire loop (code -> build -> test -> bake) must run **locally** to protect 
 - `--keep`: Keep the local uvicorn stack running and do not clean up the tmp database/logs.
 - `--stop`: Terminate any kept stacks and clean up their state.
 - `--dry-run`: Dry run to validate env assembly and resolved paths.
+- `./hramatka/ops/check-local-loop-venv.sh`: Read-only guard that reports stale/missing console-script interpreters and exits non-zero on failure.
 
 ### Examples
 
@@ -93,6 +94,22 @@ The entire loop (code -> build -> test -> bake) must run **locally** to protect 
    ```bash
    ./hramatka/ops/local-loop.sh --stop
    ```
+
+### Venv shebang guard (read-only)
+
+Before running `local-loop.sh`, run the guard:
+
+```bash
+./hramatka/ops/check-local-loop-venv.sh
+```
+
+If the check reports missing or out-of-venv interpreters, recreate the local venv manually:
+
+```bash
+rm -rf .venv
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e .
+```
 
 ## Local soak baseline (18 anchors)
 
@@ -129,4 +146,3 @@ Never commit anchors, lessons, failures, or results — only this script and REA
 ./hramatka/ops/local-soak.sh             # full 18-anchor soak (~40–90 min)
 ./hramatka/ops/local-soak.sh --stop      # if a stack was left running
 ```
-
