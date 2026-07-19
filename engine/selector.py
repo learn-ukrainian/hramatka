@@ -17,7 +17,7 @@ from typing import Any
 from . import content_density, schema
 from .registry import ACTIVITY_REGISTRY
 
-SELECTOR_POLICY_VERSION = "grounding-mode-v1.selector.v5"
+SELECTOR_POLICY_VERSION = "grounding-mode-v1.selector.v7"
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class SelectorPolicy:
     forbid_duplicate_evidence_answer: bool = True
     require_content_density: bool = True
     require_productive: bool = False
+    prioritize_response_units: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -159,10 +160,31 @@ def _select(
             lemma_budget = len(core_lemmas)
             new_coverage = len(_coverage(candidate) - state.covered)
             variety = int(activity_type not in state.selected_types)
+            # Response-unit ranking is a density optimization, not permission
+            # to collapse the lesson into a few high-yield families.  Protect
+            # the canonical four-family floor during the first pass; once it
+            # is reached, response units resume as the stronger preference.
+            variety_floor_boost = int(
+                policy.prioritize_response_units
+                and len(state.selected_types)
+                < content_density.MIN_TEACHER_READY_ACTIVITY_TYPES
+                and activity_type not in state.selected_types
+            )
             productive_boost = int(
                 policy.require_productive
                 and activity_type in content_density.PRODUCTIVE_TYPES
-                and not (state.selected_types.keys() & content_density.PRODUCTIVE_TYPES)
+                and (
+                    (phase == 3 and not any(
+                        item.activity.get("type") in content_density.PRODUCTIVE_TYPES
+                        for item in selected
+                    ))
+                    or not (state.selected_types.keys() & content_density.PRODUCTIVE_TYPES)
+                )
+            )
+            response_unit_boost = (
+                content_density.response_units(candidate.activity)
+                if policy.prioritize_response_units
+                else 0
             )
             focus_boost = _focus_score(
                 candidate,
@@ -177,6 +199,8 @@ def _select(
                 (
                     -focus_boost,
                     -productive_boost,
+                    -variety_floor_boost,
+                    -response_unit_boost,
                     0,
                     0,
                     -novelty,
@@ -185,7 +209,18 @@ def _select(
                     tie_break,
                 )
                 if derived_mode
-                else (-focus_boost, -productive_boost, 1, -new_coverage, 0, 0, -variety, tie_break)
+                else (
+                    -focus_boost,
+                    -productive_boost,
+                    -variety_floor_boost,
+                    -response_unit_boost,
+                    1,
+                    -new_coverage,
+                    0,
+                    0,
+                    -variety,
+                    tie_break,
+                )
             )
             ranked.append((score, original_index, candidate))
 
@@ -255,7 +290,11 @@ def select_composed_lesson(
     """Select a TTT lesson under one global composition policy."""
     state = _SelectionState()
     selected_by_phase: dict[int, list[schema.HramatkaActivity]] = {}
-    for phase, slots in sorted(slots_by_phase.items()):
+    phase_order = sorted(
+        slots_by_phase.items(),
+        key=lambda row: (row[0] != 3, row[0]) if policy.require_productive else (False, row[0]),
+    )
+    for phase, slots in phase_order:
         state.sentence_reuse.last_primary = None
         state.last_type = None
         selected_by_phase[phase] = _select(
@@ -268,4 +307,4 @@ def select_composed_lesson(
             anchor=anchor,
             focus_context=focus_context,
         )
-    return selected_by_phase
+    return {phase: selected_by_phase[phase] for phase in sorted(selected_by_phase)}

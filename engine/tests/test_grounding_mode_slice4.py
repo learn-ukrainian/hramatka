@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hramatka.engine import content_density, pipeline, schema, selector
+from hramatka.engine import content_density, fixtures, pipeline, schema, selector
 
 
 def _anchor() -> dict:
@@ -58,7 +58,10 @@ def _quote_candidate(candidate_id: str, activity_type: str) -> schema.HramatkaAc
         activity = {
             "type": activity_type,
             "instruction": "Позначте.",
-            "items": [{"statement": candidate_id, "correct": True}],
+            "items": [
+                {"statement": f"{candidate_id}-{index}", "correct": True}
+                for index in range(4)
+            ],
         }
         evidence.locator = "items[0]"
     elif activity_type == "cloze":
@@ -76,6 +79,12 @@ def _quote_candidate(candidate_id: str, activity_type: str) -> schema.HramatkaAc
                 {"id": "c", "answer": "щодня", "options": ["щодня", "інколи", "завтра", "вчора"]},
             ],
         }
+    elif activity_type == "short-writing":
+        activity = {
+            "type": activity_type,
+            "prompt": "(1) Опишіть читання. (2) Поясніть приклад.",
+            "word_count_guidance": "40–60 слів",
+        }
     else:
         activity = {
             "type": activity_type,
@@ -91,14 +100,33 @@ def _quote_candidate(candidate_id: str, activity_type: str) -> schema.HramatkaAc
     )
 
 
-def _floor_candidates(count: int) -> list[schema.HramatkaActivity]:
-    types = ("true-false", "quiz", "short-writing", "cloze")
-    return [
-        schema.HramatkaActivity(
-            activity={"type": types[index % len(types)]}, candidate_id=str(index)
+def _teacher_ready_by_phase(duration: int) -> dict[int, list[schema.HramatkaActivity]]:
+    contract = content_density.teacher_ready_density(duration)
+    next_index = 0
+    activity_types = ("true-false", "quiz", "cloze", "mark-the-words", "fill-in")
+
+    def closed_response() -> schema.HramatkaActivity:
+        nonlocal next_index
+        activity_type = activity_types[next_index % len(activity_types)]
+        candidate = schema.HramatkaActivity(
+            activity=fixtures._READY_CANDIDATES[activity_type](next_index),  # noqa: SLF001
+            candidate_id=f"{activity_type}-{next_index}",
         )
-        for index in range(count)
-    ]
+        next_index += 1
+        return candidate
+
+    selected = {
+        1: [closed_response() for _ in range(contract.phase_blocks[1])],
+        2: [closed_response() for _ in range(contract.phase_blocks[2])],
+        3: [closed_response() for _ in range(contract.phase_blocks[3] - 1)],
+    }
+    selected[3].append(
+        schema.HramatkaActivity(
+            activity=fixtures._READY_CANDIDATES["short-writing"](next_index),  # noqa: SLF001
+            candidate_id="final-transfer",
+        )
+    )
+    return selected
 
 
 def _fp_kwargs(**overrides):
@@ -150,12 +178,12 @@ def test_quoting_reuse_cap_still_rejects_third_shared_primary(monkeypatch):
     anchor = _anchor()
     selected = selector.select_composed_lesson(
         {
-            1: [_quote_candidate("quote-1", "true-false")],
+            1: [_quote_candidate("quote-1", "mark-the-words")],
             2: [_quote_candidate("quote-2", "cloze")],
-            3: [_quote_candidate("quote-3", "mark-the-words")],
+            3: [_quote_candidate("quote-3", "short-writing")],
         },
         slots_by_phase={1: 1, 2: 1, 3: 1},
-        count_plan={"true-false": 1, "cloze": 1, "mark-the-words": 1},
+        count_plan={"mark-the-words": 1, "cloze": 1, "short-writing": 1},
         anchor=anchor,
     )
     assert [candidate.candidate_id for candidate in selected[1]] == ["quote-1"]
@@ -168,11 +196,11 @@ def test_mixed_mode_phase_selection_uses_a_fixed_width_key(monkeypatch):
     monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", "1")
     anchor = _anchor()
     derived = _derived_fill_in("derived-1", "Нове завдання", "читання")
-    quoting = _quote_candidate("quote-1", "true-false")
+    quoting = _quote_candidate("quote-1", "mark-the-words")
 
     selected = selector.select_lesson(
         [derived, quoting],
-        count_plan={"fill-in": 1, "true-false": 1},
+        count_plan={"fill-in": 1, "mark-the-words": 1},
         anchor=anchor,
         phase=1,
         policy=selector.SelectorPolicy(density_target=2),
@@ -198,7 +226,7 @@ def test_sentence_builder_derived_density_reads_starters_list():
 
 
 def test_selector_policy_version_is_in_fingerprint_identity():
-    assert selector.SELECTOR_POLICY_VERSION == "grounding-mode-v1.selector.v5"
+    assert selector.SELECTOR_POLICY_VERSION == "grounding-mode-v1.selector.v7"
     assert (
         pipeline.fingerprint_inputs(**_fp_kwargs())["selector_policy"]["version"]
         == selector.SELECTOR_POLICY_VERSION
@@ -245,51 +273,65 @@ def test_thin_source_blame_requires_empty_kit_only_in_grounding_mode(monkeypatch
     assert content_density.source_lacks_lesson_evidence(thin, kit=empty_kit) is False
 
 
-def test_45_floor_is_unchanged_and_60_90_underfilled_lessons_reject(monkeypatch):
-    forty_five = _floor_candidates(6)
+def test_teacher_ready_8_10_12_contract_rejects_underfilled_lessons(monkeypatch):
+    forty_five = _teacher_ready_by_phase(45)
     assert content_density.meets_lesson_floor(
-        forty_five,
+        [candidate for phase in forty_five.values() for candidate in phase],
         duration=45,
-        selected_by_phase={1: forty_five[:2], 2: forty_five[2:5], 3: forty_five[5:]},
+        selected_by_phase=forty_five,
     )
     for grounding_mode in (None, "1"):
         if grounding_mode is None:
             monkeypatch.delenv("HRAMATKA_GROUNDING_MODE_V1", raising=False)
         else:
             monkeypatch.setenv("HRAMATKA_GROUNDING_MODE_V1", grounding_mode)
-        sixty = _floor_candidates(8)
+        sixty = _teacher_ready_by_phase(60)
+        sixty[3].pop()
         assert not content_density.meets_lesson_floor(
-            sixty,
+            [candidate for phase in sixty.values() for candidate in phase],
             duration=60,
-            selected_by_phase={1: sixty[:2], 2: sixty[2:7], 3: sixty[7:]},
+            selected_by_phase=sixty,
         )
-        ninety = _floor_candidates(11)
+        ninety = _teacher_ready_by_phase(90)
+        ninety[3].pop()
         assert not content_density.meets_lesson_floor(
-            ninety,
+            [candidate for phase in ninety.values() for candidate in phase],
             duration=90,
-            selected_by_phase={1: ninety[:4], 2: ninety[4:9], 3: ninety[9:]},
+            selected_by_phase=ninety,
         )
 
 
 def test_floor_oracle_is_frozen_in_the_measurement_harness_record():
     assert content_density.floor_oracle_record() == {
-        "45": {
-            "min_blocks": 6,
-            "phase_minimums": {1: 2, 2: 3, 3: 1},
+        "teacher_ready_density": content_density.teacher_ready_density_record(),
+        "compatibility_floors": {
+            "45": {
+            "min_blocks": 8,
+            "phase_minimums": {1: 3, 2: 4, 3: 1},
             "min_types": 4,
             "require_productive": True,
-        },
-        "60": {
-            "min_blocks": 9,
-            "phase_minimums": {1: 2, 2: 5, 3: 2},
+            "minimum_response_units": 28,
+            "version": "TeacherReadyDensity.v1",
+            "digest": content_density.teacher_ready_density_digest(),
+            },
+            "60": {
+            "min_blocks": 10,
+            "phase_minimums": {1: 3, 2: 5, 3: 2},
             "min_types": 4,
             "require_productive": True,
-        },
-        "90": {
+            "minimum_response_units": 35,
+            "version": "TeacherReadyDensity.v1",
+            "digest": content_density.teacher_ready_density_digest(),
+            },
+            "90": {
             "min_blocks": 12,
             "phase_minimums": {1: 4, 2: 5, 3: 3},
             "min_types": 4,
             "require_productive": True,
+            "minimum_response_units": 42,
+            "version": "TeacherReadyDensity.v1",
+            "digest": content_density.teacher_ready_density_digest(),
+            },
         },
     }
     harness = Path("hramatka/grounding-mode-v1-ab-harness.md")

@@ -114,6 +114,7 @@ class RepairRequest:
     phase: int
     round: int
     slots: tuple[RepairSlot, ...]
+    density_errors: tuple[str, ...] = ()
 
 
 def bounded_gate_failures(
@@ -142,10 +143,24 @@ class RepairPlanner:
     """Plan at most one exact-slot request per phase per round."""
 
     shared_pack: Mapping[str, Any]
+    duration: int
     started_at: float = field(default_factory=time.monotonic)
     hard_deadline: float | None = None
     calls: int = 0
     attempts: Counter[str] = field(default_factory=Counter)
+    _contract: content_density.TeacherReadyDensity = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._contract = content_density.teacher_ready_density(self.duration)
+        declared_durations = (
+            self.shared_pack.get("teacher_ready_density", {}).get("duration"),
+            self.shared_pack.get("lesson_plan", {}).get("duration_minutes"),
+        )
+        if any(
+            declared is not None and declared != self.duration
+            for declared in declared_durations
+        ):
+            raise ValueError("Repair duration does not match the immutable prompt pack.")
 
     def _expired(self, now: float) -> bool:
         if now - self.started_at >= MAX_WALL_SECONDS:
@@ -181,40 +196,191 @@ class RepairPlanner:
         now = time.monotonic() if now is None else now
         if self._expired(now):
             return []
-        requests: list[RepairRequest] = []
-        for phase, visible_slots in sorted(slots_by_phase.items()):
-            missing = max(0, int(visible_slots) - len(selected_by_phase.get(phase, ())))
-            if not missing:
-                continue
-            candidates = [
+        if dict(slots_by_phase) != dict(self._contract.phase_blocks):
+            # Repair must never guess a duration from a shape or operate on a
+            # noncanonical shape.  No request is safer than repairing against
+            # the wrong teacher-delivery contract.
+            return []
+        receipt = content_density.evaluate_teacher_ready_density(
+            selected_by_phase, duration=self.duration
+        )
+        density_errors = receipt.errors
+        selected_types = {
+            str(candidate.activity.get("type") or "")
+            for candidates in selected_by_phase.values()
+            for candidate in candidates
+        }
+        below_floor_types_by_phase = {
+            phase: {
+                str(candidate.activity.get("type") or "")
+                for candidate in candidates
+                if not content_density.meets_content_density(candidate)
+            }
+            for phase, candidates in selected_by_phase.items()
+        }
+        needs_variety = any(error.startswith("activity_types_") for error in density_errors)
+        needs_response_units = any(error.startswith("response_units_") for error in density_errors)
+        needs_productive = any(error.startswith("phase_3_") for error in density_errors)
+        response_required_gain = 0
+        if needs_response_units:
+            response_shortfall = max(
+                0,
+                self._contract.minimum_response_units - receipt.response_units,
+            )
+            block_repair_gain = sum(
+                max(
+                    0,
+                    content_density.delivered_item_floors().get(
+                        str(candidate.activity.get("type") or ""), 0
+                    )
+                    - content_density.response_units(candidate.activity),
+                )
+                for candidates in selected_by_phase.values()
+                for candidate in candidates
+                if not content_density.meets_content_density(candidate)
+            )
+            response_required_gain = max(0, response_shortfall - block_repair_gain)
+            needs_response_units = response_required_gain > 0
+
+        available_by_phase = {
+            phase: [
                 slot
                 for slot in self._slots_for_phase(phase)
                 if self.attempts[slot.slot_id] < MAX_SLOT_ATTEMPTS
             ]
-            candidates.sort(
-                key=lambda slot: (not slot.focus_required, slot.activity_type, slot.slot_id)
+            for phase in slots_by_phase
+        }
+        target_phases = {
+            phase
+            for phase, visible_slots in slots_by_phase.items()
+            if int(visible_slots) > len(selected_by_phase.get(phase, ()))
+        }
+        target_phases.update(
+            phase for phase, types in below_floor_types_by_phase.items() if types
+        )
+        if needs_productive and 3 in slots_by_phase:
+            target_phases.add(3)
+        item_targets = content_density.registry_item_targets()
+        if needs_variety:
+            variety_choices = [
+                (item_targets.get(slot.activity_type, 0), phase, slot.slot_id)
+                for phase, slots in available_by_phase.items()
+                for slot in slots
+                if slot.activity_type not in selected_types
+            ]
+            if variety_choices:
+                _target, phase, _slot_id = max(variety_choices)
+                target_phases.add(phase)
+        if needs_response_units:
+            response_choices: list[tuple[int, int, str]] = []
+            selected_type_counts = Counter(
+                str(candidate.activity.get("type") or "")
+                for candidates in selected_by_phase.values()
+                for candidate in candidates
             )
-            chosen = tuple(candidates[:missing])
+            required_type_count = self._contract.min_types
+            for phase, slots in available_by_phase.items():
+                phase_selected = list(selected_by_phase.get(phase, ()))
+                for slot in slots:
+                    same_type = [
+                        candidate
+                        for candidate in phase_selected
+                        if candidate.activity.get("type") == slot.activity_type
+                    ]
+                    replaceable = same_type
+                    if not replaceable:
+                        replaceable = []
+                        for candidate in phase_selected:
+                            candidate_type = str(candidate.activity.get("type") or "")
+                            if (
+                                phase == 3
+                                and candidate_type in content_density.PRODUCTIVE_TYPES
+                                and slot.activity_type not in content_density.PRODUCTIVE_TYPES
+                                and sum(
+                                    item.activity.get("type")
+                                    in content_density.PRODUCTIVE_TYPES
+                                    for item in phase_selected
+                                )
+                                == 1
+                            ):
+                                continue
+                            if (
+                                len(selected_type_counts) <= required_type_count
+                                and selected_type_counts[candidate_type] == 1
+                                and slot.activity_type in selected_type_counts
+                            ):
+                                continue
+                            replaceable.append(candidate)
+                    if not replaceable:
+                        continue
+                    replaceable_floor = min(
+                        content_density.response_units(candidate.activity)
+                        for candidate in replaceable
+                    )
+                    gain = item_targets.get(slot.activity_type, 0) - replaceable_floor
+                    if gain > 0:
+                        response_choices.append((gain, phase, slot.slot_id))
+            response_slot_ids: set[str] = set()
+            remaining_gain = response_required_gain
+            for gain, phase, slot_id in sorted(
+                response_choices, key=lambda choice: (-choice[0], choice[1], choice[2])
+            ):
+                response_slot_ids.add(slot_id)
+                target_phases.add(phase)
+                remaining_gain -= gain
+                if remaining_gain <= 0:
+                    break
+        else:
+            response_slot_ids = set()
+        if not receipt.ready and not target_phases:
+            target_phases.add(min(slots_by_phase))
+
+        requests: list[RepairRequest] = []
+        for phase, visible_slots in sorted(slots_by_phase.items()):
+            missing = max(0, int(visible_slots) - len(selected_by_phase.get(phase, ())))
+            if phase not in target_phases:
+                continue
+            candidates = available_by_phase[phase]
+            below_floor_types = below_floor_types_by_phase.get(phase, set())
+            candidates.sort(
+                key=lambda slot: (
+                    slot.activity_type not in below_floor_types,
+                    not (
+                        phase == 3
+                        and needs_productive
+                        and slot.activity_type in content_density.PRODUCTIVE_TYPES
+                    ),
+                    not (needs_variety and slot.activity_type not in selected_types),
+                    slot.slot_id not in response_slot_ids,
+                    -(
+                        item_targets.get(slot.activity_type, 0)
+                        if needs_response_units
+                        else 0
+                    ),
+                    not slot.focus_required,
+                    slot.activity_type,
+                    slot.slot_id,
+                )
+            )
+            response_slots_in_phase = sum(
+                slot.slot_id in response_slot_ids for slot in candidates
+            )
+            chosen = tuple(candidates[: max(1, missing, response_slots_in_phase)])
             if chosen:
-                requests.append(RepairRequest(phase=phase, round=round, slots=chosen))
+                requests.append(
+                    RepairRequest(
+                        phase=phase,
+                        round=round,
+                        slots=chosen,
+                        density_errors=tuple(density_errors),
+                    )
+                )
         return requests[: max(0, MAX_CALLS - self.calls)]
 
     def scheduled(self, request: RepairRequest) -> None:
         self.calls += 1
         for slot in request.slots:
             self.attempts[slot.slot_id] += 1
-
-
-def floor_ready(
-    selected: Sequence[schema.HramatkaActivity],
-    selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]],
-    *,
-    duration: int,
-    planned_blocks: int,
-) -> bool:
-    return len(selected) >= planned_blocks and content_density.meets_lesson_floor(
-        list(selected), duration=duration, selected_by_phase=selected_by_phase
-    )
 
 
 def merge_matchup_pairs(

@@ -82,6 +82,14 @@ def test_registry_migrates_all_wave_1b_activity_types():
                         "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера."
                     ),
                 },
+                {
+                    "question": "Що частина людей обирає замість читання книжок?",
+                    "model_answer": "Увімкнути телевізор.",
+                    "evidence": (
+                        "Багато людей втратили насолоду від неспішного читання книжок, "
+                        "бо простіше увімкнути телевізор."
+                    ),
+                },
             ],
             "teacher_guidance": "Приймайте змістовні відповіді учнів.",
         },
@@ -111,6 +119,25 @@ def test_registry_migrates_all_wave_1b_activity_types():
 
     assert registry.ACTIVITY_REGISTRY["text-questions"].assessment_mode == "teacher_assessed"
     assert registry.ACTIVITY_REGISTRY["short-writing"].assessment_mode == "teacher_assessed"
+
+
+def test_error_correction_fixtures_are_index_distinct_and_transfer_is_meaningful():
+    variants = [fixtures._READY_CANDIDATES["error-correction"](index) for index in range(3)]
+    item_signatures = [
+        tuple((item["sentence"], item["correction"]) for item in variant["items"])
+        for variant in variants
+    ]
+
+    assert len(set(item_signatures)) == len(variants)
+    assert all(
+        len({item["evidence"] for item in variant["items"]}) == len(variant["items"])
+        for variant in variants
+    )
+
+    transfer = fixtures._READY_CANDIDATES["text-questions"](1)["items"][2]
+    assert transfer["question"] == "Що люди щодня знаходять?"
+    assert transfer["model_answer"] == "Час увімкнути телевізор."
+    assert "застосуєте телевізор" not in transfer["question"]
 
 
 def test_default_extractive_types_are_registry_derived_and_non_puzzle():
@@ -377,27 +404,11 @@ def test_unexpected_and_non_object_outputs_are_rejected_not_silently_dropped(tmp
 
 def test_targeted_regeneration_requests_ready_pool_deficits(tmp_path, monkeypatch):
     calls: list[tuple[list[str], dict[str, int]]] = []
-    evidence = [
-        "Третина українців за рік не прочитує жодної книжки",
-        "На думку вчених, читання є одним з найскладніших завдань для мозку",
-    ]
 
     def fake_generate(_anchor, _level, types, *, counts, **_kwargs):
         calls.append((types, counts))
         index = len(calls) - 1
-        return [
-            {
-                "type": "true-false",
-                "instruction": "Познач правильне твердження.",
-                "items": [
-                    {
-                        "statement": evidence[index],
-                        "correct": True,
-                        "evidence": evidence[index],
-                    }
-                ],
-            }
-        ]
+        return [fixtures._READY_CANDIDATES["true-false"](index)]
 
     monkeypatch.setattr(pipeline, "generate", fake_generate)
 

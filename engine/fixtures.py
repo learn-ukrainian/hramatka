@@ -26,6 +26,9 @@ from pathlib import Path
 from hramatka.engine import data
 
 _ANCHORS_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
+_TRUE_FALSE_TARGET = 5
+_QUIZ_TARGET = 4
+_ERROR_CORRECTION_TARGET = 4
 
 
 def load_anchor(name: str = "anchor01") -> str:
@@ -177,6 +180,29 @@ _FIXTURES_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
 _TASK_LANGUAGE_FORMS = (
     {"word_form": "Опишіть", "lemma": "описати", "tags": "verb:perf:impr:2p", "pos": "verb"},
     {"word_form": "Поясніть", "lemma": "пояснити", "tags": "verb:perf:impr:2p", "pos": "verb"},
+    {"word_form": "Чому", "lemma": "чому", "tags": "adv", "pos": "adv"},
+    {"word_form": "Як", "lemma": "як", "tags": "adv", "pos": "adv"},
+    {"word_form": "ви", "lemma": "ви", "tags": "pron:pers:2p", "pos": "pron"},
+    {"word_form": "вашу", "lemma": "ваш", "tags": "pron:poss:acc:f", "pos": "pron"},
+    {"word_form": "важливе", "lemma": "важливий", "tags": "adj:nom:n", "pos": "adj"},
+    {"word_form": "застосуєте", "lemma": "застосувати", "tags": "verb:perf:fut:2p", "pos": "verb"},
+    {"word_form": "цю", "lemma": "цей", "tags": "pron:dem:acc:f", "pos": "pron"},
+    {"word_form": "власному", "lemma": "власний", "tags": "adj:loc:m", "pos": "adj"},
+    {"word_form": "досвіді", "lemma": "досвід", "tags": "noun:inanim:loc:m", "pos": "noun"},
+    {"word_form": "думку", "lemma": "думка", "tags": "noun:inanim:acc:f", "pos": "noun"},
+    {"word_form": "про", "lemma": "про", "tags": "prep", "pos": "prep"},
+    {"word_form": "читання", "lemma": "читання", "tags": "noun:inanim:gen:n", "pos": "noun"},
+    {"word_form": "людей", "lemma": "людина", "tags": "noun:anim:gen:p", "pos": "noun"},
+    {"word_form": "обирає", "lemma": "обирати", "tags": "verb:impf:pres:3s", "pos": "verb"},
+    {"word_form": "телевізор", "lemma": "телевізор", "tags": "noun:inanim:acc:m", "pos": "noun"},
+    {"word_form": "можете", "lemma": "могти", "tags": "verb:impf:pres:2p", "pos": "verb"},
+    {"word_form": "застосувати", "lemma": "застосувати", "tags": "verb:perf:inf", "pos": "verb"},
+    {"word_form": "інформацію", "lemma": "інформація", "tags": "noun:inanim:acc:f", "pos": "noun"},
+    {"word_form": "своєму", "lemma": "свій", "tags": "pron:refl:loc:n", "pos": "pron"},
+    {"word_form": "навчанні", "lemma": "навчання", "tags": "noun:inanim:loc:n", "pos": "noun"},
+    {"word_form": "складним", "lemma": "складний", "tags": "adj:ins:m", "pos": "adj"},
+    {"word_form": "завданням", "lemma": "завдання", "tags": "noun:inanim:ins:n", "pos": "noun"},
+    {"word_form": "мозок", "lemma": "мозок", "tags": "noun:inanim:nom:m", "pos": "noun"},
 )
 
 
@@ -285,24 +311,25 @@ def _ready_true_false(index: int) -> dict:
             "statement": "Регулярне читання знижує ризик хвороби Альцгеймера.",
             "evidence": "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера",
         },
+        {
+            "statement": "Читання є одним з найскладніших завдань для мозку.",
+            "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
+        },
     ]
-    item = variants[index % len(variants)]
+    items = [
+        {**variants[(index + offset) % len(variants)], "correct": True}
+        for offset in range(_TRUE_FALSE_TARGET)
+    ]
     return {
         "type": "true-false",
         "instruction": f"Познач правильне твердження за текстом. #{index + 1}",
-        "items": [{"statement": item["statement"], "correct": True, "evidence": item["evidence"]}],
+        "items": items,
     }
 
 
 def _ready_quiz(index: int) -> dict:
     variants = [
         [
-            {
-                "question": "Скільки українців не прочитує жодної книжки?",
-                "options": ["третина", "телевізор", "мозку"],
-                "correct": 0,
-                "evidence": "Третина українців за рік не прочитує жодної книжки",
-            },
             {
                 "question": "Що знижує ризик хвороби Альцгеймера?",
                 "options": ["читання", "телевізор", "книжки"],
@@ -312,10 +339,22 @@ def _ready_quiz(index: int) -> dict:
                 ),
             },
             {
+                "question": "Скільки українців не прочитує жодної книжки?",
+                "options": ["третина", "телевізор", "мозку"],
+                "correct": 0,
+                "evidence": "Третина українців за рік не прочитує жодної книжки",
+            },
+            {
                 "question": "Що втратили багато людей?",
                 "options": ["насолоду", "телевізор", "мозку"],
                 "correct": 0,
                 "evidence": "Багато людей втратили насолоду від неспішного читання книжок",
+            },
+            {
+                "question": "Що активізується під час читання?",
+                "options": ["17 ділянок", "книжки", "телевізор"],
+                "correct": 0,
+                "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку",
             },
         ],
         [
@@ -338,6 +377,12 @@ def _ready_quiz(index: int) -> dict:
                 "options": ["насолоду", "телевізор", "мозку"],
                 "correct": 0,
                 "evidence": "Багато людей втратили насолоду від неспішного читання книжок",
+            },
+            {
+                "question": "Що активізується під час читання?",
+                "options": ["ділянок", "книжки", "телевізор"],
+                "correct": 0,
+                "evidence": "активізуються одразу 17 ділянок головного мозку",
             },
         ],
         # Phase-3 bank: evidence/answer pairs kept disjoint from earlier phases so
@@ -405,7 +450,18 @@ def _ready_quiz(index: int) -> dict:
             },
         ],
     ]
-    items = variants[index % len(variants)]
+    items = list(variants[index % len(variants)])
+    target = _QUIZ_TARGET
+    seen = {item["evidence"] for item in items}
+    for variant in variants:
+        for item in variant:
+            if item["evidence"] not in seen:
+                items.append(item)
+                seen.add(item["evidence"])
+            if len(items) >= target:
+                break
+        if len(items) >= target:
+            break
     return {
         "type": "quiz",
         "instruction": f"Обери правильну відповідь за текстом. #{index + 1}",
@@ -476,10 +532,26 @@ def _ready_error_correction(index: int) -> dict:
             },
         ],
     ]
+    target = _ERROR_CORRECTION_TARGET
+    # One correction per distinct source sentence.  The fixture deliberately
+    # models an item-rich classroom block rather than reusing two sentences
+    # merely to fill a four-item envelope.  Start from the requested variant
+    # so concurrent candidates are genuinely distinct rather than carrying a
+    # different instruction suffix over an identical activity body.
+    variant = index % len(item_sets)
+    source_orders = (
+        ((0, 0), (2, 0), (1, 0), (0, 1)),
+        ((0, 0), (1, 0), (2, 0), (2, 1)),
+        ((0, 0), (2, 1), (1, 0), (2, 0)),
+    )
+    items = [
+        item_sets[set_index][item_index]
+        for set_index, item_index in source_orders[variant][:target]
+    ]
     return {
         "type": "error-correction",
         "instruction": f"Виправ помилку. #{index + 1}",
-        "items": item_sets[(index + 1) % len(item_sets)],
+        "items": items,
     }
 
 
@@ -491,32 +563,39 @@ def _ready_fill_in(index: int) -> dict:
         "items": [
             {
                 "sentence": (
-                    "Багато людей втратили ____ від неспішного читання книжок, "
+                    "Багато людей втратили насолоду від неспішного ____ книжок, "
                     "бо простіше увімкнути телевізор"
                 ),
-                "answer": "насолоду",
-                "options": ["насолоду", "книжки", "читання", "телевізор"],
-                "explanation": "У тексті саме «насолоду».",
+                "answer": "читання",
+                "options": ["читання", "книжки", "насолоду", "телевізор"],
+                "explanation": "У тексті саме «читання книжок».",
                 "evidence": (
                     "Багато людей втратили насолоду від неспішного читання книжок, "
                     "бо простіше увімкнути телевізор"
                 ),
             },
             {
-                "sentence": "Регулярне читання знижує в 2,5 рази ризик розвитку ____ Альцгеймера",
-                "answer": "хвороби",
-                "options": ["хвороби", "книжки", "читання", "телевізор"],
-                "explanation": "У тексті саме «хвороби Альцгеймера».",
+                "sentence": "Регулярне читання знижує в 2,5 рази ____ розвитку хвороби Альцгеймера",
+                "answer": "ризик",
+                "options": ["ризик", "книжки", "читання", "телевізор"],
+                "explanation": "У тексті саме «ризик розвитку».",
                 "evidence": (
                     "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера"
                 ),
             },
             {
-                "sentence": "На думку вчених, читання є одним з найскладніших ____ для мозку",
-                "answer": "завдань",
-                "options": ["завдань", "книжок", "читання", "телевізор"],
-                "explanation": "У тексті саме «завдань для мозку».",
+                "sentence": "На думку вчених, читання є одним з найскладніших завдань для ____",
+                "answer": "мозку",
+                "options": ["мозку", "книжок", "читання", "телевізор"],
+                "explanation": "У тексті саме «для мозку».",
                 "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
+            },
+            {
+                "sentence": "Дві третини щодня знаходять ____ увімкнути телевізор",
+                "answer": "час",
+                "options": ["час", "книжки", "читання", "мозку"],
+                "explanation": "У тексті саме «знаходять час».",
+                "evidence": "дві третини щодня знаходять час увімкнути телевізор",
             },
         ],
     }
@@ -618,7 +697,7 @@ def _ready_text_questions(index: int) -> dict:
                 "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
             },
             {
-                "question": "Що знижує ризик хвороби Альцгеймера?",
+                "question": "Чому, на вашу думку, регулярне читання важливе для мозку?",
                 "model_answer": "Регулярне читання.",
                 "evidence": (
                     "Регулярне читання знижує в 2,5 рази ризик розвитку "
@@ -626,24 +705,26 @@ def _ready_text_questions(index: int) -> dict:
                 ),
             },
             {
-                "question": "Що втратили багато людей?",
+                "question": "Як ви застосуєте цю думку про читання у власному досвіді?",
                 "model_answer": "Насолоду від читання книжок.",
                 "evidence": "Багато людей втратили насолоду від неспішного читання книжок",
             },
         ],
         [
             {
-                "question": "Що є одним з найскладніших завдань для мозку?",
-                "model_answer": "Читання.",
+                "question": "Що знижує регулярне читання?",
+                "model_answer": "Ризик розвитку хвороби Альцгеймера.",
+                "evidence": (
+                    "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера"
+                ),
+            },
+            {
+                "question": "Читання є одним з найскладніших завдань для мозку?",
+                "model_answer": "Одним з найскладніших завдань для мозку.",
                 "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
             },
             {
-                "question": "Що не прочитує третина українців?",
-                "model_answer": "Жодної книжки.",
-                "evidence": "Третина українців за рік не прочитує жодної книжки",
-            },
-            {
-                "question": "Що знаходять дві третини щодня?",
+                "question": "Що люди щодня знаходять?",
                 "model_answer": "Час увімкнути телевізор.",
                 "evidence": "дві третини щодня знаходять час увімкнути телевізор",
             },
@@ -692,8 +773,8 @@ def _ready_short_writing(index: int) -> dict:
             "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
         },
         {
-            "prompt": "телевізор і книжки: (1) третина; (2) дві третини; (3) телевізор",
-            "evidence": "бо простіше увімкнути телевізор",
+            "prompt": "читання і мозку: (1) читання; (2) завдань; (3) мозку",
+            "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
         },
         {
             "prompt": "мозок і читання: (1) 17 ділянок; (2) мозку; (3) читання",
@@ -785,7 +866,7 @@ _E2E_VARIANTS_BY_PHASE: dict[int, dict[str, int]] = {
         "match-up": 1,
         "fill-in": 0,
         "error-correction": 1,
-        "text-questions": 0,
+        "text-questions": 1,
         "short-writing": 1,
     },
     3: {

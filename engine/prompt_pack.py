@@ -14,10 +14,11 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from . import flags
+from . import content_density, flags
 from .gates import derived, matchup_semantics, schema_tokens, vesum_tags
 from .prompts import (
     active_writer_prompt_version,
@@ -25,8 +26,8 @@ from .prompts import (
     mode_split_authoring_active,
 )
 
-PROMPT_PACK_VERSION = "PromptPackInput.v2"
-TEMPLATE_VERSION = "gemma-phase-pack.v2"
+PROMPT_PACK_VERSION = "PromptPackInput.v3"
+TEMPLATE_VERSION = "gemma-phase-pack.v3"
 INPUT_TOKEN_CEILING = 16_000
 DERIVED_ALLOWED_VOCABULARY_CAP = 400
 _TOKEN_RE = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
@@ -207,8 +208,18 @@ def _allowed_forms(
 def _mark_kit(
     inventory: Sequence[Mapping[str, Any]],
     parsed_forms: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    primary_id: str | None = None,
 ) -> dict[str, Any] | None:
-    for start in range(max(0, len(inventory) - 1)):
+    starts = list(range(max(0, len(inventory) - 1)))
+    if primary_id is not None:
+        preferred = next(
+            (index for index, row in enumerate(inventory[:-1]) if str(row["id"]) == primary_id),
+            None,
+        )
+        if preferred is not None:
+            starts = [preferred, *(index for index in starts if index != preferred)]
+    for start in starts:
         span = inventory[start : start + 2]
         text = " ".join(str(row["text"]) for row in span)
         for pos, criterion, instruction in (
@@ -316,10 +327,88 @@ def _replace_first_token(text: str, token: str, replacement: str) -> str | None:
 def _contiguous_evidence_rows(
     inventory: Sequence[Mapping[str, Any]], slot_index: int
 ) -> list[Mapping[str, Any]]:
-    """Choose up to three source rows without wrapping a literal span."""
-    count = min(3, len(inventory))
+    """Choose up to four source rows without wrapping a literal span."""
+    count = min(4, len(inventory))
     start = min(slot_index % len(inventory), len(inventory) - count)
     return list(inventory[start : start + count])
+
+
+def _evidence_rows_for_primary(
+    inventory: Sequence[Mapping[str, Any]],
+    *,
+    activity_type: str,
+    primary_id: str,
+) -> list[Mapping[str, Any]]:
+    """Build a literal evidence plan whose first row is the assigned primary.
+
+    Itemized families may cite distinct literal rows, while cloze keeps its
+    two-sentence source span contiguous.  This makes the source allocation
+    explicit instead of letting overlapping four-row windows accidentally
+    assign the same selector primary to two same-phase slots.
+    """
+    primary_index = next(
+        (index for index, row in enumerate(inventory) if str(row["id"]) == primary_id), None
+    )
+    if primary_index is None:
+        raise PromptPackError("Prompt-pack primary is absent from sentence inventory.")
+    if activity_type == "cloze":
+        start = min(primary_index, len(inventory) - 2)
+        return list(inventory[start : start + 2])
+    if activity_type == "short-writing":
+        return [inventory[primary_index]]
+    required = content_density.registry_item_targets()[activity_type]
+    if activity_type in {"error-correction", "fill-in"}:
+        start = min(primary_index, len(inventory) - required)
+        return list(inventory[start : start + required])
+    ordered = [inventory[primary_index], *inventory[:primary_index], *inventory[primary_index + 1 :]]
+    return ordered[:required]
+
+
+def _allocate_phase_primaries(
+    inventory: Sequence[Mapping[str, Any]],
+    expanded_types: Sequence[str],
+    *,
+    phase: int,
+    slot_index: int,
+    prior_operations: Mapping[str, set[str]],
+    prior_usage: Mapping[str, int],
+) -> list[str]:
+    """Assign distinct phase primaries without repeating an operation cross-phase.
+
+    The invariant is deterministic: every phase slot gets a distinct primary
+    when the inventory has enough rows; a sentence used in an earlier phase is
+    not reused for the same cognitive operation where another row is available.
+    Evidence remains literal and each family retains its own density contract.
+    """
+    ids = [str(row["id"]) for row in inventory]
+    if not ids:
+        raise PromptPackError("Prompt-pack primary allocation requires sentence inventory.")
+    used: set[str] = set()
+    allocated: list[str] = []
+    for offset, activity_type in enumerate(expanded_types):
+        operation = content_density.COGNITIVE_OPERATION.get(activity_type, activity_type)
+        ordered = ids[(slot_index + offset) % len(ids) :] + ids[: (slot_index + offset) % len(ids)]
+        if activity_type in {"cloze", "mark-the-words"} and len(ids) > 1:
+            ordered = [sentence_id for sentence_id in ordered if sentence_id != ids[-1]]
+        eligible = [
+            sentence_id
+            for sentence_id in ordered
+            if sentence_id not in used
+            and prior_usage.get(sentence_id, 0) < 2
+            and operation not in prior_operations.get(sentence_id, set())
+        ]
+        if not eligible:
+            eligible = [
+                sentence_id
+                for sentence_id in ordered
+                if sentence_id not in used and prior_usage.get(sentence_id, 0) < 2
+            ]
+        if not eligible:
+            eligible = ordered
+        primary_id = eligible[0]
+        used.add(primary_id)
+        allocated.append(primary_id)
+    return allocated
 
 
 def _quiz_kit(
@@ -329,7 +418,7 @@ def _quiz_kit(
     slot_index: int,
 ) -> dict[str, Any] | None:
     """Precompute unambiguous, VESUM-attested option sets for every quiz item."""
-    if len(evidence_rows) < 3:
+    if len(evidence_rows) < content_density.registry_item_targets()["quiz"]:
         return None
     items = []
     for row_index, row in enumerate(evidence_rows):
@@ -361,9 +450,10 @@ def _cloze_kit(
     source_forms: Sequence[str],
     parsed_forms: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> dict[str, Any] | None:
-    """Build an exact multi-sentence display/evidence pair with three gaps."""
+    """Build a multi-sentence cloze at the canonical generation target."""
     if len(evidence_rows) < 2:
         return None
+    target = content_density.registry_item_targets()["cloze"]
     evidence = " ".join(str(row["text"]) for row in evidence_rows)
     candidates = []
     seen: set[str] = set()
@@ -372,11 +462,11 @@ def _cloze_kit(
             if token.casefold() not in seen:
                 candidates.append(token)
                 seen.add(token.casefold())
-            if len(candidates) == 3:
+            if len(candidates) == target:
                 break
-        if len(candidates) == 3:
+        if len(candidates) == target:
             break
-    if len(candidates) < 3:
+    if len(candidates) < target:
         return None
     display = evidence
     blanks = []
@@ -406,25 +496,35 @@ def _fill_in_kit(
     slot_index: int,
     *,
     derived: bool,
+    reserved_pairs: set[tuple[str, str]],
 ) -> dict[str, Any] | None:
     """Precompute fill-in form plans and their mode-specific proof fields."""
     items = []
     for row_index, row in enumerate(evidence_rows):
         row_forms = _row_tokens(row, parsed_forms)
-        answer = row_forms[(slot_index + row_index) % len(row_forms)] if row_forms else None
-        if answer is None:
-            continue
-        answer_pos = {str(parse.get("pos")) for parse in parsed_forms.get(answer, ())}
-        distractors = [
-            form
-            for form in source_forms
-            if form.casefold() != answer.casefold()
-            and answer_pos.intersection(
-                str(parse.get("pos")) for parse in parsed_forms.get(form, ())
-            )
-        ]
-        display = _replace_first_token(str(row["text"]), answer, "____")
-        if display is None or len(distractors) < 2:
+        answer = None
+        distractors: list[str] = []
+        display = None
+        ordered_forms = row_forms[row_index + slot_index :] + row_forms[: row_index + slot_index]
+        for candidate in ordered_forms:
+            if (str(row["text"]).casefold(), candidate.casefold()) in reserved_pairs:
+                continue
+            answer_pos = {str(parse.get("pos")) for parse in parsed_forms.get(candidate, ())}
+            candidate_distractors = [
+                form
+                for form in source_forms
+                if form.casefold() != candidate.casefold()
+                and answer_pos.intersection(
+                    str(parse.get("pos")) for parse in parsed_forms.get(form, ())
+                )
+            ]
+            candidate_display = _replace_first_token(str(row["text"]), candidate, "____")
+            if candidate_display is not None and len(candidate_distractors) >= 2:
+                answer = candidate
+                distractors = candidate_distractors
+                display = candidate_display
+                break
+        if answer is None or display is None:
             continue
         if derived:
             answer_lemmas = sorted(
@@ -509,50 +609,65 @@ def _short_writing_kit(
 
 
 def _density_contract(activity_type: str, *, grounding_mode: str) -> dict[str, Any]:
-    """Return the pack-level counterpart of the runtime density floor."""
+    """Return a slot view of the one TeacherReadyDensity.v1 authority."""
+    target = content_density.registry_item_targets()[activity_type]
     contracts = {
-        "true-false": {"collection": "items", "minimum": 1, "evidence_sentence_minimum": 1},
+        "true-false": {
+            "collection": "items",
+            "minimum": target,
+            "evidence_sentence_minimum": target,
+            "literal_item_plan": True,
+        },
         "quiz": {
             "collection": "items",
-            "minimum": 3,
-            "evidence_sentence_minimum": 3,
+            "minimum": target,
+            "evidence_sentence_minimum": target,
             "literal_item_plan": True,
         },
         "cloze": {
             "collection": "blanks",
-            "minimum": 3,
+            "minimum": target,
             "evidence_sentence_minimum": 2,
             "multi_sentence_display": 2,
             "literal_display_evidence_plan": True,
         },
         "match-up": {
             "collection": "pairs",
-            "minimum": 4,
+            "minimum": target,
             "evidence_sentence_minimum": 1,
             "literal_pair_plan": True,
         },
         "mark-the-words": {
-            "minimum_targets": 4,
+            "minimum_targets": target,
             "multi_sentence_display": 2,
             "exact_target_set": True,
         },
-        "error-correction": {"collection": "items", "minimum": 2, "evidence_sentence_minimum": 2},
+        "error-correction": {
+            "collection": "items",
+            "minimum": target,
+            "evidence_sentence_minimum": target,
+        },
         "fill-in": (
             {
                 "collection": "items",
-                "minimum": 3,
+                "minimum": target,
                 "kit_anchor_item_plan": True,
             }
             if grounding_mode == "derived"
             else {
                 "collection": "items",
-                "minimum": 3,
-                "evidence_sentence_minimum": 3,
+                "minimum": target,
+                "evidence_sentence_minimum": target,
                 "literal_item_plan": True,
             }
         ),
-        "text-questions": {"collection": "items", "minimum": 3, "evidence_sentence_minimum": 3},
+        "text-questions": {
+            "collection": "items",
+            "minimum": target,
+            "evidence_sentence_minimum": target,
+        },
         "short-writing": {
+            "minimum_response_units": target,
             "prompt_requirements": 2,
             "prompt_requirement_strings": True,
             **(
@@ -562,7 +677,11 @@ def _density_contract(activity_type: str, *, grounding_mode: str) -> dict[str, A
             ),
         },
     }
-    return {"version": "DensityContract.v1", **contracts[activity_type]}
+    return {
+        "version": content_density.TEACHER_READY_DENSITY_VERSION,
+        "digest": content_density.teacher_ready_density_digest(),
+        **contracts[activity_type],
+    }
 
 
 def _sentence_count(text: object) -> int:
@@ -576,21 +695,33 @@ def _preflight_density_contract(kit: Mapping[str, Any]) -> list[str]:
     contract = kit.get("density_contract")
     if not isinstance(contract, Mapping):
         return ["slot lacks a density_contract"]
+    minimum = contract.get("minimum")
     evidence_minimum = contract.get("evidence_sentence_minimum")
     if isinstance(evidence_minimum, int) and len(kit.get("evidence_items", [])) < evidence_minimum:
         return ["slot lacks enough literal evidence items for its density contract"]
     activity_type = kit.get("type")
-    if activity_type == "quiz" and len(kit.get("quiz", {}).get("items", [])) < 3:
-        return ["quiz slot lacks three certified item plans"]
+    if activity_type == "quiz" and (
+        not isinstance(minimum, int) or len(kit.get("quiz", {}).get("items", [])) < minimum
+    ):
+        return ["quiz slot lacks enough certified item plans"]
     if activity_type == "cloze":
         cloze = kit.get("cloze", {})
-        if len(cloze.get("blanks", [])) < 3 or _sentence_count(cloze.get("display_text")) < 2:
-            return ["cloze slot lacks a three-gap multi-sentence display plan"]
-    if activity_type == "fill-in" and len(kit.get("fill_in", {}).get("items", [])) < 3:
-        return ["fill-in slot lacks three same-POS item plans"]
+        target = content_density.registry_item_targets()["cloze"]
+        if (
+            len(cloze.get("blanks", [])) < target
+            or _sentence_count(cloze.get("display_text")) < 2
+        ):
+            return [f"cloze slot lacks a {target}-gap multi-sentence display plan"]
+    if activity_type == "fill-in" and (
+        not isinstance(minimum, int) or len(kit.get("fill_in", {}).get("items", [])) < minimum
+    ):
+        return ["fill-in slot lacks enough same-POS item plans"]
     if activity_type == "mark-the-words":
         mark = kit.get("mark", {})
-        if len(mark.get("expected_target_words", [])) < 4 or _sentence_count(mark.get("text")) < 2:
+        if (
+            len(mark.get("expected_target_words", [])) < int(contract["minimum_targets"])
+            or _sentence_count(mark.get("text")) < 2
+        ):
             return ["mark-the-words slot lacks its exact two-sentence target set"]
     if activity_type == "short-writing":
         short_writing = kit.get("short_writing", {})
@@ -633,12 +764,15 @@ def _type_kit(
     numeral_inventory: Sequence[Mapping[str, Any]],
     atlas_lookup: Mapping[str, Any],
     slot_index: int,
+    primary_id: str,
+    reserved_pairs: set[tuple[str, str]],
 ) -> dict[str, Any]:
     # Productive phase-three slots arrive after the receptive slots.  Stagger
     # their source window so composition retains an independently reusable
     # evidence sentence instead of repeatedly clamping to the final span.
-    evidence_offset = max(0, len(inventory) - 3) if activity_type == "short-writing" else 0
-    evidence_rows = _contiguous_evidence_rows(inventory, slot_index + evidence_offset)
+    evidence_rows = _evidence_rows_for_primary(
+        inventory, activity_type=activity_type, primary_id=primary_id
+    )
     forms = _allowed_forms(evidence_rows, parsed_forms)
     source_forms = _source_forms(inventory, parsed_forms)
     grounding_mode = grounding_mode_for_type(activity_type)
@@ -658,7 +792,7 @@ def _type_kit(
         ],
     }
     if activity_type == "mark-the-words":
-        mark = _mark_kit(inventory, parsed_forms)
+        mark = _mark_kit(inventory, parsed_forms, primary_id=primary_id)
         if mark is None:
             return {**kit, "available": False, "unsupported_reason": "no complete VESUM target set"}
         mark_rows = [row for row in inventory if row["id"] in mark["span_sentence_ids"]]
@@ -725,7 +859,12 @@ def _type_kit(
     if activity_type == "cloze":
         cloze = _cloze_kit(evidence_rows, source_forms, parsed_forms)
         if cloze is None:
-            return {**kit, "available": False, "unsupported_reason": "no three-gap multi-sentence source plan"}
+            target = content_density.registry_item_targets()["cloze"]
+            return {
+                **kit,
+                "available": False,
+                "unsupported_reason": f"no {target}-gap multi-sentence source plan",
+            }
         return {
             **kit,
             "available": True,
@@ -739,6 +878,7 @@ def _type_kit(
             parsed_forms,
             slot_index,
             derived=grounding_mode == "derived",
+            reserved_pairs=reserved_pairs,
         )
         if fill_in is None:
             return {**kit, "available": False, "unsupported_reason": "no same-POS fill-in option plan"}
@@ -767,7 +907,21 @@ def _type_kit(
             "citation_plan": {"text": [short_writing["evidence_id"]]},
         }
     if activity_type in {"true-false", "text-questions"}:
-        return {**kit, "available": True}
+        target = content_density.registry_item_targets()[activity_type]
+        if len(evidence_rows) < target:
+            return {
+                **kit,
+                "available": False,
+                "unsupported_reason": "not enough distinct literal evidence rows",
+            }
+        return {
+            **kit,
+            "available": True,
+            "citation_plan": {
+                f"items[{index}]": [evidence_rows[index]["id"]]
+                for index in range(target)
+            },
+        }
     return {**kit, "available": False, "unsupported_reason": "unsupported registered activity type"}
 
 
@@ -809,13 +963,26 @@ def build_shared_input(
     slot_rows: list[dict[str, Any]] = []
     phases: list[dict[str, Any]] = []
     slot_index = 0
+    prior_operations: dict[str, set[str]] = {}
+    prior_usage: Counter[str] = Counter()
+    reserved_pairs: set[tuple[str, str]] = set()
     for phase in sorted(phase_count_plans):
         count_plan = phase_count_plans[phase]
         expanded = [
             activity_type for activity_type, count in count_plan.items() for _ in range(count)
         ]
+        phase_primaries = _allocate_phase_primaries(
+            inventory,
+            expanded,
+            phase=phase,
+            slot_index=slot_index,
+            prior_operations=prior_operations,
+            prior_usage=prior_usage,
+        )
         slots = []
-        for position, activity_type in enumerate(expanded, start=1):
+        for position, (activity_type, primary_id) in enumerate(
+            zip(expanded, phase_primaries, strict=True), start=1
+        ):
             slot_id = f"P{phase}-A{position}"
             kit = _type_kit(
                 slot_id,
@@ -825,6 +992,8 @@ def build_shared_input(
                 numeral_inventory=numeral_inventory,
                 atlas_lookup=atlas_lookup if isinstance(atlas_lookup, Mapping) else {},
                 slot_index=slot_index,
+                primary_id=primary_id,
+                reserved_pairs=reserved_pairs,
             )
             preflight_errors = _preflight_density_contract(kit)
             if preflight_errors:
@@ -833,6 +1002,22 @@ def build_shared_input(
                     + "; ".join(preflight_errors)
                 )
             slot_index += 1
+            if activity_type == "quiz":
+                for item in kit.get("quiz", {}).get("items", []):
+                    options = item.get("options", [])
+                    correct = item.get("correct")
+                    if isinstance(options, list) and isinstance(correct, int) and 0 <= correct < len(options):
+                        reserved_pairs.add(
+                            (str(item.get("evidence", "")).casefold(), str(options[correct]).casefold())
+                        )
+            elif activity_type == "fill-in":
+                for item in kit.get("fill_in", {}).get("items", []):
+                    reserved_pairs.add(
+                        (str(item.get("evidence", "")).casefold(), str(item.get("answer", "")).casefold())
+                    )
+            operation = content_density.COGNITIVE_OPERATION.get(activity_type, activity_type)
+            prior_operations.setdefault(primary_id, set()).add(operation)
+            prior_usage[primary_id] += 1
             slot_rows.append({"slot_id": slot_id, "type": activity_type, "kit": kit})
             slots.append({"slot_id": slot_id, "type": activity_type})
         phases.append(
@@ -861,6 +1046,11 @@ def build_shared_input(
     )
     base = {
         "pack_version": PROMPT_PACK_VERSION,
+        "teacher_ready_density": {
+            **content_density.teacher_ready_density_record(),
+            "digest": content_density.teacher_ready_density_digest(),
+            "duration": duration_minutes,
+        },
         "lesson_plan": {
             "lesson_id": str(snapshot["anchor_id"]),
             "level": "B1",
@@ -960,10 +1150,11 @@ def phase_context(
         }
         for slot in slots
     ]
-    return {
+    context = {
         "shared": shared,
         "phase": phase,
         "lesson_plan": shared["lesson_plan"],
+        "teacher_ready_density": shared["teacher_ready_density"],
         "phase_request": {
             "phase": phase,
             "phase_name": phase_plan["name"],
@@ -984,20 +1175,19 @@ def phase_context(
             for kit in type_kits
         ],
         "repair_failures": [dict(item) for item in repair_failures],
-        "provenance": shared["provenance"],
+        "provenance": dict(shared["provenance"]),
     }
+    # The shared injection digest identifies inputs, but a qualification
+    # receipt also needs the literal instruction template actually rendered
+    # for this phase/repair request. The rendered prompt contains both.
+    context["provenance"]["rendered_prompt_sha256"] = hashlib.sha256(
+        render_phase_prompt(context).encode("utf-8")
+    ).hexdigest()
+    return context
 
 
 def _required_item_count(activity_type: str) -> int:
-    return {
-        "quiz": 3,
-        "cloze": 3,
-        "match-up": 4,
-        "fill-in": 3,
-        "mark-the-words": 4,
-        "error-correction": 2,
-        "text-questions": 3,
-    }.get(activity_type, 1)
+    return content_density.registry_item_targets()[activity_type]
 
 
 _GOLD_EXEMPLARS = r"""
@@ -1032,7 +1222,7 @@ _CERTIFIED_KIT_GUIDE = r"""
 - fill-in: вигаданий або іншої частини мови дистрактор → VESUM/POS помилка.
 - mark-the-words: менший список слів або одне речення → неповна множина цілей.
 - short-writing: довгий перелік вимог поза prompt або поле requirements → B1/контрактна помилка.
-- text-questions: два запитання замість трьох → порушення щільності.
+- text-questions: рівно три запитання; у фінальній фазі послідовно: розуміння, пояснення/висновок, особисте або прикладне застосування з опорою на текст.
 - error-correction: не вигадуйте зміну; якщо kit unavailable, цього типу в response_order немає.
 """.strip()
 
@@ -1160,7 +1350,13 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
         "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
         "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
+        "TeacherReadyDensity.v1 є жорстким контрактом: кожен запитаний тип мусить досягти його мінімуму; однопунктові вправи не приймаються.",
         "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
+        block(
+            "КОНТРАКТ ЩІЛЬНОСТІ УРОКУ",
+            context.get("teacher_ready_density")
+            or context["shared"]["teacher_ready_density"],
+        ),
         block("ПОВНИЙ ПЛАН УРОКУ", context["lesson_plan"]),
         block("ПОТОЧНА ФАЗА ТА СЛОТИ ВІДПОВІДІ", context["phase_request"]),
         block("ПОВНИЙ НУМЕРОВАНИЙ ТЕКСТ-ОПОРА", context["shared"]["anchor_sentence_inventory"]),
@@ -1194,7 +1390,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             "2. Виконайте density_contract і точні поля відповідного kit; сертифіковані значення не перефразуйте.\n"
             f"{evidence_rule}\n"
             "4. Не додавайте slot_id, source_sentence_ids, requirements, learner_answer, learner_response або інших полів.\n"
-            "5. Дотримуйтеся щільності: quiz/cloze/fill-in 3+, match-up 4+, mark 4+ у 2+ реченнях, error-correction 2+, text-questions рівно 3, short-writing має 2 вимоги в prompt.\n"
+            "5. Дотримуйтеся контракту з блоку вище: не замінюйте його скороченим переліком або іншими числовими порогами.\n"
             "6. Відповідайте рівно одним JSON-об'єктом без Markdown чи пояснення.",
             "ВІДПОВІДЬ МАЄ МАТИ РІВНО ЦЮ ОБОЛОНКУ:\n"
             '{"activities":[...],"citations":[{"activity_index":0,"sentence_ids":{"items[0]":["S01"]}}]}\n'

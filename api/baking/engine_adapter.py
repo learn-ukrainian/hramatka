@@ -14,7 +14,6 @@ promoted into a visible warning block to hide a density shortfall.
 
 from __future__ import annotations
 
-import copy
 import logging
 import os
 import re
@@ -43,6 +42,7 @@ from hramatka.engine import (
 )
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
+from hramatka.engine.prompts import active_writer_prompt_version
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
 
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
@@ -166,13 +166,20 @@ def _prompt_pack_candidate_count_plan(phases: list[int]) -> dict[int, dict[str, 
     keeping each phase's candidate count directly visible in the pack.
     """
     visible = Counter(phases)
-    base_types = ("true-false", "quiz", "cloze", "fill-in")
     plans: dict[int, dict[str, int]] = {}
     for phase, slots in sorted(visible.items()):
         quota = prompt_pack.phase_candidate_quota(slots)
-        # Phase three deliberately reserves the two productive forms when its
-        # quota permits; all selected types remain legal under the registry.
-        candidates = ("text-questions", "short-writing", *base_types) if phase == 3 else base_types
+        # The pack carries one candidate family per primary evidence role.
+        # Repeating true-false in a later phase would reuse its literal
+        # evidence/answer pairs, so phase two instead reserves a distinct
+        # marking family.  The final phase reserves productive transfer.
+        candidates = (
+            ("true-false", "quiz", "cloze", "mark-the-words")
+            if phase == 1
+            else ("quiz", "cloze", "fill-in", "mark-the-words", "text-questions")
+            if phase == 2
+            else ("short-writing", "quiz", "fill-in", "text-questions")
+        )
         counts: Counter[str] = Counter()
         for index in range(quota):
             activity_type = candidates[index % len(candidates)]
@@ -652,6 +659,15 @@ class EngineLessonBaker:
                         "resolved_duration": resolved_duration,
                     }
                 )
+            writer_prompt_version = active_writer_prompt_version(
+                extractive_fallback=registry.EXTRACTIVE_PROMPT_VERSION
+            )
+            prompt_pack_digest = (
+                shared_pack.get("provenance", {}).get("injection_sha256")
+                if shared_pack is not None
+                else None
+            )
+            prompt_pack_prompt_digests: dict[str, str] = {}
             if prompt_pack_enabled:
                 tel_ctx.record_event(
                     {
@@ -687,6 +703,12 @@ class EngineLessonBaker:
                             if shared_pack is not None
                             else None
                         )
+                        if isinstance(pack_context, dict):
+                            rendered_digest = pack_context.get("provenance", {}).get(
+                                "rendered_prompt_sha256"
+                            )
+                            if isinstance(rendered_digest, str):
+                                prompt_pack_prompt_digests[f"phase-{phase}"] = rendered_digest
                         return pipeline.run(
                             anchor,
                             level="B1",
@@ -823,14 +845,15 @@ class EngineLessonBaker:
             )
             first_result = next(iter(phase_results.values()))
             anchor_snapshot = first_result.anchor
-            floor = content_density.LESSON_FLOORS.get(resolved_duration)
+            density_contract = content_density.teacher_ready_density(resolved_duration)
             selected_by_phase = selector.select_composed_lesson(
                 {phase: result.ready for phase, result in phase_results.items()},
                 slots_by_phase=slots_by_phase,
                 count_plan=total_count_plan,
                 policy=selector.SelectorPolicy(
                     density_target=len(plan),
-                    require_productive=bool(floor and floor.require_productive),
+                    require_productive=density_contract.require_productive,
+                    prioritize_response_units=True,
                 ),
                 anchor=anchor_snapshot,
                 focus_context=(
@@ -844,13 +867,20 @@ class EngineLessonBaker:
                 for phase in sorted(slots_by_phase)
                 for candidate in selected_by_phase[phase]
             ]
+            density_receipt = content_density.evaluate_teacher_ready_density(
+                selected_by_phase, duration=resolved_duration
+            )
             # The ordinary path deliberately ends here.  The feature-gated
             # path owns a ledger of gate-passing candidates and only invokes
             # repair after the *whole* selector exposes a structural/floor
             # deficit.  Every returned candidate comes back through
             # ``pipeline.run`` (the normal gates) and this same selector.
             if slot_repair_enabled and shared_pack is not None:
-                planner = repair.RepairPlanner(shared_pack, hard_deadline=repair.hard_deadline())
+                planner = repair.RepairPlanner(
+                    shared_pack,
+                    duration=resolved_duration,
+                    hard_deadline=repair.hard_deadline(),
+                )
                 candidates_by_phase = {
                     phase: list(result.ready) for phase, result in phase_results.items()
                 }
@@ -890,7 +920,8 @@ class EngineLessonBaker:
                         count_plan=total_count_plan,
                         policy=selector.SelectorPolicy(
                             density_target=len(plan),
-                            require_productive=bool(floor and floor.require_productive),
+                            require_productive=density_contract.require_productive,
+                            prioritize_response_units=True,
                         ),
                         anchor=anchor_snapshot,
                         focus_context=prompt_pack.focus_selector_context(shared_pack),
@@ -903,12 +934,7 @@ class EngineLessonBaker:
 
                 repair_stopped = False
                 rounds_executed = 0
-                if repair.floor_ready(
-                    selected,
-                    selected_by_phase,
-                    duration=resolved_duration,
-                    planned_blocks=len(plan),
-                ):
+                if density_receipt.ready:
                     tel_ctx.record_event(
                         {
                             "event": "slot_repair_stopped",
@@ -960,6 +986,7 @@ class EngineLessonBaker:
                             {
                                 "slot_id": slot.slot_id,
                                 "gate_codes": failure_details.get(slot.activity_type, [])[:2],
+                                "density_error_codes": list(request.density_errors),
                                 **(
                                     {
                                         "preserved_subitems": 2,
@@ -978,6 +1005,13 @@ class EngineLessonBaker:
                             requested_slot_ids=[slot.slot_id for slot in request.slots],
                             repair_failures=repair_failures,
                         )
+                        rendered_digest = repair_context.get("provenance", {}).get(
+                            "rendered_prompt_sha256"
+                        )
+                        if isinstance(rendered_digest, str):
+                            prompt_pack_prompt_digests[
+                                f"repair-{repair_round}-phase-{request.phase}"
+                            ] = rendered_digest
                         repair_counts = Counter(slot.activity_type for slot in request.slots)
                         tel_ctx.increase_calls_planned()
                         repair_result = pipeline.run(
@@ -1077,6 +1111,9 @@ class EngineLessonBaker:
                         phase_results[request.phase].rejected.extend(repair_result.rejected)
                         candidates_by_phase[request.phase].extend(repair_result.ready)
                         selected_by_phase, selected = compose_repair_pool()
+                        density_receipt = content_density.evaluate_teacher_ready_density(
+                            selected_by_phase, duration=resolved_duration
+                        )
                         original_model = next(
                             (
                                 str(candidate.provenance.get("generator"))
@@ -1119,12 +1156,7 @@ class EngineLessonBaker:
                             }
                         )
                         rounds_executed = repair_round
-                        if repair.floor_ready(
-                            selected,
-                            selected_by_phase,
-                            duration=resolved_duration,
-                            planned_blocks=len(plan),
-                        ):
+                        if density_receipt.ready:
                             tel_ctx.record_event(
                                 {
                                     "event": "slot_repair_stopped",
@@ -1171,11 +1203,16 @@ class EngineLessonBaker:
                     reason="review-required: retained for teacher review; never auto-included",
                 )
             )
-            if floor is not None and not content_density.meets_lesson_floor(
-                selected,
-                duration=resolved_duration,
-                selected_by_phase=selected_by_phase,
-            ):
+            if not density_receipt.ready:
+                tel_ctx.record_event(
+                    {
+                        "event": "teacher_ready_density",
+                        **density_receipt.telemetry_record(),
+                        "writer_prompt_version": writer_prompt_version,
+                        "prompt_pack_digest": prompt_pack_digest,
+                        "prompt_pack_prompt_digests": prompt_pack_prompt_digests,
+                    }
+                )
                 kit = (
                     precomputed_grounding.get("kit")
                     if isinstance(precomputed_grounding, dict)
@@ -1186,7 +1223,7 @@ class EngineLessonBaker:
                 # capacity, not lesson slots. The real quoting quota is the
                 # duration floor that must survive selection when the kit is
                 # empty and derived activities cannot contribute.
-                quoting_slots_required = floor.min_blocks
+                quoting_slots_required = density_contract.min_blocks
                 quoting_slots_selected = sum(
                     1
                     for candidate in selected
@@ -1206,15 +1243,12 @@ class EngineLessonBaker:
                     "Bake failed: the lesson could not reach the minimum activity density.",
                     blames_source=False,
                 )
-            shortfall = len(blocks) < len(plan)
-            if shortfall:
-                rejected.extend(
-                    reserve_entries(
-                        composition_reserve,
-                        reason="composition-reserve: not auto-included by lesson-wide policy",
-                    )
+            rejected.extend(
+                reserve_entries(
+                    composition_reserve,
+                    reason="composition-reserve: not auto-included by lesson-wide policy",
                 )
-                _annotate_shortfall(rejected, blocks=blocks, planned=len(plan))
+            )
             # Anchor diagnostics stay in engine-out artifacts only; the pilot wire
             # lesson schema forbids fingerprint/diagnostics on anchor.
             anchor_body = anchor_snapshot["body_uk"]
@@ -1224,10 +1258,23 @@ class EngineLessonBaker:
 
             tel_ctx.update_progress_db(step="assembly")
             tel_ctx.record_event(
+                {
+                    "event": "teacher_ready_density",
+                    **density_receipt.telemetry_record(),
+                    "writer_prompt_version": writer_prompt_version,
+                    "prompt_pack_digest": prompt_pack_digest,
+                    "prompt_pack_prompt_digests": prompt_pack_prompt_digests,
+                }
+            )
+            tel_ctx.record_event(
                 _composition_trace(
                     selected=selected,
-                    reserve=[*review_reserve, *(composition_reserve if shortfall else [])],
+                    reserve=[*review_reserve, *composition_reserve],
                     planned=len(plan),
+                    density_receipt=density_receipt,
+                    writer_prompt_version=writer_prompt_version,
+                    prompt_pack_digest=prompt_pack_digest,
+                    prompt_pack_prompt_digests=prompt_pack_prompt_digests,
                 )
             )
 
@@ -1453,38 +1500,17 @@ def reserve_entries(activities: list, *, reason: str) -> list[dict]:
     ]
 
 
-def _annotate_shortfall(rejected: list[dict], *, blocks: list[dict], planned: int) -> None:
-    """Make a clean-candidate deficit durable without inventing a fake block."""
-    reason = f"shortfall: composed {len(blocks)} of {planned} clean activities"
-    if rejected:
-        rejected[0]["reason"] = f"{reason}; {rejected[0]['reason']}"
-        return
-    if not blocks:
-        # The caller already rejects a completely empty generation bank.  This
-        # branch is therefore defensive, and keeps the template shape honest.
-        return
-    # The pinned rejected-draft schema only accepts activity documents.  A
-    # duplicate *notice* is the only legal carrier in the degenerate case in
-    # which every generated activity is visible and no reserve exists.
-    block = blocks[0]
-    rejected.append(
-        {
-            "type": block["type"],
-            "activity": block["activity"],
-            "reason": f"shortfall-notice: {reason}; informational, not a restore candidate",
-            **(
-                {"answer_key": copy.deepcopy(block["answer_key"])}
-                if block["type"] == "error-correction"
-                and isinstance(block["answer_key"], dict)
-                and "corrections" in block["answer_key"]
-                else {}
-            ),
-        }
-    )
-
-
-def _composition_trace(*, selected: list, reserve: list, planned: int) -> dict:
-    """Emit whole-lesson type-presence telemetry without candidate content."""
+def _composition_trace(
+    *,
+    selected: list,
+    reserve: list,
+    planned: int,
+    density_receipt: content_density.TeacherReadyDensityReceipt,
+    writer_prompt_version: str,
+    prompt_pack_digest: str | None,
+    prompt_pack_prompt_digests: dict[str, str],
+) -> dict:
+    """Emit a safe, qualification-consumable teacher-ready receipt."""
     selected_counts = Counter(activity.activity["type"] for activity in selected)
     reserve_counts = Counter(activity.activity["type"] for activity in reserve)
     return {
@@ -1499,7 +1525,10 @@ def _composition_trace(*, selected: list, reserve: list, planned: int) -> dict:
         "reserve_present_types": sorted(reserve_counts),
         "planned_blocks": planned,
         "composed_blocks": len(selected),
-        "shortfall": len(selected) < planned,
+        "teacher_ready_density": density_receipt.telemetry_record(),
+        "writer_prompt_version": writer_prompt_version,
+        "prompt_pack_digest": prompt_pack_digest,
+        "prompt_pack_prompt_digests": dict(sorted(prompt_pack_prompt_digests.items())),
     }
 
 

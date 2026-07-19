@@ -29,8 +29,9 @@ Cross-Reference Sites:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -48,8 +49,11 @@ _REQUIREMENT_MARKERS_RE: Final = re.compile(
     r"(?:\(\d+\)|\d[\).\]]|;\s|—\s*(?:опиш|згадай|порів|навед|поясн|вкаж))",
     re.IGNORECASE | re.UNICODE,
 )
+_WORD_RE: Final = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE)
 
 PRODUCTIVE_TYPES: Final = frozenset({"text-questions", "short-writing"})
+MIN_TEACHER_READY_ACTIVITY_TYPES: Final = 4
+TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v1"
 
 COGNITIVE_OPERATION: Final[dict[str, str]] = {
     "true-false": "evaluate",
@@ -64,7 +68,7 @@ COGNITIVE_OPERATION: Final[dict[str, str]] = {
 }
 
 THIN_SOURCE_UA_MESSAGE: Final = (
-    "З цього тексту не вдалося скласти повний урок на 45 хвилин. "
+    "З цього тексту не вдалося скласти повний урок. "
     "Додайте 2–3 змістові речення — приклади, деталі або послідовність дій — "
     "і спробуйте ще раз."
 )
@@ -73,7 +77,7 @@ THIN_SOURCE_UA_MESSAGE: Final = (
 # deterministic thin-source precheck (i.e. sufficient source but still could not
 # assemble a full lesson this time). Must never blame the teacher's text.
 FLOOR_SHORTFALL_UA_MESSAGE: Final = (
-    "Цього разу не вдалося скласти повний урок на 45 хвилин. "
+    "Цього разу не вдалося скласти повний урок. "
     "Спробуйте, будь ласка, ще раз."
 )
 
@@ -334,6 +338,10 @@ def meets_content_density(
     # sentence-id density is a quoting contract.
     derived_mode = _is_derived_mode_candidate(candidate)
 
+    if activity_type == "true-false":
+        items = activity.get("items", [])
+        return isinstance(items, list) and len(items) >= delivered_item_floors()["true-false"]
+
     if activity_type == "quiz":
         items = activity.get("items", [])
         if not isinstance(items, list) or len(items) < 3:
@@ -365,7 +373,10 @@ def meets_content_density(
 
     if activity_type == "cloze":
         blanks = activity.get("blanks", [])
-        return isinstance(blanks, list) and len(blanks) >= 3
+        return (
+            isinstance(blanks, list)
+            and len(blanks) >= delivered_item_floors()["cloze"]
+        )
 
     if activity_type == "match-up":
         pairs = activity.get("pairs", [])
@@ -557,61 +568,302 @@ def _is_grounding_mode_enabled() -> bool:
 
 
 @dataclass(frozen=True)
-class LessonFloor:
-    min_blocks: int
-    phase_minimums: dict[int, int]
-    min_types: int
-    require_productive: bool
+class TeacherReadyDensity:
+    """One teacher-delivery contract, independent of test/runtime environment."""
+
+    duration: int
+    phase_blocks: Mapping[int, int]
+    minimum_response_units: int
+
+    @property
+    def min_blocks(self) -> int:
+        """Compatibility view derived from the exact phase shape."""
+        return sum(self.phase_blocks.values())
+
+    @property
+    def phase_minimums(self) -> Mapping[int, int]:
+        """Compatibility view; teacher-ready requires equality, not a minimum."""
+        return self.phase_blocks
+
+    @property
+    def min_types(self) -> int:
+        """Return the enforced minimum number of distinct activity families."""
+        return MIN_TEACHER_READY_ACTIVITY_TYPES
+
+    @property
+    def require_productive(self) -> bool:
+        return True
 
 
-LESSON_FLOORS: Final[dict[int, LessonFloor]] = {
-    45: LessonFloor(
-        min_blocks=6,
-        phase_minimums={1: 2, 2: 3, 3: 1},
-        min_types=4,
-        require_productive=True,
-    ),
-    60: LessonFloor(
-        min_blocks=9,
-        phase_minimums={1: 2, 2: 5, 3: 2},
-        min_types=4,
-        require_productive=True,
-    ),
-    90: LessonFloor(
-        min_blocks=12,
-        phase_minimums={1: 4, 2: 5, 3: 3},
-        min_types=4,
-        require_productive=True,
-    ),
+TEACHER_READY_DENSITIES: Final[dict[int, TeacherReadyDensity]] = {
+    45: TeacherReadyDensity(45, {1: 3, 2: 4, 3: 1}, 28),
+    60: TeacherReadyDensity(60, {1: 3, 2: 5, 3: 2}, 35),
+    90: TeacherReadyDensity(90, {1: 4, 2: 5, 3: 3}, 42),
 }
 
-# Expose 60 and 90 duration floors only when not running under pytest.
-# This prevents breaking existing mock tests that use duration=60 or 90 with fewer slots.
-if "pytest" not in sys.modules and not any("pytest" in arg for arg in sys.argv):
-    LESSON_FLOORS[60] = LessonFloor(
-        min_blocks=9,
-        phase_minimums={1: 2, 2: 5, 3: 2},
-        min_types=4,
-        require_productive=True,
-    )
-    LESSON_FLOORS[90] = LessonFloor(
-        min_blocks=12,
-        phase_minimums={1: 4, 2: 5, 3: 3},
-        min_types=4,
-        require_productive=True,
-    )
+# A thin compatibility name only.  It is derived from the single teacher-ready
+# authority above and must never become a second delivery policy.
+LESSON_FLOORS: Final[dict[int, TeacherReadyDensity]] = TEACHER_READY_DENSITIES
+LessonFloor = TeacherReadyDensity
 
 
-def floor_oracle_record() -> dict[str, dict[str, object]]:
-    """Stable §5.1 floor record embedded in the forthcoming A/B harness."""
+def teacher_ready_density(duration: int) -> TeacherReadyDensity:
+    """Return the exact contract for a supported teacher lesson duration."""
+    try:
+        return TEACHER_READY_DENSITIES[duration]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported teacher-ready duration: {duration!r}") from exc
+
+
+def registry_item_targets() -> dict[str, int]:
+    """Read exact generation targets from the registry after its construction.
+
+    ``registry`` imports this module, so this deliberately local import keeps
+    the authoritative per-type budget in one place without an import cycle.
+    """
+    from .registry import ACTIVITY_REGISTRY
+
     return {
-        str(duration): {
-            "min_blocks": floor.min_blocks,
-            "phase_minimums": dict(floor.phase_minimums),
-            "min_types": floor.min_types,
-            "require_productive": floor.require_productive,
+        activity_type: entry.item_budget
+        for activity_type, entry in sorted(ACTIVITY_REGISTRY.items())
+    }
+
+
+def delivered_item_floors() -> dict[str, int]:
+    """Return the per-block lesson-delivery floors, separate from generation.
+
+    The generator deliberately asks for the exact registry target (notably five
+    true/false items).  A gated, selected block remains deliverable with four
+    true/false items, but it may never borrow units from another block of the
+    same type to conceal a sparse result.
+    """
+    return {
+        "true-false": 4,
+        "quiz": 3,
+        "cloze": 3,
+        "fill-in": 3,
+        "match-up": 4,
+        "mark-the-words": 4,
+        "error-correction": 2,
+        "text-questions": 3,
+        "short-writing": 1,
+    }
+
+
+def teacher_ready_density_record() -> dict[str, object]:
+    """Canonical public-safe input used for fingerprinting and telemetry."""
+    return {
+        "version": TEACHER_READY_DENSITY_VERSION,
+        "durations": {
+            str(duration): {
+                "phase_blocks": dict(contract.phase_blocks),
+                "minimum_response_units": contract.minimum_response_units,
+                "minimum_activity_types": contract.min_types,
+                "require_productive_transfer": contract.require_productive,
+            }
+            for duration, contract in sorted(TEACHER_READY_DENSITIES.items())
+        },
+        "generation_item_targets": registry_item_targets(),
+        "delivered_item_floors": delivered_item_floors(),
+    }
+
+
+def teacher_ready_density_digest() -> str:
+    """Stable digest of the complete delivery contract, never of lesson content."""
+    encoded = json.dumps(
+        teacher_ready_density_record(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def response_units(activity: Mapping[str, object]) -> int:
+    """Return the learner-response units an activity contributes."""
+    activity_type = activity.get("type")
+    collection_by_type = {
+        "true-false": "items",
+        "quiz": "items",
+        "error-correction": "items",
+        "fill-in": "items",
+        "cloze": "blanks",
+        "match-up": "pairs",
+        "mark-the-words": "target_words",
+        "text-questions": "items",
+    }
+    collection = collection_by_type.get(activity_type)
+    if collection is not None:
+        value = activity.get(collection)
+        return len(value) if isinstance(value, list) else 0
+    return 1 if activity_type == "short-writing" else 0
+
+
+# Kept private-name compatible for older internal callers while the selector
+# and delivery evaluator share the explicit public calculation above.
+_response_units = response_units
+
+
+def _phase_three_transfer_errors(
+    phase_three: Sequence[schema.HramatkaActivity],
+) -> list[str]:
+    """Require productive transfer somewhere in the final phase.
+
+    A multi-block final phase can legitimately contain writing, discussion, and
+    a closed-response consolidation task.  Productive transfer is therefore an
+    aggregate phase property, rather than a restriction on every phase-three
+    block.  Text-question grounding stays strict and reads the parsed evidence
+    retained on the candidate, not the public activity projection.
+    """
+    productive = [
+        candidate
+        for candidate in phase_three
+        if candidate.activity.get("type") in PRODUCTIVE_TYPES
+    ]
+    if not productive:
+        return ["phase_3_requires_productive_transfer"]
+    if any(candidate.activity.get("type") == "short-writing" for candidate in productive):
+        return []
+    text_questions = [
+        candidate for candidate in productive if candidate.activity.get("type") == "text-questions"
+    ]
+    if not text_questions:
+        return []
+    candidate = text_questions[-1]
+    items = candidate.activity.get("items")
+    if not isinstance(items, list) or len(items) < 3:
+        return ["phase_3_text_questions_require_three_moves"]
+    questions = [
+        str(item.get("question") or "").casefold()
+        for item in items[:3]
+        if isinstance(item, dict)
+    ]
+    evidence_by_locator = {
+        evidence.locator: evidence.quote.strip()
+        for evidence in candidate.evidence
+        if isinstance(evidence.locator, str) and isinstance(evidence.quote, str)
+    }
+    if len(questions) != 3 or not all(
+        evidence_by_locator.get(f"items[{index}]") for index in range(3)
+    ):
+        return ["phase_3_text_questions_require_anchored_moves"]
+    comprehension = ("що", "хто", "де", "коли", "скільки", "який", "яка", "які", "назвіть")
+    explanation = ("чому", "як", "поясніть", "виснов")
+    application_tokens = frozenset({"ви", "ваш", "свій", "власний", "власному", "досвід"})
+    application_bigrams = {("наведіть", "приклад"), ("застосуєте", "це")}
+    if not any(marker in questions[0] for marker in comprehension):
+        return ["phase_3_text_questions_require_comprehension"]
+    if not any(marker in questions[1] for marker in explanation):
+        return ["phase_3_text_questions_require_explanation"]
+    question_tokens = tuple(token.casefold() for token in _WORD_RE.findall(questions[2]))
+    if not (
+        application_tokens.intersection(question_tokens)
+        or any(
+            question_tokens[index : index + 2] in application_bigrams
+            for index in range(len(question_tokens) - 1)
+        )
+    ):
+        return ["phase_3_text_questions_require_anchored_application"]
+    return []
+
+
+@dataclass(frozen=True)
+class TeacherReadyDensityReceipt:
+    """Safe deterministic result for delivery, telemetry, and qualification."""
+
+    duration: int
+    phase_counts: Mapping[int, int]
+    delivered_blocks: int
+    response_units: int
+    type_units: Mapping[str, int]
+    errors: tuple[str, ...]
+    version: str = TEACHER_READY_DENSITY_VERSION
+    digest: str = ""
+
+    @property
+    def ready(self) -> bool:
+        return not self.errors
+
+    def telemetry_record(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "digest": self.digest,
+            "duration": self.duration,
+            "phase_counts": {
+                str(phase): count for phase, count in sorted(self.phase_counts.items())
+            },
+            "delivered_blocks": self.delivered_blocks,
+            "response_units": self.response_units,
+            "type_units": dict(sorted(self.type_units.items())),
+            "disposition": "teacher_ready" if self.ready else "recoverable_draft",
+            "error_codes": list(self.errors),
         }
-        for duration, floor in sorted(LESSON_FLOORS.items())
+
+
+def evaluate_teacher_ready_density(
+    selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]], *, duration: int
+) -> TeacherReadyDensityReceipt:
+    """Evaluate exactly what the EngineLessonBaker would deliver to a teacher."""
+    contract = teacher_ready_density(duration)
+    phase_counts = {phase: len(selected_by_phase.get(phase, ())) for phase in contract.phase_blocks}
+    selected = [
+        candidate
+        for phase in sorted(contract.phase_blocks)
+        for candidate in selected_by_phase.get(phase, ())
+    ]
+    type_units: Counter[str] = Counter()
+    errors: list[str] = []
+    delivered_floors = delivered_item_floors()
+    for index, candidate in enumerate(selected, start=1):
+        activity_type = str(candidate.activity.get("type") or "")
+        type_units[activity_type] += response_units(candidate.activity)
+        if activity_type not in delivered_floors:
+            errors.append(f"unknown_activity_type_{activity_type}")
+        elif not meets_content_density(candidate):
+            errors.append(f"block_{index}_{activity_type}_below_delivered_floor")
+
+    for phase, expected in contract.phase_blocks.items():
+        if phase_counts[phase] != expected:
+            errors.append(f"phase_{phase}_blocks_{phase_counts[phase]}_expected_{expected}")
+    total_response_units = sum(type_units.values())
+    if total_response_units < contract.minimum_response_units:
+        errors.append(
+            f"response_units_{total_response_units}_minimum_{contract.minimum_response_units}"
+        )
+    for activity_type, units in sorted(type_units.items()):
+        target = delivered_floors.get(activity_type)
+        if target is None:
+            continue
+        elif units < target:
+            errors.append(f"{activity_type}_units_{units}_minimum_{target}")
+    if len(type_units) < contract.min_types:
+        errors.append(f"activity_types_{len(type_units)}_minimum_{contract.min_types}")
+    errors.extend(_phase_three_transfer_errors(selected_by_phase.get(3, ())))
+    return TeacherReadyDensityReceipt(
+        duration=duration,
+        phase_counts=phase_counts,
+        delivered_blocks=len(selected),
+        response_units=total_response_units,
+        type_units=dict(type_units),
+        errors=tuple(errors),
+        digest=teacher_ready_density_digest(),
+    )
+
+
+def floor_oracle_record() -> dict[str, object]:
+    """Frozen measurement oracle, including every teacher-ready policy input."""
+    compatibility_floors = {
+        str(duration): {
+            "min_blocks": contract.min_blocks,
+            "phase_minimums": dict(contract.phase_blocks),
+            "min_types": contract.min_types,
+            "require_productive": contract.require_productive,
+            "minimum_response_units": contract.minimum_response_units,
+            "version": TEACHER_READY_DENSITY_VERSION,
+            "digest": teacher_ready_density_digest(),
+        }
+        for duration, contract in sorted(TEACHER_READY_DENSITIES.items())
+    }
+    return {
+        "teacher_ready_density": teacher_ready_density_record(),
+        "compatibility_floors": compatibility_floors,
     }
 
 
@@ -622,27 +874,19 @@ def meets_lesson_floor(
     phase_by_candidate: dict[str, int] | None = None,
     selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]] | None = None,
 ) -> bool:
-    floor = LESSON_FLOORS.get(duration)
-    if floor is None:
-        return True
-    if len(selected) < floor.min_blocks:
+    """Fail-closed compatibility adapter around the canonical evaluator.
+
+    A flat candidate list cannot prove the exact Test-Teach-Test delivery shape.
+    Legacy callers that omit both phase representations therefore receive
+    ``False`` rather than an ambiguous local-density success.
+    """
+    if selected_by_phase is None and phase_by_candidate is None:
         return False
-    phase_counts: Counter[int] = Counter()
-    if selected_by_phase is not None:
-        for phase, candidates in selected_by_phase.items():
-            phase_counts[phase] += len(candidates)
-    else:
+    if selected_by_phase is None:
+        grouped: dict[int, list[schema.HramatkaActivity]] = {1: [], 2: [], 3: []}
         for candidate in selected:
-            phase = None
-            if phase_by_candidate and candidate.candidate_id:
-                phase = phase_by_candidate.get(candidate.candidate_id)
-            if phase is not None:
-                phase_counts[phase] += 1
-    if any(phase_counts.get(phase, 0) < minimum for phase, minimum in floor.phase_minimums.items()):
-        return False
-    types = {candidate.activity.get("type") for candidate in selected}
-    if len(types) < floor.min_types:
-        return False
-    if floor.require_productive and not (types & PRODUCTIVE_TYPES):
-        return False
-    return True
+            phase = phase_by_candidate.get(candidate.candidate_id) if phase_by_candidate else None
+            if phase in grouped:
+                grouped[phase].append(candidate)
+        selected_by_phase = grouped
+    return evaluate_teacher_ready_density(selected_by_phase, duration=duration).ready

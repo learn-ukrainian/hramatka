@@ -9,7 +9,14 @@ from hramatka.engine import measure, pipeline
 from hramatka.engine.gates import vesum
 
 
-def _single_true_false(anchor_sentence: str):
+def _single_true_false(*anchor_sentences: str):
+    """Build one deliverable true/false block from source-backed statements."""
+    if not anchor_sentences:
+        raise ValueError("At least one source sentence is required.")
+    statements = tuple(anchor_sentences)
+    if len(statements) == 1:
+        statements *= 4
+
     def generator(_prompt: str) -> str:
         return json.dumps(
             {
@@ -19,10 +26,11 @@ def _single_true_false(anchor_sentence: str):
                         "instruction": "Познач правильне твердження за текстом.",
                         "items": [
                             {
-                                "statement": anchor_sentence,
+                                "statement": sentence,
                                 "correct": True,
-                                "evidence": anchor_sentence,
+                                "evidence": sentence,
                             }
+                            for sentence in statements
                         ],
                     }
                 ]
@@ -72,22 +80,27 @@ def test_c1_anchor_does_not_fail_b1_task_language_gate(tmp_path):
     # itself uses the second, simple sentence.  Source-baseline diagnostics
     # may flag unfamiliar anchor vocabulary, but they are not task-language
     # gate failures and therefore cannot suppress an otherwise valid bake.
-    task_sentence = "Учні читають текст."
+    task_sentences = (
+        "Учні читають текст.",
+        "Учні обговорюють текст.",
+        "Учні відповідають на запитання.",
+        "Учні пояснюють свою думку.",
+    )
     anchor = (
         "Епістемологічна інтерсуб’єктивність дискурсивно переосмислює "
         "герменевтичну парадигму. "
-        f"{task_sentence}"
+        + " ".join(task_sentences)
     )
     result = pipeline.run(
         anchor,
-        generator=_single_true_false(task_sentence),
+        generator=_single_true_false(*task_sentences),
         out_dir=tmp_path / "out",
         cache_dir=tmp_path / "cache",
     )
 
     assert result.lesson_b1
     payload = result.lesson_b1[0]
-    assert payload["items"][0]["statement"] == task_sentence
+    assert [item["statement"] for item in payload["items"]] == list(task_sentences)
     # No C1 anchor form is converted into a failed task gate.
     assert result.rejected == []
 

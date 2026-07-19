@@ -11,27 +11,31 @@ def _pack() -> dict:
         "slots": [
             {"slot_id": "P1-A1", "type": "quiz"},
             {"slot_id": "P1-A2", "type": "true-false"},
+            {"slot_id": "P1-A3", "type": "cloze"},
             {"slot_id": "P2-A1", "type": "fill-in"},
+            {"slot_id": "P2-A2", "type": "cloze"},
+            {"slot_id": "P2-A3", "type": "error-correction"},
+            {"slot_id": "P2-A4", "type": "text-questions"},
             {"slot_id": "P3-A1", "type": "short-writing"},
         ],
     }
 
 
 def test_planner_batches_exact_slots_per_phase_and_respects_attempt_budget():
-    planner = repair.RepairPlanner(_pack(), started_at=100.0)
+    planner = repair.RepairPlanner(_pack(), duration=45, started_at=100.0)
     selected = {1: [], 2: [], 3: []}
     requests = planner.plan(
-        round=1, selected_by_phase=selected, slots_by_phase={1: 2, 2: 1, 3: 1}, now=101
+        round=1, selected_by_phase=selected, slots_by_phase={1: 3, 2: 4, 3: 1}, now=101
     )
     assert [(request.phase, [slot.slot_id for slot in request.slots]) for request in requests] == [
-        (1, ["P1-A1", "P1-A2"]),
-        (2, ["P2-A1"]),
+        (1, ["P1-A2", "P1-A1", "P1-A3"]),
+        (2, ["P2-A3", "P2-A1", "P2-A2", "P2-A4"]),
         (3, ["P3-A1"]),
     ]
     for request in requests:
         planner.scheduled(request)
     again = planner.plan(
-        round=2, selected_by_phase=selected, slots_by_phase={1: 2, 2: 1, 3: 1}, now=102
+        round=2, selected_by_phase=selected, slots_by_phase={1: 3, 2: 4, 3: 1}, now=102
     )
     assert len(again) == 3
     for request in again:
@@ -43,12 +47,16 @@ def test_planner_batches_exact_slots_per_phase_and_respects_attempt_budget():
 
 
 def test_planner_stops_at_wall_and_hard_deadline_guard():
-    selected = {1: []}
-    assert repair.RepairPlanner(_pack(), started_at=0).plan(
-        round=1, selected_by_phase=selected, slots_by_phase={1: 1}, now=repair.MAX_WALL_SECONDS
+    selected = {1: [], 2: [], 3: []}
+    slots = {1: 3, 2: 4, 3: 1}
+    assert repair.RepairPlanner(_pack(), duration=45, started_at=0).plan(
+        round=1,
+        selected_by_phase=selected,
+        slots_by_phase=slots,
+        now=repair.MAX_WALL_SECONDS,
     ) == []
-    assert repair.RepairPlanner(_pack(), started_at=0, hard_deadline=700).plan(
-        round=1, selected_by_phase=selected, slots_by_phase={1: 1}, now=220
+    assert repair.RepairPlanner(_pack(), duration=45, started_at=0, hard_deadline=700).plan(
+        round=1, selected_by_phase=selected, slots_by_phase=slots, now=220
     ) == []
 
 

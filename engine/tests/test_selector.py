@@ -19,7 +19,10 @@ def _candidate(
         activity = {
             "type": activity_type,
             "instruction": "i",
-            "items": [{"statement": candidate_id, "correct": answer}],
+            "items": [
+                {"statement": f"{candidate_id}-{item}", "correct": answer}
+                for item in range(4)
+            ],
         }
         locator = "items[0]"
     elif activity_type == "cloze":
@@ -34,6 +37,25 @@ def _candidate(
             ],
         }
         locator = "text"
+    elif activity_type == "text-questions":
+        activity = {
+            "type": activity_type,
+            "instruction": "i",
+            "items": [
+                {"question": "Що?", "model_answer": answer},
+                {"question": "Чому?", "model_answer": "тому"},
+                {"question": "Як ви?", "model_answer": "так"},
+            ],
+        }
+        locator = "items[0]"
+    elif activity_type == "short-writing":
+        activity = {
+            "type": activity_type,
+            "instruction": "i",
+            "prompt": str(answer),
+            "min_words": 40,
+        }
+        locator = "prompt"
     else:
         pairs = [
             {"left": f"{candidate_id}-a", "right": answer},
@@ -86,7 +108,7 @@ def test_selector_honours_phase_coverage_variety_puzzle_and_duplicate_constraint
     selected = selector.select_lesson(
         [true_false, cloze, match_up, duplicate_match, second_match, review, rejected],
         count_plan={"true-false": 2, "cloze": 2, "match-up": 2},
-        policy=selector.SelectorPolicy(density_target=4),
+        policy=selector.SelectorPolicy(density_target=4, require_content_density=False),
     )
 
     assert [candidate.candidate_id for candidate in selected] == [
@@ -111,6 +133,7 @@ def test_selector_honours_phase_coverage_variety_puzzle_and_duplicate_constraint
         [true_false, cloze, match_up],
         count_plan={"true-false": 1, "cloze": 1, "match-up": 1},
         phase=3,
+        policy=selector.SelectorPolicy(require_content_density=False),
     )
     assert [candidate.activity["type"] for candidate in phase_three] == ["cloze", "true-false"]
 
@@ -165,3 +188,77 @@ def test_composed_selector_can_select_all_nine_registered_types_without_a_hidden
     assert {
         activity.activity["type"] for activities in selected.values() for activity in activities
     } == set(PILOT_ACTIVITY_TYPES)
+
+
+def test_phase_three_productive_policy_is_local_to_the_final_phase():
+    quiz = _candidate("quiz", "cloze", start=0, answer="answer")
+    phase_three_quiz = _candidate("phase-three-quiz", "true-false", start=30, answer=False)
+    phase_two_writing = _candidate("phase-two-writing", "short-writing", start=10, answer="Write")
+    phase_three_transfer = _candidate(
+        "phase-three-transfer", "text-questions", start=20, answer="A"
+    )
+
+    candidates_by_phase = {
+        1: [quiz],
+        2: [phase_two_writing],
+        3: [phase_three_quiz, phase_three_transfer],
+    }
+    count_plan = {
+        "cloze": 1,
+        "true-false": 1,
+        "short-writing": 1,
+        "text-questions": 1,
+    }
+
+    unrestricted = selector.select_composed_lesson(
+        candidates_by_phase,
+        slots_by_phase={1: 1, 2: 1, 3: 1},
+        count_plan=count_plan,
+        policy=selector.SelectorPolicy(density_target=3, require_content_density=False),
+    )
+    assert unrestricted[3][0].candidate_id == "phase-three-quiz"
+
+    production = selector.select_composed_lesson(
+        candidates_by_phase,
+        slots_by_phase={1: 1, 2: 1, 3: 1},
+        count_plan=count_plan,
+        policy=selector.SelectorPolicy(
+            density_target=3,
+            require_content_density=False,
+            require_productive=True,
+        ),
+    )
+    assert production[2][0].candidate_id == "phase-two-writing"
+    assert production[3][0].candidate_id == "phase-three-transfer"
+
+    final_phase_allows_consolidation = selector.select_composed_lesson(
+        candidates_by_phase,
+        slots_by_phase={1: 1, 2: 1, 3: 2},
+        count_plan=count_plan,
+        policy=selector.SelectorPolicy(
+            density_target=4,
+            require_content_density=False,
+            require_productive=True,
+        ),
+    )
+    assert [candidate.candidate_id for candidate in final_phase_allows_consolidation[3]] == [
+        "phase-three-transfer",
+        "phase-three-quiz",
+    ]
+
+
+def test_productive_policy_does_not_fabricate_a_missing_phase_three_transfer():
+    non_productive = _candidate("quiz", "true-false", start=0, answer=True)
+
+    selected = selector.select_composed_lesson(
+        {1: [], 2: [], 3: [non_productive]},
+        slots_by_phase={1: 0, 2: 0, 3: 1},
+        count_plan={"true-false": 1},
+        policy=selector.SelectorPolicy(
+            density_target=1,
+            require_content_density=False,
+            require_productive=True,
+        ),
+    )
+
+    assert selected == {1: [], 2: [], 3: [non_productive]}

@@ -204,7 +204,7 @@ def test_e2e_baker_round_robins_one_primary_per_bake(tmp_path):
 
 
 def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp_path):
-    """Optional phase-specific variety must never consume the 45-minute fill floor."""
+    """A constrained candidate bank must never escape as a teacher delivery."""
     constrained = {"match-up", "mark-the-words"}
 
     variant_mapping = {
@@ -249,10 +249,8 @@ def test_e2e_baker_surfaces_shortfall_when_constrained_types_are_unavailable(tmp
         bundle=_bundle_with_matchup_vocabulary(tmp_path / "data"),
         cache_dir=tmp_path / "cache",
     )
-    baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
-    min_blocks = content_density.LESSON_FLOORS[45].min_blocks
-    assert min_blocks <= len(baked["blocks"]) < 8
-    assert any(entry["reason"].startswith("shortfall:") for entry in baked["rejected"])
+    with pytest.raises(BakeError, match="minimum activity density"):
+        baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
 
 def test_e2e_bake_raises_bakeerror_when_generator_unavailable(tmp_path):
