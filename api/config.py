@@ -122,6 +122,9 @@ class Settings:
     review_attestation_audience: str | None = None
     review_attestation_workflow_ref: str | None = None
     review_attestation_workflow_digest: str | None = None
+    review_attestation_trusted_runner_id: str | None = None
+    review_attestation_trusted_runner_group_id: str | None = None
+    review_attestation_trusted_runner_label: str | None = None
     review_attestation_db_path: Path | None = None
     review_attestation_signing_key_file: Path | None = None
     review_attestation_ais_base_url: str = _DEFAULT_GOOGLE_AIS_BASE_URL
@@ -153,6 +156,9 @@ class Settings:
                 "audience": self.review_attestation_audience,
                 "workflow_ref": self.review_attestation_workflow_ref,
                 "workflow_digest": self.review_attestation_workflow_digest,
+                "trusted_runner_id": self.review_attestation_trusted_runner_id,
+                "trusted_runner_group_id": self.review_attestation_trusted_runner_group_id,
+                "trusted_runner_label": self.review_attestation_trusted_runner_label,
                 "signing_key_file": self.review_attestation_signing_key_file,
             }
             missing = sorted(name for name, value in required.items() if not value)
@@ -162,6 +168,22 @@ class Settings:
                 )
             if not self.review_attestation_paid_enabled:
                 raise ValueError("review attestation requires paid review enablement.")
+            for name, value in {
+                "trusted_runner_id": self.review_attestation_trusted_runner_id,
+                "trusted_runner_group_id": self.review_attestation_trusted_runner_group_id,
+            }.items():
+                if (
+                    not isinstance(value, str)
+                    or not value.isascii()
+                    or not value.isdigit()
+                    or value.startswith("0")
+                    or len(value) > 19
+                    or int(value) <= 0
+                    or int(value) > 9_223_372_036_854_775_807
+                ):
+                    raise ValueError(f"review attestation {name} must be a positive integer.")
+            if self.review_attestation_trusted_runner_label != "hramatka-attestor":
+                raise ValueError("review attestation runner label must be hramatka-attestor.")
             object.__setattr__(
                 self,
                 "review_attestation_ais_base_url",
@@ -236,6 +258,15 @@ class Settings:
             ),
             review_attestation_workflow_digest=os.environ.get(
                 "HRAMATKA_REVIEW_ATTESTATION_TRUSTED_WORKFLOW_DIGEST"
+            ),
+            review_attestation_trusted_runner_id=os.environ.get(
+                "HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_ID"
+            ),
+            review_attestation_trusted_runner_group_id=os.environ.get(
+                "HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_GROUP_ID"
+            ),
+            review_attestation_trusted_runner_label=os.environ.get(
+                "HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_LABEL"
             ),
             review_attestation_db_path=(
                 Path(value)

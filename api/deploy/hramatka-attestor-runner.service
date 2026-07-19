@@ -1,0 +1,61 @@
+[Unit]
+Description=Dedicated Hramatka review-attestation GitHub Actions runner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=hramatka-attestor-runner
+Group=hramatka-attestor-runner
+UMask=0077
+WorkingDirectory=/opt/actions-runner-attestor
+Environment=HOME=/var/lib/hramatka-attestor-runner
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/hramatka-attestor/verify-attestor-runner-job.sh
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%u:%%g:%%a /usr/local/lib/hramatka-attestor)" = "0:0:755"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%u:%%g:%%a /usr/local/lib/hramatka-attestor/verify-attestor-runner-job.sh)" = "0:0:755"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%U:%%G:%%a /opt/actions-runner-attestor)" = "root:hramatka-attestor-runner:750"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%U:%%G:%%a /opt/actions-runner-attestor/runsvc.sh)" = "root:hramatka-attestor-runner:550"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%U:%%G:%%a /opt/actions-runner-attestor/.runner)" = "root:hramatka-attestor-runner:640"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%U:%%G:%%a /opt/actions-runner-attestor/.credentials)" = "root:hramatka-attestor-runner:640"'
+ExecStartPre=/usr/bin/sh -ec 'test "$(/usr/bin/stat -c %%U:%%G:%%a /opt/actions-runner-attestor/.credentials_rsaparams)" = "root:hramatka-attestor-runner:640"'
+ExecStart=/opt/actions-runner-attestor/runsvc.sh
+Restart=always
+RestartSec=5s
+TimeoutStopSec=5min
+
+# The runner application is root-owned and immutable between deliberate
+# upgrades. Only runner workspaces, action cache, tool cache, diagnostics, and
+# the service account state directory are writable at runtime.
+StateDirectory=hramatka-attestor-runner
+StateDirectoryMode=0700
+ReadOnlyPaths=/opt/actions-runner-attestor
+ReadWritePaths=/opt/actions-runner-attestor/_actions
+ReadWritePaths=/opt/actions-runner-attestor/_diag
+ReadWritePaths=/opt/actions-runner-attestor/_tool
+ReadWritePaths=/opt/actions-runner-attestor/_work
+
+# Deny access to the API's secret/config, signing credential, persistent data,
+# release tree, and the existing general-purpose runner installation.
+InaccessiblePaths=/etc/hramatka
+InaccessiblePaths=/var/lib/hramatka
+InaccessiblePaths=/opt/hramatka
+InaccessiblePaths=/opt/actions-runner
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=tmpfs
+ProtectSystem=strict
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -213,6 +213,146 @@ or regenerate affected open-PR receipts during the same maintenance record.
 Supporting old and new receipts simultaneously requires a separately reviewed
 multi-key design; do not improvise overlap or retain untracked private keys.
 
+## Dedicated review-attestation runner
+
+This is a documented installation plan only. It does not authorize runner
+registration, a GitHub configuration change, or a host change. The existing
+general-purpose runner remains separate and must not be repurposed.
+
+Install the reviewed files
+[`hramatka-attestor-runner.service`](hramatka-attestor-runner.service) and
+[`verify-attestor-runner-job.sh`](verify-attestor-runner-job.sh) only in a
+reviewed maintenance change. Create the dedicated no-login service account
+`hramatka-attestor-runner` and `/opt/actions-runner-attestor`; do not add that
+account to `root`, `hramatka`, Docker, or any privileged group. The API env,
+root-only signing PEM, database/state directory, deployment tree, and existing
+runner tree must remain inaccessible to the service.
+
+The guard is installed outside the runner tree at
+`/usr/local/lib/hramatka-attestor/verify-attestor-runner-job.sh` as
+`root:root` mode `0755`, with its containing directory root-owned and not
+writable by the runner account. The service verifies those ownership and mode
+requirements before starting and uses GitHub's synchronous pre-job hook. A
+rejected job fails before any action, shell, or pull-request code runs; the
+guard deliberately logs only a generic rejection.
+
+Register a second runner against this repository only after an operator obtains
+a fresh single-use registration token interactively. Do not save, print, or
+paste the token into shell history, a service unit, an environment file, or a
+ticket. Configure it with `--unattended`, `--disableupdate`,
+`--no-default-labels`, the name `pilot-vps-attestor`, and the sole custom label
+`hramatka-attestor`. The absence of the default `self-hosted`, OS, and
+architecture labels prevents this runner from accepting ordinary selectors used
+by the existing CI jobs. The review-attestation workflow must explicitly target
+the custom label.
+
+Use a hidden, short-lived shell value only while configuring the runner; do not
+place a real token in the command text below or retain it after configuration:
+
+```sh
+read -r -s registration_token
+printf '\n'
+sudo -u hramatka-attestor-runner \
+  /opt/actions-runner-attestor/config.sh --unattended \
+  --url https://github.com/learn-ukrainian/learn-ukrainian-infra-private \
+  --token "$registration_token" --name pilot-vps-attestor \
+  --labels hramatka-attestor --no-default-labels --disableupdate
+unset registration_token
+```
+
+The configuration command deliberately runs as the service account because it
+must write the initial runner registration files. Immediately after it succeeds
+and before enabling the unit, root locks down the installation. Do not apply
+the following ownership changes before configuration completes.
+
+Run the following as root. The install root and immutable application tree use
+`root:hramatka-attestor-runner` with directories mode `0750`, executable files
+mode `0550`, and other regular files mode `0440`. The service account can read
+and execute the runner, while the existing `ghrunner` account cannot traverse
+or read the tree. The three runner credential files remain readable to the
+service account with mode `0640` but are never writable by it.
+
+```sh
+runner_root=/opt/actions-runner-attestor
+runner_user=hramatka-attestor-runner
+runner_group=hramatka-attestor-runner
+
+chown -R "root:$runner_group" "$runner_root"
+find "$runner_root" -type d -exec chmod 0750 {} +
+find "$runner_root" -type f -perm /111 -exec chmod 0550 {} +
+find "$runner_root" -type f ! -perm /111 -exec chmod 0440 {} +
+
+for credential in .runner .credentials .credentials_rsaparams; do
+  credential_path="$runner_root/$credential"
+  test -f "$credential_path"
+  chown "root:$runner_group" "$credential_path"
+  chmod 0640 "$credential_path"
+done
+```
+
+Only these runtime directories are writable by
+`hramatka-attestor-runner:hramatka-attestor-runner` with mode `0700`:
+
+- `/opt/actions-runner-attestor/_actions`
+- `/opt/actions-runner-attestor/_diag`
+- `/opt/actions-runner-attestor/_tool`
+- `/opt/actions-runner-attestor/_work`
+- `/var/lib/hramatka-attestor-runner`
+
+The systemd `StateDirectory` directive creates the final `/var/lib` directory
+with that service account ownership and mode; do not create it manually.
+
+```sh
+for runtime_dir in \
+  "$runner_root/_actions" \
+  "$runner_root/_diag" \
+  "$runner_root/_tool" \
+  "$runner_root/_work"; do
+  install -d -o "$runner_user" -g "$runner_group" -m 0700 "$runtime_dir"
+  chown -R "$runner_user:$runner_group" "$runtime_dir"
+  find "$runtime_dir" -type d -exec chmod 0700 {} +
+  find "$runtime_dir" -type f -exec chmod 0600 {} +
+done
+```
+
+The account needs read access to its runner credentials but never write access
+to the application, guard, systemd unit, API configuration, key, database,
+release tree, or existing runner tree. The unit refuses to start unless the
+install root, `runsvc.sh`, and all three credential files have these exact
+owner, group, and modes.
+
+`--disableupdate` is required because automatic runner replacement would
+violate that immutable-install boundary. Upgrade the runner only as a reviewed
+root maintenance operation, then repeat the lockdown commands and re-check the
+unit, guard ownership, and the four runtime directories before starting it.
+The guard uses only the embedded
+`/opt/actions-runner-attestor/externals/node24/bin/node` interpreter from that
+immutable runner installation; it does not trust a host interpreter or `PATH`.
+
+Configure the API's root-owned environment file with the exact non-secret
+`HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_ID`,
+`HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_GROUP_ID`, and
+`HRAMATKA_REVIEW_ATTESTATION_TRUSTED_RUNNER_LABEL=hramatka-attestor` values
+reported after registration. Configure the same three values as GitHub
+repository variables for the PR lifecycle workflow. They let the lifecycle
+verify the runner identity recorded by GitHub; they are not secrets and must
+not be represented as Actions secrets.
+
+The root-owned guard admits only GitHub-provided default context for the exact
+repository, the workflow ref
+`learn-ukrainian/learn-ukrainian-infra-private/.github/workflows/review-attestation.yml@refs/heads/main`,
+the `pull_request_target` event, and the `attest` or `publish` job. It parses
+the runner-supplied event file without logging its content and additionally
+requires `action=labeled` and `label.name=review-attestation`.
+
+Repository-scoped labels prevent accidental routing but are not an authorization
+boundary: a permitted repository workflow can name the unique label. In this
+zero-GitHub-spend design, the root-owned guard's exact workflow-ref, job, and
+event checks are the mandatory authorization boundary and execute before any
+workflow action, shell, or pull-request code. If available, an organization
+runner group restricted to this repository and attestation workflow is optional
+defense in depth; its absence does not block this design.
+
 ## Rollback
 
 1. Stop and investigate if the new service cannot pass the smoke probe. Keep

@@ -336,15 +336,32 @@ class ReviewAttestor:
             claims = self._verify_oidc(oidc_token)
             run_id = _positive_int(claims.get("run_id"), allow_digit_string=True)
             run_attempt = _positive_int(claims.get("run_attempt"), allow_digit_string=True)
+            try:
+                oidc_check_run_id = _positive_int(
+                    claims.get("check_run_id"), allow_digit_string=True
+                )
+            except ReviewAttestationError as error:
+                raise ReviewAttestationError("oidc_claim_mismatch") from error
+            if oidc_check_run_id != check_run_id:
+                raise ReviewAttestationError("oidc_claim_mismatch")
             workflow_sha = _required_text(claims.get("workflow_sha"), "workflow_sha", max_length=40)
             if _SHA_RE.fullmatch(workflow_sha) is None:
                 raise ReviewAttestationError("oidc_claim_mismatch")
             jti = _required_text(claims.get("jti"), "jti", max_length=512)
             workflow_name = _required_text(claims.get("workflow"), "workflow", max_length=200)
+            run_base_sha = self._validate_authoritative_actions_context(
+                check_run_id=check_run_id,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                pr_number=pr_number,
+                expected_head=expected_head,
+                token=github_token,
+            )
             pr, diff, workflow_path = self._fetch_authoritative_inputs(
                 pr_number,
                 github_token,
                 expected_head=expected_head,
+                expected_base_sha=run_base_sha,
                 workflow_sha=workflow_sha,
             )
             head = self._authoritative_head(pr, expected_head)
@@ -490,7 +507,7 @@ class ReviewAttestor:
                 audience=self.settings.review_attestation_audience,
                 issuer=_GITHUB_ISSUER,
                 options={
-                    "require": ["exp", "iat", "jti", "sub"],
+                    "require": ["exp", "iat", "jti", "sub", "check_run_id"],
                     "verify_exp": False,
                     "verify_iat": False,
                 },
@@ -525,7 +542,7 @@ class ReviewAttestor:
             "repository_id": self.settings.review_attestation_repository_id,
             "repository_visibility": "private",
             "event_name": "pull_request_target",
-            "runner_environment": "github-hosted",
+            "runner_environment": "self-hosted",
             "workflow_ref": self.settings.review_attestation_workflow_ref,
         }
         if any(claims.get(name) != value for name, value in expected.items()):
@@ -567,8 +584,109 @@ class ReviewAttestor:
         response.raise_for_status()
         return response
 
+    def _validate_authoritative_actions_context(
+        self,
+        *,
+        check_run_id: int,
+        run_id: int,
+        run_attempt: int,
+        pr_number: int,
+        expected_head: str,
+        token: str,
+    ) -> str:
+        """Bind a self-hosted OIDC token to its dedicated current Actions job."""
+        repository = self.settings.review_attestation_repository
+        assert repository is not None
+        repository_id = _positive_int(
+            self.settings.review_attestation_repository_id,
+            allow_digit_string=True,
+        )
+        encoded_repo = quote(repository, safe="/")
+        try:
+            job = self._github_get(
+                f"/repos/{encoded_repo}/actions/jobs/{check_run_id}", token
+            ).json()
+            run = self._github_get(f"/repos/{encoded_repo}/actions/runs/{run_id}", token).json()
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise ReviewAttestationError("github_authority_unavailable", status_code=503) from error
+        runner_id = _positive_int(
+            self.settings.review_attestation_trusted_runner_id,
+            allow_digit_string=True,
+        )
+        runner_group_id = _positive_int(
+            self.settings.review_attestation_trusted_runner_group_id,
+            allow_digit_string=True,
+        )
+        label = self.settings.review_attestation_trusted_runner_label
+        assert label is not None
+        expected_job = {
+            "id": check_run_id,
+            "run_id": run_id,
+            "name": "attest",
+            "status": "in_progress",
+            "conclusion": None,
+            "runner_id": runner_id,
+            "runner_group_id": runner_group_id,
+            "labels": [label],
+        }
+        if not isinstance(job, dict) or any(
+            job.get(name) != value for name, value in expected_job.items()
+        ):
+            raise ReviewAttestationError("actions_job_mismatch")
+        workflow_path = self._workflow_path()
+        if (
+            not isinstance(run, dict)
+            or run.get("id") != run_id
+            or run.get("event") != "pull_request_target"
+            or run.get("path") != workflow_path
+            or run.get("run_attempt") != run_attempt
+            or (
+                run_base_sha := self._authoritative_pull_request_base_sha(
+                    run.get("pull_requests"),
+                    pr_number=pr_number,
+                    expected_head=expected_head,
+                    repository_id=repository_id,
+                )
+            )
+            is None
+        ):
+            raise ReviewAttestationError("actions_run_mismatch")
+        return run_base_sha
+
+    @staticmethod
+    def _authoritative_pull_request_base_sha(
+        value: object, *, pr_number: int, expected_head: str, repository_id: int
+    ) -> str | None:
+        if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+            return None
+        pull = value[0]
+        head, base = pull.get("head"), pull.get("base")
+        if not isinstance(head, dict) or not isinstance(base, dict):
+            return None
+        head_repo, base_repo = head.get("repo"), base.get("repo")
+        base_sha = base.get("sha")
+        if (
+            pull.get("number") != pr_number
+            or head.get("sha") != expected_head
+            or not isinstance(head_repo, dict)
+            or head_repo.get("id") != repository_id
+            or not isinstance(base_repo, dict)
+            or base_repo.get("id") != repository_id
+            or base.get("ref") != "main"
+            or not isinstance(base_sha, str)
+            or _SHA_RE.fullmatch(base_sha) is None
+        ):
+            return None
+        return base_sha
+
     def _fetch_authoritative_inputs(
-        self, pr_number: int, token: str, *, expected_head: str, workflow_sha: str
+        self,
+        pr_number: int,
+        token: str,
+        *,
+        expected_head: str,
+        expected_base_sha: str,
+        workflow_sha: str,
     ) -> tuple[dict[str, Any], str, str]:
         repository = self.settings.review_attestation_repository
         assert repository is not None
@@ -579,6 +697,8 @@ class ReviewAttestor:
                 raise ValueError("malformed PR")
             head_sha = self._authoritative_head(pr, expected_head)
             base_sha = self._base_sha(pr)
+            if base_sha != expected_base_sha:
+                raise ReviewAttestationError("actions_run_mismatch")
             diff_response = self._github_get(
                 f"/repos/{encoded_repo}/compare/{base_sha}...{head_sha}",
                 token,
