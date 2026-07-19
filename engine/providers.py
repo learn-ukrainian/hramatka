@@ -22,6 +22,7 @@ import statistics
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -155,6 +156,10 @@ class _TelemetryState:
     step: str | None = None
     duration_fallback: dict[str, Any] | None = None
     latency_samples_ms: list[float] = field(default_factory=list)
+    repair: dict[str, Any] | None = None
+    generation_path: str | None = None
+    fallback_reason: str | None = None
+    latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -170,6 +175,10 @@ class TelemetryContext:
     traces: list[dict] = field(default_factory=list)
     activity_types: list[str] = field(default_factory=list)
     duration_fallback: dict[str, Any] | None = None
+    repair: dict[str, Any] | None = None
+    generation_path: str | None = None
+    fallback_reason: str | None = None
+    latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -181,13 +190,27 @@ class TelemetryContext:
                 calls_planned=self.calls_planned,
                 step=self.step,
                 duration_fallback=self.duration_fallback,
+                repair=self.repair,
+                generation_path=self.generation_path,
+                fallback_reason=self.fallback_reason,
+                latency_watchdogs=self.latency_watchdogs,
             )
         else:
-            self.traces = self._state.traces
-            self.calls_done = self._state.calls_done
-            self.calls_planned = self._state.calls_planned
-            self.step = self._state.step
-            self.duration_fallback = self._state.duration_fallback
+            with self._state.lock:
+                self._sync_from_shared_state()
+
+    def _sync_from_shared_state(self) -> None:
+        """Refresh this context's scalar mirrors from the locked shared state."""
+        assert self._state is not None
+        self.traces = self._state.traces
+        self.calls_done = self._state.calls_done
+        self.calls_planned = self._state.calls_planned
+        self.step = self._state.step
+        self.duration_fallback = self._state.duration_fallback
+        self.repair = self._state.repair
+        self.generation_path = self._state.generation_path
+        self.fallback_reason = self._state.fallback_reason
+        self.latency_watchdogs = self._state.latency_watchdogs
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -195,10 +218,7 @@ class TelemetryContext:
             job_id=self.job_id,
             store=self.store,
             phases_total=self.phases_total,
-            calls_planned=self.calls_planned,
-            calls_done=self.calls_done,
             phase=phase,
-            step=self._state.step if self._state else self.step,
             trace_dir=self.trace_dir,
             _state=self._state,
             _report_phase=False,
@@ -228,47 +248,53 @@ class TelemetryContext:
                 if self._state.calls_planned is None or calls_planned > self._state.calls_planned:
                     self._state.calls_planned = calls_planned
 
-            self.step = self._state.step
-            self.calls_done = self._state.calls_done
-            self.calls_planned = self._state.calls_planned
+            self._sync_from_shared_state()
             progress_phase = self.phase if self._report_phase else 1
             progress_obj = {
                 "phase": progress_phase,
                 "phases_total": self.phases_total,
                 "step": self.step,
-                "calls_done": self.calls_done,
-                "calls_planned": self.calls_planned,
+                "calls_done": self._state.calls_done,
+                "calls_planned": self._state.calls_planned,
             }
             if self._state.duration_fallback is not None:
-                progress_obj["duration_fallback"] = self._state.duration_fallback
+                progress_obj["duration_fallback"] = deepcopy(self._state.duration_fallback)
+            if self._state.repair is not None:
+                progress_obj["repair"] = deepcopy(self._state.repair)
+            if self._state.generation_path is not None:
+                progress_obj["generation_path"] = self._state.generation_path
+            if self._state.fallback_reason is not None:
+                progress_obj["fallback_reason"] = self._state.fallback_reason
+            if self._state.latency_watchdogs:
+                progress_obj["latency_watchdogs"] = list(self._state.latency_watchdogs)
             snapshot = dict(progress_obj)
 
-        if self.store is not None and self.job_id is not None:
-            # Monotonic: never write a smaller calls_done than the shared state holds
-            with self._state.lock:
-                if (
-                    snapshot["calls_done"] is not None
-                    and self._state.calls_done is not None
-                    and snapshot["calls_done"] < self._state.calls_done
-                ):
-                    return
+            if self.store is not None and self.job_id is not None:
+                # Keep the durable write inside the shared lock.  This makes the
+                # shared state the only authority and prevents an older fork
+                # snapshot from overwriting either call counter after a newer
+                # fork has advanced it.
+                from datetime import UTC, datetime
 
-            from datetime import UTC, datetime
+                timestamp = (
+                    datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                )
+                snapshot["updated_at"] = timestamp
+                try:
+                    self.store.update_progress(self.job_id, snapshot)
+                except Exception as exc:
+                    log.warning("Failed to update progress in DB for job %s: %s", self.job_id, exc)
 
-            timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            snapshot["updated_at"] = timestamp
-            try:
-                self.store.update_progress(self.job_id, snapshot)
-            except Exception as exc:
-                log.warning("Failed to update progress in DB for job %s: %s", self.job_id, exc)
-
-    def increase_calls_planned(self) -> None:
-        """Atomically account for one dependent regeneration request."""
+    def increase_calls_planned(self, count: int = 1) -> int | None:
+        """Atomically account for dependent requests and return their shared total."""
+        if count < 0:
+            raise ValueError("Planned-call increment must be non-negative.")
         assert self._state is not None
         with self._state.lock:
             if self._state.calls_planned is not None:
-                self._state.calls_planned += 1
-            self.calls_planned = self._state.calls_planned
+                self._state.calls_planned += count
+            self._sync_from_shared_state()
+            return self.calls_planned
 
     def record_provider_call(self, trace_entry: dict) -> None:
         """Atomically keep one trace and progress increment from a phase thread.
@@ -291,6 +317,15 @@ class TelemetryContext:
                         "http_status_class": trace_entry.get("http_status_class"),
                     }
                     self._state.traces.append(watchdog)
+                    self._state.latency_watchdogs.append(
+                        {
+                            "duration_ms": watchdog.get("duration_ms"),
+                            "threshold_ms": watchdog.get("threshold_ms"),
+                            "ratio": float(watchdog.get("ratio") or 0.0),
+                            "host": watchdog.get("host"),
+                            "phase": watchdog.get("phase"),
+                        }
+                    )
                     log.warning(
                         "latency_watchdog host=%s dur_ms=%s median_ms=%s ratio=%.2f",
                         watchdog.get("host"),
@@ -304,10 +339,9 @@ class TelemetryContext:
                         -LATENCY_WATCHDOG_WINDOW:
                     ]
             self._state.traces.append(trace_entry)
-            self.traces = self._state.traces
             if self._state.calls_done is not None:
                 self._state.calls_done += 1
-            self.calls_done = self._state.calls_done
+            self._sync_from_shared_state()
             self.save_traces()
             calls_done = self.calls_done
         if calls_done is not None:
@@ -319,11 +353,32 @@ class TelemetryContext:
         with self._state.lock:
             self._state.traces.append(trace_entry)
             self.traces = self._state.traces
-            if trace_entry.get("event") == "duration_fallback":
+            event = trace_entry.get("event")
+            if event == "duration_fallback":
                 self._state.duration_fallback = {
                     "requested_duration_kind": trace_entry.get("requested_duration_kind"),
                     "resolved_duration": trace_entry.get("resolved_duration"),
                 }
+            elif event == "slot_repair_stopped":
+                if self._state.repair is None:
+                    self._state.repair = {"attempts": 0, "rounds": 0, "stop_reason": "unknown"}
+                self._state.repair["stop_reason"] = trace_entry.get("reason", "unknown")
+                self._state.repair["rounds"] = max(
+                    self._state.repair["rounds"], trace_entry.get("round", 0)
+                )
+            elif event == "slot_repair_attempt":
+                if self._state.repair is None:
+                    self._state.repair = {"attempts": 0, "rounds": 0, "stop_reason": "unknown"}
+                self._state.repair["attempts"] += 1
+                self._state.repair["rounds"] = max(
+                    self._state.repair["rounds"], trace_entry.get("round", 0)
+                )
+            elif event == "prompt_pack_enabled":
+                self._state.generation_path = "pack"
+            elif event == "prompt_pack_fallback":
+                self._state.generation_path = "legacy_fallback"
+                if "reason" in trace_entry:
+                    self._state.fallback_reason = trace_entry["reason"]
             self.save_traces()
         self.update_progress_db()
 
@@ -804,7 +859,7 @@ def make_bake_generator(
         unknown = sorted(set(names) - set(allowed))
         if not names or unknown:
             raise ValueError(f"Bake providers must be one or more of {', '.join(allowed)}.")
-        
+
         if active_model == "google-ais/gemma-4-26b-a4b-it":
             ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
             openrouter_base = os.environ.get(
@@ -843,7 +898,7 @@ def make_bake_generator(
                 )
         else:
             ais, openrouter, deepinfra = _gemma_routes()
-            
+
         routes: dict[str, AISGeneratorPort] = {
             "google-ais": _with_failover(ais, openrouter),
             "openrouter": _with_failover(openrouter, ais),
@@ -919,4 +974,3 @@ def make_generator(name: str) -> AISGeneratorPort:
 
     known = sorted(list(ALLOWED_MODELS))
     raise ValueError(f"unknown generator {name!r}; known: {', '.join(known)}")
-

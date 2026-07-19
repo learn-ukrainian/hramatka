@@ -538,6 +538,8 @@ class EngineLessonBaker:
         focus: str | None,
         *,
         _allow_prompt_pack: bool = True,
+        _fallback_reason: str | None = None,
+        _tel_ctx=None,
     ) -> dict[str, Any]:
         """Run the engine and return a lu.lesson.v1 block template.
 
@@ -566,6 +568,9 @@ class EngineLessonBaker:
         precomputed_snapshot: dict[str, Any] | None = None
         precomputed_grounding: dict[str, Any] | None = None
         kit_enrichment_enabled = flags.kit_enrichment_v1_enabled()
+
+        fallback_reason = _fallback_reason
+
         if prompt_pack_enabled or kit_enrichment_enabled:
             # One immutable snapshot/grounding/kit pass is shared by all three
             # phase workers.  It is local, deterministic, and content-hashed.
@@ -601,6 +606,7 @@ class EngineLessonBaker:
                 # text because it may name a source-derived condition.
                 log.warning("Prompt-pack preflight rejected; using legacy generation path.")
                 prompt_pack_enabled = False
+                fallback_reason = "preflight_rejected"
                 # Repair is inseparable from the immutable prompt pack.  Once
                 # its preflight falls back, retain the legacy regeneration
                 # policy rather than suppressing it under the repair flag.
@@ -614,15 +620,21 @@ class EngineLessonBaker:
         job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
         phases_total = len(phase_count_plans)
 
-        tel_ctx = TelemetryContext(
-            job_id=job_id,
-            store=self.store,
-            phases_total=phases_total,
-            calls_planned=phases_total,
-            calls_done=0,
-            phase=1,
-            step="generation",
-        )
+        if _tel_ctx is not None:
+            tel_ctx = _tel_ctx
+            tel_ctx.phases_total = phases_total
+            tel_ctx.increase_calls_planned(phases_total)
+            tel_ctx.update_progress_db()
+        else:
+            tel_ctx = TelemetryContext(
+                job_id=job_id,
+                store=self.store,
+                phases_total=phases_total,
+                calls_planned=phases_total,
+                calls_done=0,
+                phase=1,
+                step="generation",
+            )
         ctx_token = telemetry_ctx.set(tel_ctx)
         tel_ctx.update_progress_db()
 
@@ -647,6 +659,13 @@ class EngineLessonBaker:
                         "version": prompt_pack.PROMPT_PACK_VERSION,
                         "candidate_policy": "max(2, visible_slots), capped at 6",
                         "focus_status": shared_pack["lesson_plan"]["focus"]["status"],
+                    }
+                )
+            else:
+                tel_ctx.record_event(
+                    {
+                        "event": "prompt_pack_fallback",
+                        "reason": fallback_reason or "disabled",
                     }
                 )
 
@@ -734,6 +753,8 @@ class EngineLessonBaker:
                         duration,
                         focus,
                         _allow_prompt_pack=False,
+                        _fallback_reason="response_rejected",
+                        _tel_ctx=tel_ctx,
                     )
                 if prompt_pack_enabled:
                     had_success = any(
@@ -844,9 +865,7 @@ class EngineLessonBaker:
                         # the normal re-gate receives the complete contract.
                         raw_candidate = candidate.raw_candidate
                         pairs = (
-                            raw_candidate.get("pairs")
-                            if isinstance(raw_candidate, dict)
-                            else None
+                            raw_candidate.get("pairs") if isinstance(raw_candidate, dict) else None
                         )
                         if not isinstance(pairs, list):
                             continue
@@ -883,13 +902,24 @@ class EngineLessonBaker:
                     ]
 
                 repair_stopped = False
+                rounds_executed = 0
+                if repair.floor_ready(
+                    selected,
+                    selected_by_phase,
+                    duration=resolved_duration,
+                    planned_blocks=len(plan),
+                ):
+                    tel_ctx.record_event(
+                        {
+                            "event": "slot_repair_stopped",
+                            "round": 0,
+                            "reason": "floor_met",
+                        }
+                    )
+                    repair_stopped = True
+
                 for repair_round in range(1, repair.MAX_ROUNDS + 1):
-                    if repair.floor_ready(
-                        selected,
-                        selected_by_phase,
-                        duration=resolved_duration,
-                        planned_blocks=len(plan),
-                    ):
+                    if repair_stopped:
                         break
                     requests = planner.plan(
                         round=repair_round,
@@ -900,10 +930,11 @@ class EngineLessonBaker:
                         tel_ctx.record_event(
                             {
                                 "event": "slot_repair_stopped",
-                                "round": repair_round,
+                                "round": rounds_executed,
                                 "reason": "budget_or_deadline",
                             }
                         )
+                        repair_stopped = True
                         break
                     for request in requests:
                         # A batch can span multiple provider calls.  Re-check
@@ -914,7 +945,7 @@ class EngineLessonBaker:
                             tel_ctx.record_event(
                                 {
                                     "event": "slot_repair_stopped",
-                                    "round": repair_round,
+                                    "round": rounds_executed,
                                     "reason": "budget_or_deadline",
                                 }
                             )
@@ -1040,7 +1071,9 @@ class EngineLessonBaker:
                         planner.scheduled(request)
                         phase_results[request.phase].activities.extend(repair_result.activities)
                         phase_results[request.phase].ready.extend(repair_result.ready)
-                        phase_results[request.phase].review_required.extend(repair_result.review_required)
+                        phase_results[request.phase].review_required.extend(
+                            repair_result.review_required
+                        )
                         phase_results[request.phase].rejected.extend(repair_result.rejected)
                         candidates_by_phase[request.phase].extend(repair_result.ready)
                         selected_by_phase, selected = compose_repair_pool()
@@ -1085,8 +1118,31 @@ class EngineLessonBaker:
                                 "disposition": "amended",
                             }
                         )
-                    if repair_stopped:
-                        break
+                        rounds_executed = repair_round
+                        if repair.floor_ready(
+                            selected,
+                            selected_by_phase,
+                            duration=resolved_duration,
+                            planned_blocks=len(plan),
+                        ):
+                            tel_ctx.record_event(
+                                {
+                                    "event": "slot_repair_stopped",
+                                    "round": rounds_executed,
+                                    "reason": "floor_met",
+                                }
+                            )
+                            repair_stopped = True
+                            break
+
+                if not repair_stopped:
+                    tel_ctx.record_event(
+                        {
+                            "event": "slot_repair_stopped",
+                            "round": rounds_executed,
+                            "reason": "max_rounds_exhausted",
+                        }
+                    )
             blocks = [
                 self._block(candidate, slot, phase)
                 for slot, (phase, candidate) in enumerate(
@@ -1196,6 +1252,8 @@ class EngineLessonBaker:
                     duration,
                     focus,
                     _allow_prompt_pack=False,
+                    _fallback_reason="phase_setup_rejected",
+                    _tel_ctx=tel_ctx,
                 )
             raise GenerationFailed(
                 "Bake failed: prompt-pack preflight could not verify source material.",
