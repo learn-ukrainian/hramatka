@@ -13,8 +13,15 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   await page.getByPlaceholder(/Вставте український текст/).fill(
     'Учні читають український текст і обговорюють вправи на уроці.'
   );
-  await page.locator('select').selectOption('45');
+  const modelPicker = page.getByLabel('Модель для уроку');
+  await expect(modelPicker).toHaveValue('gemini-3.5-flash');
+  await modelPicker.selectOption('gemini-3.5-flash');
+  await page.locator('.field').filter({ hasText: 'Тривалість' }).locator('select').selectOption('45');
+  const submittedLesson = page.waitForRequest(
+    request => request.url().endsWith('/api/lessons') && request.method() === 'POST',
+  );
   await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+  expect((await submittedLesson).postDataJSON().logical_model_id).toBe('gemini-3.5-flash');
   // 45-min B1 lesson = 8 activities under the canonical sizing policy (hramatka/sizing_policy.py).
   await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(8, { timeout: 15_000 });
   await expect(page.locator('[data-activity-player]')).toHaveCount(8);

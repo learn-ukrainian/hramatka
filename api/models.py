@@ -59,6 +59,16 @@ class LessonCreate(FrozenModel):
     level: Literal["B1"]
     duration: Literal[45, 60, 90]
     focus: str | None = Field(default=None, max_length=500)
+    # Optional only for wire compatibility with pre-selector clients.  The
+    # production endpoint resolves it fail-closed; newly persisted jobs always
+    # carry a qualified logical ID.  Injected legacy bakers retain their test /
+    # migration seam while old durable request_json remains readable.
+    logical_model_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
+    )
 
 
 class RevisionMutation(FrozenModel):

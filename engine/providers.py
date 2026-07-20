@@ -160,6 +160,8 @@ class _TelemetryState:
     generation_path: str | None = None
     fallback_reason: str | None = None
     latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
+    logical_model_id: str | None = None
+    provider_routes: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -179,6 +181,8 @@ class TelemetryContext:
     generation_path: str | None = None
     fallback_reason: str | None = None
     latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
+    logical_model_id: str | None = None
+    provider_routes: list[dict[str, str]] = field(default_factory=list)
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -194,6 +198,8 @@ class TelemetryContext:
                 generation_path=self.generation_path,
                 fallback_reason=self.fallback_reason,
                 latency_watchdogs=self.latency_watchdogs,
+                logical_model_id=self.logical_model_id,
+                provider_routes=self.provider_routes,
             )
         else:
             with self._state.lock:
@@ -211,6 +217,8 @@ class TelemetryContext:
         self.generation_path = self._state.generation_path
         self.fallback_reason = self._state.fallback_reason
         self.latency_watchdogs = self._state.latency_watchdogs
+        self.logical_model_id = self._state.logical_model_id
+        self.provider_routes = self._state.provider_routes
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -267,6 +275,10 @@ class TelemetryContext:
                 progress_obj["fallback_reason"] = self._state.fallback_reason
             if self._state.latency_watchdogs:
                 progress_obj["latency_watchdogs"] = list(self._state.latency_watchdogs)
+            if self._state.logical_model_id is not None:
+                progress_obj["logical_model_id"] = self._state.logical_model_id
+            if self._state.provider_routes:
+                progress_obj["provider_routes"] = deepcopy(self._state.provider_routes)
             snapshot = dict(progress_obj)
 
             if self.store is not None and self.job_id is not None:
@@ -339,6 +351,12 @@ class TelemetryContext:
                         -LATENCY_WATCHDOG_WINDOW:
                     ]
             self._state.traces.append(trace_entry)
+            host = trace_entry.get("host")
+            model = trace_entry.get("model")
+            if isinstance(host, str) and isinstance(model, str):
+                route = {"host": host, "model": model}
+                if route not in self._state.provider_routes:
+                    self._state.provider_routes.append(route)
             if self._state.calls_done is not None:
                 self._state.calls_done += 1
             self._sync_from_shared_state()
@@ -638,6 +656,7 @@ class HttpChatTransport:
                 trace_entry = {
                     "duration_ms": duration_ms,
                     "host": self.host,
+                    "model": model,
                     "attempts": attempts,
                     "http_status_class": status_class,
                     "phase": phase,
@@ -909,6 +928,96 @@ def make_bake_generator(
     else:
         gen = _build_generator_port(active_model)
         return RoundRobinGeneratorSelector({active_model: gen})
+
+
+def make_logical_model_generator(
+    logical_model_id: str,
+    provider_names: tuple[str, ...] | list[str] | None = None,
+    *,
+    qualified_routes: Sequence[Any] | None = None,
+) -> RoundRobinGeneratorSelector:
+    """Build one job-scoped generator without consulting or mutating model env.
+
+    ``logical_model_id`` is the durable teacher choice.  Provider names and
+    wire model IDs stay behind this boundary; a Gemma job may use either of its
+    qualified routes and each route retains outage-only opposite-host failover.
+    """
+    if logical_model_id == "gemma-4-31b":
+        ais, openrouter, _ = _gemma_routes()
+        routes: dict[str, AISGeneratorPort] = {
+            "google-ais": _with_failover(ais, openrouter),
+            "openrouter": _with_failover(openrouter, ais),
+        }
+        requested = tuple(provider_names or routes)
+        selected = tuple(name for name in dict.fromkeys(requested) if name in routes)
+        if not selected:
+            raise ValueError("Gemma 4 31B requires a qualified AIS or OpenRouter route.")
+        _require_exact_qualified_routes(
+            qualified_routes,
+            {
+                "gemma-ais": (getattr(ais._transport, "host", ""), ais._model),
+                "gemma-openrouter": (
+                    getattr(openrouter._transport, "host", ""),
+                    openrouter._model,
+                ),
+            },
+            configured_hosts=set(selected),
+        )
+        if qualified_routes is not None and (
+            not ais.is_configured() or not openrouter.is_configured()
+        ):
+            raise ValueError("A qualified provider route has no configured credential source.")
+        return RoundRobinGeneratorSelector({name: routes[name] for name in selected})
+
+    ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+    if logical_model_id == "gemini-3.5-flash":
+        model_id = "google-ais/gemini-3.5-flash"
+    elif logical_model_id == "gemini-3.1-pro":
+        if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
+            raise ValueError(
+                "Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1."
+            )
+        model_id = "google-ais/gemini-3.1-pro-preview"
+    else:
+        raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
+    port = AISGeneratorPort(
+        api_key_env=AIS_API_KEY_ENV,
+        model=model_id,
+        timeout_s=GEMMA_TIMEOUT_S,
+        transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+    )
+    route_id = (
+        "gemini-flash-ais" if logical_model_id == "gemini-3.5-flash" else "gemini-pro-ais"
+    )
+    _require_exact_qualified_routes(
+        qualified_routes,
+        {route_id: ("google-ais", model_id)},
+        configured_hosts=set(provider_names or ("google-ais",)),
+    )
+    if qualified_routes is not None and not port.is_configured():
+        raise ValueError("A qualified provider route has no configured credential source.")
+    return RoundRobinGeneratorSelector({"google-ais": port})
+
+
+def _require_exact_qualified_routes(
+    qualified_routes: Sequence[Any] | None,
+    actual_routes: Mapping[str, tuple[str, str]],
+    *,
+    configured_hosts: set[str],
+) -> None:
+    """Bind runtime host/model construction to the receipt-pinned route set."""
+    if qualified_routes is None:
+        return
+    expected = {
+        route.id: (route.host, route.model_id)
+        for route in qualified_routes
+        if all(hasattr(route, field) for field in ("id", "host", "model_id"))
+    }
+    if expected != dict(actual_routes):
+        raise ValueError("Qualified provider routes do not match runtime routing.")
+    required_hosts = {host for host, _model in actual_routes.values()}
+    if not required_hosts <= configured_hosts:
+        raise ValueError("A qualified provider route is not enabled for this deployment.")
 
 
 def make_generator(name: str) -> AISGeneratorPort:

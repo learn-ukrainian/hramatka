@@ -183,8 +183,9 @@ function buildGoldenLesson(id, opts = {}) {
     focus: opts.focus || 'демонстрація контракту',
     anchor: {
       text: anchorText,
-      source: 'teacher-paste',
+      source: opts.anchor?.source || 'teacher-paste',
       chars: anchorText.length,
+      ...(opts.anchor?.source_url ? { source_url: opts.anchor.source_url } : {}),
     },
     duration: opts.duration || 60,
     version: 1,
@@ -213,6 +214,12 @@ function loadPilotTypes() {
 }
 
 const PILOT_TYPES = loadPilotTypes();
+const QUALIFIED_MODEL_REGISTRY_VERSION = 'QualifiedLogicalModels.v1';
+const QUALIFIED_LOGICAL_MODEL = Object.freeze({
+  id: 'gemini-3.5-flash',
+  label: 'Gemini 3.5 Flash',
+  description: 'Детермінована тестова модель.',
+});
 const SLOW_BAKE_MARKER = '__SLOW_BAKE__';
 
 function isSlowBake(l) {
@@ -377,6 +384,7 @@ function lessonResource(l) {
     accepted_at: l.accepted_at,
     accepted_revision: l.accepted_revision,
     warning_acknowledgements: l.acks || [],
+    logical_model_id: l._logicalModelId ?? null,
     lesson: l.lesson,
   };
 }
@@ -548,6 +556,19 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 204, null, { 'Set-Cookie': cleared });
   }
 
+  // One synthetic current receipt, matching real_backend_server.py's explicit
+  // qualified test registry. Provider routes are intentionally never exposed.
+  if (pathname === '/api/lesson-models' && method === 'GET') {
+    if (!state.session) {
+      return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    }
+    return sendJSON(res, 200, {
+      registry_version: QUALIFIED_MODEL_REGISTRY_VERSION,
+      models: [{ ...QUALIFIED_LOGICAL_MODEL }],
+      unavailable_message: null,
+    });
+  }
+
   // Anchor URL import (stub — no real network)
   if (pathname === '/api/anchor/import-url' && method === 'POST') {
     if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
@@ -596,11 +617,20 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const id = body && body.id;
     const anchor = body && body.anchor;
+    const logicalModelId = body && body.logical_model_id;
     if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
       return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
     }
     if (!anchor || !anchor.text || anchor.text.trim().length < 1 || anchor.text.length > 100000) {
       return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    }
+    if (logicalModelId !== QUALIFIED_LOGICAL_MODEL.id) {
+      return sendJSON(res, 409, errorBody(
+        'model_unavailable',
+        logicalModelId
+          ? 'Обрана модель зараз недоступна. Оновіть список моделей.'
+          : 'Оберіть доступну кваліфіковану модель.',
+      ));
     }
     // Idempotency: same id + same request returns existing
     const existing = state.lessons[id];
@@ -627,6 +657,7 @@ const server = http.createServer(async (req, res) => {
       _anchor: anchor,
       _duration: body.duration || 60,
       _focus: body.focus || null,
+      _logicalModelId: logicalModelId,
     };
     // Scripted: special id for errors
     if (id === '00000000-0000-0000-0000-000000000bad') {
@@ -707,6 +738,7 @@ const server = http.createServer(async (req, res) => {
       _anchor: source._anchor,
       _duration: source._duration || 60,
       _focus: source._focus || null,
+      _logicalModelId: source._logicalModelId,
     };
     return sendJSON(res, 202, { id: newId, status: 'baking', revision: 1, reused: false });
   }
@@ -731,14 +763,7 @@ const server = http.createServer(async (req, res) => {
     if (l.status !== 'ready' || !l.lesson) {
       return sendJSON(res, 409, errorBody('lesson_not_ready', 'The lesson is not ready.'));
     }
-    return sendJSON(res, 200, {
-      lesson_id: lid,
-      revision: l.revision,
-      accepted_at: l.accepted_at,
-      accepted_revision: l.accepted_revision,
-      warning_acknowledgements: l.acks || [],
-      lesson: l.lesson,
-    });
+    return sendJSON(res, 200, lessonResource(l));
   }
 
   // Acknowledge warning block

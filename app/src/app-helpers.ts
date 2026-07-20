@@ -36,6 +36,7 @@ export interface BakeRequestPayload {
   lessonId: string;
   anchorSource?: 'teacher-paste' | 'teacher-url';
   sourceUrl?: string;
+  logicalModelId?: string;
 }
 
 const LAST_BAKE_KEY = 'hramatka:last-bake-request';

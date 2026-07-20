@@ -273,10 +273,16 @@ class BakeRunner:
             "body_uk": job.anchor_text,
             "source": job.anchor_source,
         }
+        route_for_job = getattr(self._baker, "for_logical_model", None)
+        baker = (
+            route_for_job(getattr(job, "logical_model_id", None))
+            if callable(route_for_job)
+            else self._baker
+        )
         for attempt in range(2):
             deadline_token = repair.set_hard_deadline(time.monotonic() + self._hard_timeout_seconds)
             try:
-                return self._baker.bake(request, job.duration, job.focus)
+                return baker.bake(request, job.duration, job.focus)
             except ProviderUnavailable as error:
                 # The adapter preserves the underlying transport signal: retry
                 # a fresh bake only after its own bounded retry/failover path

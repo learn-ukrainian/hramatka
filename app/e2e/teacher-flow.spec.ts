@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const STUB_PORT = 8787;
 const APP = 'http://localhost:5173';
 const TEST_TOKEN = 'A'.repeat(42) + 'Q'; // valid pattern
+const TEST_LOGICAL_MODEL_ID = 'gemini-3.5-flash';
 
 let stubProc: ChildProcess | null = null;
 
@@ -80,15 +81,68 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible({ timeout: 10000 });
   });
 
-  test('paste → bake status poll → lesson renders all 9 blocks (no fallbacks)', async ({ page }) => {
+  test('qualified model stub contract → paste → bake renders all 9 blocks', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs
     await page.waitForURL(/\/teacher\/?$/);
 
+    const modelContract = await page.evaluate(async () => {
+      const response = await fetch('/api/lesson-models');
+      return { status: response.status, payload: await response.json() };
+    });
+    expect(modelContract).toEqual({
+      status: 200,
+      payload: {
+        registry_version: 'QualifiedLogicalModels.v1',
+        models: [{
+          id: TEST_LOGICAL_MODEL_ID,
+          label: 'Gemini 3.5 Flash',
+          description: 'Детермінована тестова модель.',
+        }],
+        unavailable_message: null,
+      },
+    });
+    await expect(page.getByLabel('Модель для уроку')).toHaveValue(TEST_LOGICAL_MODEL_ID);
+
+    const rejectedModelRequests = await page.evaluate(async () => {
+      const session = await (await fetch('/api/session')).json();
+      const attempt = async (logicalModelId?: string) => {
+        const body: Record<string, unknown> = {
+          id: crypto.randomUUID(),
+          anchor: { text: 'Текст для перевірки відхилення моделі.', source: 'teacher-paste' },
+          level: 'B1',
+          duration: 45,
+          focus: null,
+        };
+        if (logicalModelId !== undefined) body.logical_model_id = logicalModelId;
+        const response = await fetch('/api/lessons', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': session.csrf_token,
+          },
+          body: JSON.stringify(body),
+        });
+        return { status: response.status, code: (await response.json()).code };
+      };
+      return {
+        missing: await attempt(),
+        unknown: await attempt('unknown-model'),
+      };
+    });
+    expect(rejectedModelRequests).toEqual({
+      missing: { status: 409, code: 'model_unavailable' },
+      unknown: { status: 409, code: 'model_unavailable' },
+    });
+
     // paste form
     const text = 'Тестовий текст для демонстрації уроку з усіма типами. Він містить речення для вправ.';
     await page.getByPlaceholder(/Вставте український текст/).fill(text);
+    const submittedLesson = page.waitForRequest(
+      request => request.url().endsWith('/api/lessons') && request.method() === 'POST',
+    );
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    expect((await submittedLesson).postDataJSON().logical_model_id).toBe(TEST_LOGICAL_MODEL_ID);
 
     // baking / poll visible
     await expect(page.getByText(/бакінг|статус|готово/i)).toBeVisible({ timeout: 10000 });
@@ -103,6 +157,30 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
       const found = await page.locator(`[data-activity-type="${t}"], [data-activity-player="${t}"], .dblock:has-text("${t}"), .block:has-text("${t}")`).count();
       expect(found, `block for ${t} should be visible`).toBeGreaterThan(0);
     }
+
+    const lessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
+    expect(lessonId).toBeTruthy();
+    const persistedModelId = await page.evaluate(async (id) => {
+      const response = await fetch(`/api/lessons/${id}`);
+      return (await response.json()).logical_model_id;
+    }, lessonId!);
+    expect(persistedModelId).toBe(TEST_LOGICAL_MODEL_ID);
+
+    const recreatedModel = await page.evaluate(async (id) => {
+      const session = await (await fetch('/api/session')).json();
+      const response = await fetch(`/api/lessons/${id}/recreate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': session.csrf_token,
+        },
+      });
+      const recreated = await response.json();
+      await fetch(`/api/lessons/${recreated.id}/status`);
+      const resource = await (await fetch(`/api/lessons/${recreated.id}`)).json();
+      return { status: response.status, logicalModelId: resource.logical_model_id };
+    }, lessonId!);
+    expect(recreatedModel).toEqual({ status: 202, logicalModelId: TEST_LOGICAL_MODEL_ID });
 
     // no placeholder messages
     const bad = await page.locator('text=тип поки без віджета, text=unsupported, text=placeholder').count();
@@ -257,7 +335,8 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     const teacherAText = 'Секретний текст викладача А — не повинен з’явитися у наступній сесії.';
     await page.getByPlaceholder(/Вставте український текст/).fill(teacherAText);
-    await page.locator('.paste select.inputbox').selectOption('90');
+    const durationPicker = page.locator('.field').filter({ hasText: 'Тривалість' }).locator('select');
+    await durationPicker.selectOption('90');
     await page.getByPlaceholder(/вищий ступінь/).fill('майбутній час');
 
     await page.getByRole('button', { name: 'Вийти' }).click();
@@ -270,7 +349,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByPlaceholder(/Вставте український текст/)).toHaveValue('');
-    await expect(page.locator('.paste select.inputbox')).toHaveValue('60');
+    await expect(durationPicker).toHaveValue('60');
     await expect(page.getByPlaceholder(/вищий ступінь/)).toHaveValue('');
 
     const storageCleared = await page.evaluate(() => {
@@ -515,10 +594,11 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
     await page.waitForSelector('[data-activity-player], .block', { timeout: 15000 });
 
-    await page.getByRole('button', { name: /До списку/ }).click();
+    await page.getByTestId('copy-lesson-as-new').click();
     await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'З посилання' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('anchor-url-input')).toBeVisible();
 
-    await page.getByRole('tab', { name: 'З посилання' }).click();
     const failUrl = 'https://stub.example.test/fail-fetch';
     await page.getByTestId('anchor-url-input').fill(failUrl);
     await page.getByTestId('fetch-anchor-url-btn').click();

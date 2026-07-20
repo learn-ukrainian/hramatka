@@ -494,8 +494,22 @@ def test_runtime_is_private_and_each_run_gets_fresh_state(tmp_path: Path) -> Non
     assert stat.S_IMODE(first_root.stat().st_mode) == 0o700
     assert first["HRAMATKA_MOCK_MODE"] == "0"
     assert first["HRAMATKA_PROMPT_PACK"] == "1"
+    assert first["HRAMATKA_SLOT_REPAIR"] == "1"
     assert first["HRAMATKA_GEN_JSON_MODE"] == "0"
     assert first["HRAMATKA_BAKE_PROVIDERS"] == "google-ais"
+
+
+def test_slot_repair_has_an_explicit_local_opt_out(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    config = local_teacher._parse_args(["--no-slot-repair"])
+
+    resolved = local_teacher._runtime_environment(
+        config, _runtime_paths(root), _data_environment(tmp_path)
+    )
+
+    assert config.slot_repair is False
+    assert resolved["HRAMATKA_SLOT_REPAIR"] == "0"
 
 
 def test_openrouter_is_enabled_only_when_credential_is_configured(tmp_path: Path) -> None:
@@ -536,17 +550,28 @@ def test_explicit_unknown_provider_is_rejected_but_models_are_not_allowlisted(
         )
 
 
-def test_model_is_passed_through_without_a_launcher_allowlist(tmp_path: Path) -> None:
-    model = "future-provider/qualified-model"
-    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT, model=model)
+def test_runtime_discards_legacy_process_global_model(tmp_path: Path) -> None:
+    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     root = tmp_path / "runtime"
     root.mkdir()
+    environment = _data_environment(tmp_path)
+    environment["HRAMATKA_GEN_MODEL"] = "legacy/process-global-model"
 
     resolved = local_teacher._runtime_environment(
-        config, _runtime_paths(root), _data_environment(tmp_path)
+        config, _runtime_paths(root), environment
     )
 
-    assert resolved["HRAMATKA_GEN_MODEL"] == model
+    assert "HRAMATKA_GEN_MODEL" not in resolved
+
+
+def test_legacy_model_argument_fails_with_per_lesson_migration_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        local_teacher._parse_args(["--model", "google-ais/gemma-4-31b-it"])
+
+    assert exit_info.value.code == 2
+    assert "choose a qualified model for each lesson" in capsys.readouterr().err
 
 
 def test_frontend_and_proxy_tooling_never_receive_runtime_credentials() -> None:

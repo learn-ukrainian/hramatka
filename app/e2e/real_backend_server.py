@@ -21,12 +21,50 @@ import uvicorn
 from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.config import Settings
+from hramatka.api.qualified_models import (
+    DENSITY_CONTRACT_DIGEST,
+    DENSITY_CONTRACT_VERSION,
+    QUALIFICATION_ANCHORS,
+    QUALIFIED_MODEL_REGISTRY_VERSION,
+    LogicalModelSpec,
+    QualificationReceipt,
+    QualifiedModelRegistry,
+    QualifiedProviderRoute,
+)
 from hramatka.engine import fixtures
+from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 from hramatka.engine.providers import telemetry_ctx
 
 LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 EXPECTED_STATE_DIRECTORY = Path(__file__).resolve().parents[1] / ".real-e2e"
+TEST_LOGICAL_MODEL_ID = "gemini-3.5-flash"
+TEST_PROVIDER_ROUTE = QualifiedProviderRoute(
+    "gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"
+)
+
+
+def _qualified_test_registry() -> QualifiedModelRegistry:
+    """Return one explicit synthetic receipt; production defaults stay empty."""
+    model = LogicalModelSpec(
+        id=TEST_LOGICAL_MODEL_ID,
+        label="Gemini 3.5 Flash",
+        description_uk="Детермінована тестова модель.",
+        provider_routes=(TEST_PROVIDER_ROUTE,),
+    )
+    receipt = QualificationReceipt(
+        logical_model_id=model.id,
+        provider_route=TEST_PROVIDER_ROUTE.id,
+        provider_host=TEST_PROVIDER_ROUTE.host,
+        provider_model_id=TEST_PROVIDER_ROUTE.model_id,
+        registry_version=QUALIFIED_MODEL_REGISTRY_VERSION,
+        prompt_pack_version=PROMPT_PACK_VERSION,
+        density_contract_version=DENSITY_CONTRACT_VERSION,
+        density_contract_digest=DENSITY_CONTRACT_DIGEST,
+        passed_anchors=QUALIFICATION_ANCHORS,
+        passed=True,
+    )
+    return QualifiedModelRegistry(models=(model,), receipts=(receipt,))
 
 
 class FixtureBaker(EngineLessonBaker):
@@ -38,7 +76,9 @@ class FixtureBaker(EngineLessonBaker):
     browser paste to the durable lesson resource.
     """
 
-    def __init__(self, runtime_dir: Path) -> None:
+    def __init__(self, runtime_dir: Path, *, logical_model_id: str | None = None) -> None:
+        self._runtime_dir = runtime_dir
+
         def generator(prompt: str) -> str:
             ctx = telemetry_ctx.get()
             phase = int(ctx.phase) if ctx is not None and ctx.phase else 1
@@ -49,7 +89,22 @@ class FixtureBaker(EngineLessonBaker):
             generator=generator,
             bundle=fixtures._bundle_with_matchup_vocabulary(runtime_dir / "data"),
             cache_dir=runtime_dir / "cache",
+            logical_model_id=logical_model_id,
         )
+
+    def for_logical_model(self, logical_model_id: str | None) -> FixtureBaker:
+        if logical_model_id != TEST_LOGICAL_MODEL_ID:
+            raise ValueError("real-backend fixture requires its qualified logical model")
+        routed = FixtureBaker.__new__(FixtureBaker)
+        routed._runtime_dir = self._runtime_dir
+        EngineLessonBaker.__init__(
+            routed,
+            generator=self._generator,
+            bundle=self._resolved_bundle,
+            cache_dir=self._cache_dir,
+            logical_model_id=logical_model_id,
+        )
+        return routed
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
         del anchor
@@ -148,6 +203,7 @@ def main() -> None:
                 csrf_hmac_key=b"e2e-only-csrf-key-not-a-deployment-secret",
             ),
             baker=FixtureBaker(database_path.parent),
+            model_registry=_qualified_test_registry(),
         )
         teacher = app.state.store.create_teacher("E2E викладач")
         _, invite_token = app.state.store.create_invite(teacher.id)

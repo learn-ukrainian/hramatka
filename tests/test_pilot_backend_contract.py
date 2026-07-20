@@ -2102,7 +2102,7 @@ def test_migration_v005_extends_failure_code_check_and_preserves_data(tmp_path: 
         conn.close()
 
 
-def test_recreate_from_failed_starts_a_new_job(app) -> None:
+def test_recreate_from_legacy_model_less_failed_job_is_rejected(app) -> None:
     with TestClient(app, base_url=ORIGIN) as client:
         _, _, token = _issue_invite(app)
         session = _redeem(client, token)
@@ -2129,14 +2129,7 @@ def test_recreate_from_failed_starts_a_new_job(app) -> None:
             f"/api/lessons/{failed_id}/recreate",
             headers=_mutation_headers(session["csrf_token"]),
         )
-        assert response.status_code == 202, response.text
-        body = response.json()
-        assert body["id"] != failed_id
-        assert body["status"] in {"draft", "baking"}
-        assert body["reused"] is False
-        new_id = body["id"]
-        ready = _wait_for_status(client, new_id, "ready")
-        assert ready["status"] == "ready"
+        _error(response, 409, "model_unavailable")
         failed_status = client.get(f"/api/lessons/{failed_id}/status").json()
         assert failed_status["status"] == "failed"
 

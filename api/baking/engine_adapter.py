@@ -523,11 +523,35 @@ class EngineLessonBaker:
         bundle: data.DataBundle | None = None,
         cache_dir: str | Path | None = None,
         store: Any | None = None,
+        logical_generator_factory=None,
+        logical_model_id: str | None = None,
     ) -> None:
         self._generator = generator
         self._resolved_bundle = bundle
         self._cache_dir = cache_dir
         self.store = store
+        self._logical_generator_factory = logical_generator_factory
+        self._logical_model_id = logical_model_id
+
+    def for_logical_model(self, logical_model_id: str | None) -> EngineLessonBaker:
+        """Return a job-scoped adapter while preserving legacy queued jobs.
+
+        A missing ID can only come from a durable pre-#244 request and keeps the
+        startup generator.  New API requests are resolved by the qualification
+        registry before persistence and therefore always take the exact route.
+        """
+        if logical_model_id is None:
+            return self
+        if self._logical_generator_factory is None:
+            raise ValueError("This engine baker has no logical-model routing factory.")
+        return EngineLessonBaker(
+            generator=self._logical_generator_factory(logical_model_id),
+            bundle=self._resolved_bundle,
+            cache_dir=self._cache_dir,
+            store=self.store,
+            logical_generator_factory=self._logical_generator_factory,
+            logical_model_id=logical_model_id,
+        )
 
     def resolve_data_bundle(self) -> data.DataBundle:
         """Resolve the digest-pinned input bundle once for readiness and bakes."""
@@ -641,9 +665,17 @@ class EngineLessonBaker:
                 calls_done=0,
                 phase=1,
                 step="generation",
+                logical_model_id=self._logical_model_id,
             )
         ctx_token = telemetry_ctx.set(tel_ctx)
         tel_ctx.update_progress_db()
+        if self._logical_model_id is not None:
+            tel_ctx.record_event(
+                {
+                    "event": "logical_model_selected",
+                    "logical_model_id": self._logical_model_id,
+                }
+            )
 
         try:
             job_out = out_root / str(uuid.uuid4()) if out_root else None

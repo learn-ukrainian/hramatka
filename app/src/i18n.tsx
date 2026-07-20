@@ -121,16 +121,21 @@ const DICT = {
   // ---- paste hub ----
   'paste.title': { uk: 'Створити новий урок', en: 'Create a new lesson' },
   'paste.disclose': {
-    uk: 'Вставлений текст буде надіслано зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.',
-    en: 'The pasted text will be sent to an external provider (Gemma). Do not use sensitive or personal data.',
+    uk: 'Вставлений текст і матеріали згенерованих завдань можуть надсилатися зовнішнім провайдерам обраної моделі, зокрема резервному. Не використовуйте чутливі або персональні дані.',
+    en: 'The pasted text and generated activity material may be sent to the selected model’s external providers, including its fallback. Do not use sensitive or personal data.',
   },
   'paste.discloseUrl': {
-    uk: 'Текст із посилання та згенеровані завдання будуть надіслані зовнішньому провайдеру (Gemma). Не використовуйте чутливі або персональні дані.',
-    en: 'The text from the link and the generated tasks will be sent to an external provider (Gemma). Do not use sensitive or personal data.',
+    uk: 'Текст із посилання і матеріали згенерованих завдань можуть надсилатися зовнішнім провайдерам обраної моделі, зокрема резервному. Не використовуйте чутливі або персональні дані.',
+    en: 'The text from the link and generated activity material may be sent to the selected model’s external providers, including its fallback. Do not use sensitive or personal data.',
   },
   'paste.levelPre': { uk: 'Рівень: ', en: 'Level: ' }, // T_EXACT «Рівень»
   'paste.levelPost': { uk: ' (фіксовано для пілоту)', en: ' (fixed for the pilot)' },
   'paste.duration': { uk: 'Тривалість (хв)', en: 'Duration (min)' },
+  'paste.model': { uk: 'Модель для уроку', en: 'Lesson model' },
+  'paste.modelUnavailable': {
+    uk: 'Немає моделей, кваліфікованих для поточних правил уроку.',
+    en: 'No models are qualified for the current lesson rules.',
+  },
   'paste.focus': { uk: 'Фокус (необов’язково)', en: 'Focus (optional)' },
   'paste.focusPh': { uk: 'напр. вищий ступінь прикметників', en: 'e.g. comparative adjectives' }, // T_EXACT
   'paste.textLabel': { uk: 'Текст для уроку (вставте)', en: 'Text for the lesson (paste)' },

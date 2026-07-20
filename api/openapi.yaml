@@ -209,6 +209,31 @@ paths:
                 $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lesson-models:
+    get:
+      tags: [Lessons]
+      operationId: listQualifiedLessonModels
+      summary: List logical models qualified for the current lesson contract
+      description: |
+        Returns only teacher-visible logical identities with complete current
+        production-path receipts. Provider routes, wire model IDs, credentials,
+        and fallback order are deliberately absent.
+      security:
+        - PilotSession: []
+      responses:
+        '200':
+          description: Current fail-closed qualified choice set
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualifiedModelList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons:
     post:
       tags: [Lessons]
@@ -217,9 +242,10 @@ paths:
       description: |
         The browser creates a UUID and reuses it for network retries. The
         request hash covers `anchor` (including `source_url` for teacher-url),
-        `level`, `duration`, and normalized `focus` (`null` when omitted). Same
-        UUID and same request returns the existing aggregate with `reused: true`;
-        different input returns `409`.
+        `level`, `duration`, normalized `focus` (`null` when omitted), and
+        `logical_model_id`. Same UUID and same request returns the existing
+        aggregate with `reused: true`; different input or a model that is not
+        currently qualified/configured returns `409` with its distinct code.
       security:
         - PilotSession: []
       parameters:
@@ -243,7 +269,7 @@ paths:
         '403':
           $ref: '#/components/responses/CsrfRejected'
         '409':
-          $ref: '#/components/responses/IdempotencyConflict'
+          $ref: '#/components/responses/CreateLessonConflict'
         '422':
           $ref: '#/components/responses/InvalidInput'
         '503':
@@ -363,6 +389,8 @@ paths:
           $ref: '#/components/responses/CsrfRejected'
         '404':
           $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/ModelUnavailable'
         '422':
           $ref: '#/components/responses/InvalidInput'
         '503':
@@ -937,6 +965,41 @@ components:
           type: [string, 'null']
           maxLength: 500
           default: null
+        logical_model_id:
+          type: [string, 'null']
+          pattern: '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
+          maxLength: 64
+          description: |
+            Teacher-visible logical choice. Null/absent is accepted only for
+            pre-selector compatibility and fails closed on the production baker.
+    QualifiedModelChoice:
+      type: object
+      additionalProperties: false
+      required: [id, label, description]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
+        label:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
+    QualifiedModelList:
+      type: object
+      additionalProperties: false
+      required: [registry_version, models, unavailable_message]
+      properties:
+        registry_version:
+          type: string
+          const: QualifiedLogicalModels.v1
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/QualifiedModelChoice'
+        unavailable_message:
+          type: [string, 'null']
     LessonCreateAccepted:
       type: object
       additionalProperties: false
@@ -1374,6 +1437,7 @@ components:
         - accepted_at
         - accepted_revision
         - warning_acknowledgements
+        - logical_model_id
         - lesson
       properties:
         lesson_id:
@@ -1393,6 +1457,9 @@ components:
           uniqueItems: true
           items:
             type: string
+        logical_model_id:
+          type: [string, 'null']
+          description: Null only for a durable lesson created before model selection.
         lesson:
           $ref: '#/components/schemas/LessonDocument'
     RevisionMutation:
@@ -1556,6 +1623,37 @@ components:
             message: This lesson ID is already bound to different inputs.
             retryable: false
             lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+    CreateLessonConflict:
+      description: |
+        Either the UUID is already bound to different canonical inputs
+        (`idempotency_conflict`) or the requested logical model is not both
+        currently qualified and configured (`model_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            idempotencyConflict:
+              value:
+                code: idempotency_conflict
+                message: This lesson ID is already bound to different inputs.
+                retryable: false
+                lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+            modelUnavailable:
+              value:
+                code: model_unavailable
+                message: The selected model is not currently available.
+                retryable: false
+    ModelUnavailable:
+      description: The stored logical model is absent, retired, stale, or not configured
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: model_unavailable
+            message: The lesson model is no longer available. Create a new lesson.
+            retryable: false
     LessonNotFound:
       description: Lesson does not exist or belongs to another teacher (indistinguishable)
       content:

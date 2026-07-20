@@ -22,6 +22,10 @@ import Conductor from './Conductor';
 import { useT, statusKey, recoveryBodyKey, type ChromeKey } from './i18n';
 import LessonBlocks from './LessonBlocks';
 import ReviewWorkbench from './ReviewWorkbench';
+import QualifiedModelPicker, {
+  resolveQualifiedModelId,
+  type QualifiedModelChoice,
+} from './QualifiedModelPicker';
 import {
   splitReviewBlocks,
   blockNeedsReview,
@@ -100,7 +104,14 @@ interface LessonResource {
   accepted_at: string | null;
   accepted_revision: number | null;
   warning_acknowledgements: string[];
+  logical_model_id: string | null;
   lesson: LessonDocument;
+}
+
+interface QualifiedModelList {
+  registry_version: string;
+  models: QualifiedModelChoice[];
+  unavailable_message: string | null;
 }
 
 interface LessonCatalogItem {
@@ -201,6 +212,9 @@ export default function TeacherApp() {
   const [fetchingUrl, setFetchingUrl] = useState(false);
   const [duration, setDuration] = useState<45 | 60 | 90>(60);
   const [focus, setFocus] = useState('');
+  const [qualifiedModels, setQualifiedModels] = useState<QualifiedModelChoice[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [modelUnavailableMessage, setModelUnavailableMessage] = useState<string | null>(null);
 
   // Baking / lesson state
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
@@ -262,6 +276,9 @@ export default function TeacherApp() {
     setPasteText('');
     setDuration(60);
     setFocus('');
+    setQualifiedModels([]);
+    setSelectedModelId('');
+    setModelUnavailableMessage(null);
     setCurrentLessonId(null);
     setLesson(null);
     setCatalog([]);
@@ -282,10 +299,11 @@ export default function TeacherApp() {
     setPasteText(payload.text);
     setDuration(payload.duration);
     setFocus(payload.focus || '');
+    setSelectedModelId(resolveQualifiedModelId(qualifiedModels, payload.logicalModelId));
     setSourceUrl(payload.sourceUrl || null);
-    setAnchorTab(payload.anchorSource === 'teacher-url' ? 'text' : 'text');
+    setAnchorTab(payload.anchorSource === 'teacher-url' ? 'url' : 'text');
     setRestoredTextNotice(true);
-  }, []);
+  }, [qualifiedModels]);
 
   // Invite redemption (token only in memory)
   const redeemFromFragment = useCallback(async () => {
@@ -313,6 +331,7 @@ export default function TeacherApp() {
         // Fetch full session for display
         await refreshSession();
         await loadTeacherDefaultDuration();
+        await loadQualifiedModels();
         // Load catalog so paste view is fully populated (used by some flows)
         try { await loadCatalog(); } catch {}
       } else if (res.status === 410) {
@@ -365,6 +384,23 @@ export default function TeacherApp() {
     }
   }, []);
 
+  const loadQualifiedModels = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/lesson-models');
+      if (!res.ok) throw new Error('model list unavailable');
+      const payload: QualifiedModelList = await res.json();
+      const models = Array.isArray(payload.models) ? payload.models : [];
+      setQualifiedModels(models);
+      setModelUnavailableMessage(payload.unavailable_message || null);
+      setSelectedModelId(previous => resolveQualifiedModelId(models, previous));
+    } catch {
+      // Availability is fail-closed: a failed list read never revives cached choices.
+      setQualifiedModels([]);
+      setSelectedModelId('');
+      setModelUnavailableMessage(null);
+    }
+  }, []);
+
   // On mount (and on hashchange for invite fragment): try redeem from fragment.
   // This ensures E2E direct-goto with hash (or late hash set) triggers redeem without requiring full reload.
   // #93 item1: drive sessionReady; UA «Завантаження…» during init, never blank.
@@ -390,6 +426,7 @@ export default function TeacherApp() {
           if (s) {
             did = true;
             await loadTeacherDefaultDuration();
+            await loadQualifiedModels();
           }
         }
       } catch {
@@ -466,6 +503,7 @@ export default function TeacherApp() {
     focus: string | null;
     anchorSource: 'teacher-paste' | 'teacher-url';
     sourceUrl?: string | null;
+    logicalModelId: string;
   }) => {
     if (!session || !csrf) {
       setError(errKey('err.sessionRequired'));
@@ -480,6 +518,10 @@ export default function TeacherApp() {
       setError(errKey('err.urlSourceRequired'));
       return;
     }
+    if (!qualifiedModels.some(model => model.id === source.logicalModelId)) {
+      setError(errKey('paste.modelUnavailable'));
+      return;
+    }
     setError(null);
     setLoading(true);
     setLesson(null);
@@ -491,6 +533,7 @@ export default function TeacherApp() {
       lessonId: id,
       anchorSource: source.anchorSource,
       ...(source.sourceUrl ? { sourceUrl: source.sourceUrl } : {}),
+      logicalModelId: source.logicalModelId,
     };
     try {
       const res = await apiFetch('/api/lessons', {
@@ -511,6 +554,7 @@ export default function TeacherApp() {
           level: 'B1',
           duration: source.duration,
           focus: source.focus?.trim() || null,
+          logical_model_id: source.logicalModelId,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -544,6 +588,7 @@ export default function TeacherApp() {
       focus: focus || null,
       anchorSource: sourceUrl ? 'teacher-url' : 'teacher-paste',
       sourceUrl,
+      logicalModelId: selectedModelId,
     });
   };
 
@@ -700,6 +745,7 @@ export default function TeacherApp() {
       lessonId: lesson.lesson_id,
       anchorSource: lesson.lesson.anchor.source,
       ...(lesson.lesson.anchor.source_url ? { sourceUrl: lesson.lesson.anchor.source_url } : {}),
+      ...(lesson.logical_model_id ? { logicalModelId: lesson.logical_model_id } : {}),
     });
     navigate({ view: 'paste' });
   };
@@ -1335,6 +1381,15 @@ export default function TeacherApp() {
                     <label>{t('paste.levelPre')}<strong>B1</strong>{t('paste.levelPost')}</label>
                   </div>
 
+                  <QualifiedModelPicker
+                    models={qualifiedModels}
+                    selectedId={selectedModelId}
+                    unavailableMessage={modelUnavailableMessage}
+                    disabled={loading}
+                    onChange={setSelectedModelId}
+                    t={t}
+                  />
+
                   <div className="field">
                     <label>{t('paste.duration')}</label>
                     <select className="inputbox" value={duration} onChange={e => {
@@ -1400,7 +1455,15 @@ export default function TeacherApp() {
                     />
                   </div>
 
-                  <button className="btn primary" onClick={startBake} disabled={loading || !pasteText.trim()}>
+                  <button
+                    className="btn primary"
+                    onClick={startBake}
+                    disabled={
+                      loading
+                      || !pasteText.trim()
+                      || !qualifiedModels.some(model => model.id === selectedModelId)
+                    }
+                  >
                     {loading ? t('paste.submitting') : t('paste.submit')}
                   </button>
                 </div>

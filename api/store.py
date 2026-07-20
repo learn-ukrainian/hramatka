@@ -241,6 +241,17 @@ class JobRecord:
         return self.request["focus"]
 
     @property
+    def logical_model_id(self) -> str | None:
+        """Selected teacher model, absent only on pre-#244 durable jobs."""
+        request = self.request
+        if "logical_model_id" not in request:
+            return None
+        value = request["logical_model_id"]
+        if not isinstance(value, str) or not value:
+            raise ValueError("Durable logical model ID is invalid.")
+        return value
+
+    @property
     def last_error(self) -> str | None:
         """Prototype-compatible name for the safe durable failure message."""
         return self.failure_message
@@ -320,6 +331,7 @@ def canonical_request_json(
     level: str = "B1",
     duration: int,
     focus: str | None,
+    logical_model_id: str | None = None,
 ) -> str:
     """Build the complete canonical request defined by the frozen OpenAPI contract."""
     if anchor_source not in {"teacher-paste", "teacher-url"}:
@@ -336,17 +348,22 @@ def canonical_request_json(
         raise ValueError("Anchor text must not be blank.")
     if not isinstance(focus, str | type(None)):
         raise ValueError("Focus must be a string or null.")
+    if logical_model_id is not None and (
+        not isinstance(logical_model_id, str) or not logical_model_id
+    ):
+        raise ValueError("Logical model ID must be a non-empty string or null.")
     anchor: dict[str, Any] = {"source": anchor_source, "text": anchor_text}
     if anchor_source_url is not None:
         anchor["source_url"] = anchor_source_url
-    return canonical_json(
-        {
-            "anchor": anchor,
-            "duration": duration,
-            "focus": focus,
-            "level": level,
-        }
-    )
+    request = {
+        "anchor": anchor,
+        "duration": duration,
+        "focus": focus,
+        "level": level,
+    }
+    if logical_model_id is not None:
+        request["logical_model_id"] = logical_model_id
+    return canonical_json(request)
 
 
 def request_hash(
@@ -357,6 +374,7 @@ def request_hash(
     level: str = "B1",
     duration: int,
     focus: str | None,
+    logical_model_id: str | None = None,
 ) -> bytes:
     """SHA-256 over the canonical UTF-8 request JSON, stored as a BLOB."""
     return hashlib.sha256(
@@ -367,6 +385,7 @@ def request_hash(
             level=level,
             duration=duration,
             focus=focus,
+            logical_model_id=logical_model_id,
         ).encode("utf-8")
     ).digest()
 
@@ -725,6 +744,7 @@ class JobStore:
         focus: str | None,
         anchor_source: str = "teacher-paste",
         anchor_source_url: str | None = None,
+        logical_model_id: str | None = None,
     ) -> tuple[JobRecord, bool]:
         request_json = canonical_request_json(
             anchor_text=anchor_text,
@@ -733,6 +753,7 @@ class JobStore:
             level=level,
             duration=duration,
             focus=focus,
+            logical_model_id=logical_model_id,
         )
         digest = hashlib.sha256(request_json.encode("utf-8")).digest()
         timestamp = now_iso()

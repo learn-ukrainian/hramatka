@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cache
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -23,7 +24,11 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hramatka.engine import data
-from hramatka.engine.providers import configure_provider_concurrency, make_bake_generator
+from hramatka.engine.providers import (
+    configure_provider_concurrency,
+    make_bake_generator,
+    make_logical_model_generator,
+)
 
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
@@ -38,6 +43,11 @@ from .models import (
     RevisionMutation,
     TeacherPreferences,
     UrlImportRequest,
+)
+from .qualified_models import (
+    LogicalModelUnavailable,
+    QualifiedModelRegistry,
+    default_model_registry,
 )
 from .review_attestation import ReviewAttestationError, ReviewAttestor
 from .runner import BakeRunner
@@ -58,6 +68,7 @@ from .store import (
     TokenFormatError,
     WarningAcknowledgementsRequired,
     WarningBlockNotFound,
+    canonical_request_json,
 )
 from .url_import import UrlImportError, fetch_url_text
 
@@ -219,6 +230,7 @@ def _resource_payload(job: JobRecord) -> dict[str, object]:
         "accepted_at": job.accepted_at,
         "accepted_revision": job.accepted_revision,
         "warning_acknowledgements": sorted(job.warning_acknowledgements),
+        "logical_model_id": job.logical_model_id,
         "lesson": lesson,
     }
 
@@ -259,15 +271,35 @@ def _github_bearer_token(authorization: str | None) -> str:
     return token
 
 
-def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = None) -> FastAPI:
+def create_app(
+    *,
+    settings: Settings | None = None,
+    baker: LessonBaker | None = None,
+    model_registry: QualifiedModelRegistry | None = None,
+) -> FastAPI:
     """Create the one-process application; it deliberately exposes no bearer path."""
     settings = settings or Settings.from_env()
+    production_routing_required = baker is None
+    model_registry = model_registry or default_model_registry()
     store = JobStore(settings.database_path)
     store.initialize()
     configure_provider_concurrency(settings.max_provider_concurrency)
+
+    @cache
+    def logical_generator(logical_model_id: str):
+        # Shared per logical identity so Gemma's internal primary selection
+        # remains balanced across jobs rather than restarting at route one.
+        model = model_registry.require_qualified(logical_model_id)
+        return make_logical_model_generator(
+            logical_model_id,
+            settings.bake_providers,
+            qualified_routes=model.provider_routes,
+        )
+
     baker = baker or EngineLessonBaker(
         store=store,
         generator=make_bake_generator(settings.bake_providers),
+        logical_generator_factory=logical_generator,
     )
     runner = BakeRunner(
         store,
@@ -297,6 +329,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
     app.state.runner = runner
     app.state.baker = baker
     app.state.review_attestor = ReviewAttestor(settings)
+    app.state.model_registry = model_registry
 
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
@@ -353,6 +386,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             request.url.path.startswith("/api/session")
             or request.url.path.startswith("/api/lessons")
             or request.url.path.startswith("/api/anchor")
+            or request.url.path.startswith("/api/lesson-models")
         ):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -504,6 +538,22 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         dur = store.get_teacher_default_duration(session.teacher_id)
         return {"default_duration": dur}
 
+    @app.get("/api/lesson-models")
+    def get_lesson_models(
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        """Expose qualified logical choices, never provider routing details."""
+        if not production_routing_required:
+            return model_registry.public_payload()
+        operational: set[str] = set()
+        for model in model_registry.qualified_models():
+            try:
+                logical_generator(model.id)
+            except (LogicalModelUnavailable, ValueError):
+                continue
+            operational.add(model.id)
+        return model_registry.public_payload(operational_model_ids=frozenset(operational))
+
     @app.put("/api/teacher/preferences")
     def put_teacher_preferences(
         request_body: TeacherPreferences,
@@ -544,6 +594,30 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
         lesson_id = _lesson_id(request_body.id)
+        logical_model_id = request_body.logical_model_id
+        if logical_model_id is None and production_routing_required:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Оберіть доступну кваліфіковану модель.",
+            )
+        if logical_model_id is not None:
+            try:
+                model_registry.require_qualified(logical_model_id)
+                if production_routing_required:
+                    logical_generator(logical_model_id)
+            except LogicalModelUnavailable as error:
+                raise PilotError(
+                    409,
+                    "model_unavailable",
+                    "Обрана модель зараз недоступна. Оновіть список моделей.",
+                ) from error
+            except ValueError as error:
+                raise PilotError(
+                    409,
+                    "model_unavailable",
+                    "Обрана модель не налаштована на цьому сервері. Оновіть список моделей.",
+                ) from error
         try:
             job, created = store.create_or_get(
                 session.teacher_id,
@@ -554,6 +628,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 level=request_body.level,
                 duration=request_body.duration,
                 focus=request_body.focus,
+                logical_model_id=logical_model_id,
             )
         except IdempotencyConflict as error:
             raise PilotError(
@@ -624,6 +699,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
             level = request["level"]
             duration = request["duration"]
             focus = request["focus"]
+            logical_model_id = request.get("logical_model_id")
         except (KeyError, TypeError, ValueError):
             raise PilotError(
                 422,
@@ -636,6 +712,34 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 "invalid_input",
                 "Немає збереженого запиту для повторного створення уроку.",
             )
+        try:
+            canonical_request_json(
+                anchor_text=anchor_text,
+                anchor_source=anchor_source,
+                anchor_source_url=anchor_source_url,
+                level=level,
+                duration=duration,
+                focus=focus,
+                logical_model_id=logical_model_id,
+            )
+        except ValueError:
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from None
+        if logical_model_id is None:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Для старого уроку модель не збережено. Створіть новий урок.",
+            )
+        try:
+            model_registry.require_qualified(logical_model_id)
+            if production_routing_required:
+                logical_generator(logical_model_id)
+        except (LogicalModelUnavailable, ValueError) as error:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Модель цього уроку більше не доступна. Створіть новий урок.",
+            ) from error
         new_lesson_id = str(uuid.uuid4())
         try:
             job, created = store.create_or_get(
@@ -647,6 +751,7 @@ def create_app(*, settings: Settings | None = None, baker: LessonBaker | None = 
                 level=level,
                 duration=duration,
                 focus=focus,
+                logical_model_id=logical_model_id,
             )
         except IdempotencyConflict as error:
             raise PilotError(
