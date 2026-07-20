@@ -537,6 +537,7 @@ class ProductionQualificationHarness:
             ),
             bundle=bundle,
             cache_dir=cell_root / "cache",
+            engine_out_dir=cell_root / "engine-out",
             logical_generator_factory=logical_generator_factory,
         )
         app = create_app(

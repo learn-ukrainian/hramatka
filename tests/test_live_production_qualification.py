@@ -444,9 +444,11 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports() -> None:
 
 
 def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate(
-    tmp_path, qualification_flags
+    tmp_path, qualification_flags, monkeypatch
 ) -> None:
     request = _request(tmp_path)
+    environment_root = tmp_path / "environment-engine-out"
+    monkeypatch.setenv("HRAMATKA_ENGINE_OUT_DIR", str(environment_root))
     constructed: list[tuple[str, str, str, str]] = []
 
     def fake_port_factory(logical_model_id, route):
@@ -471,6 +473,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     }
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []
+    assert not environment_root.exists()
     assert all(cell.receipt.semantic_gate == "not_run" for cell in run.cells)
     assert all(path.is_file() for path in run.receipt_paths)
     assert all(

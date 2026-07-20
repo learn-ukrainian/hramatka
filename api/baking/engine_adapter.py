@@ -522,6 +522,7 @@ class EngineLessonBaker:
         generator=call_gemma,
         bundle: data.DataBundle | None = None,
         cache_dir: str | Path | None = None,
+        engine_out_dir: str | Path | None = None,
         store: Any | None = None,
         logical_generator_factory=None,
         logical_model_id: str | None = None,
@@ -529,6 +530,7 @@ class EngineLessonBaker:
         self._generator = generator
         self._resolved_bundle = bundle
         self._cache_dir = cache_dir
+        self._engine_out_dir = engine_out_dir
         self.store = store
         self._logical_generator_factory = logical_generator_factory
         self._logical_model_id = logical_model_id
@@ -548,6 +550,7 @@ class EngineLessonBaker:
             generator=self._logical_generator_factory(logical_model_id),
             bundle=self._resolved_bundle,
             cache_dir=self._cache_dir,
+            engine_out_dir=self._engine_out_dir,
             store=self.store,
             logical_generator_factory=self._logical_generator_factory,
             logical_model_id=logical_model_id,
@@ -595,6 +598,8 @@ class EngineLessonBaker:
         )
         bundle = self.resolve_data_bundle()
         out_root = _engine_out_root()
+        if self._engine_out_dir is not None:
+            out_root = Path(self._engine_out_dir)
         shared_pack: dict[str, Any] | None = None
         precomputed_snapshot: dict[str, Any] | None = None
         precomputed_grounding: dict[str, Any] | None = None
