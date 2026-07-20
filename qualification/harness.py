@@ -13,12 +13,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +44,7 @@ from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
     CellReceipt,
     DensitySummary,
+    QualificationError,
     RepairTraceEntry,
     RouteBinding,
     aggregate_receipts,
@@ -307,6 +311,14 @@ class QualificationRun:
         return tuple(cell.receipt for cell in self.cells)
 
 
+ProviderFactory = Callable[[RuntimeAnchor, str, RouteBinding], Any]
+RunnerStopWaiter = Callable[[Any, float], bool]
+
+
+class QualificationRunnerStillActiveError(QualificationError):
+    """A live scratch directory cannot be safely deleted yet."""
+
+
 class ProductionQualificationHarness:
     """Execute the exact 3 anchors × 4 configured route cells without spend."""
 
@@ -333,33 +345,140 @@ class ProductionQualificationHarness:
         self._last_anchor_hashes = {anchor.id: _sha(anchor.text) for anchor in runtime_anchors}
         self._last_prompt_hashes = {}
         bundle = fixtures._bundle_with_matchup_vocabulary(self._root / "fixture-data")
+        return self._run_cells(
+            runtime_anchors,
+            bundle=bundle,
+            provider_factory=lambda anchor, _logical_model_id, route: _DeterministicRouteProvider(
+                route,
+                force_initial_shortfall=(
+                    anchor.id == "b1-morphology" and route.route_id == "gemma-openrouter"
+                ),
+            ),
+            scratch_root=self._root,
+            temporary_cells=False,
+            bake_hard_timeout_seconds=600,
+            readiness_timeout_seconds=20,
+            runner_stop_timeout_seconds=1,
+            runner_stop_waiter=lambda runner, timeout: runner.wait_until_stopped(timeout),
+        )
+
+    def run_with_provider_factory(
+        self,
+        anchors: Mapping[str, RuntimeAnchor],
+        *,
+        bundle: data.DataBundle,
+        provider_factory: ProviderFactory,
+        scratch_root: Path,
+        bake_hard_timeout_seconds: int,
+        readiness_timeout_seconds: int,
+        runner_stop_timeout_seconds: float,
+        runner_stop_waiter: RunnerStopWaiter | None = None,
+    ) -> QualificationRun:
+        """Run the same HTTP production path with an already-preflighted provider.
+
+        The caller owns all live-mode authorization and provenance checks.  This
+        method intentionally has no provider configuration or environment
+        policy: each supplied factory receives one immutable matrix route.
+        """
+        runtime_anchors = self._manifest.validate_runtime_anchors(anchors)
+        self._root.mkdir(parents=True, exist_ok=True)
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        return self._run_cells(
+            runtime_anchors,
+            bundle=bundle,
+            provider_factory=provider_factory,
+            scratch_root=scratch_root,
+            temporary_cells=True,
+            bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+            readiness_timeout_seconds=readiness_timeout_seconds,
+            runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+            runner_stop_waiter=runner_stop_waiter
+            or (lambda runner, timeout: runner.wait_until_stopped(timeout)),
+        )
+
+    def _run_cells(
+        self,
+        runtime_anchors: tuple[RuntimeAnchor, ...],
+        *,
+        bundle: data.DataBundle,
+        provider_factory: ProviderFactory,
+        scratch_root: Path,
+        temporary_cells: bool,
+        bake_hard_timeout_seconds: int,
+        readiness_timeout_seconds: int,
+        runner_stop_timeout_seconds: float,
+        runner_stop_waiter: RunnerStopWaiter,
+    ) -> QualificationRun:
+        self._last_anchor_hashes = {anchor.id: _sha(anchor.text) for anchor in runtime_anchors}
+        self._last_prompt_hashes = {}
         cells: list[QualificationCellResult] = []
         receipt_paths: list[Path] = []
-        previous_bundle = data._active  # noqa: SLF001 - restore the explicit test boundary.
+        previous_bundle = data._active  # noqa: SLF001 - worker threads need this explicit scope.
         data.set_active_bundle(bundle)
         try:
             for runtime_anchor in runtime_anchors:
                 for model in LOGICAL_MODELS:
-                    for route in model.provider_routes:
-                        cell = self._run_cell(
-                            runtime_anchor,
-                            model.id,
-                            RouteBinding(route.id, route.host, route.model_id),
-                            bundle,
-                            force_initial_shortfall=(
-                                runtime_anchor.id == "b1-morphology"
-                                and route.id == "gemma-openrouter"
-                            ),
+                    for configured_route in model.provider_routes:
+                        route = RouteBinding(
+                            configured_route.id, configured_route.host, configured_route.model_id
                         )
+                        provider = provider_factory(runtime_anchor, model.id, route)
+                        if temporary_cells:
+                            raw_cell_root = Path(
+                                tempfile.mkdtemp(
+                                    dir=scratch_root,
+                                    prefix=f"{runtime_anchor.id}-{route.route_id}-",
+                                )
+                            )
+                            try:
+                                cell = self._run_cell(
+                                    runtime_anchor,
+                                    model.id,
+                                    route,
+                                    bundle,
+                                    provider=provider,
+                                    cell_root=Path(raw_cell_root),
+                                    bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+                                    readiness_timeout_seconds=readiness_timeout_seconds,
+                                    runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+                                    runner_stop_waiter=runner_stop_waiter,
+                                )
+                            except QualificationRunnerStillActiveError:
+                                # This directory can contain durable job/cache data.
+                                # Preserve it until the process has actually exited.
+                                raise
+                            except Exception:
+                                try:
+                                    shutil.rmtree(raw_cell_root)
+                                except OSError:
+                                    # Preserve the original qualification failure.
+                                    pass
+                                raise
+                            else:
+                                try:
+                                    shutil.rmtree(raw_cell_root)
+                                except OSError as error:
+                                    raise QualificationError(
+                                        "Qualification scratch cleanup failed."
+                                    ) from error
+                        else:
+                            cell = self._run_cell(
+                                runtime_anchor,
+                                model.id,
+                                route,
+                                bundle,
+                                provider=provider,
+                                cell_root=scratch_root / f"{runtime_anchor.id}-{route.route_id}",
+                                bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+                                readiness_timeout_seconds=readiness_timeout_seconds,
+                                runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+                                runner_stop_waiter=runner_stop_waiter,
+                            )
                         cells.append(cell)
                         receipt_paths.append(self._persist_cell_receipt(cell.receipt))
-                        self._last_prompt_hashes[
-                            (
-                                cell.receipt.logical_model_id,
-                                cell.receipt.expected_route.route_id,
-                                cell.receipt.anchor_id,
-                            )
-                        ] = cell.receipt.prompt_sha256
+                        self._last_prompt_hashes[(model.id, route.route_id, runtime_anchor.id)] = (
+                            cell.receipt.prompt_sha256
+                        )
         finally:
             data.set_active_bundle(previous_bundle)
         return QualificationRun(tuple(cells), tuple(receipt_paths))
@@ -400,13 +519,13 @@ class ProductionQualificationHarness:
         route: RouteBinding,
         bundle: data.DataBundle,
         *,
-        force_initial_shortfall: bool,
+        provider: Any,
+        cell_root: Path,
+        bake_hard_timeout_seconds: int,
+        readiness_timeout_seconds: int,
+        runner_stop_timeout_seconds: float,
+        runner_stop_waiter: RunnerStopWaiter,
     ) -> QualificationCellResult:
-        cell_root = self._root / f"{anchor.id}-{route.route_id}"
-        provider = _DeterministicRouteProvider(
-            route, force_initial_shortfall=force_initial_shortfall
-        )
-
         def logical_generator_factory(requested_logical_model_id: str):
             if requested_logical_model_id != logical_model_id:
                 raise ValueError("Qualification provider received the wrong logical model.")
@@ -425,7 +544,7 @@ class ProductionQualificationHarness:
                 database_path=cell_root / "jobs.sqlite3",
                 pilot_origin=_ORIGIN,
                 csrf_hmac_key=_CSRF_KEY,
-                bake_hard_timeout_seconds=600,
+                bake_hard_timeout_seconds=bake_hard_timeout_seconds,
                 bake_workers=1,
             ),
             baker=baker,
@@ -437,46 +556,59 @@ class ProductionQualificationHarness:
             ),
         )
         baker.store = app.state.store
-        with TestClient(app, base_url=_ORIGIN) as client:
-            teacher = app.state.store.create_teacher(display_name="Qualification teacher")
-            _, invite = app.state.store.create_invite(teacher.id)
-            redeemed = client.post(
-                "/api/session/redeem", headers={"Origin": _ORIGIN}, json={"token": invite}
-            )
-            if redeemed.status_code != 200:
-                raise AssertionError("Qualification session could not be redeemed.")
-            csrf = redeemed.json()["csrf_token"]
-            lesson_id = str(uuid.uuid4())
-            created = client.post(
-                "/api/lessons",
-                headers={"Origin": _ORIGIN, "X-CSRF-Token": csrf},
-                json={
-                    "id": lesson_id,
-                    "anchor": {"text": anchor.text, "source": "teacher-paste"},
-                    "level": "B1",
-                    "duration": 45,
-                    "focus": None,
-                    "logical_model_id": logical_model_id,
-                },
-            )
-            if created.status_code != 202:
-                raise AssertionError("Qualification lesson was not accepted through HTTP.")
-            deadline = time.monotonic() + 20
-            status_payload: dict[str, Any] = {}
-            while time.monotonic() < deadline:
-                status = client.get(f"/api/lessons/{lesson_id}/status")
-                status_payload = status.json()
-                if status_payload.get("status") in {"ready", "failed"}:
-                    break
-                time.sleep(0.01)
-            if status_payload.get("status") != "ready":
-                raise AssertionError("Qualification durable job did not become ready.")
-            resource = client.get(f"/api/lessons/{lesson_id}")
-            if resource.status_code != 200:
-                raise AssertionError("Qualification lesson resource was unavailable.")
-            durable_job = app.state.store.get(teacher.id, lesson_id)
-            if durable_job is None or durable_job.status != "ready":
-                raise AssertionError("Qualification did not persist a durable ready job.")
+        try:
+            with TestClient(app, base_url=_ORIGIN) as client:
+                teacher = app.state.store.create_teacher(display_name="Qualification teacher")
+                _, invite = app.state.store.create_invite(teacher.id)
+                redeemed = client.post(
+                    "/api/session/redeem", headers={"Origin": _ORIGIN}, json={"token": invite}
+                )
+                if redeemed.status_code != 200:
+                    raise AssertionError("Qualification session could not be redeemed.")
+                csrf = redeemed.json()["csrf_token"]
+                lesson_id = str(uuid.uuid4())
+                created = client.post(
+                    "/api/lessons",
+                    headers={"Origin": _ORIGIN, "X-CSRF-Token": csrf},
+                    json={
+                        "id": lesson_id,
+                        "anchor": {"text": anchor.text, "source": "teacher-paste"},
+                        "level": "B1",
+                        "duration": 45,
+                        "focus": None,
+                        "logical_model_id": logical_model_id,
+                    },
+                )
+                if created.status_code != 202:
+                    raise AssertionError("Qualification lesson was not accepted through HTTP.")
+                deadline = time.monotonic() + readiness_timeout_seconds
+                status_payload: dict[str, Any] = {}
+                while time.monotonic() < deadline:
+                    status = client.get(f"/api/lessons/{lesson_id}/status")
+                    status_payload = status.json()
+                    if status_payload.get("status") in {"ready", "failed"}:
+                        break
+                    time.sleep(0.01)
+                terminal_status = status_payload.get("status")
+                if terminal_status not in {"ready", "failed"}:
+                    raise QualificationError(
+                        "Qualification durable job did not reach a terminal state before "
+                        "readiness timeout."
+                    )
+                if terminal_status != "ready":
+                    raise AssertionError("Qualification durable job did not become ready.")
+                resource = client.get(f"/api/lessons/{lesson_id}")
+                if resource.status_code != 200:
+                    raise AssertionError("Qualification lesson resource was unavailable.")
+                durable_job = app.state.store.get(teacher.id, lesson_id)
+                if durable_job is None or durable_job.status != "ready":
+                    raise AssertionError("Qualification did not persist a durable ready job.")
+        finally:
+            if not runner_stop_waiter(app.state.runner, runner_stop_timeout_seconds):
+                active_error = sys.exc_info()[1]
+                raise QualificationRunnerStillActiveError(
+                    "Qualification runner is still active; scratch was preserved."
+                ) from active_error
         durable_trace = self._durable_route_trace(durable_job)
         delivery = self._delivery_summary(
             resource.json(), logical_model_id, route, durable_job, durable_trace

@@ -89,6 +89,7 @@ class BakeRunner:
                 # Stop admitting drafts; a restart will sweep any in-flight rows.
                 self.quarantine()
                 raise
+
     def stop(self) -> None:
         """Signal workers and the watchdog, then join within a bounded deadline.
 
@@ -97,11 +98,9 @@ class BakeRunner:
         """
         self._stop.set()
         self._wake.set()
-        deadline = time.monotonic() + _STOP_JOIN_TIMEOUT_SECONDS
+        if self.wait_until_stopped(_STOP_JOIN_TIMEOUT_SECONDS):
+            return
         for worker in self._workers:
-            remaining = deadline - time.monotonic()
-            if remaining > 0:
-                worker.join(timeout=remaining)
             if worker.is_alive():
                 log.warning(
                     "Worker %s did not finish within stop deadline; "
@@ -109,11 +108,28 @@ class BakeRunner:
                     worker.name,
                 )
         if self._watchdog is not None and self._watchdog.is_alive():
+            log.warning("Watchdog did not finish within stop deadline.")
+
+    def wait_until_stopped(self, timeout_seconds: float) -> bool:
+        """Join workers and watchdog for a caller-supplied bounded interval.
+
+        This does not signal shutdown; callers that need to stop work first
+        call :meth:`stop`.  The return value is deterministic and lets the
+        qualification harness refuse scratch cleanup while any worker remains
+        capable of touching its temporary database or cache.
+        """
+        if timeout_seconds < 0:
+            raise ValueError("Runner stop wait timeout must be nonnegative.")
+        deadline = time.monotonic() + timeout_seconds
+        with self._state_lock:
+            threads = [*self._workers]
+            if self._watchdog is not None:
+                threads.append(self._watchdog)
+        for thread in threads:
             remaining = deadline - time.monotonic()
             if remaining > 0:
-                self._watchdog.join(timeout=remaining)
-            if self._watchdog.is_alive():
-                log.warning("Watchdog did not finish within stop deadline.")
+                thread.join(timeout=remaining)
+        return all(not thread.is_alive() for thread in threads)
 
     def submit(self, lesson_id: str) -> bool:
         """Wake the shared pool; requests never create bake threads."""
@@ -167,6 +183,7 @@ class BakeRunner:
             if job is not None:
                 return job
         return None
+
     def _run_job(self, job) -> None:  # JobRecord is deliberately duck-typed for test seams.
         lesson = None
         template = None

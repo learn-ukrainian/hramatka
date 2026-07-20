@@ -409,6 +409,24 @@ class TelemetryContext:
         if calls_done is not None:
             self.update_progress_db(calls_done=calls_done)
 
+    def record_qualification_route_trace(self, trace_entry: dict) -> None:
+        """Persist a validated route binding without counting another provider call.
+
+        A transport records the actual HTTP attempt.  The qualification wrapper
+        records the route identity separately so initial generation and every
+        repair can be checked against the immutable expected cell.
+        """
+        binding = _content_free_qualification_route_trace(trace_entry)
+        if binding is None:
+            raise ValueError("Qualification route trace is not content-free or valid.")
+        assert self._state is not None
+        with self._state.lock:
+            self._state.qualification_route_traces.append(binding)
+            self._state.traces.append({"event": "qualification_route", **binding})
+            self._sync_from_shared_state()
+            self.save_traces()
+        self.update_progress_db()
+
     def record_event(self, trace_entry: dict) -> None:
         """Persist a safe non-provider trace event without changing call progress."""
         assert self._state is not None
@@ -525,6 +543,7 @@ class HttpChatTransport:
     strip_model_prefix: bool = True
     max_attempts: int = 3
     retry_backoff_s: float = 0.75
+    retry_json_mode_on_400: bool = True
 
     def __call__(self, prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
         import time
@@ -589,7 +608,11 @@ class HttpChatTransport:
                     with provider_call_slot():
                         response = client.post(url, json=payload, headers=headers)
 
-                    if response.status_code == 400 and "response_format" in payload:
+                    if (
+                        self.retry_json_mode_on_400
+                        and response.status_code == 400
+                        and "response_format" in payload
+                    ):
                         log.warning(
                             "%s 400 JSON mode bad request. Retrying without it. model=%s",
                             self.host,
@@ -777,6 +800,169 @@ def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPor
             ),
         )
     return ais, openrouter, deepinfra
+
+
+_QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None]] = {
+    "gemini-flash-ais": (
+        "gemini-3.5-flash",
+        "google-ais",
+        "google-ais/gemini-3.5-flash",
+        AIS_API_KEY_ENV,
+    ),
+    "gemini-pro-ais": (
+        "gemini-3.1-pro",
+        "google-ais",
+        "google-ais/gemini-3.1-pro-preview",
+        AIS_API_KEY_ENV,
+    ),
+    "gemma-ais": (
+        "gemma-4-31b",
+        "google-ais",
+        GEMMA_MODEL,
+        AIS_API_KEY_ENV,
+    ),
+    "gemma-openrouter": (
+        "gemma-4-31b",
+        "openrouter",
+        DEFAULT_GEMMA_FALLBACK_MODEL,
+        GEMMA_FALLBACK_API_KEY_ENV,
+    ),
+}
+
+
+def _require_qualification_route(
+    *, route_id: str, logical_model_id: str, host: str, model_id: str
+) -> tuple[str, str | None]:
+    """Validate one immutable qualification-matrix cell without I/O.
+
+    The qualification runner calls this before it constructs a provider.  The
+    ordinary production factory deliberately keeps Gemma failover; that is not
+    an admissible path while proving one exact qualification route.
+    """
+    expected = _QUALIFICATION_ROUTE_SPECS.get(route_id)
+    if expected is None or expected[:3] != (logical_model_id, host, model_id):
+        raise ValueError("Qualification route is not an exact configured matrix cell.")
+    return expected[3], (
+        GEMMA_FALLBACK_API_KEY_FILE_ENV if route_id == "gemma-openrouter" else None
+    )
+
+
+def qualification_route_credential_present(
+    *, route_id: str, logical_model_id: str, host: str, model_id: str
+) -> bool:
+    """Return credential-source presence for one pinned cell, without logging it.
+
+    This is deliberately a presence gate, not an authentication probe.  It
+    never performs provider I/O and does not expose a key or its value.
+    """
+    key_env, key_file_env = _require_qualification_route(
+        route_id=route_id,
+        logical_model_id=logical_model_id,
+        host=host,
+        model_id=model_id,
+    )
+    if key_env and os.environ.get(key_env):
+        return True
+    if key_file_env:
+        configured_file = os.environ.get(key_file_env)
+        if configured_file:
+            path = Path(configured_file)
+            return path.is_file() and os.access(path, os.R_OK)
+    return False
+
+
+def validate_qualification_route_runtime(
+    *, route_id: str, logical_model_id: str, host: str, model_id: str
+) -> None:
+    """Reject runtime overrides that would invalidate an exact route proof.
+
+    This is deliberately pure environment validation: the live qualification
+    preflight calls it for the complete matrix before constructing even the
+    first provider.  A noncanonical endpoint or model must not be able to
+    self-identify as a configured route in a receipt.
+    """
+    _require_qualification_route(
+        route_id=route_id,
+        logical_model_id=logical_model_id,
+        host=host,
+        model_id=model_id,
+    )
+    if host == "google-ais":
+        configured_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV)
+        if configured_base is not None and configured_base.rstrip("/") != (
+            DEFAULT_GEMMA_AIS_BASE_URL.rstrip("/")
+        ):
+            raise ValueError("Qualification route has a noncanonical AIS base URL.")
+    elif host == "openrouter":
+        configured_base = os.environ.get(GEMMA_FALLBACK_BASE_URL_ENV)
+        configured_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV)
+        if configured_base is not None and configured_base.rstrip("/") != (
+            DEFAULT_GEMMA_FALLBACK_BASE_URL.rstrip("/")
+        ):
+            raise ValueError("Qualification route has a noncanonical OpenRouter base URL.")
+        if configured_model not in {None, DEFAULT_GEMMA_FALLBACK_MODEL}:
+            raise ValueError("Qualification route has a noncanonical OpenRouter model.")
+    else:  # _require_qualification_route keeps this defensive branch unreachable.
+        raise ValueError("Qualification route has an unknown provider host.")
+
+
+def make_qualification_pinned_generator(
+    *, route_id: str, logical_model_id: str, host: str, model_id: str
+) -> AISGeneratorPort:
+    """Construct exactly one provider port for a real qualification cell.
+
+    Unlike the normal job factory, this never wraps a port in failover or
+    round-robin selection.  Any provider failure remains a failure of this
+    exact cell and cannot become evidence for a sibling route.
+    """
+    validate_qualification_route_runtime(
+        route_id=route_id,
+        logical_model_id=logical_model_id,
+        host=host,
+        model_id=model_id,
+    )
+    if route_id == "gemma-ais":
+        port = AISGeneratorPort(
+            api_key_env=AIS_API_KEY_ENV,
+            model=GEMMA_MODEL,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=DEFAULT_GEMMA_AIS_BASE_URL,
+                host="google-ais",
+                max_attempts=1,
+                retry_json_mode_on_400=False,
+            ),
+        )
+    elif route_id == "gemma-openrouter":
+        port = AISGeneratorPort(
+            api_key_env=GEMMA_FALLBACK_API_KEY_ENV,
+            api_key_file_env=GEMMA_FALLBACK_API_KEY_FILE_ENV,
+            model=DEFAULT_GEMMA_FALLBACK_MODEL,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=DEFAULT_GEMMA_FALLBACK_BASE_URL,
+                host="openrouter",
+                strip_model_prefix=False,
+                max_attempts=1,
+                retry_json_mode_on_400=False,
+            ),
+        )
+    else:
+        port = AISGeneratorPort(
+            api_key_env=AIS_API_KEY_ENV,
+            model=model_id,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=HttpChatTransport(
+                base_url=DEFAULT_GEMMA_AIS_BASE_URL,
+                host="google-ais",
+                max_attempts=1,
+                retry_json_mode_on_400=False,
+            ),
+        )
+    observed_host = getattr(port._transport, "host", "")
+    if observed_host != host or port._model != model_id:
+        raise ValueError("Qualification route does not match current runtime configuration.")
+    return port
 
 
 def _with_failover(primary: AISGeneratorPort, fallback: AISGeneratorPort) -> FailoverGeneratorPort:

@@ -84,8 +84,55 @@ a `QualificationReceipt` and be considered for the production registry.
 
 ## Real-provider runs
 
-No real-provider mode is provided by this change. If one is added later, it
-must be an explicit operator command with a separate spend acknowledgement,
-must never run in tests, and must never auto-fallback to another provider or
-route. Preserve expected/observed route binding across generation and every
-repair trace entry. Do not populate shipped defaults from a no-cost run.
+The real mode is an operator-only command and is never invoked by pytest or by
+the teacher API. It runs the exact fixed 3-anchor × 4-route matrix, not a
+selected subset. Before it constructs a provider it requires a clean worktree,
+the current source commit, the immutable manifest digest, all three external
+anchor hashes, both production-path feature flags, every route's credential
+source, separate scratch and receipt directories outside the repository, and a
+spend acknowledgement bound to the current commit and manifest digest.
+
+First obtain the exact acknowledgement string without running the command's
+provider mode:
+
+```text
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x4
+```
+
+The operator then supplies that exact value together with
+`--execute-real-provider` to
+`.venv/bin/python -m hramatka.qualification.live`. The anchor JSON is an
+operator-local object containing only `id`, `source_identity`, and `text` for
+the three manifest anchors. It must not be stored in the repository. Receipt
+and scratch roots must also be outside the repository.
+
+Each cell constructs one pinned provider port. Gemma's normal production
+failover and all round-robin selection are deliberately bypassed: a provider
+failure is a failure of that same cell, never evidence for a sibling route.
+The ordinary `BakeRunner` may repeat a failed whole bake, but every initial and
+repair call remains pinned to the same route and is recorded as content-free
+route telemetry.
+
+The run deletes its per-cell SQLite/cache/generated-content scratch directory
+and persists only validated content-free receipts. It leaves
+`semantic_gate: not_run`, invokes no semantic reviewer, and cannot populate
+the shipped production receipt defaults. Semantic adjudication is a separately
+authorized later gate that must repeat provenance validation before any call.
+
+Real cells use the production 1,800-second bake hard timeout and keep the
+authenticated API lifecycle open for 1,830 seconds, rather than the no-cost
+test harness's 600-second/20-second bounds. A cell that has not reached a
+terminal durable state by that deadline is refused; a terminal failed job is
+also refused. The command exits nonzero unless all twelve cells are present,
+passed, and remain `semantic_gate: not_run`; it reports only anchor/route IDs,
+never lesson or provider content.
+
+After each TestClient lifecycle stops its runner, live qualification waits up
+to one provider timeout plus a 30-second margin before deleting that cell's
+scratch directory. Pinned qualification transports make one HTTP attempt only;
+the ordinary whole-bake retry remains route-pinned. If a worker still has not
+stopped, the command fails without naming a filesystem path and preserves that
+one external scratch directory. Do not delete preserved scratch while the
+process is alive. After the qualification process has exited and an operator
+has confirmed no Hramatka worker remains, remove the preserved external
+scratch directory manually before starting a fresh run.
