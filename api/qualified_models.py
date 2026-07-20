@@ -106,6 +106,73 @@ LOGICAL_MODELS: Final = (
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
 
 
+class QualificationCandidateRegistry:
+    """Authorize one configured matrix cell while it is being qualified.
+
+    This is deliberately distinct from :class:`QualifiedModelRegistry`:
+    candidate authorization proves only that a requested harness cell belongs
+    to the immutable routing matrix.  It neither reads nor constructs
+    production qualification receipts.  The returned model contains exactly
+    the requested configured route, preventing a qualification cell from
+    silently exercising a sibling fallback route.
+    """
+
+    def __init__(
+        self,
+        *,
+        logical_model_id: str,
+        provider_route: str,
+        provider_host: str,
+        provider_model_id: str,
+    ) -> None:
+        model = next((item for item in LOGICAL_MODELS if item.id == logical_model_id), None)
+        if model is None or model.retired:
+            raise LogicalModelUnavailable("Logical model is not a qualification candidate.")
+        route = next((item for item in model.provider_routes if item.id == provider_route), None)
+        if route is None or (route.host, route.model_id) != (
+            provider_host,
+            provider_model_id,
+        ):
+            raise LogicalModelUnavailable("Provider route is not a qualification candidate.")
+        self._model = LogicalModelSpec(
+            id=model.id,
+            label=model.label,
+            description_uk=model.description_uk,
+            provider_routes=(route,),
+        )
+
+    def qualified_models(self) -> tuple[LogicalModelSpec, ...]:
+        """Return the sole configured model and route for this harness cell."""
+        return (self._model,)
+
+    def require_qualified(self, logical_model_id: str) -> LogicalModelSpec:
+        """Return only this cell's configured logical model."""
+        if logical_model_id != self._model.id:
+            raise LogicalModelUnavailable("Logical model is not a qualification candidate.")
+        return self._model
+
+    def public_payload(
+        self, *, operational_model_ids: frozenset[str] | None = None
+    ) -> dict[str, object]:
+        """Implement the small registry surface required by ``create_app``."""
+        available = operational_model_ids is None or self._model.id in operational_model_ids
+        return {
+            "registry_version": QUALIFIED_MODEL_REGISTRY_VERSION,
+            "models": (
+                [
+                    {
+                        "id": self._model.id,
+                        "label": self._model.label,
+                        "description": self._model.description_uk,
+                    }
+                ]
+                if available
+                else []
+            ),
+            "unavailable_message": None if available else "Модель тимчасово недоступна.",
+        }
+
+
 class QualifiedModelRegistry:
     """Resolve teacher choices only from complete, current route receipts."""
 
@@ -175,20 +242,39 @@ class QualifiedModelRegistry:
 
     def _has_current_receipts(self, model: LogicalModelSpec) -> bool:
         return all(
-            any(
-                receipt.logical_model_id == model.id
-                and receipt.provider_route == route.id
-                and receipt.provider_host == route.host
-                and receipt.provider_model_id == route.model_id
-                and receipt.passed
-                and receipt.registry_version == QUALIFIED_MODEL_REGISTRY_VERSION
-                and receipt.prompt_pack_version == self.prompt_pack_version
-                and receipt.density_contract_version == self.density_contract_version
-                and receipt.density_contract_digest == self.density_contract_digest
-                and QUALIFICATION_ANCHORS <= receipt.passed_anchors
-                for receipt in self._receipts
-            )
+            self._has_one_current_route_aggregate(model, route)
             for route in model.provider_routes
+        )
+
+    def _has_one_current_route_aggregate(
+        self, model: LogicalModelSpec, route: QualifiedProviderRoute
+    ) -> bool:
+        """Require exactly one current aggregate per configured route.
+
+        The production receipt loader must reject duplicate/missing/stale cell
+        evidence before constructing this aggregate.  Retaining more than one
+        aggregate would make route eligibility ambiguous, so this selector
+        also fails closed if that invariant is ever bypassed.
+        """
+        aggregates = tuple(
+            receipt
+            for receipt in self._receipts
+            if receipt.logical_model_id == model.id and receipt.provider_route == route.id
+        )
+        return len(aggregates) == 1 and self._is_current(aggregates[0], route)
+
+    def _is_current(
+        self, receipt: QualificationReceipt, route: QualifiedProviderRoute
+    ) -> bool:
+        return (
+            receipt.provider_host == route.host
+            and receipt.provider_model_id == route.model_id
+            and receipt.passed
+            and receipt.registry_version == QUALIFIED_MODEL_REGISTRY_VERSION
+            and receipt.prompt_pack_version == self.prompt_pack_version
+            and receipt.density_contract_version == self.density_contract_version
+            and receipt.density_contract_digest == self.density_contract_digest
+            and receipt.passed_anchors == QUALIFICATION_ANCHORS
         )
 
 

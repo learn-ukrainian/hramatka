@@ -147,6 +147,37 @@ _STEP_ORDER = {
 }
 
 
+def _content_free_qualification_route_trace(value: object) -> dict[str, Any] | None:
+    """Allowlist the optional qualification route trace before durable storage.
+
+    Qualification receipts may retain only selected routing metadata.  This
+    rejects arbitrary provider payloads rather than letting a caller tunnel
+    prompt, response, or anchor content through the extensible progress blob.
+    """
+    if not isinstance(value, dict) or set(value) != {
+        "expected_route",
+        "mode",
+        "observed_route",
+        "phase",
+    }:
+        return None
+    if (
+        value.get("mode") not in {"initial", "repair"}
+        or type(value.get("phase")) is not int
+        or value.get("phase") not in {1, 2, 3}
+    ):
+        return None
+    for key in ("expected_route", "observed_route"):
+        route = value.get(key)
+        if (
+            not isinstance(route, dict)
+            or set(route) != {"host", "model_id", "route_id"}
+            or not all(isinstance(item, str) and item for item in route.values())
+        ):
+            return None
+    return deepcopy(value)
+
+
 @dataclass
 class _TelemetryState:
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -162,6 +193,7 @@ class _TelemetryState:
     latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
     logical_model_id: str | None = None
     provider_routes: list[dict[str, str]] = field(default_factory=list)
+    qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -183,6 +215,7 @@ class TelemetryContext:
     latency_watchdogs: list[dict[str, Any]] = field(default_factory=list)
     logical_model_id: str | None = None
     provider_routes: list[dict[str, str]] = field(default_factory=list)
+    qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -200,6 +233,7 @@ class TelemetryContext:
                 latency_watchdogs=self.latency_watchdogs,
                 logical_model_id=self.logical_model_id,
                 provider_routes=self.provider_routes,
+                qualification_route_traces=self.qualification_route_traces,
             )
         else:
             with self._state.lock:
@@ -219,6 +253,7 @@ class TelemetryContext:
         self.latency_watchdogs = self._state.latency_watchdogs
         self.logical_model_id = self._state.logical_model_id
         self.provider_routes = self._state.provider_routes
+        self.qualification_route_traces = self._state.qualification_route_traces
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -279,6 +314,10 @@ class TelemetryContext:
                 progress_obj["logical_model_id"] = self._state.logical_model_id
             if self._state.provider_routes:
                 progress_obj["provider_routes"] = deepcopy(self._state.provider_routes)
+            if self._state.qualification_route_traces:
+                progress_obj["qualification_route_traces"] = deepcopy(
+                    self._state.qualification_route_traces
+                )
             snapshot = dict(progress_obj)
 
             if self.store is not None and self.job_id is not None:
@@ -357,6 +396,11 @@ class TelemetryContext:
                 route = {"host": host, "model": model}
                 if route not in self._state.provider_routes:
                     self._state.provider_routes.append(route)
+            qualification_trace = _content_free_qualification_route_trace(
+                trace_entry.get("qualification_route_trace")
+            )
+            if qualification_trace is not None:
+                self._state.qualification_route_traces.append(qualification_trace)
             if self._state.calls_done is not None:
                 self._state.calls_done += 1
             self._sync_from_shared_state()
