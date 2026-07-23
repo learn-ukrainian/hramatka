@@ -1,3 +1,4 @@
+import { AgentMonitorWidget } from './AgentMonitorWidget';
 import { useEffect, useState, useCallback, useRef } from 'react';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
@@ -1243,6 +1244,7 @@ export default function TeacherApp() {
               >
                 ?
               </button>
+              <AgentMonitorWidget apiFetch={apiFetch} />
               <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
               <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
             </>

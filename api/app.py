@@ -32,6 +32,7 @@ from hramatka.engine.providers import (
 
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
+from .agent_monitor import router as agent_monitor_router
 from .config import Settings
 from .models import (
     ActivityReplacementMutation,
@@ -330,6 +331,7 @@ def create_app(
     app.state.baker = baker
     app.state.review_attestor = ReviewAttestor(settings)
     app.state.model_registry = model_registry
+    app.include_router(agent_monitor_router)
 
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
