@@ -1,7 +1,8 @@
 """Agent Process & Resource Monitor API for Hetzner VPS (hramatka).
 
 Prevents multi-agent task overload, OOM crashes, and CPU contention.
-Enforces capacity invariant: host_reserved + active_reservations + requested_ram <= max_safe_memory.
+Enforces capacity invariant: host_reserved + active_reservations + requested_ram
+<= max_safe_memory.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -68,24 +69,55 @@ def _get_db():
 def _calculate_severity(used_percent: float) -> str:
     if used_percent >= 85.0:
         return "critical"
-    elif used_percent >= MAX_SAFE_RAM_PERCENT:
+    if used_percent >= MAX_SAFE_RAM_PERCENT:
         return "warning"
     return "healthy"
 
 
+def _sum_active_reserved_mb(cur: sqlite3.Cursor, now: float) -> int:
+    cur.execute(
+        "SELECT COALESCE(SUM(reserved_ram_mb), 0) FROM agent_leases "
+        "WHERE status='APPROVED' AND last_heartbeat >= ?",
+        (now - 300,),
+    )
+    return int(cur.fetchone()[0])
+
+
+def _capacity_exceeded(
+    *,
+    active_reserved_mb: int,
+    request_mb: int,
+    total_ram_mb: int,
+    available_ram_mb: int,
+) -> bool:
+    safe_capacity_mb = (
+        int(total_ram_mb * (MAX_SAFE_RAM_PERCENT / 100.0)) - HOST_RESERVED_RAM_MB
+    )
+    over_safe = (active_reserved_mb + request_mb) > safe_capacity_mb
+    under_available = available_ram_mb < (request_mb + 256)
+    return over_safe or under_available
+
+
 @router.get("/status")
-def get_monitor_status(_session: str = Depends(require_session)) -> Dict:
+def get_monitor_status(_session: str = Depends(require_session)) -> dict:
     mem = psutil.virtual_memory()
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
-    
+
     conn = _get_db()
     cur = conn.cursor()
     now = time.time()
     # Prune expired leases (>300s without heartbeat)
-    cur.execute("UPDATE agent_leases SET status='EXPIRED' WHERE status='APPROVED' AND last_heartbeat < ?", (now - 300,))
+    cur.execute(
+        "UPDATE agent_leases SET status='EXPIRED' "
+        "WHERE status='APPROVED' AND last_heartbeat < ?",
+        (now - 300,),
+    )
     conn.commit()
 
-    cur.execute("SELECT lease_token, agent_id, task_name, pid, reserved_ram_mb, last_heartbeat FROM agent_leases WHERE status='APPROVED'")
+    cur.execute(
+        "SELECT lease_token, agent_id, task_name, pid, reserved_ram_mb, last_heartbeat "
+        "FROM agent_leases WHERE status='APPROVED'"
+    )
     active_leases = [
         {
             "lease_token": row[0],
@@ -99,7 +131,7 @@ def get_monitor_status(_session: str = Depends(require_session)) -> Dict:
     ]
     conn.close()
 
-    total_reserved_mb = sum(l["reserved_ram_mb"] for l in active_leases)
+    total_reserved_mb = sum(lease["reserved_ram_mb"] for lease in active_leases)
     severity = _calculate_severity(mem.percent)
 
     return {
@@ -122,7 +154,7 @@ def get_monitor_status(_session: str = Depends(require_session)) -> Dict:
 
 
 @router.post("/preflight")
-def preflight_check(req: PreflightRequest) -> Dict:
+def preflight_check(req: PreflightRequest) -> dict:
     mem = psutil.virtual_memory()
     total_ram_mb = int(mem.total / (1024 * 1024))
     available_ram_mb = int(mem.available / (1024 * 1024))
@@ -130,14 +162,15 @@ def preflight_check(req: PreflightRequest) -> Dict:
     conn = _get_db()
     cur = conn.cursor()
     now = time.time()
-
-    cur.execute("SELECT COALESCE(SUM(reserved_ram_mb), 0) FROM agent_leases WHERE status='APPROVED' AND last_heartbeat >= ?", (now - 300,))
-    active_reserved_mb = cur.fetchone()[0]
+    active_reserved_mb = _sum_active_reserved_mb(cur, now)
     conn.close()
 
-    safe_capacity_mb = int(total_ram_mb * (MAX_SAFE_RAM_PERCENT / 100.0)) - HOST_RESERVED_RAM_MB
-
-    if (active_reserved_mb + req.required_ram_mb) > safe_capacity_mb or available_ram_mb < (req.required_ram_mb + 256):
+    if _capacity_exceeded(
+        active_reserved_mb=active_reserved_mb,
+        request_mb=req.required_ram_mb,
+        total_ram_mb=total_ram_mb,
+        available_ram_mb=available_ram_mb,
+    ):
         return {
             "verdict": "REJECTED",
             "reason": "Host memory capacity limit reached.",
@@ -156,7 +189,7 @@ def preflight_check(req: PreflightRequest) -> Dict:
 
 
 @router.post("/register")
-def register_agent_lease(req: LeaseRegisterRequest) -> Dict:
+def register_agent_lease(req: LeaseRegisterRequest) -> dict:
     mem = psutil.virtual_memory()
     total_ram_mb = int(mem.total / (1024 * 1024))
     available_ram_mb = int(mem.available / (1024 * 1024))
@@ -164,13 +197,14 @@ def register_agent_lease(req: LeaseRegisterRequest) -> Dict:
     conn = _get_db()
     cur = conn.cursor()
     now = time.time()
+    active_reserved_mb = _sum_active_reserved_mb(cur, now)
 
-    cur.execute("SELECT COALESCE(SUM(reserved_ram_mb), 0) FROM agent_leases WHERE status='APPROVED' AND last_heartbeat >= ?", (now - 300,))
-    active_reserved_mb = cur.fetchone()[0]
-
-    safe_capacity_mb = int(total_ram_mb * (MAX_SAFE_RAM_PERCENT / 100.0)) - HOST_RESERVED_RAM_MB
-
-    if (active_reserved_mb + req.reserved_ram_mb) > safe_capacity_mb or available_ram_mb < (req.reserved_ram_mb + 256):
+    if _capacity_exceeded(
+        active_reserved_mb=active_reserved_mb,
+        request_mb=req.reserved_ram_mb,
+        total_ram_mb=total_ram_mb,
+        available_ram_mb=available_ram_mb,
+    ):
         conn.close()
         return {
             "verdict": "REJECTED",
@@ -184,7 +218,16 @@ def register_agent_lease(req: LeaseRegisterRequest) -> Dict:
     lease_token = f"lease_{uuid.uuid4().hex[:12]}"
     cur.execute(
         "INSERT INTO agent_leases VALUES (?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?)",
-        (lease_token, req.agent_id, req.task_name, req.pid, req.process_create_time, req.reserved_ram_mb, now, now),
+        (
+            lease_token,
+            req.agent_id,
+            req.task_name,
+            req.pid,
+            req.process_create_time,
+            req.reserved_ram_mb,
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -202,12 +245,13 @@ def register_agent_lease(req: LeaseRegisterRequest) -> Dict:
 
 
 @router.post("/heartbeat")
-def heartbeat_agent_lease(req: HeartbeatRequest) -> Dict:
+def heartbeat_agent_lease(req: HeartbeatRequest) -> dict:
     conn = _get_db()
     cur = conn.cursor()
     now = time.time()
     cur.execute(
-        "UPDATE agent_leases SET last_heartbeat=? WHERE lease_token=? AND pid=? AND status='APPROVED'",
+        "UPDATE agent_leases SET last_heartbeat=? "
+        "WHERE lease_token=? AND pid=? AND status='APPROVED'",
         (now, req.lease_token, req.pid),
     )
     updated = cur.rowcount
@@ -215,16 +259,22 @@ def heartbeat_agent_lease(req: HeartbeatRequest) -> Dict:
     conn.close()
 
     if updated == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active lease token not found or process mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active lease token not found or process mismatch",
+        )
 
     return {"status": "OK", "lease_token": req.lease_token, "timestamp": now}
 
 
 @router.post("/release")
-def release_agent_lease(lease_token: str) -> Dict:
+def release_agent_lease(lease_token: str) -> dict:
     conn = _get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE agent_leases SET status='RELEASED' WHERE lease_token=?", (lease_token,))
+    cur.execute(
+        "UPDATE agent_leases SET status='RELEASED' WHERE lease_token=?",
+        (lease_token,),
+    )
     conn.commit()
     conn.close()
     return {"status": "RELEASED", "lease_token": lease_token}

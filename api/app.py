@@ -30,9 +30,9 @@ from hramatka.engine.providers import (
     make_logical_model_generator,
 )
 
+from .agent_monitor import router as agent_monitor_router
 from .baking.engine_adapter import EngineLessonBaker
 from .baking.port import LessonBaker
-from .agent_monitor import router as agent_monitor_router
 from .config import Settings
 from .models import (
     ActivityReplacementMutation,
