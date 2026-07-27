@@ -5,9 +5,10 @@
   Client-only, no backend.
 */
 
+/* Conductor sits inside .lesson-view.page-shell; no own max-width so it shares
+   the single content grid defined by the top bar. */
 .conductor-view {
-  max-width: 1060px;
-  margin: 0 auto;
+  width: 100%;
 }
 
 /* top bar */

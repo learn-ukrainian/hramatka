@@ -896,16 +896,73 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByPlaceholder(/Вставте/)).toHaveValue(anchorOne, { timeout: 5000 });
   });
 
-  // Operator layout order 2026-07-27: create page must fit one screen, only textarea scrolls.
-  test('create page has no body scroll at 1440x900 with empty form', async ({ page }) => {
+  // Operator layout order 2026-07-27: ONE content grid defined by the top bar.
+  test('header and create-page content edges align at 1440x900', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
     await page.waitForURL(/\/teacher\/?$/);
 
-    const docScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-    const docClientHeight = await page.evaluate(() => document.documentElement.clientHeight);
-    expect(docScrollHeight).toBeLessThanOrEqual(docClientHeight);
+    const headerShell = page.locator('.appbar > .page-shell');
+    const createShell = page.locator('.hub.create-hub.page-shell');
+    await expect(headerShell).toBeVisible();
+    await expect(createShell).toBeVisible();
+
+    const [headerEdges, createEdges] = await page.evaluate(() => {
+      const contentEdges = (el: Element) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return {
+          left: rect.left + parseFloat(style.paddingLeft),
+          right: rect.right - parseFloat(style.paddingRight),
+        };
+      };
+      return [
+        contentEdges(document.querySelector('.appbar > .page-shell')!),
+        contentEdges(document.querySelector('.hub.create-hub.page-shell')!),
+      ];
+    });
+
+    expect(Math.abs(createEdges.left - headerEdges.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(createEdges.right - headerEdges.right)).toBeLessThanOrEqual(1);
+  });
+
+  test('create page has no body scroll at 1440x900 and 1568x774 with empty form', async ({ page }) => {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 1568, height: 774 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+      await page.reload();
+      await page.waitForURL(/\/teacher\/?$/);
+
+      const docScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+      const docClientHeight = await page.evaluate(() => document.documentElement.clientHeight);
+      expect(docScrollHeight, `no body scroll at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(docClientHeight);
+    }
+  });
+
+  test('create-page textarea width is grid width minus controls at 1440x900', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const grid = page.locator('.create-shell');
+    const textarea = page.getByTestId('anchor-text-input');
+    await expect(grid).toBeVisible();
+    await expect(textarea).toBeVisible();
+
+    const { gridContentWidth, textareaWidth } = await page.evaluate(() => {
+      const grid = document.querySelector('.create-shell')!;
+      const style = window.getComputedStyle(grid);
+      const gridRect = grid.getBoundingClientRect();
+      const gridContentWidth = gridRect.width
+        - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+      const textarea = document.querySelector('[data-testid="anchor-text-input"]')!;
+      return { gridContentWidth, textareaWidth: textarea.getBoundingClientRect().width };
+    });
+
+    expect(textareaWidth).toBeGreaterThanOrEqual(gridContentWidth - 420);
   });
 
   test('long pasted text scrolls inside textarea without scrolling body', async ({ page }) => {
@@ -930,5 +987,43 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await textarea.evaluate(el => { el.scrollTop = el.scrollHeight; });
     const bodyScrollAfter = await page.evaluate(() => window.scrollY);
     expect(bodyScrollAfter).toBe(bodyScrollBefore);
+  });
+
+  test('lessons and settings pages share the same content grid as the header', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const headerShell = page.locator('.appbar > .page-shell');
+    await expect(headerShell).toBeVisible();
+    const headerEdges = await page.evaluate(() => {
+      const el = document.querySelector('.appbar > .page-shell')!;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return {
+        left: rect.left + parseFloat(style.paddingLeft),
+        right: rect.right - parseFloat(style.paddingRight),
+      };
+    });
+
+    for (const [label, selector] of [
+      ['Мої заняття', '.lessons-page.page-shell'],
+      ['Налаштування', '.settings-page.page-shell'],
+    ]) {
+      await page.getByRole('button', { name: label }).click();
+      const pageShell = page.locator(selector);
+      await expect(pageShell).toBeVisible();
+      const pageEdges = await pageShell.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return {
+          left: rect.left + parseFloat(style.paddingLeft),
+          right: rect.right - parseFloat(style.paddingRight),
+        };
+      });
+      expect(Math.abs(pageEdges.left - headerEdges.left), `${label} left edge aligns`).toBeLessThanOrEqual(1);
+      expect(Math.abs(pageEdges.right - headerEdges.right), `${label} right edge aligns`).toBeLessThanOrEqual(1);
+    }
   });
 });

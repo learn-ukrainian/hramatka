@@ -1197,63 +1197,65 @@ export default function TeacherApp() {
   return (
     <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}${isStudentSurface ? ' studentframe' : ''}`} data-testid={isStudentSurface ? 'student-surface' : 'teacher-surface'}>
       <header className="appbar">
-        <div className="brand">{t('brand')}</div>
-        {session && !isStudentSurface && (
-          <nav className="appnav" aria-label={t('brand')}>
-            <button
-              type="button"
-              className={route.view === 'catalog' ? 'on' : ''}
-              onClick={() => navigate({ view: 'catalog' })}
-            >
-              {t('catalog.title')}
-            </button>
-            <button
-              type="button"
-              className={route.view === 'paste' ? 'on' : ''}
-              onClick={() => navigate({ view: 'paste' })}
-            >
-              {t('catalog.new')}
-            </button>
-            <button
-              type="button"
-              className={route.view === 'settings' ? 'on' : ''}
-              onClick={() => navigate({ view: 'settings' })}
-            >
-              {t('settings.title')}
-            </button>
-          </nav>
-        )}
-        {session && isStudentSurface && (
-          <span className="modechip student" data-testid="student-mode-badge">{t('chip.student')}</span>
-        )}
-        <div className="session">
-          {/* Header EN/УКР toggle (demo langbtn): default UA, instant + reversible, persisted.
-              Stays on the student surface too — the demo keeps interface-language switching there. */}
-          <button
-            type="button"
-            className="helpbtn langbtn"
-            onClick={toggleLang}
-            title={t('lang.title')}
-            aria-label={t('lang.title')}
-            data-testid="lang-toggle"
-          >
-            {lang === 'en' ? t('lang.switchUk') : t('lang.switchEn')}
-          </button>
+        <div className="page-shell">
+          <div className="brand">{t('brand')}</div>
           {session && !isStudentSurface && (
-            <>
+            <nav className="appnav" aria-label={t('brand')}>
               <button
                 type="button"
-                className="helpbtn"
-                onClick={() => setHelpOpen(true)}
-                title={t('help.aria')}
-                aria-label={t('help.aria')}
+                className={route.view === 'catalog' ? 'on' : ''}
+                onClick={() => navigate({ view: 'catalog' })}
               >
-                ?
+                {t('catalog.title')}
               </button>
-              <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
-              <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
-            </>
+              <button
+                type="button"
+                className={route.view === 'paste' ? 'on' : ''}
+                onClick={() => navigate({ view: 'paste' })}
+              >
+                {t('catalog.new')}
+              </button>
+              <button
+                type="button"
+                className={route.view === 'settings' ? 'on' : ''}
+                onClick={() => navigate({ view: 'settings' })}
+              >
+                {t('settings.title')}
+              </button>
+            </nav>
           )}
+          {session && isStudentSurface && (
+            <span className="modechip student" data-testid="student-mode-badge">{t('chip.student')}</span>
+          )}
+          <div className="session">
+            {/* Header EN/УКР toggle (demo langbtn): default UA, instant + reversible, persisted.
+                Stays on the student surface too — the demo keeps interface-language switching there. */}
+            <button
+              type="button"
+              className="helpbtn langbtn"
+              onClick={toggleLang}
+              title={t('lang.title')}
+              aria-label={t('lang.title')}
+              data-testid="lang-toggle"
+            >
+              {lang === 'en' ? t('lang.switchUk') : t('lang.switchEn')}
+            </button>
+            {session && !isStudentSurface && (
+              <>
+                <button
+                  type="button"
+                  className="helpbtn"
+                  onClick={() => setHelpOpen(true)}
+                  title={t('help.aria')}
+                  aria-label={t('help.aria')}
+                >
+                  ?
+                </button>
+                <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
+                <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1334,7 +1336,7 @@ export default function TeacherApp() {
         <>
           {/* Paste / Hub — one-screen split create page; text is the centerpiece. */}
           {route.view === 'paste' && (
-            <main className="hub create-hub">
+            <main className="hub create-hub page-shell">
               <section className="create-shell">
                 <div className="create-left">
                   <h2>{t('paste.title')}</h2>
@@ -1503,7 +1505,7 @@ export default function TeacherApp() {
           )}
 
           {route.view === 'catalog' && (
-            <main className="lessons-page">
+            <main className="lessons-page page-shell">
               <div className="lessons-page-head">
                 <h1>{t('catalog.title')}</h1>
                 <span className="lessons-page-actions">
@@ -1550,7 +1552,7 @@ export default function TeacherApp() {
           )}
 
           {route.view === 'settings' && (
-            <main className="settings-page">
+            <main className="settings-page page-shell">
               <section className="settings-card">
                 <h1>{t('settings.title')}</h1>
                 <div className="field">
@@ -1569,7 +1571,7 @@ export default function TeacherApp() {
           {/* Lesson view */}
           {/* #93 item1: render on route.lessonId to avoid blank on direct/refresh; set current early via ready effect */}
           {route.view === 'lesson' && route.lessonId && (
-            <main className={`lesson-view${currentMode === 'run' ? ' student-run-view' : ''}`}>
+            <main className={`lesson-view page-shell${currentMode === 'run' ? ' student-run-view' : ''}`}>
               {showTeacherLessonChrome && (
               <div className="lesson-header">
                 <button className="btn ghost" onClick={() => navigate({ view: 'catalog' })}>{t('lesson.back')}</button>

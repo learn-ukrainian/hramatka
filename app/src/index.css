@@ -160,11 +160,19 @@ input.inputbox::placeholder,textarea.inputbox::placeholder{color:var(--ink-soft)
   @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
 }
 
-/* #root adapted for demo width/feel (no forced center border on teacher content) */
+/* #root spans the full viewport; the single shared .page-shell constrains content. */
 #root {
-  max-width: 1060px;
-  margin: 0 auto;
   min-height: 100svh;
+  box-sizing: border-box;
+}
+
+/* ONE content grid defined by the top bar. Header content and every page main use
+   this class so left/right edges align to the pixel across the app. */
+.page-shell {
+  max-width: 1520px;
+  margin: 0 auto;
+  padding: 0 24px;
+  width: 100%;
   box-sizing: border-box;
 }
 

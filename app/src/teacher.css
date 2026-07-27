@@ -12,17 +12,22 @@
   flex-direction: column;
 }
 
-/* chrome: appbar styled after demo .mockbar (accent bar + Georgia brand) */
+/* chrome: appbar styled after demo .mockbar (accent bar + Georgia brand).
+   The bar spans the full width; .page-shell inside it aligns content with page mains. */
 .appbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
   background: var(--accent);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 10;
+}
+.appbar > .page-shell {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  min-height: 46px;
 }
 :root[data-theme="dark"] .appbar { color: var(--paper); }
 .brand { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; letter-spacing: .4px; font-size: 17px; }
@@ -112,14 +117,14 @@
 .banner .ic { font-size: 17px; line-height: 1.2; }
 .paste .restored-notice { margin: 6px 0 8px; }
 
-/* hub + cards: paste + catalog as demo paper/card */
+/* hub + cards: legacy two-column hub (kept for reuse); create-hub overrides below.
+   Use vertical padding only so .page-shell controls horizontal padding. */
 .hub {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  padding: 20px;
-  max-width: 1060px;
-  margin: 0 auto;
+  padding-top: 20px;
+  padding-bottom: 20px;
 }
 @media (max-width: 860px) { .hub { grid-template-columns: 1fr; } }
 
@@ -145,21 +150,24 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 .paste .field + .field { margin-top: 2px; }
 
 /* Create page: one-screen split layout. Desktop = controls left, large text right.
-   Narrow screens stack naturally. Text area is the centerpiece and scrolls internally. */
+   Narrow screens stack naturally. Text area is the centerpiece and scrolls internally.
+   Horizontal padding comes from .page-shell; only vertical padding lives here. */
 .hub.create-hub {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 12px 20px 12px;
+  padding-top: 12px;
+  padding-bottom: 12px;
   overflow: hidden;
 }
 .create-shell {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 300px 1fr;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
   gap: 20px;
   min-height: 0;
+  overflow: hidden;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -167,29 +175,34 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
   padding: 14px 20px;
 }
 .create-left {
+  width: 380px;
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   overflow-y: auto;
 }
 .create-left h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 18px; margin: 0; }
-.create-privacy { margin: 0; font-size: 13px; padding: 10px 12px; }
+.create-privacy { margin: 0; font-size: 12px; padding: 8px 10px; }
 .create-controls-stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .create-controls-stack .field { margin: 0; }
 .create-controls-stack .field label { font-size: 12.5px; margin-bottom: 4px; }
 .create-submit { margin-top: auto; }
 .create-right {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
+  overflow: hidden;
 }
 .create-right label { font-size: 13px; font-weight: 600; margin-bottom: 6px; flex: none; }
+.create-right .restored-notice { margin: 0 0 8px; font-size: 12px; padding: 8px 10px; }
 .create-right textarea {
   flex: 1 1 auto;
   min-height: 0;
@@ -203,16 +216,16 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 @media (max-width: 1023px) {
   .hub.create-hub { overflow: visible; height: auto; }
   .hub.create-hub + .footer { margin-top: 32px; }
-  .create-shell { grid-template-columns: 1fr; overflow: visible; }
-  .create-left { overflow: visible; }
-  .create-right { height: 360px; }
+  .create-shell { flex-direction: column; overflow: visible; height: auto; }
+  .create-left { width: 100%; overflow: visible; }
+  .create-right { min-height: 360px; height: auto; }
   .create-submit { margin-top: 4px; }
 }
 @media (max-width: 860px) {
   .create-shell { padding: 14px 16px; }
 }
 @media (max-width: 650px) {
-  .create-right { height: 280px; }
+  .create-right { min-height: 280px; }
 }
 
 .pedcards { display: grid; gap: 10px; }
@@ -231,8 +244,9 @@ button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
 .catalog li.listrow .title { font-weight: 600; }
 .catalog li.listrow .when { color: var(--ink-soft); font-size: 12.5px; margin-left: auto; font-variant-numeric: tabular-nums; }
 
-/* «Мої заняття» is the design's calm home page: one list, one primary action. */
-.lessons-page, .settings-page { max-width: 1060px; margin: 0 auto; padding: 22px 20px; }
+/* «Мої заняття» is the design's calm home page: one list, one primary action.
+   Horizontal padding comes from .page-shell. */
+.lessons-page, .settings-page { padding-top: 22px; padding-bottom: 22px; }
 .lessons-page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
 .lessons-page-head h1, .settings-card h1 { margin: 0; }
 .lessons-page-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -256,8 +270,8 @@ button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
   .lesson-drive-paths { width: 100%; padding-left: 0; }
 }
 
-/* lesson view chrome */
-.lesson-view { max-width: 1060px; margin: 0 auto; padding: 16px 20px; }
+/* lesson view chrome. Horizontal padding comes from .page-shell. */
+.lesson-view { padding-top: 16px; padding-bottom: 16px; }
 .lesson-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .lesson-header h2 { margin: 0 0 0 4px; font-size: 21px; font-family: Georgia, 'Times New Roman', serif; }
 .lesson-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
