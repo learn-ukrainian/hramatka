@@ -1,0 +1,135 @@
+/*
+  Activity-kit vendored CSS hardcodes white backgrounds and white text on
+  several interactive controls. In dark theme those hardcoded values break
+  the token bridge (the demo tokens flip, but the kit ignores them), causing
+  pale-on-pale unreadable controls (operator report 2026-07-28).
+
+  These app-side overrides restore the bridge by forcing the hardcoded kit
+  surfaces to use demo tokens. They are scoped to [data-activity] so app
+  chrome is untouched. Hover and selection/correct/wrong states are preserved
+  by re-mapping them to the same bridge tokens.
+
+  This file must be imported AFTER @learn-ukrainian/activity-kit/styles.css
+  so its rules win ties of equal specificity.
+*/
+
+/* ===== Default/rest surfaces: replace hardcoded white with --card ===== */
+[data-activity] [class*="option"],
+[data-activity] [class*="tfButton"],
+[data-activity] [class*="chip"]:not([class*="chipDraggable"]),
+[data-activity] [class*="wordTile"],
+[data-activity] [class*="translateOption"],
+[data-activity] [class*="dialogueLine"],
+[data-activity] [class*="observeExample"],
+[data-activity] [class*="etymologyItem"],
+[data-activity] [class*="noErrorButton"],
+[data-activity] [class*="readingContext"] {
+  background: var(--card);
+  color: var(--ink);
+}
+
+/* ===== Primary-filled labels/buttons: hardcoded white text fails on light --accent in dark theme. ===== */
+[data-activity] [class*="submitButton"],
+[data-activity] [class*="activityIcon"],
+[data-activity] [class*="speakerLabel"],
+[data-activity] [class*="positionNumber"],
+[data-activity] [class*="criteriaTag"],
+[data-activity] [class*="stepBadge"],
+[data-activity] [class*="checkbox"][class*="checked"],
+[data-activity] [class*="letterTile"]:hover,
+[data-activity] [class*="wordTile"]:hover,
+[data-activity] [class*="revealButton"]:hover,
+[data-activity] [class*="helpButton"]:hover,
+[data-activity] [class*="hotspot"] {
+  color: var(--paper);
+}
+
+/* ===== Restore kit hover intents that the default rule above would otherwise override. ===== */
+[data-activity] [class*="option"]:hover,
+[data-activity] [class*="chip"]:not([class*="chipDraggable"]):hover,
+[data-activity] [class*="translateOption"]:hover,
+[data-activity] [class*="checkboxOption"]:hover,
+[data-activity] [class*="etymologyItem"]:hover {
+  background: var(--lu-state-active);
+  color: var(--ink);
+}
+[data-activity] [class*="dialogueLine"]:hover {
+  border-color: var(--ifm-color-primary);
+}
+[data-activity] [class*="noErrorButton"]:hover {
+  background: var(--lu-state-correct-bg);
+  color: var(--lu-state-correct-fg);
+}
+[data-activity] [class*="tfButton"][class*="trueButton"]:hover {
+  background: var(--lu-state-correct-bg);
+  color: var(--lu-state-correct-fg);
+}
+[data-activity] [class*="tfButton"][class*="falseButton"]:hover {
+  background: var(--lu-state-wrong-bg);
+  color: var(--lu-state-wrong-fg);
+}
+[data-activity] [class*="letterTile"]:hover,
+[data-activity] [class*="wordTile"]:hover,
+[data-activity] [class*="revealButton"]:hover,
+[data-activity] [class*="helpButton"]:hover {
+  background: var(--ifm-color-primary);
+  color: var(--paper);
+}
+
+/* ===== Preserve kit selection / feedback states using bridge tokens ===== */
+[data-activity] [class*="option"][class*="selected"],
+[data-activity] [class*="translateOption"][class*="selected"],
+[data-activity] [class*="checkboxOption"][class*="checked"] {
+  background: var(--lu-state-active);
+  color: var(--ink);
+}
+
+[data-activity] [class*="option"][class*="correct"],
+[data-activity] [class*="tfButton"][class*="correct"],
+[data-activity] [class*="translateOption"][class*="correct"],
+[data-activity] [class*="blank"][class*="correct"],
+[data-activity] [class*="blankDropZone"][class*="correct"],
+[data-activity] [class*="sentenceBuilder"][class*="correct"],
+[data-activity] [class*="answerZone"][class*="correct"],
+[data-activity] [class*="dialogueLine"][class*="correct"] {
+  background: var(--lu-state-correct-bg);
+  color: var(--lu-state-correct-fg);
+}
+
+[data-activity] [class*="option"][class*="incorrect"],
+[data-activity] [class*="tfButton"][class*="incorrect"],
+[data-activity] [class*="translateOption"][class*="incorrect"],
+[data-activity] [class*="blank"][class*="incorrect"],
+[data-activity] [class*="blankDropZone"][class*="incorrect"],
+[data-activity] [class*="sentenceBuilder"][class*="incorrect"],
+[data-activity] [class*="answerZone"][class*="incorrect"],
+[data-activity] [class*="dialogueLine"][class*="incorrect"] {
+  background: var(--lu-state-wrong-bg);
+  color: var(--lu-state-wrong-fg);
+}
+
+/* ===== Inline-styled kit controls that bypass CSS modules ===== */
+/* Fill-in drag chips set style={{ color: 'white' }} inline; force token. */
+[data-activity] [class*="chipDraggable"] {
+  color: var(--paper) !important;
+}
+
+/* ===== Density: tighten activity chrome without shrinking content fonts ===== */
+[data-activity] [class*="activityContainer"] {
+  padding: 14px;
+  margin: 12px 0;
+}
+[data-activity] [class*="activityContent"] {
+  gap: 0.75rem;
+}
+[data-activity] [class*="activityHeader"] {
+  margin-bottom: 8px;
+}
+[data-activity] [class*="instruction"] {
+  margin-bottom: 8px;
+}
+[data-activity] [class*="readingContext"],
+[data-activity] [class*="clozePassage"],
+[data-activity] [class*="markWordsText"] {
+  padding: 10px 12px;
+}

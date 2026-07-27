@@ -87,7 +87,7 @@ export default function LessonBlocks({
                   )}
 
                   {/* REAL WIDGET — zero fallback (container styled only; kit kept untouched) */}
-                  <div className="activity-wrapper" data-activity-type={block.type}>
+                  <div className="activity-wrapper" data-activity data-activity-type={block.type}>
                     <ActivityPlayer
                       activity={block.activity}
                       isUkrainian={true}

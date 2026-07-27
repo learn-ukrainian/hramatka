@@ -568,7 +568,7 @@ button.choice.on {
   border: 1px solid var(--line);
   border-radius: 3px;
   box-shadow: var(--shadow);
-  padding: 30px 36px;
+  padding: 18px 22px;
   font-size: 15.5px;
   line-height: 1.66;
 }
@@ -585,6 +585,23 @@ button.choice.on {
   border-top: 1px solid var(--line);
   padding-top: 8px;
   margin-top: 22px;
+}
+
+/* Review-mode density: tighten chrome/labels without touching lesson content fonts. */
+.review-workbench .dochead {
+  padding: 10px 0 2px;
+}
+.review-workbench .anchorbody {
+  padding: 6px 2px 8px;
+}
+.review-workbench .review-phase {
+  margin: 10px 0;
+}
+.review-workbench .dblock {
+  padding: 6px 2px;
+}
+.review-workbench .dblock:last-child {
+  border-bottom: 0;
 }
 .dochead {
   font-family: Georgia, 'Times New Roman', serif;
@@ -608,7 +625,7 @@ button.choice.on {
 .anchorbody { white-space: pre-wrap; font-size: 14.5px; margin-bottom: 8px; }
 
 .dblock {
-  padding: 12px 2px;
+  padding: 8px 2px;
   border-bottom: 1px solid var(--line);
 }
 .dblock.editing {

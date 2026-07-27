@@ -99,7 +99,7 @@ export default function ReviewWorkbench({
     // #164: the workbench is teacher-only by construction — no student path reaches it.
     const intent = deliberateErrors(block.answer_key);
     return (
-      <div className="bcontent" data-activity-type={block.type}>
+      <div className="bcontent" data-activity data-activity-type={block.type}>
         {/* Marked before the activity: the point is to pre-empt reading the wrong
             Ukrainian below as an engine defect, so it must be seen first. */}
         {intent.length > 0 && <DeliberateErrorBadge />}
@@ -305,7 +305,7 @@ export default function ReviewWorkbench({
                 {t(activityTypeLabel(block.type) as ChromeKey)}
                 {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
               </span>
-              <div className="bcontent" data-activity-type={block.type}>
+              <div className="bcontent" data-activity data-activity-type={block.type}>
                 <ActivityPlayer activity={block.activity} isUkrainian />
               </div>
               <div className="dmargin noprint">

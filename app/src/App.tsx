@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
 import './teacher.css';
+import './activity-kit-overrides.css';
 import {
   bakeStatusSubline,
   formatBakeProgressLine,

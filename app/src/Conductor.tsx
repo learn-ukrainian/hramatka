@@ -452,7 +452,9 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
         <div className="cond-taskmeta">
           <span className="num">{t('cond.taskCount', { i: visIndex, total })}</span>
         </div>
-        <ActivityPlayer activity={curB.activity} isUkrainian />
+        <div data-activity data-activity-type={curB.type}>
+          <ActivityPlayer activity={curB.activity} isUkrainian />
+        </div>
       </div>
     );
   }
