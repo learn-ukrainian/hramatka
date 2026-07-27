@@ -78,6 +78,38 @@ change, provisioning, or disclosure of any secret.
    process-local concurrency limit of one are application-level defenses;
    Caddy independently enforces exact method/path, body size, timeouts, no
    cache, no CORS, and skipped access logging.
+### Sealed review records
+
+An existing cross-family review is eligible for attestation only after a sealed
+review record is added to the host-side attestation database. The record is
+immutable for one repository/PR/head and binds the exact GitHub comment ID, URL,
+author, timestamps, body digest, reviewer family, concrete reviewer model, and
+provider origin. The attestor later fetches that comment using its ephemeral
+Actions token and rejects an edited, deleted, swapped, or head-mismatched
+record. A lifecycle marker is only a consistency check; it cannot authorize a
+signature by itself.
+
+Fetch the private review comment through an authenticated local GitHub client
+and stream its JSON to the host registrar. Do not put a token in the command,
+terminal output, host environment, or repository. The command prints only the
+sealed record identifiers and digest:
+
+```sh
+gh api repos/<owner>/<repo>/issues/comments/<comment-id> | \
+  ~/.local/bin/hramatka-vps \
+    'sudo -u hramatka /opt/hramatka/current/.venv/bin/python \
+    -m hramatka.ops.register_review_record \
+    --database /var/lib/hramatka/review-attestations.sqlite3 \
+    --repository <owner>/<repo> --pr-number <n> --head-sha <40-hex-sha> \
+    --reviewer-family <family> --reviewer-model <family>/<concrete-model> \
+    --provider-host https://<provider-origin>'
+```
+
+The input comment must itself state a clean/approved review and name the
+declared reviewer family and concrete model. To replace review evidence, create
+a new review at a new PR head; do not modify the sealed SQLite row. After
+registration, apply `review-attestation`; the bot publisher replaces the first
+lifecycle marker with its own signed receipt URL before it removes the label.
 7. Generate and install the signing key only in a root shell on the host. Never
    redirect its contents to a terminal, paste it into a ticket, or copy it to a
    checkout:

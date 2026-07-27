@@ -331,8 +331,6 @@ def create_app(
     app.state.baker = baker
     app.state.review_attestor = ReviewAttestor(settings)
     app.state.model_registry = model_registry
-    app.include_router(agent_monitor_router)
-
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
         return JSONResponse(status_code=error.status_code, content=error.payload())
@@ -451,6 +449,12 @@ def create_app(
                 403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
             )
         return session
+
+    # The monitor router is intentionally dependency-free as a reusable unit,
+    # but the live API must not disclose its lease tokens without a teacher
+    # session.  The session dependency lives in this factory because it closes
+    # over this application's store.
+    app.include_router(agent_monitor_router, dependencies=[Depends(require_session)])
 
     def session_payload(session: AuthenticatedSession) -> dict[str, object]:
         return {
