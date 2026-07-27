@@ -103,8 +103,15 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         density=replace(
             run.receipts[-1].density,
             delivered_blocks=0,
+            ready_blocks=0,
+            tray_blocks=0,
+            floor_blocks=0,
             phase_counts={"1": 0, "2": 0, "3": 0},
+            ready_phase_counts={"1": 0, "2": 0, "3": 0},
+            tray_phase_counts={"1": 0, "2": 0, "3": 0},
             response_units=0,
+            ready_response_units=0,
+            tray_response_units=0,
         ),
     ))
     with pytest.raises(QualificationError, match="density counts"):

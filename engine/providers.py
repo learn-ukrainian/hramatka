@@ -270,6 +270,7 @@ class _TelemetryState:
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
+    teacher_ready_density: dict[str, Any] | None = None
 
 
 @dataclass
@@ -294,6 +295,7 @@ class TelemetryContext:
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
+    teacher_ready_density: dict[str, Any] | None = None
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -314,6 +316,7 @@ class TelemetryContext:
                 qualification_route_traces=self.qualification_route_traces,
                 qualification_density_traces=self.qualification_density_traces,
                 qualification_repair_traces=self.qualification_repair_traces,
+                teacher_ready_density=self.teacher_ready_density,
             )
         else:
             with self._state.lock:
@@ -336,6 +339,7 @@ class TelemetryContext:
         self.qualification_route_traces = self._state.qualification_route_traces
         self.qualification_density_traces = self._state.qualification_density_traces
         self.qualification_repair_traces = self._state.qualification_repair_traces
+        self.teacher_ready_density = self._state.teacher_ready_density
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -408,6 +412,8 @@ class TelemetryContext:
                 progress_obj["qualification_repair_traces"] = deepcopy(
                     self._state.qualification_repair_traces
                 )
+            if self._state.teacher_ready_density is not None:
+                progress_obj["teacher_ready_density"] = deepcopy(self._state.teacher_ready_density)
             snapshot = dict(progress_obj)
 
             if self.store is not None and self.job_id is not None:
@@ -575,6 +581,24 @@ class TelemetryContext:
                 self._state.generation_path = "legacy_fallback"
                 if "reason" in trace_entry:
                     self._state.fallback_reason = trace_entry["reason"]
+            elif event == "teacher_ready_density":
+                self._state.teacher_ready_density = {
+                    key: deepcopy(trace_entry[key])
+                    for key in (
+                        "phase_counts",
+                        "ready_phase_counts",
+                        "tray_phase_counts",
+                        "delivered_blocks",
+                        "ready_blocks",
+                        "tray_blocks",
+                        "floor_blocks",
+                        "ready_response_units",
+                        "tray_response_units",
+                        "response_units",
+                        "disposition",
+                    )
+                    if key in trace_entry
+                }
             self.save_traces()
         self.update_progress_db()
 

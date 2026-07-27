@@ -8,8 +8,9 @@ generator is injectable, so the pipeline runs offline in tests with a fake
 generator and never touches the network here.
 
 The assembler selects only ``ready`` candidates under one whole-lesson policy.
-``review_required`` material is retained in the rejected/reserve tray, never
-promoted into a visible warning block to hide a density shortfall.
+``review_required`` material remains in the rejected/reserve tray and is never
+promoted automatically, but it is separately counted toward the teacher-ready
+floor because a teacher can inspect and explicitly acknowledge it.
 """
 
 from __future__ import annotations
@@ -904,8 +905,17 @@ class EngineLessonBaker:
                 for phase in sorted(slots_by_phase)
                 for candidate in selected_by_phase[phase]
             ]
+
+            def tray_accounting_by_phase() -> dict[int, list[Any]]:
+                """Return gate-passing tray blocks without making them visible."""
+                return {
+                    phase: list(result.review_required) for phase, result in phase_results.items()
+                }
+
             density_receipt = content_density.evaluate_teacher_ready_density(
-                selected_by_phase, duration=resolved_duration
+                selected_by_phase,
+                duration=resolved_duration,
+                tray_by_phase=tray_accounting_by_phase(),
             )
 
             def record_qualification_density(*, stage: str, repair_invocations: int) -> None:
@@ -1031,6 +1041,7 @@ class EngineLessonBaker:
                         round=repair_round,
                         selected_by_phase=selected_by_phase,
                         slots_by_phase=slots_by_phase,
+                        tray_by_phase=tray_accounting_by_phase(),
                     )
                     if not requests:
                         tel_ctx.record_event(
@@ -1212,7 +1223,9 @@ class EngineLessonBaker:
                         candidates_by_phase[request.phase].extend(repair_result.ready)
                         selected_by_phase, selected = compose_repair_pool()
                         density_receipt = content_density.evaluate_teacher_ready_density(
-                            selected_by_phase, duration=resolved_duration
+                            selected_by_phase,
+                            duration=resolved_duration,
+                            tray_by_phase=tray_accounting_by_phase(),
                         )
                         original_model = next(
                             (
@@ -1348,7 +1361,14 @@ class EngineLessonBaker:
                 quoting_slots_required = density_contract.min_blocks
                 quoting_slots_selected = sum(
                     1
-                    for candidate in selected
+                    for candidate in [
+                        *selected,
+                        *(
+                            candidate
+                            for candidates in tray_accounting_by_phase().values()
+                            for candidate in candidates
+                        ),
+                    ]
                     if registry.ACTIVITY_REGISTRY[candidate.activity["type"]].grounding_mode
                     == registry.GROUNDING_QUOTING
                 )

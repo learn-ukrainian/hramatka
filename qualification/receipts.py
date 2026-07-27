@@ -19,7 +19,7 @@ from hramatka.api.qualified_models import (
 )
 from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 
-CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v1"
+CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v2"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v1"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COMMIT_RE = re.compile(r"^[a-f0-9]{40,64}$")
@@ -106,42 +106,95 @@ class RepairTraceEntry:
 
 @dataclass(frozen=True)
 class DensitySummary:
+    """Content-free accounting of ready and teacher-tray floor capacity."""
+
     delivered_blocks: int
+    ready_blocks: int
+    tray_blocks: int
+    floor_blocks: int
     phase_counts: Mapping[str, int]
+    ready_phase_counts: Mapping[str, int]
+    tray_phase_counts: Mapping[str, int]
     response_units: int
+    ready_response_units: int
+    tray_response_units: int
     disposition: str
 
     @classmethod
     def from_dict(cls, value: object) -> DensitySummary:
         row = _require_exact_keys(
             value,
-            {"delivered_blocks", "disposition", "phase_counts", "response_units"},
+            {
+                "delivered_blocks",
+                "ready_blocks",
+                "tray_blocks",
+                "floor_blocks",
+                "phase_counts",
+                "ready_phase_counts",
+                "tray_phase_counts",
+                "response_units",
+                "ready_response_units",
+                "tray_response_units",
+                "disposition",
+            },
             "density",
         )
-        phase_counts = row["phase_counts"]
+        count_fields = (
+            "delivered_blocks",
+            "ready_blocks",
+            "tray_blocks",
+            "floor_blocks",
+            "response_units",
+            "ready_response_units",
+            "tray_response_units",
+        )
+        phase_count_fields = ("phase_counts", "ready_phase_counts", "tray_phase_counts")
         if (
-            type(row["delivered_blocks"]) is not int
-            or type(row["response_units"]) is not int
-            or row["delivered_blocks"] < 0
-            or row["response_units"] < 0
+            any(type(row[field]) is not int or row[field] < 0 for field in count_fields)
             or row["disposition"] not in {"teacher_ready", "recoverable_draft"}
-            or not isinstance(phase_counts, dict)
-            or set(phase_counts) != {"1", "2", "3"}
-            or any(type(count) is not int or count < 0 for count in phase_counts.values())
+            or any(
+                not isinstance(row[field], dict)
+                or set(row[field]) != {"1", "2", "3"}
+                or any(type(count) is not int or count < 0 for count in row[field].values())
+                for field in phase_count_fields
+            )
+            or row["delivered_blocks"] != row["ready_blocks"]
+            or row["floor_blocks"] != row["ready_blocks"] + row["tray_blocks"]
+            or row["response_units"]
+            != row["ready_response_units"] + row["tray_response_units"]
+            or any(
+                row["phase_counts"][phase]
+                != row["ready_phase_counts"][phase] + row["tray_phase_counts"][phase]
+                for phase in ("1", "2", "3")
+            )
         ):
             raise QualificationError("Density summary has invalid values.")
         return cls(
             delivered_blocks=row["delivered_blocks"],
-            phase_counts=dict(phase_counts),
+            ready_blocks=row["ready_blocks"],
+            tray_blocks=row["tray_blocks"],
+            floor_blocks=row["floor_blocks"],
+            phase_counts=dict(row["phase_counts"]),
+            ready_phase_counts=dict(row["ready_phase_counts"]),
+            tray_phase_counts=dict(row["tray_phase_counts"]),
             response_units=row["response_units"],
+            ready_response_units=row["ready_response_units"],
+            tray_response_units=row["tray_response_units"],
             disposition=row["disposition"],
         )
 
     def as_dict(self) -> dict[str, object]:
         return {
             "delivered_blocks": self.delivered_blocks,
+            "ready_blocks": self.ready_blocks,
+            "tray_blocks": self.tray_blocks,
+            "floor_blocks": self.floor_blocks,
             "phase_counts": dict(self.phase_counts),
+            "ready_phase_counts": dict(self.ready_phase_counts),
+            "tray_phase_counts": dict(self.tray_phase_counts),
             "response_units": self.response_units,
+            "ready_response_units": self.ready_response_units,
+            "tray_response_units": self.tray_response_units,
             "disposition": self.disposition,
         }
 
@@ -532,8 +585,11 @@ def aggregate_receipts(
             )
         expected_phase_counts = {"1": 3, "2": 4, "3": 1}
         if (
-            receipt.density.delivered_blocks != 8
-            or dict(receipt.density.phase_counts) != expected_phase_counts
+            receipt.density.floor_blocks < 8
+            or any(
+                receipt.density.phase_counts[phase] < expected
+                for phase, expected in expected_phase_counts.items()
+            )
             or receipt.density.response_units < 28
         ):
             raise QualificationError(

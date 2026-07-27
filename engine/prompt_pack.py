@@ -609,7 +609,7 @@ def _short_writing_kit(
 
 
 def _density_contract(activity_type: str, *, grounding_mode: str) -> dict[str, Any]:
-    """Return a slot view of the one TeacherReadyDensity.v1 authority."""
+    """Return a slot view of the one TeacherReadyDensity.v2 authority."""
     target = content_density.registry_item_targets()[activity_type]
     contracts = {
         "true-false": {
@@ -1350,7 +1350,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
         "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
         "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
-        "TeacherReadyDensity.v1 є жорстким контрактом: кожен запитаний тип мусить досягти його мінімуму; однопунктові вправи не приймаються.",
+        "TeacherReadyDensity.v2 є жорстким контрактом: кожен запитаний тип мусить досягти його мінімуму; однопунктові вправи не приймаються.",
         "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
         block(
             "КОНТРАКТ ЩІЛЬНОСТІ УРОКУ",

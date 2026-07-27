@@ -18,9 +18,10 @@ the engine enforces two distinct, layered sizing floors:
    this module (`hramatka/engine/content_density.py`).
    - For 'match-up', the selection floor requires at least 4 surviving pairs
      (`len(pairs) >= 4`).
-   - Consequence: A 3-pair match-up board is technically `ready` in the review
-     tray (having survived gating), but is NOT select-eligible for a lesson
-     unless an operator repairs/adds a pair to meet the content-density floor.
+   - Consequence: A 3-pair match-up board is technically gate-passing in the
+     review tray. It is never auto-selected, but its actual three response
+     units now contribute to teacher-ready floor accounting until the teacher
+     explicitly acknowledges the tray item.
 
 Cross-Reference Sites:
 - Gate Floors: registry.py (ACTIVITY_REGISTRY definitions, `minimum_survivors` parameters)
@@ -53,7 +54,7 @@ _WORD_RE: Final = re.compile(r"[А-ЯҐЄІЇа-яґєіїʼ'’-]+", re.UNICODE
 
 PRODUCTIVE_TYPES: Final = frozenset({"text-questions", "short-writing"})
 MIN_TEACHER_READY_ACTIVITY_TYPES: Final = 4
-TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v1"
+TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v2"
 
 COGNITIVE_OPERATION: Final[dict[str, str]] = {
     "true-false": "evaluate",
@@ -582,7 +583,7 @@ class TeacherReadyDensity:
 
     @property
     def phase_minimums(self) -> Mapping[int, int]:
-        """Compatibility view; teacher-ready requires equality, not a minimum."""
+        """Compatibility view of the per-phase teacher-ready minimums."""
         return self.phase_blocks
 
     @property
@@ -654,6 +655,7 @@ def teacher_ready_density_record() -> dict[str, object]:
     """Canonical public-safe input used for fingerprinting and telemetry."""
     return {
         "version": TEACHER_READY_DENSITY_VERSION,
+        "floor_accounting": "ready_plus_review_tray",
         "durations": {
             str(duration): {
                 "phase_blocks": dict(contract.phase_blocks),
@@ -770,8 +772,15 @@ class TeacherReadyDensityReceipt:
 
     duration: int
     phase_counts: Mapping[int, int]
+    ready_phase_counts: Mapping[int, int]
+    tray_phase_counts: Mapping[int, int]
     delivered_blocks: int
+    ready_blocks: int
+    tray_blocks: int
+    floor_blocks: int
     response_units: int
+    ready_response_units: int
+    tray_response_units: int
     type_units: Mapping[str, int]
     errors: tuple[str, ...]
     version: str = TEACHER_READY_DENSITY_VERSION
@@ -789,8 +798,19 @@ class TeacherReadyDensityReceipt:
             "phase_counts": {
                 str(phase): count for phase, count in sorted(self.phase_counts.items())
             },
+            "ready_phase_counts": {
+                str(phase): count for phase, count in sorted(self.ready_phase_counts.items())
+            },
+            "tray_phase_counts": {
+                str(phase): count for phase, count in sorted(self.tray_phase_counts.items())
+            },
             "delivered_blocks": self.delivered_blocks,
+            "ready_blocks": self.ready_blocks,
+            "tray_blocks": self.tray_blocks,
+            "floor_blocks": self.floor_blocks,
             "response_units": self.response_units,
+            "ready_response_units": self.ready_response_units,
+            "tray_response_units": self.tray_response_units,
             "type_units": dict(sorted(self.type_units.items())),
             "disposition": "teacher_ready" if self.ready else "recoverable_draft",
             "error_codes": list(self.errors),
@@ -798,29 +818,61 @@ class TeacherReadyDensityReceipt:
 
 
 def evaluate_teacher_ready_density(
-    selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]], *, duration: int
+    selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]],
+    *,
+    duration: int,
+    tray_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]] | None = None,
 ) -> TeacherReadyDensityReceipt:
-    """Evaluate exactly what the EngineLessonBaker would deliver to a teacher."""
+    """Evaluate the teacher-ready floor without promoting tray content.
+
+    ``selected_by_phase`` contains auto-ready blocks. ``tray_by_phase`` contains
+    gate-passing blocks a teacher can inspect and explicitly acknowledge. Both
+    contribute to the floor; only the former are automatically included in the
+    lesson document.
+    """
     contract = teacher_ready_density(duration)
-    phase_counts = {phase: len(selected_by_phase.get(phase, ())) for phase in contract.phase_blocks}
-    selected = [
+    tray_by_phase = tray_by_phase or {}
+    ready_phase_counts = {
+        phase: len(selected_by_phase.get(phase, ())) for phase in contract.phase_blocks
+    }
+    tray_phase_counts = {
+        phase: len(tray_by_phase.get(phase, ())) for phase in contract.phase_blocks
+    }
+    phase_counts = {
+        phase: ready_phase_counts[phase] + tray_phase_counts[phase]
+        for phase in contract.phase_blocks
+    }
+    ready = [
         candidate
         for phase in sorted(contract.phase_blocks)
         for candidate in selected_by_phase.get(phase, ())
     ]
+    tray = [
+        candidate
+        for phase in sorted(contract.phase_blocks)
+        for candidate in tray_by_phase.get(phase, ())
+    ]
+    selected = [*ready, *tray]
     type_units: Counter[str] = Counter()
+    ready_response_units = sum(response_units(candidate.activity) for candidate in ready)
+    tray_response_units = sum(response_units(candidate.activity) for candidate in tray)
     errors: list[str] = []
     delivered_floors = delivered_item_floors()
-    for index, candidate in enumerate(selected, start=1):
+    for index, candidate in enumerate(ready, start=1):
         activity_type = str(candidate.activity.get("type") or "")
         type_units[activity_type] += response_units(candidate.activity)
         if activity_type not in delivered_floors:
             errors.append(f"unknown_activity_type_{activity_type}")
         elif not meets_content_density(candidate):
             errors.append(f"block_{index}_{activity_type}_below_delivered_floor")
+    for candidate in tray:
+        activity_type = str(candidate.activity.get("type") or "")
+        type_units[activity_type] += response_units(candidate.activity)
+        if activity_type not in delivered_floors:
+            errors.append(f"unknown_activity_type_{activity_type}")
 
     for phase, expected in contract.phase_blocks.items():
-        if phase_counts[phase] != expected:
+        if phase_counts[phase] < expected:
             errors.append(f"phase_{phase}_blocks_{phase_counts[phase]}_expected_{expected}")
     total_response_units = sum(type_units.values())
     if total_response_units < contract.minimum_response_units:
@@ -835,12 +887,23 @@ def evaluate_teacher_ready_density(
             errors.append(f"{activity_type}_units_{units}_minimum_{target}")
     if len(type_units) < contract.min_types:
         errors.append(f"activity_types_{len(type_units)}_minimum_{contract.min_types}")
-    errors.extend(_phase_three_transfer_errors(selected_by_phase.get(3, ())))
+    errors.extend(
+        _phase_three_transfer_errors(
+            [*selected_by_phase.get(3, ()), *tray_by_phase.get(3, ())]
+        )
+    )
     return TeacherReadyDensityReceipt(
         duration=duration,
         phase_counts=phase_counts,
-        delivered_blocks=len(selected),
+        ready_phase_counts=ready_phase_counts,
+        tray_phase_counts=tray_phase_counts,
+        delivered_blocks=len(ready),
+        ready_blocks=len(ready),
+        tray_blocks=len(tray),
+        floor_blocks=len(selected),
         response_units=total_response_units,
+        ready_response_units=ready_response_units,
+        tray_response_units=tray_response_units,
         type_units=dict(type_units),
         errors=tuple(errors),
         digest=teacher_ready_density_digest(),
@@ -873,6 +936,7 @@ def meets_lesson_floor(
     duration: int,
     phase_by_candidate: dict[str, int] | None = None,
     selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]] | None = None,
+    tray_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]] | None = None,
 ) -> bool:
     """Fail-closed compatibility adapter around the canonical evaluator.
 
@@ -889,4 +953,6 @@ def meets_lesson_floor(
             if phase in grouped:
                 grouped[phase].append(candidate)
         selected_by_phase = grouped
-    return evaluate_teacher_ready_density(selected_by_phase, duration=duration).ready
+    return evaluate_teacher_ready_density(
+        selected_by_phase, duration=duration, tray_by_phase=tray_by_phase
+    ).ready

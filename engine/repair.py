@@ -189,6 +189,7 @@ class RepairPlanner:
         round: int,
         selected_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]],
         slots_by_phase: Mapping[int, int],
+        tray_by_phase: Mapping[int, Sequence[schema.HramatkaActivity]] | None = None,
         now: float | None = None,
     ) -> list[RepairRequest]:
         if round > MAX_ROUNDS or self.calls >= MAX_CALLS:
@@ -202,18 +203,18 @@ class RepairPlanner:
             # the wrong teacher-delivery contract.
             return []
         receipt = content_density.evaluate_teacher_ready_density(
-            selected_by_phase, duration=self.duration
+            selected_by_phase, duration=self.duration, tray_by_phase=tray_by_phase
         )
         density_errors = receipt.errors
         selected_types = {
             str(candidate.activity.get("type") or "")
-            for candidates in selected_by_phase.values()
+            for candidates in [*selected_by_phase.values(), *(tray_by_phase or {}).values()]
             for candidate in candidates
         }
         below_floor_types_by_phase = {
             phase: {
                 str(candidate.activity.get("type") or "")
-                for candidate in candidates
+                for candidate in (*candidates, *(tray_by_phase or {}).get(phase, ()))
                 if not content_density.meets_content_density(candidate)
             }
             for phase, candidates in selected_by_phase.items()

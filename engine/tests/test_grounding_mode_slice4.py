@@ -311,7 +311,7 @@ def test_floor_oracle_is_frozen_in_the_measurement_harness_record():
             "min_types": 4,
             "require_productive": True,
             "minimum_response_units": 28,
-            "version": "TeacherReadyDensity.v1",
+            "version": "TeacherReadyDensity.v2",
             "digest": content_density.teacher_ready_density_digest(),
             },
             "60": {
@@ -320,7 +320,7 @@ def test_floor_oracle_is_frozen_in_the_measurement_harness_record():
             "min_types": 4,
             "require_productive": True,
             "minimum_response_units": 35,
-            "version": "TeacherReadyDensity.v1",
+            "version": "TeacherReadyDensity.v2",
             "digest": content_density.teacher_ready_density_digest(),
             },
             "90": {
@@ -329,7 +329,7 @@ def test_floor_oracle_is_frozen_in_the_measurement_harness_record():
             "min_types": 4,
             "require_productive": True,
             "minimum_response_units": 42,
-            "version": "TeacherReadyDensity.v1",
+            "version": "TeacherReadyDensity.v2",
             "digest": content_density.teacher_ready_density_digest(),
             },
         },

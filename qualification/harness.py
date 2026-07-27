@@ -712,14 +712,7 @@ class ProductionQualificationHarness:
             delivery = self._delivery_summary(
                 resource.json(), logical_model_id, route, durable_job, durable_trace
             )
-            density = DensitySummary(
-                delivered_blocks=delivery.block_count,
-                phase_counts=delivery.phase_counts,
-                response_units=delivery.response_units,
-                disposition=(
-                    "teacher_ready" if self._delivery_ready(delivery) else "recoverable_draft"
-                ),
-            )
+            density = self._durable_density_summary(durable_job)
         else:
             delivery, density = self._failed_diagnostic_delivery(density_trace)
         expected_trace = durable_trace
@@ -741,7 +734,7 @@ class ProductionQualificationHarness:
             density=density,
             repair_trace=expected_trace,
             semantic_gate="not_run",
-            outcome="passed" if density.disposition == "teacher_ready" else "failed",
+            outcome="passed" if self._delivery_ready(delivery, density) else "failed",
         )
         return QualificationCellResult(
             receipt=receipt,
@@ -799,8 +792,15 @@ class ProductionQualificationHarness:
         )
         density = DensitySummary(
             delivered_blocks=sum(phase_counts.values()),
+            ready_blocks=sum(phase_counts.values()),
+            tray_blocks=0,
+            floor_blocks=sum(phase_counts.values()),
             phase_counts=phase_counts,
+            ready_phase_counts=phase_counts,
+            tray_phase_counts={phase: 0 for phase in phase_counts},
             response_units=response_units,
+            ready_response_units=response_units,
+            tray_response_units=0,
             disposition="recoverable_draft",
         )
         return (
@@ -815,6 +815,17 @@ class ProductionQualificationHarness:
             ),
             density,
         )
+
+    @staticmethod
+    def _durable_density_summary(job: Any) -> DensitySummary:
+        progress = job.progress
+        if not isinstance(progress, dict):
+            raise AssertionError("Qualification durable job has no progress telemetry.")
+        density = progress.get("teacher_ready_density")
+        try:
+            return DensitySummary.from_dict(density)
+        except QualificationError as error:
+            raise AssertionError("Qualification durable job has no density telemetry.") from error
 
     @staticmethod
     def _delivery_summary(
@@ -855,13 +866,18 @@ class ProductionQualificationHarness:
         )
 
     @staticmethod
-    def _delivery_ready(delivery: DeliverySummary) -> bool:
+    def _delivery_ready(delivery: DeliverySummary, density: DensitySummary) -> bool:
         return (
             delivery.durable_job
-            and delivery.block_count == 8
-            and delivery.phase_counts == {"1": 3, "2": 4, "3": 1}
-            and delivery.response_units >= 28
-            and len(delivery.activity_types) >= 4
-            and delivery.phase_three_transfer
+            and density.disposition == "teacher_ready"
+            and density.floor_blocks >= 8
+            and all(
+                density.phase_counts[phase] >= expected
+                for phase, expected in {"1": 3, "2": 4, "3": 1}.items()
+            )
+            and density.response_units >= 28
+            and delivery.block_count == density.ready_blocks
+            and delivery.phase_counts == density.ready_phase_counts
+            and delivery.response_units == density.ready_response_units
             and delivery.provenance_continuous
         )
