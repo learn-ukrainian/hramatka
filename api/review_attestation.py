@@ -12,6 +12,7 @@ import stat
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _MARKER_RE = re.compile(r"<!--\s*hramatka-pr-lifecycle:v1\s+(\{.*?\})\s*-->", re.DOTALL)
 _SCHEMA = "hramatka-review-attestation.v2"
 _SIGNING_CONTEXT = b"hramatka-review-attestation.v2\0"
+_SEALED_REVIEW_RECORD_DOMAIN = "hramatka-sealed-review-record.v1"
 _PROCESS_REQUEST_LOCK = threading.Lock()
 _BASE64_WRAPPING_WHITESPACE = b" \t\r\n"
 _SYSTEM_PROMPT = (
@@ -145,7 +147,23 @@ def _parse_request(payload: object) -> tuple[int, str, int]:
 
 
 def _parse_lifecycle(body: object, *, is_draft: object) -> str:
-    if not isinstance(body, str) or not isinstance(is_draft, bool):
+    marker = _parse_lifecycle_marker(body)
+    family = marker["author_family"]
+    assert isinstance(family, str)
+    # This is an honest-author operational declaration in the trusted lifecycle,
+    # not cryptographic provenance of the person or model that wrote the PR.
+    if marker.get("state") not in {"draft", "blocked"} or not is_draft:
+        raise ReviewAttestationError("malformed_lifecycle")
+    if any(
+        marker.get(field) is not None
+        for field in ("review_receipt", "reviewer_family", "review_head")
+    ):
+        raise ReviewAttestationError("malformed_lifecycle")
+    return family.casefold()
+
+
+def _parse_lifecycle_marker(body: object) -> dict[str, object]:
+    if not isinstance(body, str):
         raise ReviewAttestationError("malformed_lifecycle")
     match = _MARKER_RE.search(body)
     if match is None:
@@ -159,16 +177,167 @@ def _parse_lifecycle(body: object, *, is_draft: object) -> str:
     family = marker.get("author_family")
     if not isinstance(family, str) or family.casefold() not in _FAMILIES:
         raise ReviewAttestationError("malformed_lifecycle")
-    # This is an honest-author operational declaration in the trusted lifecycle,
-    # not cryptographic provenance of the person or model that wrote the PR.
-    if marker.get("state") not in {"draft", "blocked"} or not is_draft:
-        raise ReviewAttestationError("malformed_lifecycle")
-    if any(
-        marker.get(field) is not None
-        for field in ("review_receipt", "reviewer_family", "review_head")
+    return marker
+
+
+def _required_review_timestamp(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("review comment timestamp is invalid")
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("review comment timestamp is invalid") from error
+    if timestamp.tzinfo is None:
+        raise ValueError("review comment timestamp is invalid")
+    return _timestamp(timestamp)
+
+
+def _comment_words(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _review_comment_projection(
+    comment: object, *, repository: str, pr_number: int, comment_id: int
+) -> dict[str, str | int]:
+    if not isinstance(comment, Mapping):
+        raise ValueError("review comment is invalid")
+    expected_url = (
+        f"https://github.com/{repository}/pull/{pr_number}#issuecomment-{comment_id}"
+    )
+    identifier = comment.get("id")
+    body = comment.get("body")
+    html_url = comment.get("html_url")
+    created_at = comment.get("created_at")
+    updated_at = comment.get("updated_at")
+    user = comment.get("user")
+    login = user.get("login") if isinstance(user, Mapping) else None
+    if (
+        isinstance(identifier, bool)
+        or identifier != comment_id
+        or not isinstance(body, str)
+        or not body
+        or len(body) > 65_536
+        or html_url != expected_url
+        or not isinstance(login, str)
+        or not login
     ):
-        raise ReviewAttestationError("malformed_lifecycle")
-    return family.casefold()
+        raise ValueError("review comment is invalid")
+    return {
+        "id": comment_id,
+        "html_url": expected_url,
+        "body": body,
+        "created_at": _required_review_timestamp(created_at),
+        "updated_at": _required_review_timestamp(updated_at),
+        "author_login": login,
+    }
+
+
+def _validate_review_comment_claims(
+    body: str, *, reviewer_family: str, reviewer_model: str
+) -> None:
+    normalized = _comment_words(body)
+    family_words = _comment_words(reviewer_family)
+    model_words = _comment_words(reviewer_model.split("/", maxsplit=1)[1])
+    if (
+        not re.search(r"\b(?:approve|approved|clean)\b", normalized)
+        or family_words not in normalized
+        or model_words not in normalized
+    ):
+        raise ValueError("review comment does not prove the declared clean review")
+
+
+@dataclass(frozen=True)
+class SealedReviewRecord:
+    """Immutable host-side binding of a review comment to one private PR head."""
+
+    repository: str
+    pr_number: int
+    head_sha: str
+    reviewer_family: str
+    reviewer_model: str
+    provider_host: str
+    receipt_comment_id: int
+    receipt_digest: str
+    receipt_url: str
+    reviewed_at: str
+
+    def canonical(self) -> dict[str, object]:
+        return {
+            "repository": self.repository,
+            "pr_number": self.pr_number,
+            "head_sha": self.head_sha,
+            "reviewer_family": self.reviewer_family,
+            "reviewer_model": self.reviewer_model,
+            "provider_host": self.provider_host,
+            "receipt_comment_id": self.receipt_comment_id,
+            "receipt_digest": self.receipt_digest,
+            "receipt_url": self.receipt_url,
+            "reviewed_at": self.reviewed_at,
+        }
+
+
+def _sealed_review_record(
+    *,
+    repository: str,
+    pr_number: int,
+    head_sha: str,
+    reviewer_family: str,
+    reviewer_model: str,
+    provider_host: str,
+    comment: object,
+) -> SealedReviewRecord:
+    if (
+        not isinstance(repository, str)
+        or not repository
+        or not isinstance(pr_number, int)
+        or isinstance(pr_number, bool)
+        or pr_number <= 0
+        or not isinstance(head_sha, str)
+        or _SHA_RE.fullmatch(head_sha) is None
+        or not isinstance(reviewer_family, str)
+        or reviewer_family.casefold() not in _FAMILIES
+        or not isinstance(reviewer_model, str)
+        or reviewer_model.count("/") != 1
+    ):
+        raise ValueError("sealed review record identity is invalid")
+    family = reviewer_family.casefold()
+    model_family, model_name = reviewer_model.casefold().split("/", maxsplit=1)
+    if model_family != family or not model_name or len(reviewer_model) > 300:
+        raise ValueError("sealed review record reviewer is invalid")
+    if not isinstance(provider_host, str):
+        raise ValueError("sealed review record provider host is invalid")
+    parsed_provider = urlsplit(provider_host)
+    if (
+        parsed_provider.scheme != "https"
+        or not parsed_provider.netloc
+        or parsed_provider.username
+        or parsed_provider.password
+        or parsed_provider.path not in {"", "/"}
+        or parsed_provider.query
+        or parsed_provider.fragment
+    ):
+        raise ValueError("sealed review record provider host is invalid")
+    raw_id = comment.get("id") if isinstance(comment, Mapping) else None
+    if isinstance(raw_id, bool) or not isinstance(raw_id, int) or raw_id <= 0:
+        raise ValueError("review comment is invalid")
+    projection = _review_comment_projection(
+        comment, repository=repository, pr_number=pr_number, comment_id=raw_id
+    )
+    _validate_review_comment_claims(
+        str(projection["body"]), reviewer_family=family, reviewer_model=reviewer_model
+    )
+    return SealedReviewRecord(
+        repository=repository,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        reviewer_family=family,
+        reviewer_model=reviewer_model,
+        provider_host=f"https://{parsed_provider.netloc}",
+        receipt_comment_id=raw_id,
+        receipt_digest=_sha256(_canonical_json(projection)),
+        receipt_url=str(projection["html_url"]),
+        reviewed_at=str(projection["created_at"]),
+    )
 
 
 class _StateStore:
@@ -189,6 +358,22 @@ class _StateStore:
                     receipt_json TEXT,
                     failure_code TEXT,
                     created_at TEXT NOT NULL
+                )"""
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS sealed_review_records (
+                    repository TEXT NOT NULL,
+                    pr_number INTEGER NOT NULL,
+                    head_sha TEXT NOT NULL,
+                    reviewer_family TEXT NOT NULL,
+                    reviewer_model TEXT NOT NULL,
+                    provider_host TEXT NOT NULL,
+                    receipt_comment_id INTEGER NOT NULL,
+                    receipt_digest TEXT NOT NULL,
+                    receipt_url TEXT NOT NULL,
+                    reviewed_at TEXT NOT NULL,
+                    PRIMARY KEY (repository, pr_number, head_sha),
+                    UNIQUE (repository, receipt_comment_id)
                 )"""
             )
             columns = {
@@ -286,6 +471,87 @@ class _StateStore:
                     connection.execute("ROLLBACK")
                 raise
 
+    def seal(self, record: SealedReviewRecord) -> SealedReviewRecord:
+        """Insert one immutable record, rejecting both replacement and ambiguity."""
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = connection.execute(
+                    """SELECT repository, pr_number, head_sha, reviewer_family,
+                              reviewer_model, provider_host, receipt_comment_id,
+                              receipt_digest, receipt_url, reviewed_at
+                       FROM sealed_review_records
+                       WHERE repository = ? AND pr_number = ? AND head_sha = ?""",
+                    (record.repository, record.pr_number, record.head_sha),
+                ).fetchone()
+                if existing is not None:
+                    stored = SealedReviewRecord(**dict(existing))
+                    if stored != record:
+                        raise ValueError("sealed review record already exists for this PR head")
+                    connection.execute("COMMIT")
+                    return stored
+                connection.execute(
+                    """INSERT INTO sealed_review_records (
+                        repository, pr_number, head_sha, reviewer_family, reviewer_model,
+                        provider_host, receipt_comment_id, receipt_digest, receipt_url, reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tuple(record.canonical().values()),
+                )
+                connection.execute("COMMIT")
+                return record
+            except BaseException:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+
+    def sealed_record(
+        self, *, repository: str, pr_number: int, head_sha: str
+    ) -> SealedReviewRecord | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """SELECT repository, pr_number, head_sha, reviewer_family,
+                          reviewer_model, provider_host, receipt_comment_id,
+                          receipt_digest, receipt_url, reviewed_at
+                   FROM sealed_review_records
+                   WHERE repository = ? AND pr_number = ? AND head_sha = ?""",
+                (repository, pr_number, head_sha),
+            ).fetchone()
+        return SealedReviewRecord(**dict(row)) if row is not None else None
+
+    def consume_jti(self, *, jti: str, consumed_at: str) -> None:
+        with self._connection() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO review_attestation_jtis (jti, consumed_at) VALUES (?, ?)",
+                    (jti, consumed_at),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ReviewAttestationError("oidc_replay") from error
+
+
+def seal_review_record(
+    database_path: Path,
+    *,
+    repository: str,
+    pr_number: int,
+    head_sha: str,
+    reviewer_family: str,
+    reviewer_model: str,
+    provider_host: str,
+    comment: object,
+) -> SealedReviewRecord:
+    """Seal a review-comment snapshot; attestation later re-fetches it independently."""
+    record = _sealed_review_record(
+        repository=repository,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        reviewer_family=reviewer_family,
+        reviewer_model=reviewer_model,
+        provider_host=provider_host,
+        comment=comment,
+    )
+    return _StateStore(database_path).seal(record)
+
 
 ReviewProvider = Callable[[str], str]
 
@@ -366,6 +632,55 @@ class ReviewAttestor:
             )
             head = self._authoritative_head(pr, expected_head)
             base = self._base_sha(pr)
+            lifecycle = _parse_lifecycle_marker(pr.get("body"))
+            author_family = lifecycle["author_family"]
+            assert isinstance(author_family, str)
+            author_family = author_family.casefold()
+            assert self.store is not None
+            sealed_record = self.store.sealed_record(
+                repository=self.settings.review_attestation_repository or "",
+                pr_number=pr_number,
+                head_sha=head,
+            )
+            if sealed_record is not None:
+                self._validate_sealed_review_lifecycle(
+                    lifecycle,
+                    is_draft=pr.get("draft"),
+                    author_family=author_family,
+                    head_sha=head,
+                    record=sealed_record,
+                )
+                result = self._fetch_and_verify_sealed_review(
+                    sealed_record, github_token
+                )
+                self.store.consume_jti(jti=jti, consumed_at=_timestamp(self.clock()))
+                semantic = {
+                    "review_task_id": _sha256(_canonical_json(sealed_record.canonical()))[:24],
+                    "result": result,
+                    "reviewed_at": sealed_record.reviewed_at,
+                    "base_sha": base,
+                    "head_sha": head,
+                    "author_family": author_family,
+                    "prompt_digest": _sha256(_SEALED_REVIEW_RECORD_DOMAIN),
+                    "input_digest": sealed_record.receipt_digest,
+                    "reviewer_family": sealed_record.reviewer_family,
+                    "reviewer_model": sealed_record.reviewer_model,
+                    "provider_host": sealed_record.provider_host,
+                }
+                created_at = _timestamp(self.clock())
+                receipt = self._receipt(
+                    pr_number=pr_number,
+                    workflow_path=workflow_path,
+                    workflow_sha=workflow_sha,
+                    workflow_name=workflow_name,
+                    workflow_run_id=run_id,
+                    workflow_run_attempt=run_attempt,
+                    check_run_id=check_run_id,
+                    jti=jti,
+                    semantic=semantic,
+                    created_at=created_at,
+                )
+                return self._response(receipt, result)
             author_family = _parse_lifecycle(pr.get("body"), is_draft=pr.get("draft"))
             if author_family == "google":
                 raise ReviewAttestationError("same_model_family")
@@ -401,7 +716,6 @@ class ReviewAttestor:
                 )
             )
             reservation_at = _timestamp(self.clock())
-            assert self.store is not None
             cached = self.store.consume_and_reserve(
                 jti=jti, key=key, legacy_key=legacy_key, created_at=reservation_at
             )
@@ -724,6 +1038,56 @@ class ReviewAttestor:
         return pr, diff, workflow_path
 
     @staticmethod
+    def _validate_sealed_review_lifecycle(
+        lifecycle: dict[str, object],
+        *,
+        is_draft: object,
+        author_family: str,
+        head_sha: str,
+        record: SealedReviewRecord,
+    ) -> None:
+        """Treat lifecycle metadata only as a consistency check, never authority."""
+        if (
+            is_draft is not False
+            or lifecycle.get("state") != "ready"
+            or lifecycle.get("review_receipt") != record.receipt_url
+            or lifecycle.get("reviewer_family") != record.reviewer_family
+            or lifecycle.get("review_head") != head_sha
+            or author_family == record.reviewer_family
+        ):
+            raise ReviewAttestationError("sealed_review_lifecycle_mismatch")
+
+    def _fetch_and_verify_sealed_review(
+        self, record: SealedReviewRecord, token: str
+    ) -> dict[str, object]:
+        """Verify the live GitHub comment before using the host-sealed binding."""
+        encoded_repo = quote(record.repository, safe="/")
+        try:
+            comment = self._github_get(
+                f"/repos/{encoded_repo}/issues/comments/{record.receipt_comment_id}", token
+            ).json()
+            projection = _review_comment_projection(
+                comment,
+                repository=record.repository,
+                pr_number=record.pr_number,
+                comment_id=record.receipt_comment_id,
+            )
+            _validate_review_comment_claims(
+                str(projection["body"]),
+                reviewer_family=record.reviewer_family,
+                reviewer_model=record.reviewer_model,
+            )
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise ReviewAttestationError("sealed_review_receipt_mismatch") from error
+        if (
+            _sha256(_canonical_json(projection)) != record.receipt_digest
+            or projection["html_url"] != record.receipt_url
+            or projection["created_at"] != record.reviewed_at
+        ):
+            raise ReviewAttestationError("sealed_review_receipt_mismatch")
+        return {"verdict": "clean", "findings": []}
+
+    @staticmethod
     def _decode_github_base64_content(contents: object) -> bytes:
         """Decode GitHub Contents API Base64 while allowing only its ASCII wrapping."""
         if (
@@ -908,6 +1272,18 @@ class ReviewAttestor:
             and self._signing_key is not None
             and self._signing_key_id is not None
         )
+        reviewer_family = semantic.get("reviewer_family", "google")
+        reviewer_model = semantic.get(
+            "reviewer_model", self.settings.review_attestation_model
+        )
+        provider_host = semantic.get("provider_host", self._provider_host())
+        if (
+            not isinstance(reviewer_family, str)
+            or reviewer_family not in _FAMILIES
+            or not isinstance(reviewer_model, str)
+            or not isinstance(provider_host, str)
+        ):
+            raise ReviewAttestationError("attestation_state_invalid", status_code=503)
         receipt: dict[str, object] = {
             "schema": _SCHEMA,
             "repository": self.settings.review_attestation_repository,
@@ -918,9 +1294,9 @@ class ReviewAttestor:
             "base_sha": semantic["base_sha"],
             "head_sha": semantic["head_sha"],
             "author_family": semantic["author_family"],
-            "reviewer_family": "google",
-            "reviewer_model": self.settings.review_attestation_model,
-            "provider_host": self._provider_host(),
+            "reviewer_family": reviewer_family,
+            "reviewer_model": reviewer_model,
+            "provider_host": provider_host,
             "verdict": result["verdict"],
             "review_task_id": semantic["review_task_id"],
             "prompt_version": self.settings.review_attestation_prompt_version,

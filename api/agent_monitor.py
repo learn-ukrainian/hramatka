@@ -14,14 +14,12 @@ import uuid
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-
-from .security import require_session
 
 router = APIRouter(prefix="/api/agent-monitor", tags=["agent-monitor"])
 
-DB_PATH = Path(os.environ.get("HRAMATKA_DB_PATH", "/var/lib/hramatka/hramatka.sqlite3"))
+_DEFAULT_DB_PATH = "/var/lib/hramatka/hramatka.sqlite3"
 HOST_RESERVED_RAM_MB = 1250  # Reserved for OS and system services
 MAX_SAFE_RAM_PERCENT = 75.0  # Max allocatable RAM percentage
 
@@ -46,8 +44,9 @@ class HeartbeatRequest(BaseModel):
 
 
 def _get_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    database_path = Path(os.environ.get("HRAMATKA_DB_PATH", _DEFAULT_DB_PATH))
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(database_path, timeout=10.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agent_leases (
@@ -99,7 +98,7 @@ def _capacity_exceeded(
 
 
 @router.get("/status")
-def get_monitor_status(_session: str = Depends(require_session)) -> dict:
+def get_monitor_status() -> dict:
     mem = psutil.virtual_memory()
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
 
