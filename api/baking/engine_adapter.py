@@ -907,6 +907,49 @@ class EngineLessonBaker:
             density_receipt = content_density.evaluate_teacher_ready_density(
                 selected_by_phase, duration=resolved_duration
             )
+
+            def record_qualification_density(*, stage: str, repair_invocations: int) -> None:
+                """Persist count-only composition evidence for qualification.
+
+                This is intentionally aggregate-only: it distinguishes a sparse
+                generation pool, gate drops, assembly losses, and absent repair
+                without copying a prompt, anchor, activity, or gate detail into
+                durable qualification evidence.
+                """
+                phase_density = {
+                    str(phase): {
+                        "visible_blocks": len(selected_by_phase.get(phase, ())),
+                        "response_units": sum(
+                            content_density.response_units(candidate.activity)
+                            for candidate in selected_by_phase.get(phase, ())
+                        ),
+                    }
+                    for phase in (1, 2, 3)
+                }
+                gate_outcomes = {
+                    str(phase): {
+                        "requested": sum(phase_count_plans[phase].values()),
+                        "generated": len(phase_results[phase].activities),
+                        "ready": len(phase_results[phase].ready),
+                        "review": len(phase_results[phase].review_required),
+                        "dropped": len(phase_results[phase].rejected),
+                    }
+                    for phase in (1, 2, 3)
+                }
+                tel_ctx.record_qualification_density_trace(
+                    {
+                        "stage": stage,
+                        "phase_density": phase_density,
+                        "gate_outcomes_by_phase": gate_outcomes,
+                        "density_error_codes": list(getattr(density_receipt, "errors", ())),
+                        "repair_invocations": repair_invocations,
+                    }
+                )
+
+            repair_invocations = 0
+            qualification_instrumentation = bool(tel_ctx.qualification_route_traces)
+            if qualification_instrumentation:
+                record_qualification_density(stage="initial", repair_invocations=repair_invocations)
             # The ordinary path deliberately ends here.  The feature-gated
             # path owns a ledger of gate-passing candidates and only invokes
             # repair after the *whole* selector exposes a structural/floor
@@ -1015,6 +1058,9 @@ class EngineLessonBaker:
                             repair_stopped = True
                             break
                         density_before = len(selected)
+                        density_before_units = int(
+                            getattr(density_receipt, "response_units", 0)
+                        )
                         started = datetime.now(UTC)
                         failure_details = repair.bounded_gate_failures(
                             phase_results[request.phase].activities
@@ -1051,6 +1097,7 @@ class EngineLessonBaker:
                             ] = rendered_digest
                         repair_counts = Counter(slot.activity_type for slot in request.slots)
                         tel_ctx.increase_calls_planned()
+                        repair_invocations += 1
                         repair_result = pipeline.run(
                             anchor,
                             level="B1",
@@ -1090,6 +1137,22 @@ class EngineLessonBaker:
                                     "disposition": "provider_failure",
                                 }
                             )
+                            if qualification_instrumentation:
+                                tel_ctx.record_qualification_repair_trace(
+                                    {
+                                        "phase": request.phase,
+                                        "round": repair_round,
+                                        "outcome": "provider_failure",
+                                        "visible_blocks_before": density_before,
+                                        "response_units_before": density_before_units,
+                                        "visible_blocks_after": density_before,
+                                        "response_units_after": density_before_units,
+                                        "gate_drops": 0,
+                                    }
+                                )
+                                record_qualification_density(
+                                    stage="repair", repair_invocations=repair_invocations
+                                )
                             continue
                         preserved_pairs = partial_matchup_pairs(request.phase)
                         if len(preserved_pairs) == 2:
@@ -1192,6 +1255,28 @@ class EngineLessonBaker:
                                 "disposition": "amended",
                             }
                         )
+                        if qualification_instrumentation:
+                            tel_ctx.record_qualification_repair_trace(
+                                {
+                                    "phase": request.phase,
+                                    "round": repair_round,
+                                    "outcome": "amended",
+                                    "visible_blocks_before": density_before,
+                                        "response_units_before": density_before_units,
+                                        "visible_blocks_after": int(
+                                            getattr(
+                                                density_receipt, "delivered_blocks", len(selected)
+                                            )
+                                        ),
+                                        "response_units_after": int(
+                                            getattr(density_receipt, "response_units", 0)
+                                        ),
+                                    "gate_drops": len(repair_result.rejected),
+                                }
+                            )
+                            record_qualification_density(
+                                stage="repair", repair_invocations=repair_invocations
+                            )
                         rounds_executed = repair_round
                         if density_receipt.ready:
                             tel_ctx.record_event(

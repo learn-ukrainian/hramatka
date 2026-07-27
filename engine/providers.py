@@ -178,6 +178,80 @@ def _content_free_qualification_route_trace(value: object) -> dict[str, Any] | N
     return deepcopy(value)
 
 
+def _content_free_qualification_density_trace(value: object) -> dict[str, Any] | None:
+    """Allowlist aggregate density evidence for a qualification diagnostic.
+
+    The record deliberately contains only counts and fixed error codes.  It
+    cannot carry anchor text, prompts, activities, provider responses, or gate
+    details into a durable job row.
+    """
+    expected = {
+        "density_error_codes",
+        "gate_outcomes_by_phase",
+        "phase_density",
+        "repair_invocations",
+        "stage",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return None
+    if value.get("stage") not in {"initial", "repair"}:
+        return None
+    if type(value.get("repair_invocations")) is not int or value["repair_invocations"] < 0:
+        return None
+    errors = value.get("density_error_codes")
+    if not isinstance(errors, list) or not all(isinstance(error, str) for error in errors):
+        return None
+    phase_density = value.get("phase_density")
+    gate_outcomes = value.get("gate_outcomes_by_phase")
+    if not isinstance(phase_density, dict) or not isinstance(gate_outcomes, dict):
+        return None
+    if set(phase_density) != {"1", "2", "3"} or set(gate_outcomes) != {"1", "2", "3"}:
+        return None
+    for phase in ("1", "2", "3"):
+        density = phase_density[phase]
+        outcomes = gate_outcomes[phase]
+        if (
+            not isinstance(density, dict)
+            or set(density) != {"response_units", "visible_blocks"}
+            or not all(type(count) is int and count >= 0 for count in density.values())
+            or not isinstance(outcomes, dict)
+            or set(outcomes) != {"dropped", "generated", "ready", "review", "requested"}
+            or not all(type(count) is int and count >= 0 for count in outcomes.values())
+            or outcomes["generated"]
+            != outcomes["ready"] + outcomes["review"] + outcomes["dropped"]
+        ):
+            return None
+    return deepcopy(value)
+
+
+def _content_free_qualification_repair_trace(value: object) -> dict[str, Any] | None:
+    """Allowlist one count-only repair attempt for the diagnostic receipt."""
+    expected = {
+        "gate_drops",
+        "outcome",
+        "phase",
+        "response_units_after",
+        "response_units_before",
+        "round",
+        "visible_blocks_after",
+        "visible_blocks_before",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return None
+    if value.get("outcome") not in {"amended", "provider_failure"}:
+        return None
+    if type(value.get("phase")) is not int or value["phase"] not in {1, 2, 3}:
+        return None
+    if type(value.get("round")) is not int or value["round"] < 1:
+        return None
+    if not all(
+        type(value[field]) is int and value[field] >= 0
+        for field in expected - {"outcome", "phase", "round"}
+    ):
+        return None
+    return deepcopy(value)
+
+
 @dataclass
 class _TelemetryState:
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -194,6 +268,8 @@ class _TelemetryState:
     logical_model_id: str | None = None
     provider_routes: list[dict[str, str]] = field(default_factory=list)
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -216,6 +292,8 @@ class TelemetryContext:
     logical_model_id: str | None = None
     provider_routes: list[dict[str, str]] = field(default_factory=list)
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
 
@@ -234,6 +312,8 @@ class TelemetryContext:
                 logical_model_id=self.logical_model_id,
                 provider_routes=self.provider_routes,
                 qualification_route_traces=self.qualification_route_traces,
+                qualification_density_traces=self.qualification_density_traces,
+                qualification_repair_traces=self.qualification_repair_traces,
             )
         else:
             with self._state.lock:
@@ -254,6 +334,8 @@ class TelemetryContext:
         self.logical_model_id = self._state.logical_model_id
         self.provider_routes = self._state.provider_routes
         self.qualification_route_traces = self._state.qualification_route_traces
+        self.qualification_density_traces = self._state.qualification_density_traces
+        self.qualification_repair_traces = self._state.qualification_repair_traces
 
     def fork(self, *, phase: int) -> TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
@@ -317,6 +399,14 @@ class TelemetryContext:
             if self._state.qualification_route_traces:
                 progress_obj["qualification_route_traces"] = deepcopy(
                     self._state.qualification_route_traces
+                )
+            if self._state.qualification_density_traces:
+                progress_obj["qualification_density_traces"] = deepcopy(
+                    self._state.qualification_density_traces
+                )
+            if self._state.qualification_repair_traces:
+                progress_obj["qualification_repair_traces"] = deepcopy(
+                    self._state.qualification_repair_traces
                 )
             snapshot = dict(progress_obj)
 
@@ -423,6 +513,32 @@ class TelemetryContext:
         with self._state.lock:
             self._state.qualification_route_traces.append(binding)
             self._state.traces.append({"event": "qualification_route", **binding})
+            self._sync_from_shared_state()
+            self.save_traces()
+        self.update_progress_db()
+
+    def record_qualification_density_trace(self, trace_entry: dict) -> None:
+        """Persist one validated count-only composition snapshot."""
+        trace = _content_free_qualification_density_trace(trace_entry)
+        if trace is None:
+            raise ValueError("Qualification density trace is not content-free or valid.")
+        assert self._state is not None
+        with self._state.lock:
+            self._state.qualification_density_traces.append(trace)
+            self._state.traces.append({"event": "qualification_density", **trace})
+            self._sync_from_shared_state()
+            self.save_traces()
+        self.update_progress_db()
+
+    def record_qualification_repair_trace(self, trace_entry: dict) -> None:
+        """Persist one validated count-only generic-repair invocation."""
+        trace = _content_free_qualification_repair_trace(trace_entry)
+        if trace is None:
+            raise ValueError("Qualification repair trace is not content-free or valid.")
+        assert self._state is not None
+        with self._state.lock:
+            self._state.qualification_repair_traces.append(trace)
+            self._state.traces.append({"event": "qualification_repair", **trace})
             self._sync_from_shared_state()
             self.save_traces()
         self.update_progress_db()

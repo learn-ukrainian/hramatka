@@ -36,6 +36,7 @@ from .receipts import RepairTraceEntry, RouteBinding
 
 _ACK_PREFIX = "HRAMATKA-QUALIFICATION-SPEND"
 _MATRIX_LABEL = "B1-45M-3x4"
+_DIAGNOSTIC_LABEL = "B1-45M-density-diagnostic"
 _LIVE_BAKE_HARD_TIMEOUT_SECONDS = 1800
 _LIVE_READINESS_TIMEOUT_SECONDS = 1830
 _LIVE_RUNNER_STOP_TIMEOUT_SECONDS = GEMMA_TIMEOUT_S + 30
@@ -57,9 +58,28 @@ class LiveQualificationRequest:
     repository_root: Path
 
 
+@dataclass(frozen=True)
+class LiveDiagnosticRequest:
+    """One explicitly acknowledged route × anchor measurement cell."""
+
+    qualification: LiveQualificationRequest
+    anchor_id: str
+    route_id: str
+
+
 def spend_acknowledgement(*, source_commit: str, manifest_sha256: str) -> str:
     """Return the exact acknowledgement an operator must pass to execute."""
     return f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:{_MATRIX_LABEL}"
+
+
+def diagnostic_spend_acknowledgement(
+    *, source_commit: str, manifest_sha256: str, anchor_id: str, route_id: str
+) -> str:
+    """Bind diagnostic spend to exactly one configured anchor and route."""
+    return (
+        f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:{_DIAGNOSTIC_LABEL}:"
+        f"{anchor_id}:{route_id}"
+    )
 
 
 def _repository_state(repository_root: Path) -> tuple[str, bool]:
@@ -117,15 +137,17 @@ def _matrix() -> tuple[tuple[str, RouteBinding], ...]:
     )
 
 
-def preflight_live_qualification(
+def _preflight_live_cells(
     request: LiveQualificationRequest,
     *,
+    matrix: tuple[tuple[str, RouteBinding], ...],
+    acknowledgement: Callable[[str, str], str],
     manifest: QualificationManifest | None = None,
     repository_state: Callable[[Path], tuple[str, bool]] = _repository_state,
     credential_present: Callable[..., bool] = qualification_route_credential_present,
     runtime_route_valid: Callable[..., None] = validate_qualification_route_runtime,
 ) -> QualificationManifest:
-    """Reject every deterministic defect before any provider is constructed."""
+    """Reject every deterministic defect before a selected provider is built."""
     if not request.execute_real_provider:
         raise LiveQualificationError("Real provider execution requires --execute-real-provider.")
     current_head, clean = repository_state(request.repository_root)
@@ -138,9 +160,7 @@ def preflight_live_qualification(
     active_manifest = manifest or load_manifest()
     if active_manifest.sha256 != request.expected_manifest_sha256:
         raise LiveQualificationError("Manifest digest does not match the operator acknowledgement.")
-    expected_ack = spend_acknowledgement(
-        source_commit=current_head, manifest_sha256=active_manifest.sha256
-    )
+    expected_ack = acknowledgement(current_head, active_manifest.sha256)
     if request.spend_acknowledgement != expected_ack:
         raise LiveQualificationError(
             "Real provider spend acknowledgement is missing or does not match."
@@ -165,9 +185,6 @@ def preflight_live_qualification(
             )
     if request.scratch_root.exists() and not request.scratch_root.is_dir():
         raise LiveQualificationError("Scratch storage path is not a directory.")
-    matrix = _matrix()
-    if len(matrix) != 4 or len({route.route_id for _, route in matrix}) != 4:
-        raise LiveQualificationError("Qualification matrix is not exactly four unique routes.")
     for logical_model_id, route in matrix:
         try:
             runtime_route_valid(
@@ -190,6 +207,72 @@ def preflight_live_qualification(
                 "A configured qualification route has no credential source."
             )
     return active_manifest
+
+
+def preflight_live_qualification(
+    request: LiveQualificationRequest,
+    *,
+    manifest: QualificationManifest | None = None,
+    repository_state: Callable[[Path], tuple[str, bool]] = _repository_state,
+    credential_present: Callable[..., bool] = qualification_route_credential_present,
+    runtime_route_valid: Callable[..., None] = validate_qualification_route_runtime,
+) -> QualificationManifest:
+    """Reject every deterministic defect before any matrix provider is constructed."""
+    matrix = _matrix()
+    if len(matrix) != 4 or len({route.route_id for _, route in matrix}) != 4:
+        raise LiveQualificationError("Qualification matrix is not exactly four unique routes.")
+    return _preflight_live_cells(
+        request,
+        matrix=matrix,
+        acknowledgement=lambda source_commit, manifest_sha256: spend_acknowledgement(
+            source_commit=source_commit, manifest_sha256=manifest_sha256
+        ),
+        manifest=manifest,
+        repository_state=repository_state,
+        credential_present=credential_present,
+        runtime_route_valid=runtime_route_valid,
+    )
+
+
+def preflight_live_diagnostic(
+    request: LiveDiagnosticRequest,
+    *,
+    manifest: QualificationManifest | None = None,
+    repository_state: Callable[[Path], tuple[str, bool]] = _repository_state,
+    credential_present: Callable[..., bool] = qualification_route_credential_present,
+    runtime_route_valid: Callable[..., None] = validate_qualification_route_runtime,
+) -> tuple[QualificationManifest, str, RouteBinding]:
+    """Fail closed while authorizing only the named current matrix cell."""
+    qualification = request.qualification
+    if request.anchor_id not in qualification.anchors:
+        raise LiveQualificationError(
+            "Diagnostic anchor is not in the immutable qualification pack."
+        )
+    matches = [
+        (logical_model_id, route)
+        for logical_model_id, route in _matrix()
+        if route.route_id == request.route_id
+    ]
+    if len(matches) != 1:
+        raise LiveQualificationError(
+            "Diagnostic route is not a unique configured qualification route."
+        )
+    logical_model_id, route = matches[0]
+    active_manifest = _preflight_live_cells(
+        qualification,
+        matrix=((logical_model_id, route),),
+        acknowledgement=lambda source_commit, manifest_sha256: diagnostic_spend_acknowledgement(
+            source_commit=source_commit,
+            manifest_sha256=manifest_sha256,
+            anchor_id=request.anchor_id,
+            route_id=request.route_id,
+        ),
+        manifest=manifest,
+        repository_state=repository_state,
+        credential_present=credential_present,
+        runtime_route_valid=runtime_route_valid,
+    )
+    return active_manifest, logical_model_id, route
 
 
 class _PinnedRouteProvider:
@@ -345,6 +428,70 @@ def execute_live_qualification(
     return run
 
 
+def execute_live_diagnostic(
+    request: LiveDiagnosticRequest,
+    *,
+    bundle: data.DataBundle | None = None,
+    manifest: QualificationManifest | None = None,
+    repository_state: Callable[[Path], tuple[str, bool]] = _repository_state,
+    credential_present: Callable[..., bool] = qualification_route_credential_present,
+    runtime_route_valid: Callable[..., None] = validate_qualification_route_runtime,
+    pinned_port_factory: PinnedPortFactory = _real_pinned_port,
+    bake_hard_timeout_seconds: int = _LIVE_BAKE_HARD_TIMEOUT_SECONDS,
+    readiness_timeout_seconds: int = _LIVE_READINESS_TIMEOUT_SECONDS,
+    runner_stop_timeout_seconds: float = _LIVE_RUNNER_STOP_TIMEOUT_SECONDS,
+    runner_stop_waiter: Callable[[object, float], bool] | None = None,
+):
+    """Run one pinned, content-free density diagnostic through the normal API path."""
+    active_manifest, logical_model_id, route = preflight_live_diagnostic(
+        request,
+        manifest=manifest,
+        repository_state=repository_state,
+        credential_present=credential_present,
+        runtime_route_valid=runtime_route_valid,
+    )
+    if readiness_timeout_seconds < bake_hard_timeout_seconds:
+        raise LiveQualificationError("Live readiness timeout must cover the bake hard timeout.")
+    if runner_stop_timeout_seconds < _LIVE_RUNNER_STOP_TIMEOUT_SECONDS:
+        raise LiveQualificationError(
+            "Live runner stop wait must cover one provider timeout plus its safety margin."
+        )
+    qualification = request.qualification
+    harness = ProductionQualificationHarness(
+        qualification.receipt_root,
+        manifest=active_manifest,
+        source_commit=qualification.expected_source_commit,
+    )
+    provider = _PinnedRouteProvider(route, pinned_port_factory(logical_model_id, route))
+    try:
+        run = harness.run_diagnostic_cell(
+            qualification.anchors[request.anchor_id],
+            logical_model_id,
+            route,
+            bundle=bundle or data.resolve_bundle(),
+            provider=provider,
+            scratch_root=qualification.scratch_root,
+            bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+            readiness_timeout_seconds=readiness_timeout_seconds,
+            runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+            runner_stop_waiter=runner_stop_waiter,
+        )
+    except QualificationRunnerStillActiveError as error:
+        raise LiveQualificationError(
+            "Qualification runner remained active; scratch was preserved."
+        ) from error
+    receipt = run.cell.receipt
+    if (
+        receipt.anchor_id != request.anchor_id
+        or receipt.logical_model_id != logical_model_id
+        or receipt.expected_route != route
+        or receipt.observed_route != route
+        or receipt.semantic_gate != "not_run"
+    ):
+        raise LiveQualificationError("Diagnostic cell did not retain its configured route binding.")
+    return run
+
+
 def load_anchor_pack(path: Path) -> dict[str, RuntimeAnchor]:
     """Load operator-supplied anchors without logging their text."""
     if not path.is_file():
@@ -383,6 +530,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--execute-real-provider", action="store_true")
     parser.add_argument("--acknowledge-provider-spend")
+    parser.add_argument("--diagnostic-anchor-id")
+    parser.add_argument("--diagnostic-route-id")
     return parser
 
 
@@ -403,12 +552,29 @@ def main(argv: list[str] | None = None) -> int:
             spend_acknowledgement=args.acknowledge_provider_spend,
             repository_root=repository_root,
         )
-        run = execute_live_qualification(request)
+        diagnostic_requested = bool(args.diagnostic_anchor_id or args.diagnostic_route_id)
+        if diagnostic_requested and not (args.diagnostic_anchor_id and args.diagnostic_route_id):
+            raise LiveQualificationError(
+                "Diagnostic execution requires both a configured anchor and route ID."
+            )
+        if diagnostic_requested:
+            run = execute_live_diagnostic(
+                LiveDiagnosticRequest(
+                    qualification=request,
+                    anchor_id=args.diagnostic_anchor_id,
+                    route_id=args.diagnostic_route_id,
+                )
+            )
+        else:
+            run = execute_live_qualification(request)
     except LiveQualificationError as error:
         parser.exit(1, f"Qualification refused: {error}\n")
     except Exception:
         parser.exit(1, "Qualification failed unexpectedly.\n")
-    print(f"Qualification completed: {len(run.cells)} content-free receipts written.")
+    if diagnostic_requested:
+        print(f"Qualification diagnostic completed: {run.receipt_path.name}.")
+    else:
+        print(f"Qualification completed: {len(run.cells)} content-free receipts written.")
     return 0
 
 

@@ -43,6 +43,7 @@ from hramatka.engine.providers import telemetry_ctx
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
     CellReceipt,
+    DensityDiagnosticReceipt,
     DensitySummary,
     QualificationError,
     RepairTraceEntry,
@@ -299,6 +300,8 @@ class DeliverySummary:
 class QualificationCellResult:
     receipt: CellReceipt
     delivery: DeliverySummary
+    density_trace: tuple[dict[str, object], ...]
+    repair_invocation_trace: tuple[dict[str, object], ...]
 
 
 @dataclass(frozen=True)
@@ -309,6 +312,14 @@ class QualificationRun:
     @property
     def receipts(self) -> tuple[CellReceipt, ...]:
         return tuple(cell.receipt for cell in self.cells)
+
+
+@dataclass(frozen=True)
+class QualificationDiagnosticRun:
+    """One content-free, instrumented live cell and its external receipt."""
+
+    cell: QualificationCellResult
+    receipt_path: Path
 
 
 ProviderFactory = Callable[[RuntimeAnchor, str, RouteBinding], Any]
@@ -395,6 +406,67 @@ class ProductionQualificationHarness:
             runner_stop_waiter=runner_stop_waiter
             or (lambda runner, timeout: runner.wait_until_stopped(timeout)),
         )
+
+    def run_diagnostic_cell(
+        self,
+        anchor: RuntimeAnchor,
+        logical_model_id: str,
+        route: RouteBinding,
+        *,
+        bundle: data.DataBundle,
+        provider: Any,
+        scratch_root: Path,
+        bake_hard_timeout_seconds: int,
+        readiness_timeout_seconds: int,
+        runner_stop_timeout_seconds: float,
+        runner_stop_waiter: RunnerStopWaiter | None = None,
+    ) -> QualificationDiagnosticRun:
+        """Run one already-authorized production cell with durable count traces.
+
+        The caller must have validated the full runtime anchor pack, source
+        identity, configured route, credentials, and explicit spend
+        acknowledgement.  This narrow method deliberately does not aggregate
+        or qualify a model.
+        """
+        self._root.mkdir(parents=True, exist_ok=True)
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        raw_cell_root = Path(
+            tempfile.mkdtemp(dir=scratch_root, prefix=f"{anchor.id}-{route.route_id}-")
+        )
+        previous_bundle = data._active  # noqa: SLF001 - mirror normal worker scope.
+        data.set_active_bundle(bundle)
+        try:
+            cell = self._run_cell(
+                anchor,
+                logical_model_id,
+                route,
+                bundle,
+                provider=provider,
+                cell_root=raw_cell_root,
+                bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+                readiness_timeout_seconds=readiness_timeout_seconds,
+                runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+                runner_stop_waiter=runner_stop_waiter
+                or (lambda runner, timeout: runner.wait_until_stopped(timeout)),
+                allow_failed_diagnostic=True,
+            )
+            receipt_path = self._persist_diagnostic_receipt(cell)
+        except QualificationRunnerStillActiveError:
+            raise
+        except Exception:
+            try:
+                shutil.rmtree(raw_cell_root)
+            except OSError:
+                pass
+            raise
+        else:
+            try:
+                shutil.rmtree(raw_cell_root)
+            except OSError as error:
+                raise QualificationError("Qualification scratch cleanup failed.") from error
+            return QualificationDiagnosticRun(cell=cell, receipt_path=receipt_path)
+        finally:
+            data.set_active_bundle(previous_bundle)
 
     def _run_cells(
         self,
@@ -512,6 +584,27 @@ class ProductionQualificationHarness:
         )
         return path
 
+    def _persist_diagnostic_receipt(self, cell: QualificationCellResult) -> Path:
+        """Persist exactly the count-only trace needed for one root-cause cell."""
+        parsed = DensityDiagnosticReceipt.from_dict(
+            DensityDiagnosticReceipt(
+                cell_receipt=cell.receipt,
+                density_trace=cell.density_trace,
+                repair_invocation_trace=cell.repair_invocation_trace,
+            ).as_dict()
+        )
+        directory = self._root / "diagnostics"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (
+            f"{parsed.cell_receipt.anchor_id}-"
+            f"{parsed.cell_receipt.expected_route.route_id}.json"
+        )
+        path.write_text(
+            json.dumps(parsed.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        return path
+
     def _run_cell(
         self,
         anchor: RuntimeAnchor,
@@ -525,6 +618,7 @@ class ProductionQualificationHarness:
         readiness_timeout_seconds: int,
         runner_stop_timeout_seconds: float,
         runner_stop_waiter: RunnerStopWaiter,
+        allow_failed_diagnostic: bool = False,
     ) -> QualificationCellResult:
         def logical_generator_factory(requested_logical_model_id: str):
             if requested_logical_model_id != logical_model_id:
@@ -596,14 +690,16 @@ class ProductionQualificationHarness:
                         "Qualification durable job did not reach a terminal state before "
                         "readiness timeout."
                     )
-                if terminal_status != "ready":
+                if terminal_status != "ready" and not allow_failed_diagnostic:
                     raise AssertionError("Qualification durable job did not become ready.")
-                resource = client.get(f"/api/lessons/{lesson_id}")
-                if resource.status_code != 200:
-                    raise AssertionError("Qualification lesson resource was unavailable.")
                 durable_job = app.state.store.get(teacher.id, lesson_id)
-                if durable_job is None or durable_job.status != "ready":
-                    raise AssertionError("Qualification did not persist a durable ready job.")
+                if durable_job is None or durable_job.status != terminal_status:
+                    raise AssertionError("Qualification did not persist a durable terminal job.")
+                resource = None
+                if terminal_status == "ready":
+                    resource = client.get(f"/api/lessons/{lesson_id}")
+                    if resource.status_code != 200:
+                        raise AssertionError("Qualification lesson resource was unavailable.")
         finally:
             if not runner_stop_waiter(app.state.runner, runner_stop_timeout_seconds):
                 active_error = sys.exc_info()[1]
@@ -611,15 +707,21 @@ class ProductionQualificationHarness:
                     "Qualification runner is still active; scratch was preserved."
                 ) from active_error
         durable_trace = self._durable_route_trace(durable_job)
-        delivery = self._delivery_summary(
-            resource.json(), logical_model_id, route, durable_job, durable_trace
-        )
-        density = DensitySummary(
-            delivered_blocks=delivery.block_count,
-            phase_counts=delivery.phase_counts,
-            response_units=delivery.response_units,
-            disposition="teacher_ready" if self._delivery_ready(delivery) else "recoverable_draft",
-        )
+        density_trace, repair_invocation_trace = self._durable_diagnostic_traces(durable_job)
+        if resource is not None:
+            delivery = self._delivery_summary(
+                resource.json(), logical_model_id, route, durable_job, durable_trace
+            )
+            density = DensitySummary(
+                delivered_blocks=delivery.block_count,
+                phase_counts=delivery.phase_counts,
+                response_units=delivery.response_units,
+                disposition=(
+                    "teacher_ready" if self._delivery_ready(delivery) else "recoverable_draft"
+                ),
+            )
+        else:
+            delivery, density = self._failed_diagnostic_delivery(density_trace)
         expected_trace = durable_trace
         receipt = CellReceipt(
             source_commit=self._source_commit,
@@ -641,7 +743,12 @@ class ProductionQualificationHarness:
             semantic_gate="not_run",
             outcome="passed" if density.disposition == "teacher_ready" else "failed",
         )
-        return QualificationCellResult(receipt=receipt, delivery=delivery)
+        return QualificationCellResult(
+            receipt=receipt,
+            delivery=delivery,
+            density_trace=density_trace,
+            repair_invocation_trace=repair_invocation_trace,
+        )
 
     @staticmethod
     def _durable_route_trace(job: Any) -> tuple[RepairTraceEntry, ...]:
@@ -652,6 +759,62 @@ class ProductionQualificationHarness:
         if not isinstance(traces, list):
             raise AssertionError("Qualification durable job has no route trace telemetry.")
         return tuple(RepairTraceEntry.from_dict(entry) for entry in traces)
+
+    @staticmethod
+    def _durable_diagnostic_traces(
+        job: Any,
+    ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+        progress = job.progress
+        if not isinstance(progress, dict):
+            raise AssertionError("Qualification durable job has no progress telemetry.")
+        density = progress.get("qualification_density_traces")
+        repair = progress.get("qualification_repair_traces", [])
+        if (
+            not isinstance(density, list)
+            or not density
+            or not all(isinstance(entry, dict) for entry in density)
+            or not isinstance(repair, list)
+            or not all(isinstance(entry, dict) for entry in repair)
+        ):
+            raise AssertionError("Qualification durable job has no density diagnostic telemetry.")
+        return (
+            tuple(copy.deepcopy(entry) for entry in density),
+            tuple(copy.deepcopy(entry) for entry in repair),
+        )
+
+    @staticmethod
+    def _failed_diagnostic_delivery(
+        density_trace: tuple[dict[str, object], ...],
+    ) -> tuple[DeliverySummary, DensitySummary]:
+        """Project a failed diagnostic's last count-only snapshot, never lesson content."""
+        last = density_trace[-1]
+        phase_density = last["phase_density"]
+        assert isinstance(phase_density, dict)  # validated by diagnostic receipt persistence
+        phase_counts = {
+            phase: int(phase_density[phase]["visible_blocks"])
+            for phase in ("1", "2", "3")
+        }
+        response_units = sum(
+            int(phase_density[phase]["response_units"]) for phase in ("1", "2", "3")
+        )
+        density = DensitySummary(
+            delivered_blocks=sum(phase_counts.values()),
+            phase_counts=phase_counts,
+            response_units=response_units,
+            disposition="recoverable_draft",
+        )
+        return (
+            DeliverySummary(
+                durable_job=False,
+                block_count=density.delivered_blocks,
+                phase_counts=phase_counts,
+                response_units=response_units,
+                activity_types=frozenset(),
+                phase_three_transfer=False,
+                provenance_continuous=False,
+            ),
+            density,
+        )
 
     @staticmethod
     def _delivery_summary(

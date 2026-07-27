@@ -20,6 +20,7 @@ from hramatka.api.qualified_models import (
 from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 
 CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v1"
+DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v1"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COMMIT_RE = re.compile(r"^[a-f0-9]{40,64}$")
 _OUTCOMES = frozenset({"passed", "failed"})
@@ -269,6 +270,142 @@ class CellReceipt:
             "repair_trace": [entry.as_dict() for entry in self.repair_trace],
             "semantic_gate": self.semantic_gate,
             "outcome": self.outcome,
+        }
+
+
+def _diagnostic_density_trace(value: object) -> dict[str, object]:
+    row = _require_exact_keys(
+        value,
+        {
+            "density_error_codes",
+            "gate_outcomes_by_phase",
+            "phase_density",
+            "repair_invocations",
+            "stage",
+        },
+        "diagnostic density trace",
+    )
+    if row["stage"] not in {"initial", "repair"} or (
+        type(row["repair_invocations"]) is not int or row["repair_invocations"] < 0
+    ):
+        raise QualificationError("Diagnostic density trace has invalid stage or repair count.")
+    errors = row["density_error_codes"]
+    phases = row["phase_density"]
+    outcomes = row["gate_outcomes_by_phase"]
+    if (
+        not isinstance(errors, list)
+        or not all(isinstance(error, str) for error in errors)
+        or not isinstance(phases, dict)
+        or not isinstance(outcomes, dict)
+        or set(phases) != {"1", "2", "3"}
+        or set(outcomes) != {"1", "2", "3"}
+    ):
+        raise QualificationError("Diagnostic density trace has invalid phase evidence.")
+    parsed_phases: dict[str, dict[str, int]] = {}
+    parsed_outcomes: dict[str, dict[str, int]] = {}
+    for phase in ("1", "2", "3"):
+        density = _require_exact_keys(
+            phases[phase], {"response_units", "visible_blocks"}, "diagnostic phase density"
+        )
+        gate = _require_exact_keys(
+            outcomes[phase], {"dropped", "generated", "ready", "requested", "review"},
+            "diagnostic gate outcomes",
+        )
+        if not all(type(count) is int and count >= 0 for count in density.values()) or not all(
+            type(count) is int and count >= 0 for count in gate.values()
+        ):
+            raise QualificationError("Diagnostic density trace has invalid counts.")
+        if gate["generated"] != gate["ready"] + gate["review"] + gate["dropped"]:
+            raise QualificationError("Diagnostic gate counts do not reconcile.")
+        parsed_phases[phase] = dict(density)
+        parsed_outcomes[phase] = dict(gate)
+    return {
+        "stage": row["stage"],
+        "phase_density": parsed_phases,
+        "gate_outcomes_by_phase": parsed_outcomes,
+        "density_error_codes": list(errors),
+        "repair_invocations": row["repair_invocations"],
+    }
+
+
+def _diagnostic_repair_trace(value: object) -> dict[str, object]:
+    row = _require_exact_keys(
+        value,
+        {
+            "gate_drops",
+            "outcome",
+            "phase",
+            "response_units_after",
+            "response_units_before",
+            "round",
+            "visible_blocks_after",
+            "visible_blocks_before",
+        },
+        "diagnostic repair trace",
+    )
+    if (
+        row["outcome"] not in {"amended", "provider_failure"}
+        or type(row["phase"]) is not int
+        or row["phase"] not in {1, 2, 3}
+        or type(row["round"]) is not int
+        or row["round"] < 1
+        or not all(
+            type(row[field]) is int and row[field] >= 0
+            for field in {
+                "gate_drops",
+                "response_units_after",
+                "response_units_before",
+                "visible_blocks_after",
+                "visible_blocks_before",
+            }
+        )
+    ):
+        raise QualificationError("Diagnostic repair trace has invalid values.")
+    return dict(row)
+
+
+@dataclass(frozen=True)
+class DensityDiagnosticReceipt:
+    """Strict content-free instrumentation for one explicitly authorized cell."""
+
+    cell_receipt: CellReceipt
+    density_trace: tuple[dict[str, object], ...]
+    repair_invocation_trace: tuple[dict[str, object], ...]
+    schema_version: str = DIAGNOSTIC_RECEIPT_SCHEMA_VERSION
+
+    @classmethod
+    def from_dict(cls, value: object) -> DensityDiagnosticReceipt:
+        row = _require_exact_keys(
+            value,
+            {"cell_receipt", "density_trace", "repair_invocation_trace", "schema_version"},
+            "diagnostic receipt",
+        )
+        if row["schema_version"] != DIAGNOSTIC_RECEIPT_SCHEMA_VERSION:
+            raise QualificationError("Diagnostic receipt schema version is unsupported.")
+        if not isinstance(row["density_trace"], list) or not isinstance(
+            row["repair_invocation_trace"], list
+        ):
+            raise QualificationError("Diagnostic receipt traces must be lists.")
+        density_trace = tuple(_diagnostic_density_trace(entry) for entry in row["density_trace"])
+        if not density_trace or density_trace[0]["stage"] != "initial":
+            raise QualificationError("Diagnostic receipt lacks an initial density snapshot.")
+        repair_trace = tuple(
+            _diagnostic_repair_trace(entry) for entry in row["repair_invocation_trace"]
+        )
+        if density_trace[-1]["repair_invocations"] != len(repair_trace):
+            raise QualificationError("Diagnostic repair count does not match its invocation trace.")
+        return cls(
+            cell_receipt=CellReceipt.from_dict(row["cell_receipt"]),
+            density_trace=density_trace,
+            repair_invocation_trace=repair_trace,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "cell_receipt": self.cell_receipt.as_dict(),
+            "density_trace": [dict(entry) for entry in self.density_trace],
+            "repair_invocation_trace": [dict(entry) for entry in self.repair_invocation_trace],
         }
 
 

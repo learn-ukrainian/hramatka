@@ -28,18 +28,22 @@ from hramatka.qualification.harness import (
     _DeterministicRouteProvider,
 )
 from hramatka.qualification.live import (
+    LiveDiagnosticRequest,
     LiveQualificationError,
     LiveQualificationRequest,
     _matrix,
     _repository_state,
+    diagnostic_spend_acknowledgement,
+    execute_live_diagnostic,
     execute_live_qualification,
     load_anchor_pack,
     main,
+    preflight_live_diagnostic,
     preflight_live_qualification,
     spend_acknowledgement,
 )
 from hramatka.qualification.manifest import ManifestError
-from hramatka.qualification.receipts import RouteBinding
+from hramatka.qualification.receipts import DensityDiagnosticReceipt, RouteBinding
 
 _HEAD = "a" * 40
 
@@ -67,6 +71,23 @@ def _clean_repository_state(_root: Path) -> tuple[str, bool]:
 
 def _credential_present(**_kwargs: object) -> bool:
     return True
+
+
+def _diagnostic_request(tmp_path: Path) -> LiveDiagnosticRequest:
+    qualification = _request(tmp_path)
+    return LiveDiagnosticRequest(
+        qualification=replace(
+            qualification,
+            spend_acknowledgement=diagnostic_spend_acknowledgement(
+                source_commit=_HEAD,
+                manifest_sha256=qualification.expected_manifest_sha256,
+                anchor_id="b1-narrative",
+                route_id="gemini-flash-ais",
+            ),
+        ),
+        anchor_id="b1-narrative",
+        route_id="gemini-flash-ais",
+    )
 
 
 def _complete_fake_run(request: LiveQualificationRequest, *, failed: bool = False):
@@ -219,6 +240,57 @@ def test_preflight_refuses_dirty_tree_anchor_and_path_defects_before_provider(
     with pytest.raises(LiveQualificationError, match="Scratch storage path"):
         preflight_live_qualification(
             replace(request, scratch_root=scratch_file),
+            repository_state=_clean_repository_state,
+            credential_present=_credential_present,
+        )
+
+
+def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_counts(
+    tmp_path, qualification_flags
+) -> None:
+    request = _diagnostic_request(tmp_path)
+    constructed: list[tuple[str, str]] = []
+    credential_routes: list[str] = []
+
+    def credential_present(**route: str) -> bool:
+        credential_routes.append(route["route_id"])
+        return route["route_id"] == "gemini-flash-ais"
+
+    def fake_port_factory(logical_model_id: str, route: RouteBinding):
+        constructed.append((logical_model_id, route.route_id))
+        return _DeterministicRouteProvider(route, force_initial_shortfall=False)
+
+    run = execute_live_diagnostic(
+        request,
+        bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
+        repository_state=_clean_repository_state,
+        credential_present=credential_present,
+        pinned_port_factory=fake_port_factory,
+    )
+
+    assert constructed == [("gemini-3.5-flash", "gemini-flash-ais")]
+    assert credential_routes == ["gemini-flash-ais"]
+    assert run.cell.receipt.outcome == "passed"
+    parsed = DensityDiagnosticReceipt.from_dict(
+        json.loads(run.receipt_path.read_text(encoding="utf-8"))
+    )
+    assert parsed.cell_receipt.expected_route.route_id == "gemini-flash-ais"
+    assert parsed.density_trace[0]["stage"] == "initial"
+    assert set(parsed.density_trace[0]["phase_density"]) == {"1", "2", "3"}
+    assert parsed.density_trace[-1]["repair_invocations"] == len(
+        parsed.repair_invocation_trace
+    )
+    assert request.qualification.scratch_root.is_dir()
+    assert list(request.qualification.scratch_root.iterdir()) == []
+
+
+def test_live_density_diagnostic_rejects_an_unconfigured_route_before_provider(
+    tmp_path, qualification_flags
+) -> None:
+    request = replace(_diagnostic_request(tmp_path), route_id="wrong-route")
+    with pytest.raises(LiveQualificationError, match="unique configured"):
+        preflight_live_diagnostic(
+            request,
             repository_state=_clean_repository_state,
             credential_present=_credential_present,
         )

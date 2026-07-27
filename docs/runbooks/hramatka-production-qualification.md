@@ -92,6 +92,30 @@ anchor hashes, both production-path feature flags, every route's credential
 source, separate scratch and receipt directories outside the repository, and a
 spend acknowledgement bound to the current commit and manifest digest.
 
+### One-cell density diagnostic
+
+Before a matrix rerun, an operator may authorize exactly one diagnostic cell to
+measure a suspected density shortfall. This is not a qualification shortcut:
+it validates the complete anchor pack, clean source, current manifest, prompt
+pack and generic-repair flags, and the selected configured route, then drives
+the ordinary authenticated API path for that one cell only. It cannot create a
+model aggregate or populate production qualification receipts.
+
+Its acknowledgement is bound to the chosen anchor and route:
+
+```text
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-density-diagnostic:<anchor-id>:<route-id>
+```
+
+Pass `--diagnostic-anchor-id` and `--diagnostic-route-id` together with that
+acknowledgement. The diagnostic writes one separate content-free receipt under
+`diagnostics/`: each initial/repair snapshot contains visible-block and
+learner-response-unit counts by phase, requested/generated/ready/review/dropped
+gate counts by phase, fixed density-error codes, and a count-only generic
+repair invocation trace. It retains no lesson, anchor, prompt, provider
+response, or gate-detail text. A failed diagnostic persists its last count-only
+snapshot honestly; it never appears as a successful matrix receipt.
+
 First obtain the exact acknowledgement string without running the command's
 provider mode:
 

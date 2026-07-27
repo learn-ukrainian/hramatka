@@ -439,6 +439,12 @@ def create_app(
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
         return AuthenticatedSession(record=record, raw_secret=raw_secret)
 
+    # Routers mounted during application construction cannot import this
+    # closure: it is bound to this application's cookie decoder and JobStore.
+    # Expose the dependency only on this app instance so they preserve the same
+    # opaque-session proof rather than creating a parallel auth route.
+    app.state.require_session = require_session
+
     def require_mutation_session(
         _: None = Depends(require_origin),
         session: AuthenticatedSession = Depends(require_session),
