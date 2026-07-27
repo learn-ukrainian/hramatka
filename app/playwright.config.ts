@@ -18,7 +18,10 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'node dev/server.js & npm run build && npm run preview',
+      // Every stub E2E spec owns and tears down its own API server on 8787.
+      // Starting another one here races those fixtures and intermittently drops
+      // the Vite proxy mid-suite. Playwright only needs to own the static preview.
+      command: 'npm run build && npm run preview',
       url: 'http://localhost:5173/teacher/',
       reuseExistingServer: false,
       timeout: 120 * 1000,

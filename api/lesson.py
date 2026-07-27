@@ -39,8 +39,10 @@ def materialize_lesson(template: dict[str, Any], job: JobRecord) -> dict[str, An
             "id": job.id,
             "title": title_from_anchor(job.anchor_text),
             "level": "B1",
-            "method": "ttt",
-            "focus": job.focus,
+            "method": job.methodology,
+            # The pinned lesson schema calls this field `focus`; the new API
+            # field is deliberately specific about its grammar role.
+            "focus": job.grammar_focus if job.grammar_focus is not None else job.focus,
             "anchor": {
                 "text": job.anchor_text,
                 "source": job.anchor_source,

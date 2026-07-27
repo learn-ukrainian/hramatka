@@ -242,8 +242,8 @@ paths:
       description: |
         The browser creates a UUID and reuses it for network retries. The
         request hash covers `anchor` (including `source_url` for teacher-url),
-        `level`, `duration`, normalized `focus` (`null` when omitted), and
-        `logical_model_id`. Same UUID and same request returns the existing
+        `level`, `duration`, `methodology`, normalized `focus` and
+        `grammar_focus` (`null` when omitted), and `logical_model_id`. Same UUID and same request returns the existing
         aggregate with `reused: true`; different input or a model that is not
         currently qualified/configured returns `409` with its distinct code.
       security:
@@ -279,7 +279,9 @@ paths:
       operationId: listLessons
       summary: List every lesson owned by the current teacher
       description: |
-        Returns the complete pilot catalog ordered by `updated_at DESC, id DESC`.
+        Returns metadata only, newest first by `created_at DESC, id DESC`.
+        `anchor_snippet` is capped to a short preview; the full anchor remains
+        available only from the owner-scoped lesson resource.
         No row owned by another teacher may participate in this query.
       security:
         - PilotSession: []
@@ -961,10 +963,19 @@ components:
         duration:
           type: integer
           enum: [45, 60, 90]
+        methodology:
+          type: string
+          const: ttt
+          default: ttt
+          description: Pilot methodology; the only accepted value is `ttt`.
         focus:
           type: [string, 'null']
           maxLength: 500
           default: null
+        grammar_focus:
+          type: [string, 'null']
+          maxLength: 120
+          description: Optional trimmed one-line teacher-stated grammar focus.
         logical_model_id:
           type: [string, 'null']
           pattern: '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
@@ -1113,6 +1124,10 @@ components:
         - status
         - duration
         - focus
+        - methodology
+        - grammar_focus
+        - anchor_snippet
+        - level
         - revision
         - accepted
         - accepted_at
@@ -1133,6 +1148,19 @@ components:
         duration:
           type: integer
           enum: [45, 60, 90]
+        methodology:
+          type: string
+          const: ttt
+        grammar_focus:
+          type: [string, 'null']
+          maxLength: 120
+        anchor_snippet:
+          type: string
+          maxLength: 140
+          description: Short owner-only preview, never the full anchor text.
+        level:
+          type: string
+          const: B1
         focus:
           type: [string, 'null']
         revision:
@@ -1438,6 +1466,8 @@ components:
         - accepted_revision
         - warning_acknowledgements
         - logical_model_id
+        - methodology
+        - grammar_focus
         - lesson
       properties:
         lesson_id:
@@ -1460,6 +1490,13 @@ components:
         logical_model_id:
           type: [string, 'null']
           description: Null only for a durable lesson created before model selection.
+        methodology:
+          type: string
+          const: ttt
+        grammar_focus:
+          type: [string, 'null']
+          maxLength: 120
+          description: Normalized teacher-stated grammar focus for this bake.
         lesson:
           $ref: '#/components/schemas/LessonDocument'
     RevisionMutation:

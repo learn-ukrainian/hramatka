@@ -723,6 +723,80 @@ def test_owner_scope_uses_teacher_and_uuid_together_and_hides_cross_owner_rows(a
         _error(second.get(f"/api/lessons/{first_only_id}"), 404, "lesson_not_found")
 
 
+def test_methodology_and_grammar_focus_are_strict_durable_and_owner_scoped(app) -> None:
+    """The catalog must never disclose even the short anchor preview cross-teacher."""
+    _, _, first_token = _issue_invite(app, display_name="Перша")
+    _, _, second_token = _issue_invite(app, display_name="Друга")
+    lesson_id = str(uuid.uuid4())
+    with TestClient(app, base_url=ORIGIN) as first, TestClient(app, base_url=ORIGIN) as second:
+        first_session = _redeem(first, first_token)
+        _redeem(second, second_token)
+        request = _lesson_request(lesson_id)
+        request.update(
+            {
+                "methodology": "ttt",
+                "grammar_focus": "  вищий ступінь прикметників  ",
+            }
+        )
+        created = first.post(
+            "/api/lessons",
+            headers=_mutation_headers(first_session["csrf_token"]),
+            json=request,
+        )
+        assert created.status_code == 202, created.text
+        _wait_for_status(first, lesson_id, "ready")
+
+        catalog = first.get("/api/lessons").json()["lessons"]
+        assert len(catalog) == 1
+        assert catalog[0]["methodology"] == "ttt"
+        assert catalog[0]["grammar_focus"] == "вищий ступінь прикметників"
+        assert catalog[0]["level"] == "B1"
+        assert catalog[0]["anchor_snippet"] == request["anchor"]["text"]
+        stored_job = app.state.store.get(first_session["teacher"]["id"], lesson_id)
+        assert stored_job is not None
+        assert stored_job.request["methodology"] == "ttt"
+        assert stored_job.request["grammar_focus"] == "вищий ступінь прикметників"
+        assert first.get(f"/api/lessons/{lesson_id}").json()["grammar_focus"] == (
+            "вищий ступінь прикметників"
+        )
+        assert second.get("/api/lessons").json() == {"lessons": []}
+
+        unknown_methodology = {**request, "id": str(uuid.uuid4()), "methodology": "ppp"}
+        _error(
+            first.post(
+                "/api/lessons",
+                headers=_mutation_headers(first_session["csrf_token"]),
+                json=unknown_methodology,
+            ),
+            422,
+            "invalid_input",
+        )
+        multiline_focus = {
+            **request,
+            "id": str(uuid.uuid4()),
+            "grammar_focus": "прикметники\nприслівники",
+        }
+        _error(
+            first.post(
+                "/api/lessons",
+                headers=_mutation_headers(first_session["csrf_token"]),
+                json=multiline_focus,
+            ),
+            422,
+            "invalid_input",
+        )
+        too_long_focus = {**request, "id": str(uuid.uuid4()), "grammar_focus": "а" * 121}
+        _error(
+            first.post(
+                "/api/lessons",
+                headers=_mutation_headers(first_session["csrf_token"]),
+                json=too_long_focus,
+            ),
+            422,
+            "invalid_input",
+        )
+
+
 def test_same_owner_idempotency_reuses_without_second_bake_and_conflicts_on_new_input(
     tmp_path: Path,
 ) -> None:

@@ -62,7 +62,7 @@ test.describe('Hramatka dual-language chrome E2E (stub)', () => {
     });
   });
 
-  test('toggle EN localizes catalog + paste chrome, reverses to UA, and persists across reload', async ({ page }) => {
+  test('toggle EN localizes paste and separate My Lessons chrome, reverses to UA, and persists across reload', async ({ page }) => {
     await redeem(page);
 
     const toggle = page.getByTestId('lang-toggle');
@@ -72,24 +72,26 @@ test.describe('Hramatka dual-language chrome E2E (stub)', () => {
     await toggle.click();
     await expect(toggle).toHaveText('УКР');
     await expect(page.getByRole('heading', { name: 'Create a new lesson' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Your lessons' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh list' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'My lessons' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Generate lesson/ })).toBeVisible();
     await expect(page.getByPlaceholder(/Paste Ukrainian text/)).toBeVisible();
-    await expect(page.getByText('No lessons yet.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'My lessons' }).click();
+    await expect(page.getByRole('heading', { name: 'My lessons' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh list' })).toBeVisible();
+    await expect(page.getByText('Create your first lesson:')).toBeVisible();
 
     // → back to UA (reversible)
     await toggle.click();
     await expect(toggle).toHaveText('EN');
-    await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Ваші уроки' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Мої заняття' })).toBeVisible();
 
     // → EN again, then reload keeps the choice (no re-redeem; session cookie survives)
     await toggle.click();
     await expect(toggle).toHaveText('УКР');
     await page.reload();
     await expect(page.getByTestId('lang-toggle')).toHaveText('УКР');
-    await expect(page.getByRole('heading', { name: 'Create a new lesson' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: 'My lessons' })).toBeVisible({ timeout: 10000 });
   });
 
   test('EN chrome across lesson review and conductor (lesson content stays Ukrainian)', async ({ page }) => {

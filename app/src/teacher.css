@@ -24,6 +24,9 @@
 }
 :root[data-theme="dark"] .appbar { color: var(--paper); }
 .brand { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; letter-spacing: .4px; font-size: 17px; }
+.appnav { display: flex; gap: 6px; margin-left: 18px; margin-right: auto; font-size: 13px; }
+.appnav button { color: inherit; opacity: .85; padding: 3px 9px; border-radius: 6px; }
+.appnav button:hover, .appnav button.on { opacity: 1; background: rgba(255,255,255,.18); }
 .session { display: flex; gap: 12px; align-items: center; font-size: 0.95em; }
 .session .link { color: inherit; opacity: .85; background: none; border: 0; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
 .session .link:hover { opacity: 1; background: rgba(255,255,255,.14); }
@@ -138,6 +141,12 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 .paste .formgrid { max-width: 100%; }
 .paste select, .paste input, .paste textarea { font-size: 14.5px; }
 .paste .field + .field { margin-top: 2px; }
+.pedcards { display: grid; gap: 10px; }
+button.pedcard { border: 1.5px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); width: 100%; text-align: left; }
+button.pedcard.on { border-color: var(--accent); background: var(--accent-soft); }
+button.pedcard[disabled] { cursor: not-allowed; opacity: 1; }
+button.pedcard b { display: block; margin-bottom: 3px; }
+button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
 
 /* catalog list rows (demo listrow + chips) */
 .catalog ul { list-style: none; padding: 0; margin: 8px 0 0; }
@@ -147,16 +156,31 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 .catalog li.listrow button { text-align: left; background: none; border: 0; padding: 0; cursor: pointer; flex: 1; display: flex; align-items: center; gap: 8px; }
 .catalog li.listrow .title { font-weight: 600; }
 .catalog li.listrow .when { color: var(--ink-soft); font-size: 12.5px; margin-left: auto; font-variant-numeric: tabular-nums; }
-.catalog li.listrow .catalog-delete { flex: 0 0 auto; padding: 2px 8px; font-size: 14px; opacity: 0.65; }
-.catalog li.listrow .catalog-delete:hover { opacity: 1; }
-.catalog li.listrow .inline-confirm,
-.recovery-actions .inline-confirm {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+
+/* «Мої заняття» is the design's calm home page: one list, one primary action. */
+.lessons-page, .settings-page { max-width: 1060px; margin: 0 auto; padding: 22px 20px; }
+.lessons-page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.lessons-page-head h1, .settings-card h1 { margin: 0; }
+.lessons-page-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.lessons-catalog { padding: 4px 16px; }
+.lesson-list-row { align-items: stretch !important; }
+.lesson-list-row > button { min-width: 0; }
+.lesson-list-main { display: grid; gap: 3px; min-width: 0; }
+.anchor-snippet, .lesson-list-meta { color: var(--ink-soft); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-drive-paths { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
+.lesson-drive-paths .btn { padding: 6px 10px; font-size: 12.5px; white-space: nowrap; }
+.settings-card { max-width: 640px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 18px 20px; }
+.settings-card .field { margin-top: 16px; }
+@media (max-width: 650px) {
+  .appbar { flex-wrap: wrap; gap: 8px; }
+  .appnav { order: 3; width: 100%; margin: 0; overflow-x: auto; }
+  .session { margin-left: auto; }
+  .lessons-page-head { align-items: flex-start; flex-wrap: wrap; }
+  .lessons-page-actions { margin-left: 0; }
+  .lesson-list-row > button { align-items: flex-start !important; flex-wrap: wrap; }
+  .lesson-list-row .when { margin-left: 0; }
+  .lesson-drive-paths { width: 100%; padding-left: 0; }
 }
-.btn.ghost.bad { color: var(--bad, #b42318); }
 
 /* lesson view chrome */
 .lesson-view { max-width: 1060px; margin: 0 auto; padding: 16px 20px; }

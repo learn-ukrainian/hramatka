@@ -9,7 +9,6 @@ import {
   formatBakeElapsedFallback,
   formatBakeElapsedClock,
   saveLastBakeRequest,
-  loadLastBakeRequest,
   clearLastBakeRequest,
   mergeCatalogLessons,
   loadLocalCatalogEntries,
@@ -106,6 +105,8 @@ interface LessonResource {
   accepted_revision: number | null;
   warning_acknowledgements: string[];
   logical_model_id: string | null;
+  methodology?: 'ttt';
+  grammar_focus?: string | null;
   lesson: LessonDocument;
 }
 
@@ -118,9 +119,12 @@ interface QualifiedModelList {
 interface LessonCatalogItem {
   id: string;
   title: string | null;
+  anchor_snippet?: string | null;
   status: LessonState;
+  level?: 'B1';
   duration: number;
-  focus: string | null;
+  methodology?: 'ttt';
+  grammar_focus?: string | null;
   revision: number;
   accepted: boolean;
   accepted_at: string | null;
@@ -158,7 +162,7 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 // ===== Simple SPA router (lightweight, no extra deps) =====
-type View = 'invite' | 'paste' | 'catalog' | 'lesson';
+type View = 'invite' | 'paste' | 'catalog' | 'settings' | 'lesson';
 
 interface RouteState {
   view: View;
@@ -170,7 +174,13 @@ function useSimpleRouter() {
   const [route, setRoute] = useState<RouteState>({ view: 'invite' });
 
   const navigate = useCallback((r: RouteState) => {
-    const hash = r.lessonId ? `#/lessons/${r.lessonId}${r.mode ? '?mode=' + r.mode : ''}` : '#/';
+    const hash = r.lessonId
+      ? `#/lessons/${r.lessonId}${r.mode ? '?mode=' + r.mode : ''}`
+      : r.view === 'catalog'
+        ? '#/lessons'
+        : r.view === 'settings'
+          ? '#/settings'
+          : '#/';
     history.pushState(null, '', hash);
     setRoute(r);
   }, []);
@@ -178,7 +188,11 @@ function useSimpleRouter() {
   useEffect(() => {
     const parse = () => {
       const h = window.location.hash || '#/';
-      if (h.startsWith('#/lessons/')) {
+      if (h === '#/lessons') {
+        setRoute({ view: 'catalog' });
+      } else if (h === '#/settings') {
+        setRoute({ view: 'settings' });
+      } else if (h.startsWith('#/lessons/')) {
         const id = h.split('/')[2]?.split('?')[0];
         const params = new URLSearchParams(h.split('?')[1] || '');
         setRoute({ view: 'lesson', lessonId: id, mode: (params.get('mode') as any) || 'review' });
@@ -212,7 +226,7 @@ export default function TeacherApp() {
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [fetchingUrl, setFetchingUrl] = useState(false);
   const [duration, setDuration] = useState<45 | 60 | 90>(60);
-  const [focus, setFocus] = useState('');
+  const [grammarFocus, setGrammarFocus] = useState('');
   const [qualifiedModels, setQualifiedModels] = useState<QualifiedModelChoice[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [modelUnavailableMessage, setModelUnavailableMessage] = useState<string | null>(null);
@@ -255,10 +269,10 @@ export default function TeacherApp() {
   const [restoredTextNotice, setRestoredTextNotice] = useState(false);
   const [anchorOpen, setAnchorOpen] = useState(false);
   const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
+  const [pendingPrintLessonId, setPendingPrintLessonId] = useState<string | null>(null);
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -276,7 +290,7 @@ export default function TeacherApp() {
     lastBakeRef.current = null;
     setPasteText('');
     setDuration(60);
-    setFocus('');
+    setGrammarFocus('');
     setQualifiedModels([]);
     setSelectedModelId('');
     setModelUnavailableMessage(null);
@@ -288,9 +302,9 @@ export default function TeacherApp() {
     setShowAnswers(true);
     setError(null);
     setRestoredTextNotice(false);
-    setPendingDeleteId(null);
     setAnchorOpen(false);
     setPrintVariant(null);
+    setPendingPrintLessonId(null);
     setBakeElapsedMs(0);
     resetLang(); // #106 boundary: UI language back to default UA + clear persisted choice
     setClipboardNotice(null);
@@ -299,7 +313,7 @@ export default function TeacherApp() {
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
     setDuration(payload.duration);
-    setFocus(payload.focus || '');
+    setGrammarFocus(payload.grammarFocus ?? payload.focus ?? '');
     setSelectedModelId(resolveQualifiedModelId(qualifiedModels, payload.logicalModelId));
     setSourceUrl(payload.sourceUrl || null);
     setAnchorTab(payload.anchorSource === 'teacher-url' ? 'url' : 'text');
@@ -501,7 +515,7 @@ export default function TeacherApp() {
   const submitNewLesson = async (source: {
     text: string;
     duration: 45 | 60 | 90;
-    focus: string | null;
+    grammarFocus: string | null;
     anchorSource: 'teacher-paste' | 'teacher-url';
     sourceUrl?: string | null;
     logicalModelId: string;
@@ -530,7 +544,7 @@ export default function TeacherApp() {
     const payload: BakeRequestPayload = {
       text,
       duration: source.duration,
-      focus: source.focus?.trim() || '',
+      grammarFocus: source.grammarFocus?.trim() || '',
       lessonId: id,
       anchorSource: source.anchorSource,
       ...(source.sourceUrl ? { sourceUrl: source.sourceUrl } : {}),
@@ -554,7 +568,8 @@ export default function TeacherApp() {
           },
           level: 'B1',
           duration: source.duration,
-          focus: source.focus?.trim() || null,
+          methodology: 'ttt',
+          grammar_focus: source.grammarFocus?.trim() || null,
           logical_model_id: source.logicalModelId,
         }),
       });
@@ -564,7 +579,7 @@ export default function TeacherApp() {
         lastBakeRef.current = payload;
         setPasteText(text);
         setDuration(source.duration);
-        setFocus(source.focus?.trim() || '');
+        setGrammarFocus(source.grammarFocus?.trim() || '');
         setCurrentLessonId(id);
         const startedAt = new Date().toISOString();
         setBakeStatus({ status: data.status || 'baking', step: 'bake.step.textReceived', startedAt });
@@ -586,7 +601,7 @@ export default function TeacherApp() {
     await submitNewLesson({
       text: pasteText,
       duration,
-      focus: focus || null,
+      grammarFocus: grammarFocus || null,
       anchorSource: sourceUrl ? 'teacher-url' : 'teacher-paste',
       sourceUrl,
       logicalModelId: selectedModelId,
@@ -628,10 +643,6 @@ export default function TeacherApp() {
     } finally {
       setFetchingUrl(false);
     }
-  };
-
-  const getRetrySource = (lessonId: string | null): BakeRequestPayload | null => {
-    return loadLastBakeRequest(lessonId) ?? lastBakeRef.current;
   };
 
   const beginRecreateFromServer = async (sourceLessonId: string, data: { id: string; status?: string }) => {
@@ -686,48 +697,6 @@ export default function TeacherApp() {
     }
   };
 
-  const deleteLesson = async (lessonId: string) => {
-    if (!session || !csrf) {
-      setError(errKey('err.sessionRequired'));
-      return;
-    }
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/api/lessons/${lessonId}`, {
-        method: 'DELETE',
-        headers: { 'X-CSRF-Token': csrf },
-      });
-      if (res.status === 204) {
-        setPendingDeleteId(null);
-        if (loadLastBakeRequest(lessonId)) {
-          clearLastBakeRequest();
-          lastBakeRef.current = null;
-        }
-        if (currentLessonId === lessonId || route.lessonId === lessonId) {
-          clearPoll();
-          setLesson(null);
-          setBakeStatus(null);
-          setCurrentLessonId(null);
-          navigate({ view: 'paste' });
-        }
-        await loadCatalog();
-        return;
-      }
-      if (res.status === 404) {
-        setError(errKey('err.lessonNotFound'));
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      const e: ErrorEnvelope = data;
-      handleApiError(e);
-    } catch {
-      setError(errKey('err.deleteFailed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const copyLessonAsNew = () => {
     if (!lesson) {
       setError(errKey('err.lessonNotFound'));
@@ -742,7 +711,7 @@ export default function TeacherApp() {
     restoreFormFromPayload({
       text: anchorText,
       duration: lesson.lesson.duration,
-      focus: lesson.lesson.focus || '',
+      grammarFocus: lesson.grammar_focus ?? lesson.lesson.focus ?? '',
       lessonId: lesson.lesson_id,
       anchorSource: lesson.lesson.anchor.source,
       ...(lesson.lesson.anchor.source_url ? { sourceUrl: lesson.lesson.anchor.source_url } : {}),
@@ -761,7 +730,7 @@ export default function TeacherApp() {
       {
         title: lesson.lesson.title,
         duration: lesson.lesson.duration,
-        focus: lesson.lesson.focus,
+        focus: lesson.grammar_focus ?? lesson.lesson.focus,
         anchor: lesson.lesson.anchor,
         blocks: lesson.lesson.blocks,
       },
@@ -1048,6 +1017,19 @@ export default function TeacherApp() {
     });
   };
 
+  // A list-row print action first loads the existing teacher lesson view, then
+  // invokes its established print path once its document is mounted.
+  useEffect(() => {
+    if (!pendingPrintLessonId || lesson?.lesson_id !== pendingPrintLessonId) return;
+    setPendingPrintLessonId(null);
+    printLesson('teacher');
+  }, [pendingPrintLessonId, lesson?.lesson_id]);
+
+  const openLessonForPrint = (id: string) => {
+    setPendingPrintLessonId(id);
+    void openLesson(id, 'review');
+  };
+
   // Live elapsed clock while baking (honest wait — not a fake percent)
   useEffect(() => {
     if (!bakeStatus || bakeStatus.status !== 'baking' || !bakeStatus.startedAt) {
@@ -1217,6 +1199,31 @@ export default function TeacherApp() {
     <div className={`teacher-app${printVariant ? ` print-variant-${printVariant}` : ''}${isStudentSurface ? ' studentframe' : ''}`} data-testid={isStudentSurface ? 'student-surface' : 'teacher-surface'}>
       <header className="appbar">
         <div className="brand">{t('brand')}</div>
+        {session && !isStudentSurface && (
+          <nav className="appnav" aria-label={t('brand')}>
+            <button
+              type="button"
+              className={route.view === 'catalog' ? 'on' : ''}
+              onClick={() => navigate({ view: 'catalog' })}
+            >
+              {t('catalog.title')}
+            </button>
+            <button
+              type="button"
+              className={route.view === 'paste' ? 'on' : ''}
+              onClick={() => navigate({ view: 'paste' })}
+            >
+              {t('catalog.new')}
+            </button>
+            <button
+              type="button"
+              className={route.view === 'settings' ? 'on' : ''}
+              onClick={() => navigate({ view: 'settings' })}
+            >
+              {t('settings.title')}
+            </button>
+          </nav>
+        )}
         {session && isStudentSurface && (
           <span className="modechip student" data-testid="student-mode-badge">{t('chip.student')}</span>
         )}
@@ -1328,7 +1335,7 @@ export default function TeacherApp() {
       {session && (
         <>
           {/* Paste / Hub */}
-          {route.view !== 'lesson' && (
+          {route.view === 'paste' && (
             <main className="hub">
               <section className="paste">
                 <h2>{t('paste.title')}</h2>
@@ -1393,6 +1400,22 @@ export default function TeacherApp() {
                   />
 
                   <div className="field">
+                    <label>{t('paste.methodology')}</label>
+                    <div className="pedcards">
+                      <button
+                        type="button"
+                        className="pedcard on"
+                        disabled
+                        aria-disabled="true"
+                        data-testid="methodology-ttt"
+                      >
+                        <b>{t('paste.methodology.ttt')}</b>
+                        <span className="d">{t('paste.methodology.hint')}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="field">
                     <label>{t('paste.duration')}</label>
                     <select className="inputbox" value={duration} onChange={e => {
                       const d = Number(e.target.value) as 45 | 60 | 90;
@@ -1417,10 +1440,11 @@ export default function TeacherApp() {
                     <input
                       className="inputbox"
                       type="text"
-                      value={focus}
-                      onChange={e => setFocus(e.target.value)}
+                      value={grammarFocus}
+                      onChange={e => setGrammarFocus(e.target.value)}
                       placeholder={t('paste.focusPh')}
-                      maxLength={500}
+                      maxLength={120}
+                      data-testid="grammar-focus-input"
                     />
                   </div>
 
@@ -1471,60 +1495,69 @@ export default function TeacherApp() {
                 </div>
               </section>
 
-              <section className="catalog">
-                <h2>{t('catalog.title')}</h2>
-                <button className="btn ghost" onClick={loadCatalog}>{t('catalog.refresh')}</button>
-                {catalog.length === 0 && <p className="hint">{t('catalog.empty')}</p>}
-                <ul>
-                  {catalog.map(item => {
-                    const st = item.status;
-                    const chipClass = st === 'ready' ? 'ok' : st === 'baking' ? 'info' : st === 'failed' ? 'bad' : 'muted';
-                    return (
-                      <li key={item.id} className="listrow">
-                        <button data-testid="catalog-open-btn" onClick={() => openLesson(item.id, 'review')}>
-                          <span className="title">{item.title || item.id.slice(0, 8)}</span>
-                          <span className={`chip ${chipClass}`}>{t(statusKey(item.status))}</span>
-                          {item.accepted && <span className="chip ok">{t('accepted')}</span>}
-                        </button>
-                        {pendingDeleteId === item.id ? (
-                          <div className="inline-confirm" data-testid="catalog-delete-confirm">
-                            <span className="hint">{t('recovery.deleteConfirm')}</span>
-                            <button
-                              type="button"
-                              className="btn ghost"
-                              data-testid="delete-cancel-btn"
-                              onClick={() => setPendingDeleteId(null)}
-                              disabled={loading}
-                            >
-                              {t('recovery.deleteCancelBtn')}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn ghost bad"
-                              data-testid="delete-confirm-btn"
-                              onClick={() => deleteLesson(item.id)}
-                              disabled={loading}
-                            >
-                              {t('recovery.deleteConfirmBtn')}
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn ghost catalog-delete"
-                            data-testid="catalog-delete-btn"
-                            aria-label={t('catalog.deleteAria')}
-                            onClick={() => setPendingDeleteId(item.id)}
-                            disabled={loading}
-                          >
-                            ✕
+            </main>
+          )}
+
+          {route.view === 'catalog' && (
+            <main className="lessons-page">
+              <div className="lessons-page-head">
+                <h1>{t('catalog.title')}</h1>
+                <span className="lessons-page-actions">
+                  <button className="btn ghost" onClick={loadCatalog}>{t('catalog.refresh')}</button>
+                  <button className="btn primary" onClick={() => navigate({ view: 'paste' })}>{t('catalog.new')}</button>
+                </span>
+              </div>
+              {catalog.length === 0 ? (
+                <section className="emptystate" data-testid="lessons-empty-state">
+                  <h2>{t('catalog.emptyTitle')}</h2>
+                  <p>{t('catalog.empty')}</p>
+                  <button className="btn primary" onClick={() => navigate({ view: 'paste' })}>{t('catalog.new')}</button>
+                </section>
+              ) : (
+                <section className="catalog lessons-catalog" aria-label={t('catalog.title')}>
+                  <ul>
+                    {catalog.map(item => {
+                      const chipClass = item.status === 'ready' ? 'ok' : item.status === 'baking' ? 'warn' : item.status === 'failed' ? 'bad' : 'muted';
+                      const snippet = item.anchor_snippet?.trim();
+                      return (
+                        <li key={item.id} className="listrow lesson-list-row">
+                          <button data-testid="catalog-open-btn" onClick={() => openLesson(item.id, 'review')}>
+                            <span className="lesson-list-main">
+                              <span className="title">{item.title || item.id.slice(0, 8)}</span>
+                              {snippet && <span className="anchor-snippet">{t('catalog.anchor', { snippet })}</span>}
+                              <span className="lesson-list-meta">{t('catalog.meta', { level: item.level || 'B1', duration: item.duration, methodology: t('paste.methodology.ttt') })}</span>
+                            </span>
+                            <span className={`chip ${chipClass}`}>{t(statusKey(item.status))}</span>
+                            <span className="when">{new Date(item.created_at).toLocaleString(lang === 'en' ? 'en' : 'uk')}</span>
                           </button>
-                        )}
-                        <span className="when">{new Date(item.updated_at).toLocaleString(lang === 'en' ? 'en' : 'uk')}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          {item.status === 'ready' && item.accepted && (
+                            <span className="lesson-drive-paths">
+                              <button type="button" className="btn ghost" onClick={() => openLesson(item.id, 'conduct')}>{t('catalog.conduct')}</button>
+                              <button type="button" className="btn ghost" onClick={() => openLessonForPrint(item.id)}>{t('catalog.print')}</button>
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+            </main>
+          )}
+
+          {route.view === 'settings' && (
+            <main className="settings-page">
+              <section className="settings-card">
+                <h1>{t('settings.title')}</h1>
+                <div className="field">
+                  <label>{t('settings.defaultMethodology')}</label>
+                  <div className="pedcards">
+                    <button type="button" className="pedcard on" disabled aria-disabled="true">
+                      <b>{t('paste.methodology.ttt')}</b>
+                      <span className="d">{t('paste.methodology.hint')}</span>
+                    </button>
+                  </div>
+                </div>
               </section>
             </main>
           )}
@@ -1535,7 +1568,7 @@ export default function TeacherApp() {
             <main className={`lesson-view${currentMode === 'run' ? ' student-run-view' : ''}`}>
               {showTeacherLessonChrome && (
               <div className="lesson-header">
-                <button className="btn ghost" onClick={() => navigate({ view: 'paste' })}>{t('lesson.back')}</button>
+                <button className="btn ghost" onClick={() => navigate({ view: 'catalog' })}>{t('lesson.back')}</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
                 <div className="lesson-actions">
                   <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>{t('lesson.reviewMode')}</button>
@@ -1652,50 +1685,10 @@ export default function TeacherApp() {
                           >
                             {t('recovery.retry')}
                           </button>
-                          {pendingDeleteId === (currentLessonId || route.lessonId) ? (
-                            <div className="inline-confirm" data-testid="failure-delete-confirm">
-                              <span className="hint">{t('recovery.deleteConfirm')}</span>
-                              <button
-                                type="button"
-                                className="btn ghost"
-                                data-testid="delete-cancel-btn"
-                                onClick={() => setPendingDeleteId(null)}
-                                disabled={loading}
-                              >
-                                {t('recovery.deleteCancelBtn')}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn ghost bad"
-                                data-testid="delete-confirm-btn"
-                                onClick={() => deleteLesson(currentLessonId || route.lessonId!)}
-                                disabled={loading}
-                              >
-                                {t('recovery.deleteConfirmBtn')}
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn ghost"
-                              data-testid="failure-delete-btn"
-                              onClick={() => setPendingDeleteId(currentLessonId || route.lessonId || null)}
-                              disabled={loading}
-                            >
-                              {t('recovery.delete')}
-                            </button>
-                          )}
                           <button
                             type="button"
                             className="btn ghost link-back"
-                            onClick={() => {
-                              const lid = currentLessonId || route.lessonId || null;
-                              const stored = getRetrySource(lid);
-                              if (stored) {
-                                restoreFormFromPayload(stored);
-                              }
-                              navigate({ view: 'paste' });
-                            }}
+                            onClick={() => navigate({ view: 'catalog' })}
                           >
                             {t('recovery.back')}
                           </button>
@@ -1722,7 +1715,7 @@ export default function TeacherApp() {
                   <div className="meta">
                     <div>{t('meta.level', { level: lesson.lesson.level, duration: lesson.lesson.duration })}</div>
                     <div>{t('meta.revision', { rev: lesson.revision, acc: lesson.lesson.accepted ? t('meta.yes') : t('meta.no') })}</div>
-                    {lesson.lesson.focus && <div>{t('meta.focus')}{lesson.lesson.focus}</div>}
+                    {(lesson.grammar_focus ?? lesson.lesson.focus) && <div>{t('meta.focus')}{lesson.grammar_focus ?? lesson.lesson.focus}</div>}
                   </div>
                   )}
 

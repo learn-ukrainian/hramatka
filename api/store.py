@@ -241,6 +241,30 @@ class JobRecord:
         return self.request["focus"]
 
     @property
+    def methodology(self) -> str:
+        """The durable methodology, defaulting only for pre-field pilot jobs."""
+        value = self.request.get("methodology", "ttt")
+        if value != "ttt":
+            raise ValueError("Durable methodology is invalid.")
+        return value
+
+    @property
+    def grammar_focus(self) -> str | None:
+        """The normalized teacher grammar focus, absent on older job records."""
+        value = self.request.get("grammar_focus")
+        if value is None:
+            return None
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > 120
+            or "\n" in value
+            or "\r" in value
+        ):
+            raise ValueError("Durable grammar focus is invalid.")
+        return value
+
+    @property
     def logical_model_id(self) -> str | None:
         """Selected teacher model, absent only on pre-#244 durable jobs."""
         request = self.request
@@ -264,6 +288,10 @@ class CatalogRecord:
     status: str
     duration: int
     focus: str | None
+    methodology: str
+    grammar_focus: str | None
+    anchor_snippet: str
+    level: str
     revision: int
     accepted: bool
     accepted_at: str | None
@@ -331,6 +359,8 @@ def canonical_request_json(
     level: str = "B1",
     duration: int,
     focus: str | None,
+    methodology: str = "ttt",
+    grammar_focus: str | None = None,
     logical_model_id: str | None = None,
 ) -> str:
     """Build the complete canonical request defined by the frozen OpenAPI contract."""
@@ -348,6 +378,20 @@ def canonical_request_json(
         raise ValueError("Anchor text must not be blank.")
     if not isinstance(focus, str | type(None)):
         raise ValueError("Focus must be a string or null.")
+    if methodology != "ttt":
+        raise ValueError("Unsupported methodology.")
+    if grammar_focus is not None:
+        if (
+            not isinstance(grammar_focus, str)
+            or not grammar_focus
+            or len(grammar_focus) > 120
+            or "\n" in grammar_focus
+            or "\r" in grammar_focus
+            or grammar_focus != grammar_focus.strip()
+        ):
+            raise ValueError(
+                "Grammar focus must be a trimmed one-line string of at most 120 characters."
+            )
     if logical_model_id is not None and (
         not isinstance(logical_model_id, str) or not logical_model_id
     ):
@@ -359,7 +403,9 @@ def canonical_request_json(
         "anchor": anchor,
         "duration": duration,
         "focus": focus,
+        "grammar_focus": grammar_focus,
         "level": level,
+        "methodology": methodology,
     }
     if logical_model_id is not None:
         request["logical_model_id"] = logical_model_id
@@ -374,6 +420,8 @@ def request_hash(
     level: str = "B1",
     duration: int,
     focus: str | None,
+    methodology: str = "ttt",
+    grammar_focus: str | None = None,
     logical_model_id: str | None = None,
 ) -> bytes:
     """SHA-256 over the canonical UTF-8 request JSON, stored as a BLOB."""
@@ -385,6 +433,8 @@ def request_hash(
             level=level,
             duration=duration,
             focus=focus,
+            methodology=methodology,
+            grammar_focus=grammar_focus,
             logical_model_id=logical_model_id,
         ).encode("utf-8")
     ).digest()
@@ -742,6 +792,8 @@ class JobStore:
         level: str = "B1",
         duration: int,
         focus: str | None,
+        methodology: str = "ttt",
+        grammar_focus: str | None = None,
         anchor_source: str = "teacher-paste",
         anchor_source_url: str | None = None,
         logical_model_id: str | None = None,
@@ -753,6 +805,8 @@ class JobStore:
             level=level,
             duration=duration,
             focus=focus,
+            methodology=methodology,
+            grammar_focus=grammar_focus,
             logical_model_id=logical_model_id,
         )
         digest = hashlib.sha256(request_json.encode("utf-8")).digest()
@@ -839,11 +893,28 @@ class JobStore:
                            json_extract(request_json, '$.duration')
                        ) AS duration,
                        json_extract(request_json, '$.focus') AS focus,
+                       COALESCE(json_extract(request_json, '$.methodology'), 'ttt') AS methodology,
+                       json_extract(request_json, '$.grammar_focus') AS grammar_focus,
+                       json_extract(request_json, '$.level') AS level,
+                       substr(
+                           trim(
+                               replace(
+                                   replace(
+                                       json_extract(request_json, '$.anchor.text'),
+                                       char(10),
+                                       ' '
+                                   ),
+                                   char(13),
+                                   ' '
+                               )
+                           ),
+                           1, 140
+                       ) AS anchor_snippet,
                        status, revision, accepted, accepted_at, accepted_revision,
                        failure_code, created_at, updated_at
                 FROM lesson_jobs
                 WHERE teacher_id = ?
-                ORDER BY updated_at DESC, id DESC
+                ORDER BY created_at DESC, id DESC
                 """,
                 (teacher_id,),
             ).fetchall()
@@ -1459,6 +1530,10 @@ class JobStore:
             status=row["status"],
             duration=row["duration"],
             focus=row["focus"],
+            methodology=row["methodology"],
+            grammar_focus=row["grammar_focus"],
+            anchor_snippet=row["anchor_snippet"],
+            level=row["level"],
             revision=row["revision"],
             accepted=bool(row["accepted"]),
             accepted_at=row["accepted_at"],

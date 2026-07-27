@@ -232,6 +232,10 @@ def _resource_payload(job: JobRecord) -> dict[str, object]:
         "accepted_revision": job.accepted_revision,
         "warning_acknowledgements": sorted(job.warning_acknowledgements),
         "logical_model_id": job.logical_model_id,
+        # Keep the pinned lesson document valid while giving current clients
+        # explicit names for the durable create-form choices.
+        "methodology": job.methodology,
+        "grammar_focus": job.grammar_focus,
         "lesson": lesson,
     }
 
@@ -246,6 +250,10 @@ def _catalog_payload(jobs: list[Any]) -> dict[str, object]:
                 "status": job.status,
                 "duration": job.duration,
                 "focus": job.focus,
+                "methodology": job.methodology,
+                "grammar_focus": job.grammar_focus,
+                "anchor_snippet": job.anchor_snippet,
+                "level": job.level,
                 "revision": job.revision,
                 "accepted": job.accepted,
                 "accepted_at": job.accepted_at,
@@ -640,6 +648,8 @@ def create_app(
                 level=request_body.level,
                 duration=request_body.duration,
                 focus=request_body.focus,
+                methodology=request_body.methodology,
+                grammar_focus=request_body.grammar_focus,
                 logical_model_id=logical_model_id,
             )
         except IdempotencyConflict as error:
@@ -711,6 +721,8 @@ def create_app(
             level = request["level"]
             duration = request["duration"]
             focus = request["focus"]
+            methodology = request.get("methodology", "ttt")
+            grammar_focus = request.get("grammar_focus")
             logical_model_id = request.get("logical_model_id")
         except (KeyError, TypeError, ValueError):
             raise PilotError(
@@ -732,6 +744,8 @@ def create_app(
                 level=level,
                 duration=duration,
                 focus=focus,
+                methodology=methodology,
+                grammar_focus=grammar_focus,
                 logical_model_id=logical_model_id,
             )
         except ValueError:
@@ -763,6 +777,8 @@ def create_app(
                 level=level,
                 duration=duration,
                 focus=focus,
+                methodology=methodology,
+                grammar_focus=grammar_focus,
                 logical_model_id=logical_model_id,
             )
         except IdempotencyConflict as error:

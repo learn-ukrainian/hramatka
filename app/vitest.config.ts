@@ -7,6 +7,10 @@ function resolveActivityKit(): string {
   const envDir = process.env.ACTIVITY_KIT_DIR;
   if (envDir && fs.existsSync(envDir)) return path.resolve(envDir);
   const candidates = [
+    // CI installs the pinned activity-kit tarball. Prefer that package before
+    // developer-only source checkouts so every App-level test can resolve its
+    // stylesheet through the package export.
+    path.resolve(__dirname, 'node_modules/@learn-ukrainian/activity-kit'),
     path.resolve(__dirname, '../../public/packages/activity-kit'),
     path.resolve(__dirname, '../../../../../../../learn-ukrainian/packages/activity-kit'),
   ];
@@ -25,6 +29,9 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    environmentOptions: {
+      jsdom: { url: 'http://localhost/' },
+    },
     setupFiles: ['./src/test-setup.ts'],
     globals: true,
     include: ['src/**/*.test.{ts,tsx}'],

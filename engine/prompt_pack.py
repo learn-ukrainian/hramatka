@@ -954,6 +954,7 @@ def build_shared_input(
     focus: str | None,
     phase_count_plans: Mapping[int, Mapping[str, int]],
     visible_slots_by_phase: Mapping[int, int],
+    grammar_focus: str | None = None,
 ) -> dict[str, Any]:
     """Build all deterministic, immutable injection material once per lesson."""
     inventory = _sentence_inventory(snapshot)
@@ -1044,6 +1045,25 @@ def build_shared_input(
         parsed_forms=parsed_forms,
         numeral_inventory=numeral_inventory,
     )
+    grammar_spine = (
+        {
+            "mode": "teacher-stated",
+            "focus": grammar_focus,
+            "instruction_uk": (
+                "Побудуйте щонайменше 3 вправи на граматичному фокусі, "
+                f"зазначеному вчителем: «{grammar_focus}»."
+            ),
+        }
+        if grammar_focus is not None
+        else {
+            "mode": "auto-detected",
+            "focus": None,
+            "instruction_uk": (
+                "Автоматично визначте граматичну закономірність в опорі та "
+                "побудуйте щонайменше 3 вправи на ній."
+            ),
+        }
+    )
     base = {
         "pack_version": PROMPT_PACK_VERSION,
         "teacher_ready_density": {
@@ -1057,6 +1077,7 @@ def build_shared_input(
             "duration_minutes": duration_minutes,
             "method": "TTT",
             "focus": focus_support,
+            "grammar_spine": grammar_spine,
             "phases": phases,
         },
         "anchor_sentence_inventory": inventory,
@@ -1069,6 +1090,7 @@ def build_shared_input(
             "anchor_sha256": snapshot.get("hash"),
             "template_version": active_template_version(),
             "registry_version": "pack-delegates-to-runtime-registry",
+            "grammar_focus": grammar_focus,
         },
     }
     # Slice 2 adds the closed, pre-verified kit to the generated phase context
@@ -1350,6 +1372,12 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         "Ти не шукаєш інформацію, не викликаєш інструменти й не перевіряєш слова самостійно.",
         "Усі факти, речення-опори, словоформи, варіанти, пари та заборони вже перевірив підготовчий модуль.",
         "Виконайте лише поточну фазу, але врахуйте весь план уроку. Усі інструкції для учня пишіть українською мовою тільки у формі «ви».",
+        (
+            "ГРАМАТИЧНИЙ СТРИЖЕНЬ: "
+            + str(context["lesson_plan"]["grammar_spine"]["instruction_uk"])
+            + " Це лише пріоритет добору: не послаблюйте й не змінюйте жодного "
+            "контракту щільності, гейту чи перевірки."
+        ),
         "TeacherReadyDensity.v2 є жорстким контрактом: кожен запитаний тип мусить досягти його мінімуму; однопунктові вправи не приймаються.",
         "Назви полів і значення JSON-схеми (true, false, correct, options, statement) — машинні ключі. Вони ніколи не з'являються в тексті, який бачить учень чи вчитель: пишіть «правильно»/«неправильно» (П/Н), а не «правильними (True) чи хибними (False)».",
         block(

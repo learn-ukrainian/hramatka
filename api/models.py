@@ -58,7 +58,11 @@ class LessonCreate(FrozenModel):
     anchor: AnchorInput
     level: Literal["B1"]
     duration: Literal[45, 60, 90]
+    # The pilot deliberately offers one methodology only. Keep the literal on
+    # the wire now so a future expanded choice cannot silently alter a bake.
+    methodology: Literal["ttt"] = "ttt"
     focus: str | None = Field(default=None, max_length=500)
+    grammar_focus: str | None = Field(default=None, max_length=120)
     # Optional only for wire compatibility with pre-selector clients.  The
     # production endpoint resolves it fail-closed; newly persisted jobs always
     # carry a qualified logical ID.  Injected legacy bakers retain their test /
@@ -69,6 +73,19 @@ class LessonCreate(FrozenModel):
         max_length=64,
         pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
     )
+
+    @field_validator("grammar_focus", mode="before")
+    @classmethod
+    def normalize_grammar_focus(cls, value: object) -> object:
+        """Trim a teacher-supplied grammar focus without accepting line breaks."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("Grammar focus must be one line.")
+        trimmed = value.strip()
+        return trimmed or None
 
 
 class RevisionMutation(FrozenModel):

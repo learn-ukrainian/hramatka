@@ -289,6 +289,10 @@ class BakeRunner:
             "anchor_id": job.id,
             "body_uk": job.anchor_text,
             "source": job.anchor_source,
+            # The adapter reads this durable request value. Keeping the baker
+            # method signature stable preserves injected test/legacy bakers.
+            "grammar_focus": job.grammar_focus,
+            "methodology": job.methodology,
         }
         route_for_job = getattr(self._baker, "for_logical_model", None)
         baker = (

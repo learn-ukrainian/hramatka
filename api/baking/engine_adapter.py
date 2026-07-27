@@ -581,6 +581,16 @@ class EngineLessonBaker:
         The durable layer (`api.lesson.materialize_lesson`) binds id/anchor/
         timestamps/status; here we only produce `blocks` (+ `rejected`).
         """
+        # The runner carries new request fields in the anchor envelope so the
+        # stable `LessonBaker.bake(anchor, duration, focus)` boundary remains
+        # compatible with injected pilot bakers. The grammar focus takes
+        # precedence over the older generic focus field for engine selection.
+        grammar_focus = (
+            anchor.get("grammar_focus")
+            if isinstance(anchor, dict) and isinstance(anchor.get("grammar_focus"), str)
+            else None
+        )
+        effective_focus = grammar_focus if grammar_focus is not None else focus
         resolved_duration, fallback_kind = resolve_duration(B1, duration)
         if fallback_kind is not None:
             log.warning(
@@ -616,7 +626,7 @@ class EngineLessonBaker:
                     precomputed_snapshot = pipeline.snapshot_anchor(anchor)
                     if kit_enrichment_enabled:
                         precomputed_grounding = retrieval.build_grounding_pack(
-                            precomputed_snapshot["body_uk"], B1, focus=focus
+                            precomputed_snapshot["body_uk"], B1, focus=effective_focus
                         )
                     else:
                         # Preserve the legacy call shape as well as output for
@@ -631,7 +641,8 @@ class EngineLessonBaker:
                             snapshot=precomputed_snapshot,
                             grounding=precomputed_grounding,
                             duration_minutes=resolved_duration,
-                            focus=focus,
+                            focus=effective_focus,
+                            grammar_focus=grammar_focus,
                             phase_count_plans=phase_count_plans,
                             visible_slots_by_phase=Counter(plan),
                         )

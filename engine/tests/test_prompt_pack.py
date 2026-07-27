@@ -21,7 +21,9 @@ from hramatka.engine.generate import (
 )
 
 
-def _shared(*, focus: str | None = "читання") -> dict:
+def _shared(
+    *, focus: str | None = "читання", grammar_focus: str | None = None
+) -> dict:
     snapshot = pipeline.snapshot_anchor(fixtures.load_anchor())
     grounding = retrieval.build_grounding_pack(snapshot["body_uk"])
     return prompt_pack.build_shared_input(
@@ -29,6 +31,7 @@ def _shared(*, focus: str | None = "читання") -> dict:
         grounding=grounding,
         duration_minutes=45,
         focus=focus,
+        grammar_focus=grammar_focus,
         phase_count_plans={
             1: {"true-false": 1, "quiz": 1},
             2: {"cloze": 1, "fill-in": 1},
@@ -132,6 +135,23 @@ def test_pack_builds_immutable_sentence_ids_focus_and_provisional_quota():
     assert prompt_pack.phase_candidate_quota(5) == 5
     assert prompt_pack.phase_candidate_quota(9) == 6
     assert shared["provenance"]["injection_sha256"]
+
+
+def test_teacher_grammar_focus_replaces_the_auto_detected_prompt_spine() -> None:
+    teacher_focus = "вищий ступінь прикметників"
+    shared = _shared(grammar_focus=teacher_focus)
+    prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(shared, phase=1))
+
+    assert shared["provenance"]["grammar_focus"] == teacher_focus
+    assert shared["lesson_plan"]["grammar_spine"]["mode"] == "teacher-stated"
+    assert f"зазначеному вчителем: «{teacher_focus}»" in prompt
+    assert "щонайменше 3 вправи" in prompt
+    assert "не послаблюйте й не змінюйте жодного контракту щільності, гейту чи перевірки" in prompt
+
+    auto_shared = _shared(grammar_focus=None)
+    auto_prompt = prompt_pack.render_phase_prompt(prompt_pack.phase_context(auto_shared, phase=1))
+    assert auto_shared["lesson_plan"]["grammar_spine"]["mode"] == "auto-detected"
+    assert "Автоматично визначте граматичну закономірність" in auto_prompt
 
 
 def test_pack_response_envelope_validates_citations_and_removes_them():

@@ -136,8 +136,11 @@ const DICT = {
     uk: 'Немає моделей, кваліфікованих для поточних правил уроку.',
     en: 'No models are qualified for the current lesson rules.',
   },
-  'paste.focus': { uk: 'Фокус (необов’язково)', en: 'Focus (optional)' },
-  'paste.focusPh': { uk: 'напр. вищий ступінь прикметників', en: 'e.g. comparative adjectives' }, // T_EXACT
+  'paste.methodology': { uk: 'Методика', en: 'Methodology' },
+  'paste.methodology.ttt': { uk: 'Тест → Навчання → Тест', en: 'Test → Teach → Test' },
+  'paste.methodology.hint': { uk: 'перевірити → навчити → перевірити. Радимо для B1.', en: 'test → teach → re-test. Recommended for B1.' },
+  'paste.focus': { uk: 'Граматичний фокус', en: 'Grammar focus' },
+  'paste.focusPh': { uk: 'напр., вищий ступінь прикметників', en: 'e.g., comparative adjectives' }, // T_EXACT
   'paste.textLabel': { uk: 'Текст для уроку (вставте)', en: 'Text for the lesson (paste)' },
   'paste.textLabelReview': { uk: 'Текст для уроку (перегляньте)', en: 'Text for the lesson (review)' },
   'paste.restored': {
@@ -150,9 +153,17 @@ const DICT = {
   'close.aria': { uk: 'Закрити', en: 'Close' }, // T_EXACT
 
   // ---- catalog ----
-  'catalog.title': { uk: 'Ваші уроки', en: 'Your lessons' }, // cf. T_EXACT «Мої заняття»
+  'catalog.title': { uk: 'Мої заняття', en: 'My lessons' }, // T_EXACT
   'catalog.refresh': { uk: 'Оновити список', en: 'Refresh list' },
-  'catalog.empty': { uk: 'Поки немає уроків.', en: 'No lessons yet.' },
+  'catalog.new': { uk: '+ Нове заняття', en: '+ New lesson' },
+  'catalog.emptyTitle': { uk: 'Поки що занять немає', en: 'No lessons yet' },
+  'catalog.empty': { uk: 'Створіть перше заняття: дайте «Граматці» текст — і за кілька хвилин отримаєте готове заняття з перевіреними завданнями.', en: 'Create your first lesson: give Hramatka a text — and in a few minutes you get a ready lesson with verified tasks.' },
+  'catalog.anchor': { uk: 'Якір: {snippet}', en: 'Anchor: {snippet}' },
+  'catalog.meta': { uk: '{level} · {duration} хв · {methodology}', en: '{level} · {duration} min · {methodology}' },
+  'catalog.conduct': { uk: 'Проведення', en: 'Run lesson' },
+  'catalog.print': { uk: 'Друк', en: 'Print' },
+  'settings.title': { uk: 'Налаштування', en: 'Settings' },
+  'settings.defaultMethodology': { uk: 'Типова методика', en: 'Default methodology' },
   accepted: { uk: 'Прийнято', en: 'Accepted' },
 
   // ---- status chips (mirror app-helpers.statusLabel UA) ----
@@ -240,19 +251,6 @@ const DICT = {
     en: 'Create the lesson again from this text',
   },
   'recovery.back': { uk: 'Повернутися до списку', en: 'Back to the list' },
-  'recovery.delete': { uk: 'Видалити урок', en: 'Delete lesson' },
-  'recovery.deleteConfirm': {
-    uk: 'Видалити цей урок зі списку? Дію не можна скасувати.',
-    en: 'Delete this lesson from the list? This cannot be undone.',
-  },
-  'recovery.deleteConfirmBtn': { uk: 'Так, видалити', en: 'Yes, delete' },
-  'recovery.deleteCancelBtn': { uk: 'Скасувати', en: 'Cancel' },
-  'catalog.delete': { uk: 'Видалити', en: 'Delete' },
-  'catalog.deleteAria': { uk: 'Видалити урок', en: 'Delete lesson' },
-  'err.deleteFailed': {
-    uk: 'Не вдалося видалити урок. Спробуйте, будь ласка, ще раз.',
-    en: 'Could not delete the lesson. Please try again.',
-  },
   'bake.updating': { uk: 'Оновлення…', en: 'Updating…' },
   'bake.checkNow': { uk: 'Перевірити зараз', en: 'Check now' },
   'bake.elapsed': { uk: 'Минуло {clock}', en: 'Elapsed {clock}' }, // #112 honest live wait clock (no demo equivalent)

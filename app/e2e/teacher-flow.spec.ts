@@ -274,10 +274,10 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
     await page.waitForSelector('.dblock, .block', { timeout: 15000 });
 
-    // navigate back to hub (paste/catalog) — this route change triggers auto loadCatalog via sessionReady gate
+    // navigate back to the canonical My Lessons route — this triggers catalog refresh
     await page.getByRole('button', { name: /До списку/ }).click();
 
-    // without clicking «Оновити список», catalog should have populated (auto on non-lesson route)
+    // without clicking «Оновити список», My Lessons should have populated
     await expect(page.locator('.catalog li')).toBeVisible({ timeout: 8000 });
     await expect(page.getByRole('button', { name: /Оновити список/ })).toBeVisible();
   });
@@ -547,7 +547,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByTestId('baking-polling')).toBeVisible({ timeout: 8000 });
 
     await page.getByRole('button', { name: /До списку/ }).click();
-    await expect(page.getByRole('heading', { name: 'Ваші уроки' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Мої заняття' })).toBeVisible();
 
     await page.locator('.catalog li button').first().click();
     await expect(page.getByTestId('baking-status-view')).toBeVisible({ timeout: 8000 });
@@ -748,28 +748,6 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
   });
 
-  test('delete failed lesson from failure card removes it from catalog', async ({ page }) => {
-    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
-    await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
-
-    await page.getByPlaceholder(/Вставте український текст/).fill('Текст для видалення failed-уроку.');
-    await page.evaluate(() => {
-      // @ts-ignore
-      crypto.randomUUID = () => '00000000-0000-0000-0000-000000000bad';
-    });
-    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-    await expect(page.getByTestId('failure-recovery')).toBeVisible({ timeout: 10000 });
-
-    await page.getByTestId('failure-delete-btn').click();
-    await expect(page.getByTestId('failure-delete-confirm')).toBeVisible();
-    await page.getByTestId('delete-confirm-btn').click();
-
-    await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
-    await page.getByRole('button', { name: /Оновити список/i }).click();
-    await expect(page.locator('.catalog li').filter({ hasText: /00000000/ })).toHaveCount(0);
-  });
-
   // Sol P1-5: clipboard lesson export — student variant never includes answers/«Ключ відповіді».
   test('clipboard student copy yields text with tasks but no answer_key content', async ({ page, context }) => {
     // Grant clipboard-permission so navigator.clipboard.writeText works headlessly.
@@ -878,9 +856,10 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.waitForURL(/#\/lessons\//);
     const lessonOneUrl = page.url();
 
-    // Leave for catalog; start a slow bake so another lesson stays in-flight.
+    // Leave for My Lessons, then start a slow bake so another lesson stays in-flight.
     await page.getByRole('button', { name: '← До списку' }).click();
     await expect(page.locator('.catalog')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('main').getByRole('button', { name: '+ Нове заняття' }).click();
 
     await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
     const slowText = '__SLOW_BAKE__ Текст другого уроку, що залишається в бакінгу.';

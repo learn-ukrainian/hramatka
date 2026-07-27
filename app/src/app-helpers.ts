@@ -5,9 +5,14 @@ export type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
 export interface CatalogLessonItem {
   id: string;
   title: string | null;
+  anchor_snippet?: string | null;
   status: LessonState;
+  level?: 'B1';
   duration: number;
-  focus: string | null;
+  methodology?: 'ttt';
+  grammar_focus?: string | null;
+  /** Legacy client-only field retained while old cached rows expire. */
+  focus?: string | null;
   revision: number;
   accepted: boolean;
   accepted_at: string | null;
@@ -32,7 +37,9 @@ export interface BakeProgress {
 export interface BakeRequestPayload {
   text: string;
   duration: 45 | 60 | 90;
-  focus: string;
+  grammarFocus?: string;
+  /** Legacy sessionStorage field accepted when restoring a pre-wiring request. */
+  focus?: string;
   lessonId: string;
   anchorSource?: 'teacher-paste' | 'teacher-url';
   sourceUrl?: string;
@@ -158,7 +165,9 @@ export function catalogItemFromBakeRequest(payload: BakeRequestPayload): Catalog
     title: null,
     status: 'baking',
     duration: payload.duration,
-    focus: payload.focus?.trim() || null,
+    methodology: 'ttt',
+    grammar_focus: (payload.grammarFocus ?? payload.focus ?? '').trim() || null,
+    focus: (payload.grammarFocus ?? payload.focus ?? '').trim() || null,
     revision: 1,
     accepted: false,
     accepted_at: null,
