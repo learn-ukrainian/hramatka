@@ -490,13 +490,19 @@ class _StateStore:
                         raise ValueError("sealed review record already exists for this PR head")
                     connection.execute("COMMIT")
                     return stored
-                connection.execute(
-                    """INSERT INTO sealed_review_records (
-                        repository, pr_number, head_sha, reviewer_family, reviewer_model,
-                        provider_host, receipt_comment_id, receipt_digest, receipt_url, reviewed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    tuple(record.canonical().values()),
-                )
+                try:
+                    connection.execute(
+                        """INSERT INTO sealed_review_records (
+                            repository, pr_number, head_sha, reviewer_family, reviewer_model,
+                            provider_host, receipt_comment_id, receipt_digest,
+                            receipt_url, reviewed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        tuple(record.canonical().values()),
+                    )
+                except sqlite3.IntegrityError as error:
+                    raise ValueError(
+                        "sealed review receipt is already bound to another PR head"
+                    ) from error
                 connection.execute("COMMIT")
                 return record
             except BaseException:
