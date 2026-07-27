@@ -872,6 +872,105 @@ class JobStore:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def seed_ready(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        lesson: Mapping[str, Any],
+        *,
+        request_json: str,
+    ) -> tuple[JobRecord, bool]:
+        """Insert one validated ready lesson for an explicitly local dev workflow.
+
+        The production bake lifecycle remains draft -> baking -> ready.  This
+        narrowly scoped operation exists for the offline seed CLI, whose input
+        has already been selected by a local operator.  It still applies the
+        API validator and all durable ownership and idempotency checks.
+        """
+        materialized = dict(lesson)
+        validate_lesson(materialized)
+        if materialized.get("id") != lesson_id:
+            raise ValueError("Seed lesson ID must match the durable lesson ID.")
+        if materialized.get("status") != "ready":
+            raise ValueError("A seeded lesson must have ready status.")
+        if materialized.get("accepted") is not False:
+            raise ValueError("A seeded lesson must be unaccepted.")
+
+        request = _decode_json_object(request_json)
+        if canonical_json(request) != request_json:
+            raise ValueError("Seed request JSON must be canonical.")
+        try:
+            request_anchor = request["anchor"]
+            lesson_anchor = materialized["anchor"]
+            request_matches_lesson = (
+                request_anchor["text"] == lesson_anchor["text"]
+                and request_anchor["source"] == lesson_anchor["source"]
+                and request["duration"] == materialized["duration"]
+                and request["level"] == materialized["level"]
+                and request["focus"] == materialized["focus"]
+                and request["methodology"] == materialized["method"]
+            )
+        except (KeyError, TypeError):
+            request_matches_lesson = False
+        if not request_matches_lesson:
+            raise ValueError("Seed request JSON must describe the seeded lesson.")
+
+        lesson_json = canonical_json(materialized)
+        digest = hashlib.sha256(request_json.encode("utf-8")).digest()
+        created_at = materialized["created_at"]
+        updated_at = materialized["updated_at"]
+        with self._write_transaction() as connection:
+            active_teacher = connection.execute(
+                """
+                SELECT 1 FROM pilot_teachers
+                WHERE id = ? AND deactivated_at IS NULL
+                """,
+                (teacher_id,),
+            ).fetchone()
+            if active_teacher is None:
+                raise SessionUnavailable("The lesson owner is unavailable.")
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO lesson_jobs (
+                        teacher_id, id, request_json, request_hash, status, step,
+                        failure_code, failure_message, lesson_json,
+                        warning_acknowledgements_json, accepted, accepted_at,
+                        accepted_revision, revision, created_at, updated_at,
+                        started_at, completed_at, progress_json
+                    ) VALUES (
+                        ?, ?, ?, ?, 'ready', ?, NULL, NULL, ?, '[]', 0,
+                        NULL, NULL, 1, ?, ?, NULL, ?, NULL
+                    )
+                    """,
+                    (
+                        teacher_id,
+                        lesson_id,
+                        request_json,
+                        digest,
+                        _STEP_COMPLETE,
+                        lesson_json,
+                        created_at,
+                        updated_at,
+                        updated_at,
+                    ),
+                )
+                created = True
+            except sqlite3.IntegrityError:
+                created = False
+            row = connection.execute(
+                "SELECT * FROM lesson_jobs WHERE teacher_id = ? AND id = ?",
+                (teacher_id, lesson_id),
+            ).fetchone()
+            if row is None:
+                raise PersistenceUnavailable("The lesson owner is unavailable.")
+            job = self._record(row)
+            if job.request_hash != digest or job.lesson != materialized:
+                raise IdempotencyConflict(
+                    "This seed lesson ID is already bound to different content."
+                )
+        return job, created
+
     def delete_lesson(self, teacher_id: str, lesson_id: str) -> bool:
         """Delete one owner-scoped lesson job row regardless of status."""
         with self._write_transaction() as connection:
