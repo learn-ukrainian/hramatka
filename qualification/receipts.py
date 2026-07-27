@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from hramatka.api.qualified_models import (
@@ -21,6 +23,7 @@ from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 
 CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v2"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v1"
+AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v1"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COMMIT_RE = re.compile(r"^[a-f0-9]{40,64}$")
 _OUTCOMES = frozenset({"passed", "failed"})
@@ -613,3 +616,100 @@ def aggregate_receipts(
         )
         for model_id, route_id in sorted(grouped)
     )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Fail-closed aggregation check for persisted qualification cell receipts."
+    )
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    aggregate = subcommands.add_parser(
+        "aggregate", help="validate every persisted cell receipt against the current contract"
+    )
+    aggregate.add_argument(
+        "--receipt-dir",
+        type=Path,
+        required=True,
+        help="operator-local directory containing the persisted cell receipt JSON files",
+    )
+    aggregate.add_argument(
+        "--source-commit",
+        help="expected source commit; defaults to the current checkout HEAD",
+    )
+    return parser
+
+
+def _load_receipts(receipt_dir: Path) -> tuple[CellReceipt, ...]:
+    if not receipt_dir.is_dir():
+        raise QualificationError("Receipt directory does not exist.")
+    paths = tuple(sorted(receipt_dir.glob("*.json")))
+    if not paths:
+        raise QualificationError("Receipt directory contains no cell receipt JSON files.")
+    try:
+        return tuple(
+            CellReceipt.from_dict(json.loads(path.read_text(encoding="utf-8"))) for path in paths
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise QualificationError("A persisted cell receipt could not be parsed.") from error
+
+
+def _load_prompt_hashes(receipt_dir: Path) -> dict[tuple[str, str, str], str]:
+    path = receipt_dir.parent / "aggregation-prompt-hashes.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise QualificationError("Current aggregation prompt hashes are unavailable.") from error
+    if not isinstance(value, dict) or set(value) != {"prompt_hashes", "schema_version"}:
+        raise QualificationError("Aggregation prompt hashes have an invalid schema.")
+    if value["schema_version"] != AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION:
+        raise QualificationError("Aggregation prompt hashes have an unsupported schema version.")
+    rows = value["prompt_hashes"]
+    if not isinstance(rows, list):
+        raise QualificationError("Aggregation prompt hashes have an invalid schema.")
+    prompt_hashes: dict[tuple[str, str, str], str] = {}
+    for row in rows:
+        parsed = _require_exact_keys(
+            row, {"anchor_id", "logical_model_id", "route_id", "sha256"}, "prompt hash"
+        )
+        key = (parsed["logical_model_id"], parsed["route_id"], parsed["anchor_id"])
+        if not all(isinstance(part, str) and part for part in key):
+            raise QualificationError("Aggregation prompt hashes have invalid route identity.")
+        if key in prompt_hashes:
+            raise QualificationError("Aggregation prompt hashes contain a duplicate cell.")
+        prompt_hashes[key] = _require_sha256(parsed["sha256"], "prompt hash")
+    return prompt_hashes
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Aggregate persisted receipts against the current checkout's contract."""
+    parser = _parser()
+    args = parser.parse_args(argv)
+    try:
+        # Import lazily: harness imports this module, while this operator command
+        # needs the same current-code digests that the harness writes into cells.
+        from .harness import _current_engine_digest, _file_digest, _flag_digest, _source_commit
+        from .manifest import load_manifest
+
+        receipts = _load_receipts(args.receipt_dir)
+        manifest = load_manifest()
+        aggregates = aggregate_receipts(
+            receipts,
+            source_commit=args.source_commit or _source_commit(),
+            harness_sha256=_file_digest(Path(__file__).with_name("harness.py")),
+            manifest_sha256=manifest.sha256,
+            anchor_hashes={anchor.id: anchor.sha256 for anchor in manifest.anchors},
+            prompt_hashes=_load_prompt_hashes(args.receipt_dir),
+            engine_sha256=_current_engine_digest(),
+            flag_sha256=_flag_digest(),
+        )
+    except (OSError, QualificationError, ValueError) as error:
+        parser.exit(1, f"Qualification receipt aggregation refused: {error}\n")
+
+    print(f"Qualification receipts aggregated: {len(aggregates)} routes")
+    for aggregate in aggregates:
+        print(f"{aggregate.logical_model_id} {aggregate.route.route_id} anchors=3/3")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - operator command
+    raise SystemExit(main())

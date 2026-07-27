@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -13,6 +14,7 @@ from hramatka.qualification import (
     deterministic_runtime_anchors,
     load_manifest,
 )
+from hramatka.qualification.receipts import main as receipt_main
 
 
 def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs(
@@ -131,3 +133,25 @@ def test_manifest_and_receipt_schema_are_content_free_and_fail_closed() -> None:
 
     with pytest.raises(QualificationError, match="invalid schema"):
         CellReceipt.from_dict({"outcome": "passed"})
+
+
+def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("HRAMATKA_SLOT_REPAIR", "1")
+    monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+    runtime_root = tmp_path / "qualification"
+    harness = ProductionQualificationHarness(runtime_root)
+    harness.run(deterministic_runtime_anchors())
+
+    assert receipt_main(["aggregate", "--receipt-dir", str(runtime_root / "receipts")]) == 0
+    output = capsys.readouterr().out
+    assert "Qualification receipts aggregated: 4 routes" in output
+    assert "gemini-3.5-flash gemini-flash-ais anchors=3/3" in output
+
+    prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
+    prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
+    prompt_hashes["prompt_hashes"][0]["sha256"] = "0" * 64
+    prompt_hashes_path.write_text(json.dumps(prompt_hashes), encoding="utf-8")
+    with pytest.raises(SystemExit) as exit_info:
+        receipt_main(["aggregate", "--receipt-dir", str(runtime_root / "receipts")])
+    assert exit_info.value.code == 1
+    assert "prompt hash is stale" in capsys.readouterr().err

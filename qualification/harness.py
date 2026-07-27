@@ -42,6 +42,7 @@ from hramatka.engine.providers import telemetry_ctx
 
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
+    AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION,
     CellReceipt,
     DensityDiagnosticReceipt,
     DensitySummary,
@@ -553,6 +554,7 @@ class ProductionQualificationHarness:
                         )
         finally:
             data.set_active_bundle(previous_bundle)
+        self._persist_aggregation_prompt_hashes()
         return QualificationRun(tuple(cells), tuple(receipt_paths))
 
     def aggregates(self, run: QualificationRun):
@@ -580,6 +582,33 @@ class ProductionQualificationHarness:
         path = directory / f"{parsed.anchor_id}-{parsed.expected_route.route_id}.json"
         path.write_text(
             json.dumps(parsed.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        return path
+
+    def _persist_aggregation_prompt_hashes(self) -> Path:
+        if self._last_prompt_hashes is None:
+            raise RuntimeError("Run the qualification cells before persisting aggregation inputs.")
+        rows = [
+            {
+                "logical_model_id": model_id,
+                "route_id": route_id,
+                "anchor_id": anchor_id,
+                "sha256": digest,
+            }
+            for (model_id, route_id, anchor_id), digest in sorted(self._last_prompt_hashes.items())
+        ]
+        path = self._root / "aggregation-prompt-hashes.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION,
+                    "prompt_hashes": rows,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
             encoding="utf-8",
         )
         return path
