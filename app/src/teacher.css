@@ -8,6 +8,8 @@
 .teacher-app {
   min-height: 100vh;
   color-scheme: light dark;
+  display: flex;
+  flex-direction: column;
 }
 
 /* chrome: appbar styled after demo .mockbar (accent bar + Georgia brand) */
@@ -141,6 +143,78 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
 .paste .formgrid { max-width: 100%; }
 .paste select, .paste input, .paste textarea { font-size: 14.5px; }
 .paste .field + .field { margin-top: 2px; }
+
+/* Create page: one-screen split layout. Desktop = controls left, large text right.
+   Narrow screens stack naturally. Text area is the centerpiece and scrolls internally. */
+.hub.create-hub {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 20px 12px;
+  overflow: hidden;
+}
+.create-shell {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 14px 20px;
+}
+.create-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.create-left h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 18px; margin: 0; }
+.create-privacy { margin: 0; font-size: 13px; padding: 10px 12px; }
+.create-controls-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.create-controls-stack .field { margin: 0; }
+.create-controls-stack .field label { font-size: 12.5px; margin-bottom: 4px; }
+.create-submit { margin-top: auto; }
+.create-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.create-right label { font-size: 13px; font-weight: 600; margin-bottom: 6px; flex: none; }
+.create-right textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.hub.create-hub + .footer { margin-top: 0; }
+@media (max-width: 1023px) {
+  .hub.create-hub { overflow: visible; height: auto; }
+  .hub.create-hub + .footer { margin-top: 32px; }
+  .create-shell { grid-template-columns: 1fr; overflow: visible; }
+  .create-left { overflow: visible; }
+  .create-right { height: 360px; }
+  .create-submit { margin-top: 4px; }
+}
+@media (max-width: 860px) {
+  .create-shell { padding: 14px 16px; }
+}
+@media (max-width: 650px) {
+  .create-right { height: 280px; }
+}
+
 .pedcards { display: grid; gap: 10px; }
 button.pedcard { border: 1.5px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); width: 100%; text-align: left; }
 button.pedcard.on { border-color: var(--accent); background: var(--accent-soft); }

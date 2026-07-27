@@ -1,4 +1,3 @@
-import { AgentMonitorWidget } from './AgentMonitorWidget';
 import { useEffect, useState, useCallback, useRef } from 'react';
 // Import the kit styles (resolved via package subpath export)
 import '@learn-ukrainian/activity-kit/styles.css';
@@ -1251,7 +1250,6 @@ export default function TeacherApp() {
               >
                 ?
               </button>
-              <AgentMonitorWidget apiFetch={apiFetch} />
               <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
               <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
             </>
@@ -1334,155 +1332,127 @@ export default function TeacherApp() {
 
       {session && (
         <>
-          {/* Paste / Hub */}
+          {/* Paste / Hub — one-screen split create page; text is the centerpiece. */}
           {route.view === 'paste' && (
-            <main className="hub">
-              <section className="paste">
-                <h2>{t('paste.title')}</h2>
-                <div className="banner honest"><span className="ic">ℹ︎</span><span>{t(anchorTab === 'url' ? 'paste.discloseUrl' : 'paste.disclose')}</span></div>
+            <main className="hub create-hub">
+              <section className="create-shell">
+                <div className="create-left">
+                  <h2>{t('paste.title')}</h2>
+                  <div className="banner honest create-privacy">
+                    <span className="ic">ℹ︎</span>
+                    <span>{t(anchorTab === 'url' ? 'paste.discloseUrl' : 'paste.disclose')}</span>
+                  </div>
 
-                <div className="choices" role="tablist" aria-label={t('anchor.sourceAria')}>
-                  <button
-                    type="button"
-                    className={`choice${anchorTab === 'text' ? ' on' : ''}`}
-                    role="tab"
-                    aria-selected={anchorTab === 'text'}
-                    onClick={() => setAnchorTab('text')}
-                  >
-                    {t('anchor.tabText')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`choice${anchorTab === 'url' ? ' on' : ''}`}
-                    role="tab"
-                    aria-selected={anchorTab === 'url'}
-                    onClick={() => setAnchorTab('url')}
-                  >
-                    {t('anchor.tabUrl')}
-                  </button>
-                </div>
-
-                {anchorTab === 'url' && (
-                  <div className="urlrow">
-                    <input
-                      className="inputbox"
-                      type="url"
-                      value={urlInput}
-                      onChange={e => setUrlInput(e.target.value)}
-                      placeholder={t('anchor.urlPh')}
-                      data-testid="anchor-url-input"
-                    />
+                  <div className="choices" role="tablist" aria-label={t('anchor.sourceAria')}>
                     <button
                       type="button"
-                      className="btn ghost"
-                      onClick={fetchAnchorUrl}
-                      disabled={fetchingUrl || loading}
-                      data-testid="fetch-anchor-url-btn"
+                      className={`choice${anchorTab === 'text' ? ' on' : ''}`}
+                      role="tab"
+                      aria-selected={anchorTab === 'text'}
+                      onClick={() => setAnchorTab('text')}
                     >
-                      {fetchingUrl ? t('anchor.fetching') : t('anchor.fetchBtn')}
+                      {t('anchor.tabText')}
+                    </button>
+                    <button
+                      type="button"
+                      className={`choice${anchorTab === 'url' ? ' on' : ''}`}
+                      role="tab"
+                      aria-selected={anchorTab === 'url'}
+                      onClick={() => setAnchorTab('url')}
+                    >
+                      {t('anchor.tabUrl')}
                     </button>
                   </div>
-                )}
 
-                <div className="formgrid">
-                  {/* B1 and TTT are fixed-pilot constraints and remain clearly labelled (no port of demo editing). */}
-                  <div className="field">
-                    <label>{t('paste.levelPre')}<strong>B1</strong>{t('paste.levelPost')}</label>
-                  </div>
-
-                  <QualifiedModelPicker
-                    models={qualifiedModels}
-                    selectedId={selectedModelId}
-                    unavailableMessage={modelUnavailableMessage}
-                    disabled={loading}
-                    onChange={setSelectedModelId}
-                    t={t}
-                  />
-
-                  <div className="field">
-                    <label>{t('paste.methodology')}</label>
-                    <div className="pedcards">
+                  {anchorTab === 'url' && (
+                    <div className="urlrow">
+                      <input
+                        className="inputbox"
+                        type="url"
+                        value={urlInput}
+                        onChange={e => setUrlInput(e.target.value)}
+                        placeholder={t('anchor.urlPh')}
+                        data-testid="anchor-url-input"
+                      />
                       <button
                         type="button"
-                        className="pedcard on"
-                        disabled
-                        aria-disabled="true"
-                        data-testid="methodology-ttt"
+                        className="btn ghost"
+                        onClick={fetchAnchorUrl}
+                        disabled={fetchingUrl || loading}
+                        data-testid="fetch-anchor-url-btn"
                       >
-                        <b>{t('paste.methodology.ttt')}</b>
-                        <span className="d">{t('paste.methodology.hint')}</span>
+                        {fetchingUrl ? t('anchor.fetching') : t('anchor.fetchBtn')}
                       </button>
+                    </div>
+                  )}
+
+                  <div className="create-controls-stack">
+                    {/* B1 and TTT are fixed-pilot constraints and remain clearly labelled (no port of demo editing). */}
+                    <div className="field">
+                      <label>{t('paste.levelPre')}<strong>B1</strong>{t('paste.levelPost')}</label>
+                    </div>
+
+                    <QualifiedModelPicker
+                      models={qualifiedModels}
+                      selectedId={selectedModelId}
+                      unavailableMessage={modelUnavailableMessage}
+                      disabled={loading}
+                      onChange={setSelectedModelId}
+                      t={t}
+                    />
+
+                    <div className="field">
+                      <label>{t('paste.methodology')}</label>
+                      <div className="pedcards">
+                        <button
+                          type="button"
+                          className="pedcard on"
+                          disabled
+                          aria-disabled="true"
+                          data-testid="methodology-ttt"
+                        >
+                          <b>{t('paste.methodology.ttt')}</b>
+                          <span className="d">{t('paste.methodology.hint')}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="field">
+                      <label>{t('paste.duration')}</label>
+                      <select className="inputbox" value={duration} onChange={e => {
+                        const d = Number(e.target.value) as 45 | 60 | 90;
+                        setDuration(d);
+                        // Silent persist (no extra UI, per P2-6); owner-scoped via csrf.
+                        if (csrf) {
+                          apiFetch('/api/teacher/preferences', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                            body: JSON.stringify({ default_duration: d }),
+                          }).catch(() => { /* silent */ });
+                        }
+                      }}>
+                        <option value={45}>45</option>
+                        <option value={60}>60</option>
+                        <option value={90}>90</option>
+                      </select>
+                    </div>
+
+                    <div className="field">
+                      <label>{t('paste.focus')}</label>
+                      <input
+                        className="inputbox"
+                        type="text"
+                        value={grammarFocus}
+                        onChange={e => setGrammarFocus(e.target.value)}
+                        placeholder={t('paste.focusPh')}
+                        maxLength={120}
+                        data-testid="grammar-focus-input"
+                      />
                     </div>
                   </div>
 
-                  <div className="field">
-                    <label>{t('paste.duration')}</label>
-                    <select className="inputbox" value={duration} onChange={e => {
-                      const d = Number(e.target.value) as 45 | 60 | 90;
-                      setDuration(d);
-                      // Silent persist (no extra UI, per P2-6); owner-scoped via csrf.
-                      if (csrf) {
-                        apiFetch('/api/teacher/preferences', {
-                          method: 'PUT',
-                          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-                          body: JSON.stringify({ default_duration: d }),
-                        }).catch(() => { /* silent */ });
-                      }
-                    }}>
-                      <option value={45}>45</option>
-                      <option value={60}>60</option>
-                      <option value={90}>90</option>
-                    </select>
-                  </div>
-
-                  <div className="field">
-                    <label>{t('paste.focus')}</label>
-                    <input
-                      className="inputbox"
-                      type="text"
-                      value={grammarFocus}
-                      onChange={e => setGrammarFocus(e.target.value)}
-                      placeholder={t('paste.focusPh')}
-                      maxLength={120}
-                      data-testid="grammar-focus-input"
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label>{t(anchorTab === 'url' ? 'paste.textLabelReview' : 'paste.textLabel')}</label>
-                    {restoredTextNotice && (
-                      <div
-                        className="banner honest restored-notice"
-                        role="status"
-                        data-testid="restored-text-notice"
-                      >
-                        <span className="ic">ℹ︎</span>
-                        <span>{t('paste.restored')}</span>
-                        <button
-                          type="button"
-                          onClick={() => setRestoredTextNotice(false)}
-                          style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.7 }}
-                          aria-label={t('close.aria')}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                    <textarea
-                      className="inputbox"
-                      value={pasteText}
-                      onChange={e => {
-                        setPasteText(e.target.value);
-                        if (!e.target.value.trim()) setSourceUrl(null);
-                      }}
-                      rows={8}
-                      placeholder={t('paste.textPh')}
-                      data-testid="anchor-text-input"
-                    />
-                  </div>
-
                   <button
-                    className="btn primary"
+                    className="btn primary create-submit"
                     onClick={startBake}
                     disabled={
                       loading
@@ -1493,8 +1463,42 @@ export default function TeacherApp() {
                     {loading ? t('paste.submitting') : t('paste.submit')}
                   </button>
                 </div>
-              </section>
 
+                <div className="create-right">
+                  <label htmlFor="anchor-text-input">
+                    {t(anchorTab === 'url' ? 'paste.textLabelReview' : 'paste.textLabel')}
+                  </label>
+                  {restoredTextNotice && (
+                    <div
+                      className="banner honest restored-notice"
+                      role="status"
+                      data-testid="restored-text-notice"
+                    >
+                      <span className="ic">ℹ︎</span>
+                      <span>{t('paste.restored')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRestoredTextNotice(false)}
+                        style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.7 }}
+                        aria-label={t('close.aria')}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                  <textarea
+                    id="anchor-text-input"
+                    className="inputbox"
+                    value={pasteText}
+                    onChange={e => {
+                      setPasteText(e.target.value);
+                      if (!e.target.value.trim()) setSourceUrl(null);
+                    }}
+                    placeholder={t('paste.textPh')}
+                    data-testid="anchor-text-input"
+                  />
+                </div>
+              </section>
             </main>
           )}
 

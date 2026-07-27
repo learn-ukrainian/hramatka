@@ -35,14 +35,6 @@ function installFetch(lessons: unknown[] = []) {
       });
     }
     if (url.endsWith('/api/lessons')) return response({ lessons });
-    if (url.endsWith('/api/agent-monitor/status')) {
-      return response({
-        host: 'test', timestamp: 0, severity: 'healthy', load_1m_5m_15m: [0, 0, 0],
-        ram: { total_mb: 1, available_mb: 1, used_percent: 0 },
-        capacity_reservations: { active_leases_count: 0, total_reserved_ram_mb: 0, host_reserved_ram_mb: 0 },
-        active_leases: [],
-      });
-    }
     return response({});
   }));
 }

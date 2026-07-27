@@ -895,4 +895,40 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await expect(page.getByPlaceholder(/Вставте/)).toHaveValue(anchorOne, { timeout: 5000 });
   });
+
+  // Operator layout order 2026-07-27: create page must fit one screen, only textarea scrolls.
+  test('create page has no body scroll at 1440x900 with empty form', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const docScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+    const docClientHeight = await page.evaluate(() => document.documentElement.clientHeight);
+    expect(docScrollHeight).toBeLessThanOrEqual(docClientHeight);
+  });
+
+  test('long pasted text scrolls inside textarea without scrolling body', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const longText = 'Текст для уроку.\n'.repeat(600);
+    const textarea = page.getByTestId('anchor-text-input');
+    await textarea.fill(longText);
+
+    const textareaScrollHeight = await textarea.evaluate(el => el.scrollHeight);
+    const textareaClientHeight = await textarea.evaluate(el => el.clientHeight);
+    expect(textareaScrollHeight).toBeGreaterThan(textareaClientHeight);
+
+    const docScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+    const docClientHeight = await page.evaluate(() => document.documentElement.clientHeight);
+    expect(docScrollHeight).toBeLessThanOrEqual(docClientHeight);
+
+    const bodyScrollBefore = await page.evaluate(() => window.scrollY);
+    await textarea.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    const bodyScrollAfter = await page.evaluate(() => window.scrollY);
+    expect(bodyScrollAfter).toBe(bodyScrollBefore);
+  });
 });

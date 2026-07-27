@@ -192,7 +192,7 @@ async function fillPasteForm(page: Page, text: string, duration: 45 | 60 | 90 = 
   await page.getByPlaceholder(/Вставте український текст|Paste Ukrainian text/i).fill(text);
 
   // Duration select
-  await page.locator('.paste select.inputbox, select').first().selectOption(String(duration));
+  await page.locator('.create-controls-stack select.inputbox, select').first().selectOption(String(duration));
 
   if (focus) {
     await page.getByPlaceholder(/напр\.|e\.g\./i).fill(focus);
