@@ -1,10 +1,11 @@
 {
   "bundle": "lu-runtime-data",
-  "version": "2026.07.10",
-  "description": "Development/test fixture and compatibility fallback only. It does not identify a deployed data release. Production must set HRAMATKA_DATA_MANIFEST to the matching release-local data-manifest.json beneath HRAMATKA_DATA_DIR; verification remains mandatory. The DB files are NEVER committed.",
-  "source": {
-    "repo": "learn-ukrainian (protected build)",
-    "note": "fixture metadata retained for development and tests; not a deployment authority"
+  "version": "2026-07-27-acd39159abbd",
+  "description": "Digest-pinned Hramatka corpus release. The DB files are local-only and never committed; this manifest identifies the copied release snapshot, not a mutable source data directory.",
+  "release": {
+    "date": "2026-07-27",
+    "content_sha256": "acd39159abbdd493bf1261cc52d66cfca0e6b623d1f22da918a696360b4ab9da",
+    "created_by": "hramatka.engine.tools.make_data_release"
   },
   "inputs": {
     "vesum.db": {
@@ -16,15 +17,15 @@
     },
     "atlas.db": {
       "path": "atlas.db",
-      "sha256": "091778fbe7d382fbcb0ec886041edb4eece5bed0e917dc1317c48ea9f7eaaab8",
-      "size": 149708800,
+      "sha256": "fbf85f3ecb5f3786d0d44878a243db4c0c2f6dcb0b6d0fdbdaf6f7e0eabe3954",
+      "size": 181977088,
       "role": "grounding (Word Atlas article_payloads)",
       "required": true
     },
     "sources.db": {
       "path": "sources.db",
-      "sha256": "e22c4d90d9d7f0e6a013418be1f07b66f29dc09d734b3d9f9494977a0bdfbfca",
-      "size": 1878265856,
+      "sha256": "8cb9e113ba85c9a99341cfb05ad9dfa7db390526481c7824f331e7d1ec0ef3ac",
+      "size": 1892159488,
       "role": "protected private corpus (non-redistributable)",
       "required": false
     }

@@ -11,7 +11,34 @@ from pathlib import Path
 
 import pytest
 
+from hramatka.engine import data
 from hramatka.engine.tools import make_data_release
+
+PINNED_RELEASE = {
+    "version": "2026-07-27-acd39159abbd",
+    "release": {
+        "date": "2026-07-27",
+        "content_sha256": "acd39159abbdd493bf1261cc52d66cfca0e6b623d1f22da918a696360b4ab9da",
+        "created_by": "hramatka.engine.tools.make_data_release",
+    },
+    "inputs": {
+        "vesum.db": {
+            "sha256": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+            "size": 967602176,
+            "required": True,
+        },
+        "atlas.db": {
+            "sha256": "fbf85f3ecb5f3786d0d44878a243db4c0c2f6dcb0b6d0fdbdaf6f7e0eabe3954",
+            "size": 181977088,
+            "required": True,
+        },
+        "sources.db": {
+            "sha256": "8cb9e113ba85c9a99341cfb05ad9dfa7db390526481c7824f331e7d1ec0ef3ac",
+            "size": 1892159488,
+            "required": False,
+        },
+    },
+}
 
 
 def _make_fixture_db(path: Path, marker: str) -> None:
@@ -35,6 +62,23 @@ def source_bundle(tmp_path: Path) -> Path:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_committed_manifest_pins_2026_07_27_corpus_release():
+    manifest = data.load_manifest(data.DEFAULT_MANIFEST)
+
+    assert {
+        "version": manifest["version"],
+        "release": manifest["release"],
+        "inputs": {
+            name: {
+                "sha256": record["sha256"],
+                "size": record["size"],
+                "required": record["required"],
+            }
+            for name, record in manifest["inputs"].items()
+        },
+    } == PINNED_RELEASE
 
 
 def test_create_data_release_copies_all_dbs_and_writes_fresh_manifest(
