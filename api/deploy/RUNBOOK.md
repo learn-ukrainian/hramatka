@@ -169,22 +169,23 @@ lifecycle marker with its own signed receipt URL before it removes the label.
 
    The current live pilot has not yet migrated to this target per-release venv
    layout. Its reviewed `hramatka/ops/deploy.sh HOST` path first confirms that
-   the deployed `/opt/hramatka/venv/bin/python` can import `jwt` and
-   `cryptography`, then transfers code only if that bounded preflight passes.
+   the deployed `/opt/hramatka/venv/bin/python` can import `jwt`,
+   `cryptography`, and `psutil`, then transfers code only if that bounded
+   preflight passes.
    This prevents an attestation deploy from failing after a restart because of
    missing runtime dependencies; it is transitional proof, not a claim that
    the shared pilot venv is immutable or release-bound.
 
-   If the live shared venv does not yet contain `jwt` and `cryptography`, first
-   create the exact detached, reviewed checkout from step 1 and verify its HEAD
-   and cleanliness. Then install from that immutable checkout—not the
+   If the live shared venv does not yet contain `jwt`, `cryptography`, and
+   `psutil`, first create the exact detached, reviewed checkout from step 1 and
+   verify its HEAD and cleanliness. Then install from that immutable checkout—not the
    operator's working tree—and rerun the import probe before `deploy.sh`:
 
    ```sh
    test "$(git -C /opt/hramatka/releases/<stamp> rev-parse HEAD)" = "<reviewed-commit>"
    test -z "$(git -C /opt/hramatka/releases/<stamp> status --porcelain)"
    /opt/hramatka/venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
-   /opt/hramatka/venv/bin/python -c 'import jwt, cryptography'
+   /opt/hramatka/venv/bin/python -c 'import jwt, cryptography, psutil'
    ```
 
    This is an explicit prerequisite change to the transitional shared venv. It
