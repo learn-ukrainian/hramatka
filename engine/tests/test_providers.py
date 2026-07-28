@@ -166,6 +166,23 @@ def test_vertex_request_uses_native_generate_content_shape_and_separate_key_head
     assert "tools" not in seen["body"]
 
 
+def test_extract_vertex_text_skips_thought_parts():
+    body = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"thought": True, "text": "<reasoning>"},
+                        {"text": "<answer>"},
+                    ]
+                }
+            }
+        ]
+    }
+
+    assert providers._extract_vertex_text(body) == "<answer>"
+
+
 def test_vertex_retries_5xx_and_refuses_prefixed_model_ids():
     calls = {"n": 0}
 

@@ -977,7 +977,7 @@ def _extract_vertex_text(body: Any) -> str:
     text = "".join(
         part["text"]
         for part in parts
-        if isinstance(part, dict) and isinstance(part.get("text"), str)
+        if isinstance(part, dict) and not part.get("thought") and isinstance(part.get("text"), str)
     )
     if not text:
         raise GeneratorUnavailable("Vertex response content had no text parts")
