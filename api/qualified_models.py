@@ -21,9 +21,7 @@ from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 DENSITY_CONTRACT_VERSION: Final = TEACHER_READY_DENSITY_VERSION
 DENSITY_CONTRACT_DIGEST: Final = teacher_ready_density_digest()
-QUALIFICATION_ANCHORS: Final = frozenset(
-    {"b1-narrative", "b1-dialogue", "b1-morphology"}
-)
+QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
 
 
 class LogicalModelUnavailable(ValueError):
@@ -70,9 +68,7 @@ LOGICAL_MODELS: Final = (
         label="Gemini 3.5 Flash",
         description_uk="Швидке складання уроку.",
         provider_routes=(
-            QualifiedProviderRoute(
-                "gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"
-            ),
+            QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"),
         ),
     ),
     LogicalModelSpec(
@@ -90,20 +86,74 @@ LOGICAL_MODELS: Final = (
         label="Gemma 4 31B",
         description_uk="Відкрита модель із внутрішнім резервним маршрутом.",
         provider_routes=(
-            QualifiedProviderRoute(
-                "gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"
-            ),
-            QualifiedProviderRoute(
-                "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"
-            ),
+            QualifiedProviderRoute("gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"),
+            QualifiedProviderRoute("gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
         ),
     ),
 )
 
-# Intentionally empty.  #235 evidence did not traverse the current production
-# baker, prompt pack, density contract, and generic repair loop, so treating it
-# as a current receipt would be false qualification.
-PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
+# Transcribed from the 12 receipt files for the 2026-07-28 12/12 matrix run
+# (3 anchors x 4 routes, all outcome=passed, ProductionQualificationCellReceipt.v2)
+# located at: /Users/krisztiankoos/hramatka-qual/matrix-receipts-20260727/receipts/
+#
+# AUTHORIZED RULING (driver decision, Sol concurrence bridge msg 5544):
+# - `semantic_gate: not_run` does NOT block qualification (shadow-tier advisory per
+#   LLM-QG contract; keeping `semantic_gate: not_run` EXPLICIT here as future cutover seam).
+# - `prompt_pack_version='PromptPackInput.v3'` derived from pinned commit
+#   2e621ef8add554065f11092ed0b241dee54e9b97.
+# - All 12 cell receipts passed across anchors ('b1-narrative', 'b1-dialogue', 'b1-morphology')
+#   with density contract TeacherReadyDensity.v2 (digest
+#   07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b).
+PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
+    QualificationReceipt(
+        logical_model_id="gemini-3.5-flash",
+        provider_route="gemini-flash-ais",
+        provider_host="google-ais",
+        provider_model_id="google-ais/gemini-3.5-flash",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3",
+        density_contract_version="TeacherReadyDensity.v2",
+        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
+        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
+        passed=True,
+    ),
+    QualificationReceipt(
+        logical_model_id="gemini-3.1-pro",
+        provider_route="gemini-pro-ais",
+        provider_host="google-ais",
+        provider_model_id="google-ais/gemini-3.1-pro-preview",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3",
+        density_contract_version="TeacherReadyDensity.v2",
+        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
+        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
+        passed=True,
+    ),
+    QualificationReceipt(
+        logical_model_id="gemma-4-31b",
+        provider_route="gemma-ais",
+        provider_host="google-ais",
+        provider_model_id="google-ais/gemma-4-31b-it",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3",
+        density_contract_version="TeacherReadyDensity.v2",
+        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
+        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
+        passed=True,
+    ),
+    QualificationReceipt(
+        logical_model_id="gemma-4-31b",
+        provider_route="gemma-openrouter",
+        provider_host="openrouter",
+        provider_model_id="google/gemma-4-31b-it",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3",
+        density_contract_version="TeacherReadyDensity.v2",
+        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
+        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
+        passed=True,
+    ),
+)
 
 
 class QualificationCandidateRegistry:
@@ -242,8 +292,7 @@ class QualifiedModelRegistry:
 
     def _has_current_receipts(self, model: LogicalModelSpec) -> bool:
         return all(
-            self._has_one_current_route_aggregate(model, route)
-            for route in model.provider_routes
+            self._has_one_current_route_aggregate(model, route) for route in model.provider_routes
         )
 
     def _has_one_current_route_aggregate(
@@ -263,9 +312,7 @@ class QualifiedModelRegistry:
         )
         return len(aggregates) == 1 and self._is_current(aggregates[0], route)
 
-    def _is_current(
-        self, receipt: QualificationReceipt, route: QualifiedProviderRoute
-    ) -> bool:
+    def _is_current(self, receipt: QualificationReceipt, route: QualifiedProviderRoute) -> bool:
         return (
             receipt.provider_host == route.host
             and receipt.provider_model_id == route.model_id
