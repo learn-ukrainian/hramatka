@@ -167,30 +167,13 @@ lifecycle marker with its own signed receipt URL before it removes the label.
    /opt/hramatka/releases/<stamp>/.venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
    ```
 
-   The current live pilot has not yet migrated to this target per-release venv
-   layout. Its reviewed `hramatka/ops/deploy.sh HOST` path first confirms that
-   the deployed `/opt/hramatka/venv/bin/python` can import `jwt`,
-   `cryptography`, and `psutil`, then transfers code only if that bounded
-   preflight passes.
-   This prevents an attestation deploy from failing after a restart because of
-   missing runtime dependencies; it is transitional proof, not a claim that
-   the shared pilot venv is immutable or release-bound.
-
-   If the live shared venv does not yet contain `jwt`, `cryptography`, and
-   `psutil`, first create the exact detached, reviewed checkout from step 1 and
-   verify its HEAD and cleanliness. Then install from that immutable checkout—not the
-   operator's working tree—and rerun the import probe before `deploy.sh`:
-
-   ```sh
-   test "$(git -C /opt/hramatka/releases/<stamp> rev-parse HEAD)" = "<reviewed-commit>"
-   test -z "$(git -C /opt/hramatka/releases/<stamp> status --porcelain)"
-   /opt/hramatka/venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
-   /opt/hramatka/venv/bin/python -c 'import jwt, cryptography, psutil'
-   ```
-
-   This is an explicit prerequisite change to the transitional shared venv. It
-   is never performed automatically by the deploy script and must use the same
-   reviewed commit being deployed.
+   Stage-1 `hramatka/ops/deploy.sh ops@HOST` (issues #210/#212) builds a
+   release-local `.venv` under `releases/<stamp>` and proves
+   `jwt`/`cryptography`/`psutil` on that interpreter before the atomic
+   `current` flip (`ln -sfn` + `mv -T`, never `mv -f` onto the symlink). Host
+   migration from a pre-releases layout is
+   `hramatka/ops/migrate_release_layout.sh` (operator-run; refuses if already
+   migrated).
 
 3. Build the reviewed teacher frontend in the release. Caddy serves the
    same-origin `/teacher/` path beneath `current`, so it will activate with the
@@ -206,7 +189,7 @@ lifecycle marker with its own signed receipt URL before it removes the label.
 
    ```sh
    ln -sfn /opt/hramatka/releases/<stamp> /opt/hramatka/current.new
-   mv -f /opt/hramatka/current.new /opt/hramatka/current
+   mv -T /opt/hramatka/current.new /opt/hramatka/current
    systemctl daemon-reload
    systemctl restart hramatka-api.service
    ```
@@ -394,7 +377,7 @@ defense in depth; its absence does not block this design.
 
    ```sh
    ln -sfn /opt/hramatka/releases/<previous-stamp> /opt/hramatka/current.new
-   mv -f /opt/hramatka/current.new /opt/hramatka/current
+   mv -T /opt/hramatka/current.new /opt/hramatka/current
    systemctl restart hramatka-api.service
    HRAMATKA_ORIGIN=<pilot-origin> /opt/hramatka/current/hramatka/ops/smoke.sh
    ```
