@@ -789,6 +789,17 @@ class QualificationDiagnosticRun:
 
 ProviderFactory = Callable[[RuntimeAnchor, str, RouteBinding], Any]
 RunnerStopWaiter = Callable[[Any, float], bool]
+_RAW_PARSE_FAILURES_DIR = "raw-parse-failures"
+
+
+def _raw_parse_failure_out_dir(scratch_root: Path, cell_root: Path) -> Path:
+    """Private persistent artifact location for a temporary qualification cell.
+
+    The transient cell directory is removed after a completed diagnostic. This
+    separate engine-out location preserves only raw parse failures and never
+    becomes part of receipts, logs, or the durable job record.
+    """
+    return scratch_root / _RAW_PARSE_FAILURES_DIR / cell_root.name / "engine-out"
 
 
 class QualificationRunnerStillActiveError(QualificationError):
@@ -910,6 +921,7 @@ class ProductionQualificationHarness:
                 runner_stop_waiter=runner_stop_waiter
                 or (lambda runner, timeout: runner.wait_until_stopped(timeout)),
                 allow_failed_diagnostic=True,
+                engine_out_dir=_raw_parse_failure_out_dir(scratch_root, raw_cell_root),
             )
             receipt_path = self._persist_diagnostic_receipt(cell)
         except QualificationRunnerStillActiveError:
@@ -976,6 +988,9 @@ class ProductionQualificationHarness:
                                     runner_stop_timeout_seconds=runner_stop_timeout_seconds,
                                     runner_stop_waiter=runner_stop_waiter,
                                     allow_failed_diagnostic=True,
+                                    engine_out_dir=_raw_parse_failure_out_dir(
+                                        scratch_root, raw_cell_root
+                                    ),
                                 )
                             except QualificationRunnerStillActiveError:
                                 # This directory can contain durable job/cache data.
@@ -1109,6 +1124,7 @@ class ProductionQualificationHarness:
         runner_stop_timeout_seconds: float,
         runner_stop_waiter: RunnerStopWaiter,
         allow_failed_diagnostic: bool = False,
+        engine_out_dir: Path | None = None,
     ) -> QualificationCellResult:
         def logical_generator_factory(requested_logical_model_id: str):
             if requested_logical_model_id != logical_model_id:
@@ -1121,7 +1137,7 @@ class ProductionQualificationHarness:
             ),
             bundle=bundle,
             cache_dir=cell_root / "cache",
-            engine_out_dir=cell_root / "engine-out",
+            engine_out_dir=engine_out_dir or cell_root / "engine-out",
             logical_generator_factory=logical_generator_factory,
         )
         app = create_app(
@@ -1199,14 +1215,24 @@ class ProductionQualificationHarness:
                     "Qualification runner is still active; scratch was preserved."
                 ) from active_error
         durable_trace = self._durable_route_trace(durable_job)
-        density_trace, repair_invocation_trace = self._durable_diagnostic_traces(durable_job)
+        failed_diagnostic = terminal_status == "failed"
+        density_trace, repair_invocation_trace = self._durable_diagnostic_traces(
+            durable_job, allow_empty=failed_diagnostic
+        )
+        if failed_diagnostic and not density_trace:
+            density_trace = (self._empty_parse_failure_density_trace(),)
         if resource is not None:
             delivery = self._delivery_summary(
                 resource.json(), logical_model_id, route, durable_job, durable_trace
             )
         else:
             delivery, _ = self._failed_diagnostic_delivery(density_trace)
-        slot_telemetry = self._durable_slot_telemetry(durable_job)
+        slot_telemetry = self._durable_slot_telemetry(durable_job, allow_empty=failed_diagnostic)
+        if failed_diagnostic and not slot_telemetry:
+            # Parsing can fail before the evaluator creates a real slot trace.
+            # Keep the receipt schema strict with one count-only, nonaccepted
+            # placeholder; raw response text remains only in engine-out.
+            slot_telemetry = (self._parse_failure_slot_telemetry(),)
         density = self._density_from_slot_telemetry(slot_telemetry)
         initial_prompt_digests = getattr(provider, "initial_prompt_digests", ())
         if (
@@ -1266,12 +1292,16 @@ class ProductionQualificationHarness:
     @staticmethod
     def _durable_diagnostic_traces(
         job: Any,
+        *,
+        allow_empty: bool = False,
     ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
         progress = job.progress
         if not isinstance(progress, dict):
             raise AssertionError("Qualification durable job has no progress telemetry.")
         density = progress.get("qualification_density_traces")
         repair = progress.get("qualification_repair_traces", [])
+        if allow_empty and density in (None, []) and repair in (None, []):
+            return (), ()
         if (
             not isinstance(density, list)
             or not density
@@ -1286,9 +1316,13 @@ class ProductionQualificationHarness:
         )
 
     @staticmethod
-    def _durable_slot_telemetry(job: Any) -> tuple[SlotTelemetry, ...]:
+    def _durable_slot_telemetry(
+        job: Any, *, allow_empty: bool = False
+    ) -> tuple[SlotTelemetry, ...]:
         progress = job.progress
         rows = progress.get("qualification_slot_telemetry") if isinstance(progress, dict) else None
+        if allow_empty and rows in (None, []):
+            return ()
         if not isinstance(rows, list) or not rows:
             raise AssertionError("Qualification durable job has no v3 slot telemetry.")
         telemetry = tuple(SlotTelemetry.from_dict(row) for row in rows)
@@ -1351,6 +1385,32 @@ class ProductionQualificationHarness:
         density_trace: tuple[dict[str, object], ...],
     ) -> tuple[DeliverySummary, DensitySummary]:
         """Project a failed diagnostic's last count-only snapshot, never lesson content."""
+        if not density_trace:
+            empty_phase_counts = {str(phase): 0 for phase in (1, 2, 3)}
+            return (
+                DeliverySummary(
+                    durable_job=False,
+                    block_count=0,
+                    phase_counts=empty_phase_counts,
+                    response_units=0,
+                    activity_types=frozenset(),
+                    phase_three_transfer=False,
+                    provenance_continuous=False,
+                ),
+                DensitySummary(
+                    lesson_units=0,
+                    ready_units=0,
+                    tray_units=0,
+                    floor_units=0,
+                    phase_units=dict(empty_phase_counts),
+                    ready_phase_units=dict(empty_phase_counts),
+                    tray_phase_units=dict(empty_phase_counts),
+                    slot_count=0,
+                    ready_slots=0,
+                    tray_slots=0,
+                    disposition="recoverable_draft",
+                ),
+            )
         last = density_trace[-1]
         phase_density = last["phase_density"]
         assert isinstance(phase_density, dict)  # validated by diagnostic receipt persistence
@@ -1384,6 +1444,43 @@ class ProductionQualificationHarness:
                 provenance_continuous=False,
             ),
             density,
+        )
+
+    @staticmethod
+    def _empty_parse_failure_density_trace() -> dict[str, object]:
+        """Content-free diagnostic trace when parsing stopped before evaluation."""
+        return {
+            "stage": "initial",
+            "phase_density": {
+                str(phase): {"visible_blocks": 0, "response_units": 0} for phase in (1, 2, 3)
+            },
+            "gate_outcomes_by_phase": {
+                str(phase): {
+                    "requested": 0,
+                    "generated": 0,
+                    "ready": 0,
+                    "review": 0,
+                    "dropped": 0,
+                }
+                for phase in (1, 2, 3)
+            },
+            "density_error_codes": ["v3_serialization"],
+            "repair_invocations": 0,
+        }
+
+    @staticmethod
+    def _parse_failure_slot_telemetry() -> SlotTelemetry:
+        """Return the schema-required, content-free pre-evaluation failure marker."""
+        return SlotTelemetry(
+            slot_id="P1-A1",
+            phase=1,
+            activity_type="quiz",
+            disposition="dropped",
+            units=0,
+            floor_met=False,
+            repair_rounds=0,
+            replacement_used=False,
+            unassigned_errors_count=1,
         )
 
     @staticmethod

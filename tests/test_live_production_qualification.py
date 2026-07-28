@@ -305,6 +305,31 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
     assert list(request.qualification.scratch_root.iterdir()) == []
 
 
+def test_failed_live_diagnostic_preserves_raw_parse_artifact_outside_receipts(
+    tmp_path, v2_delivery_flags
+) -> None:
+    request = _diagnostic_request(tmp_path)
+    raw_response = "PRIVATE RAW MODEL RESPONSE"
+
+    run = execute_live_diagnostic(
+        request,
+        bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
+        repository_state=_clean_repository_state,
+        credential_present=_credential_present,
+        pinned_port_factory=lambda _logical_model_id, _route: lambda _prompt: raw_response,
+    )
+
+    assert run.cell.receipt.outcome == "failed"
+    raw_paths = tuple(
+        request.qualification.scratch_root.glob(
+            "raw-parse-failures/*/engine-out/*/generation-raw-attempt1.txt"
+        )
+    )
+    assert len(raw_paths) == 1
+    assert raw_paths[0].read_text(encoding="utf-8") == raw_response
+    assert raw_response not in run.receipt_path.read_text(encoding="utf-8")
+
+
 def test_live_density_diagnostic_rejects_an_unconfigured_route_before_provider(
     tmp_path, v2_delivery_flags
 ) -> None:
@@ -574,6 +599,11 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
         assert port._transport.max_attempts == 1
         if route.host == "google-vertex":
             assert isinstance(port._transport, VertexGenerateContentTransport)
+        elif route.model_id in {
+            "google-ais/gemini-3.6-flash",
+            "google-ais/gemini-3.1-pro-preview",
+        }:
+            assert port._transport.retry_json_mode_on_400 is True
         else:
             assert port._transport.retry_json_mode_on_400 is False
 

@@ -31,6 +31,7 @@ from hramatka.engine.providers import (
 )
 
 from .agent_monitor import router as agent_monitor_router
+from .baking.artifacts import configured_engine_out_dir
 from .baking.engine_adapter_v3 import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
@@ -308,6 +309,7 @@ def create_app(
     baker = baker or EngineLessonBaker(
         store=store,
         generator=make_bake_generator(settings.bake_providers),
+        engine_out_dir=configured_engine_out_dir(),
         logical_generator_factory=logical_generator,
     )
     runner = BakeRunner(

@@ -38,14 +38,20 @@ export HRAMATKA_GEMMA_FALLBACK_API_KEY="$(cat /path/to/your/openrouter.key)"  # 
 Keys: `HRAMATKA_AIS_API_KEY` / `HRAMATKA_GEMMA_FALLBACK_API_KEY` env vars, or
 files under optional `HRAMATKA_SECRET_DIR` (no default). Never prints key values.
 
-### Default configuration (post-#171)
+### Default configuration (Gemini re-probe, post-#171)
 
 | Knob | Default | Notes |
 | --- | --- | --- |
-| `HRAMATKA_GEN_JSON_MODE` | unset / not `"1"` | Opt-in only. local-loop and local-soak force `0`. |
-| google-ais host | **hard-denied** | Even if env=`1`, transport never sends `response_format` to `google-ais`/`ais` hosts (production hang + probe: accept-but-thought-wrapped). |
-| openrouter host | allowed when env=`1` | Probe: pure JSON, ~1s, both modes. |
+| `HRAMATKA_GEN_JSON_MODE` | unset or `"1"` | Gemini JSON mode is on by default. Set to `"0"` to disable it for one run; local-loop and local-soak do this intentionally. |
+| Gemini 3.6 Flash / 3.1 Pro Preview | **enforced** | AIS OpenAI-compat requests send `response_format: {"type":"json_object"}`; native Vertex requests send `generationConfig.responseMimeType: "application/json"`. Either transport retries once without JSON mode after a 400 rejection. |
+| Gemma seats | **hard-denied** | #171's Gemini-host/Gemma-model measurements remain authoritative: Gemma never receives JSON mode, even when the environment value is `"1"`. |
 | Latency watchdog | always on when telemetry ctx present | Emits `latency_watchdog` when a call exceeds 3× rolling median of prior samples in the bake. |
+
+For a v3 parse failure, the raw model response is retained only in a per-bake UUID directory
+below the configured private engine output root as `generation-raw-attempt<N>.txt` (capped at
+64 KiB). The established 14-day artifact retention applies. Qualification diagnostics place this
+beneath their private `raw-parse-failures/` scratch subtree; raw output never enters receipts,
+durable job telemetry, or logs.
 
 ## Local Test Loop
 
@@ -66,6 +72,7 @@ The entire loop (code -> build -> test -> bake) must run **locally** to protect 
 - `--model <id>`: Model ID to use for generation (default: `google-ais/gemma-4-31b-it`). The supported values are:
   - `google-ais/gemma-4-31b-it` (default Gemma model, $0)
   - `google-ais/gemma-4-26b-a4b-it` (free Gemma MoE model, $0)
+  - `google-ais/gemini-3.6-flash` (free Gemini Flash seat, $0)
   - `google-ais/gemini-3.1-pro-preview` (paid Gemini model; requires setting `HRAMATKA_PAID_MODEL_OK=1` acknowledgement env var)
   - `deepseek/deepseek-v4-pro` (cheap DeepSeek API model; requires setting `HRAMATKA_DEEPSEEK_API_KEY` env var)
 - `--keep`: Keep the local uvicorn stack running and do not clean up the tmp database/logs.

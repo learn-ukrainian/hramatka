@@ -35,10 +35,12 @@ from hramatka.engine.teacher_ready_density_v3 import phase_shape_for
 from hramatka.engine.transport import GEMMA_MODEL, GenerationUnparseable, GeneratorUnavailable
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
+from .artifacts import bake_artifact_dir
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
 _ACTIVITY_SCHEMA = vendoring.read_json(vendoring.PILOT_LU_ACTIVITY, "lu.activity.v1.schema.json")
 _ACTIVITY_VALIDATOR = Draft7Validator(_ACTIVITY_SCHEMA)
+_RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
 
 _TITLES = {
     "true-false": "Перевірмо розуміння",
@@ -51,6 +53,17 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
+
+
+def _persist_raw_parse_failure(raw: str, out_dir: str | Path, attempt: int) -> None:
+    """Keep failed v3 model output in the private engine artifact directory only.
+
+    This mirrors the legacy prompt-pack behavior without importing its legacy
+    generation graph into the production-only v3 adapter.
+    """
+    raw_path = out_dir / f"generation-raw-attempt{attempt}.txt"
+    capped = raw.encode("utf-8")[:_RAW_PARSE_FAILURE_MAX_BYTES]
+    raw_path.write_text(capped.decode("utf-8", errors="ignore"), encoding="utf-8")
 
 
 def _mode(phase: int, activity_type: str) -> str:
@@ -355,9 +368,10 @@ class EngineLessonBaker:
         logical_generator_factory: Callable[[str], Callable[[str], str]] | None = None,
         logical_model_id: str | None = None,
     ) -> None:
-        del cache_dir, engine_out_dir
+        del cache_dir
         self._generator = generator
         self._resolved_bundle = bundle
+        self._engine_out_dir = engine_out_dir
         self.store = store
         self._logical_generator_factory = logical_generator_factory
         self._logical_model_id = logical_model_id
@@ -370,6 +384,7 @@ class EngineLessonBaker:
         return EngineLessonBaker(
             generator=self._logical_generator_factory(logical_model_id),
             bundle=self._resolved_bundle,
+            engine_out_dir=self._engine_out_dir,
             store=self.store,
             logical_generator_factory=self._logical_generator_factory,
             logical_model_id=logical_model_id,
@@ -380,15 +395,31 @@ class EngineLessonBaker:
             self._resolved_bundle = data.active_bundle()
         return self._resolved_bundle
 
-    def _call_generator(self, prompt: str) -> object:
+    def _call_generator(
+        self,
+        prompt: str,
+        *,
+        raw_attempt_counter: list[int],
+        raw_out_root: str | Path | None,
+        raw_bake_id: str | None,
+    ) -> object:
         generator = (
             self._generator.for_bake() if hasattr(self._generator, "for_bake") else self._generator
         )
+        raw: object = None
         try:
-            return _parse_payload(generator(prompt))
+            raw_attempt_counter[0] += 1
+            raw = generator(prompt)
+            return _parse_payload(raw)
         except GeneratorUnavailable as error:
             raise ProviderUnavailable(str(error), retry_exhausted=error.retry_exhausted) from error
         except GenerationUnparseable as error:
+            if isinstance(raw, str) and raw_out_root is not None:
+                _persist_raw_parse_failure(
+                    raw,
+                    bake_artifact_dir(raw_out_root, bake_id=raw_bake_id),
+                    raw_attempt_counter[0],
+                )
             raise GenerationFailed(
                 "Bake failed: v3 serializer response was not valid JSON.",
                 generation_error_type=type(error).__name__,
@@ -477,19 +508,37 @@ class EngineLessonBaker:
                     blames_source=False,
                 )
             blocks: list[dict[str, Any]] = []
+            raw_attempt_counter = [0]
+            raw_out_root = self._engine_out_dir
+            raw_bake_id = job_id if isinstance(job_id, str) else None
             for phase in sorted({slot.phase for slot in preflight.allocation.slots}):
                 context.update_progress_db(phase=phase, step="generation")
                 # The evaluator independently recreates and hashes this same context.
                 phase_context = build_phase_context(preflight.allocation, phase=phase)
-                initial_payload = self._call_generator(render_phase_prompt(phase_context))
+                initial_payload = self._call_generator(
+                    render_phase_prompt(phase_context),
+                    raw_attempt_counter=raw_attempt_counter,
+                    raw_out_root=raw_out_root,
+                    raw_bake_id=raw_bake_id,
+                )
                 evaluated = evaluate_phase_with_repair(
                     preflight.allocation,
                     phase=phase,
                     payload=initial_payload,
                     deterministic_gates=(_activity_gate,),
                     raw_contract_validator=_raw_activity_contract,
-                    repair_renderer=lambda request: self._render_repair(request),
-                    replacement_renderer=lambda request: self._render_replacement(request),
+                    repair_renderer=lambda request: self._render_repair(
+                        request,
+                        raw_attempt_counter=raw_attempt_counter,
+                        raw_out_root=raw_out_root,
+                        raw_bake_id=raw_bake_id,
+                    ),
+                    replacement_renderer=lambda request: self._render_replacement(
+                        request,
+                        raw_attempt_counter=raw_attempt_counter,
+                        raw_out_root=raw_out_root,
+                        raw_bake_id=raw_bake_id,
+                    ),
                 )
                 self._record_qualification_evaluation(phase, evaluated)
                 if evaluated.disposition != "teacher_ready":
@@ -598,25 +647,45 @@ class EngineLessonBaker:
             }
         )
 
-    def _render_repair(self, request: RepairRequest) -> object:
+    def _render_repair(
+        self,
+        request: RepairRequest,
+        *,
+        raw_attempt_counter: list[int],
+        raw_out_root: str | Path | None,
+        raw_bake_id: str | None,
+    ) -> object:
         payload = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="repair",
                 slot_id=request.slot_id,
                 repair_round=request.round,
-            )
+            ),
+            raw_attempt_counter=raw_attempt_counter,
+            raw_out_root=raw_out_root,
+            raw_bake_id=raw_bake_id,
         )
         return self._one_slot_record(payload, request.slot_id)
 
-    def _render_replacement(self, request: ReplacementRequest) -> object:
+    def _render_replacement(
+        self,
+        request: ReplacementRequest,
+        *,
+        raw_attempt_counter: list[int],
+        raw_out_root: str | Path | None,
+        raw_bake_id: str | None,
+    ) -> object:
         payload = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="replacement",
                 slot_id=request.slot_id,
                 repair_round=None,
-            )
+            ),
+            raw_attempt_counter=raw_attempt_counter,
+            raw_out_root=raw_out_root,
+            raw_bake_id=raw_bake_id,
         )
         return self._one_slot_record(payload, request.slot_id)
 

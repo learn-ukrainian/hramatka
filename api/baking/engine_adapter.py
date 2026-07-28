@@ -16,14 +16,11 @@ floor because a teacher can inspect and explicitly acknowledge it.
 from __future__ import annotations
 
 import logging
-import os
 import re
-import shutil
 import time
-import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
 from typing import Any
@@ -46,6 +43,7 @@ from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.engine.prompts import active_writer_prompt_version
 from hramatka.sizing_policy import B1, phase_plan, resolve_duration
 
+from .artifacts import bake_artifact_dir, configured_engine_out_dir, prune_engine_out
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
 log = logging.getLogger(__name__)
@@ -59,10 +57,6 @@ log = logging.getLogger(__name__)
 # cost or an open-ended bake.
 _READY_SURVIVAL_FLOOR = 0.60
 _MAX_REGENERATION_ATTEMPTS = 2
-
-# Keep diagnostics for fourteen days: this covers the daily-backup recovery
-# investigation window while putting a fixed bound on the host's state volume.
-_ENGINE_OUT_RETENTION_DAYS = 14
 
 
 def _generation_failure_message(error_type: str) -> str:
@@ -470,14 +464,7 @@ def _engine_out_root() -> Path | None:
     `HRAMATKA_ENGINE_OUT_DIR` env → systemd `STATE_DIRECTORY`/engine-out →
     None (dev default, package `.out`).
     """
-    explicit = os.environ.get("HRAMATKA_ENGINE_OUT_DIR")
-    if explicit:
-        return Path(explicit)
-    state_dir = os.environ.get("STATE_DIRECTORY")
-    if state_dir:
-        # systemd may pass a colon-separated list; the unit declares one.
-        return Path(state_dir.split(":", 1)[0]) / "engine-out"
-    return None
+    return configured_engine_out_dir()
 
 
 def _prune_engine_out(
@@ -493,25 +480,7 @@ def _prune_engine_out(
     directories when needed. Non-UUID directories and symlinks are never part
     of this retention policy.
     """
-    if not root.is_dir():
-        return
-    cutoff = (now or datetime.now(UTC)) - timedelta(days=_ENGINE_OUT_RETENTION_DAYS)
-    for candidate in root.iterdir():
-        if candidate.name in protected_names or candidate.is_symlink() or not candidate.is_dir():
-            continue
-        try:
-            uuid.UUID(candidate.name)
-            modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=UTC)
-        except (OSError, ValueError):
-            continue
-        if modified >= cutoff:
-            continue
-        try:
-            shutil.rmtree(candidate)
-        except OSError:
-            # Diagnostics retention must not turn an otherwise healthy fresh
-            # bake into a failure merely because an old directory is locked.
-            continue
+    prune_engine_out(root, protected_names=protected_names, now=now)
 
 
 class EngineLessonBaker:
@@ -695,10 +664,8 @@ class EngineLessonBaker:
             )
 
         try:
-            job_out = out_root / str(uuid.uuid4()) if out_root else None
+            job_out = bake_artifact_dir(out_root) if out_root else None
             if job_out is not None:
-                job_out.mkdir(parents=True)
-                _prune_engine_out(out_root, protected_names={job_out.name})
                 tel_ctx.trace_dir = job_out
             if fallback_kind is not None:
                 tel_ctx.record_event(

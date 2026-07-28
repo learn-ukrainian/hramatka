@@ -38,11 +38,10 @@ from .transport import (
 
 log = logging.getLogger(__name__)
 
-# #171 probe: google-ais accepts response_format=json_object (HTTP 200) but
-# returns thought-wrapped content, and production full-lesson bakes hung 12+ min
-# with JSON mode on AIS. OpenRouter path is clean on the same family. Even when
-# HRAMATKA_GEN_JSON_MODE=1, never send response_format to these hosts.
-_JSON_MODE_HOST_DENY = frozenset({"google-ais", "ais"})
+# JSON output is a transport contract for current Gemini seats, not a prompt
+# convention. The #171 Gemma measurements remain valid, so Gemma is excluded
+# by model identity rather than through a stale host-wide deny.
+_GEMINI_JSON_MODE_MODELS = frozenset({"gemini-3.6-flash", "gemini-3.1-pro-preview"})
 
 # Latency watchdog: fire when one call exceeds multiplier × rolling median of
 # prior samples in the same TelemetryContext (hang-class visibility for #165).
@@ -84,15 +83,17 @@ def evaluate_latency_watchdog(
     }
 
 
-def json_mode_enabled_for_host(host: str) -> bool:
-    """Whether this transport host may attach response_format=json_object.
+def json_mode_enabled_for_model(model: str) -> bool:
+    """Whether a model gets API-enforced JSON output for this run.
 
-    Requires explicit env opt-in (``HRAMATKA_GEN_JSON_MODE=1``). Google-AIS is
-    hard-denied per #171 probe + production hang evidence.
+    Gemini seats default to constrained JSON on every supported transport.
+    Set ``HRAMATKA_GEN_JSON_MODE=0`` to disable it for one run. Gemma remains
+    denied because #171 measured its JSON mode as unsafe; its prompt contract
+    is intentionally not promoted to a transport contract.
     """
-    if os.environ.get("HRAMATKA_GEN_JSON_MODE") != "1":
+    if os.environ.get("HRAMATKA_GEN_JSON_MODE") == "0":
         return False
-    return host not in _JSON_MODE_HOST_DENY
+    return model.split("/", 1)[-1] in _GEMINI_JSON_MODE_MODELS
 
 
 class ProviderConcurrencyBudget:
@@ -797,11 +798,10 @@ class HttpChatTransport:
             except ValueError:
                 pass
 
-        # #171: constrained decoding is opt-in (HRAMATKA_GEN_JSON_MODE=1) and
-        # host-gated. google-ais is denied (production hang + probe: accept-
-        # but-thought-wrapped; no pure-JSON benefit). OpenRouter may use it.
-        # The engineered prompt carries its own JSON contract either way.
-        json_mode_enabled = json_mode_enabled_for_host(self.host)
+        # Current Gemini seats enforce JSON at the API boundary, including AIS.
+        # Gemma remains excluded by the #171 measurements. The per-run escape
+        # hatch is HRAMATKA_GEN_JSON_MODE=0.
+        json_mode_enabled = json_mode_enabled_for_model(model)
 
         payload = {
             "model": wire_model,
@@ -999,6 +999,7 @@ class VertexGenerateContentTransport:
     host: str = "google-vertex"
     max_attempts: int = 3
     retry_backoff_s: float = 0.75
+    retry_json_mode_on_400: bool = True
 
     def __call__(self, prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
         import time
@@ -1020,9 +1021,12 @@ class VertexGenerateContentTransport:
                 temperature = float(temp_env)
             except ValueError:
                 pass
+        generation_config = {"temperature": temperature}
+        if json_mode_enabled_for_model(model):
+            generation_config["responseMimeType"] = "application/json"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": temperature},
+            "generationConfig": generation_config,
         }  # TOOLLESS: native Vertex payload has no ``tools`` key by construction
         headers = {
             "x-goog-api-key": api_key,
@@ -1050,6 +1054,29 @@ class VertexGenerateContentTransport:
                 try:
                     with provider_call_slot():
                         response = client.post(url, json=payload, headers=headers)
+
+                    if (
+                        self.retry_json_mode_on_400
+                        and response.status_code == 400
+                        and "responseMimeType" in generation_config
+                    ):
+                        log.warning(
+                            "%s 400 JSON mode bad request. Retrying without it. model=%s",
+                            self.host,
+                            model,
+                        )
+                        ctx = telemetry_ctx.get()
+                        if ctx is not None:
+                            ctx.record_event(
+                                {
+                                    "event": "json_mode_unsupported",
+                                    "host": self.host,
+                                    "model": model,
+                                }
+                            )
+                        generation_config.pop("responseMimeType", None)
+                        with provider_call_slot():
+                            response = client.post(url, json=payload, headers=headers)
                 except httpx.TimeoutException:
                     log.warning("%s timeout model=%s attempt=%d", self.host, model, attempt)
                     last_error = GeneratorUnavailable(f"provider timed out after {timeout_s}s")
@@ -1428,7 +1455,6 @@ def make_qualification_pinned_generator(
                 base_url=DEFAULT_GEMMA_AIS_BASE_URL,
                 host="google-ais",
                 max_attempts=1,
-                retry_json_mode_on_400=False,
             ),
         )
     observed_host = getattr(port._transport, "host", "")
@@ -1478,6 +1504,7 @@ class RoundRobinGeneratorSelector:
 ALLOWED_MODELS = {
     "google-ais/gemma-4-31b-it",
     "google-ais/gemma-4-26b-a4b-it",
+    "google-ais/gemini-3.6-flash",
     "google-ais/gemini-3.1-pro-preview",
     "deepseek/deepseek-v4-pro",
 }
@@ -1548,6 +1575,13 @@ def _build_generator_port(model_id: str) -> AISGeneratorPort:
         )
         # Existing OpenRouter fallback applies to gemma ids
         return _with_failover(ais, openrouter)
+
+    elif model_id == "google-ais/gemini-3.6-flash":
+        ais, vertex = _gemini_routes(
+            ais_model="google-ais/gemini-3.6-flash",
+            vertex_model="gemini-3.6-flash",
+        )
+        return _with_failover(ais, vertex, fallback_label="gemini")
 
     elif model_id == "google-ais/gemini-3.1-pro-preview":
         ais, vertex = _gemini_routes(

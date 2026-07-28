@@ -141,7 +141,8 @@ def test_wire_model_strips_our_provider_prefix():
     assert "/" not in seen["body"]["model"]
 
 
-def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header():
+@pytest.mark.parametrize("model", ("gemini-3.6-flash", "gemini-3.1-pro-preview"))
+def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header(model):
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -152,16 +153,17 @@ def test_vertex_request_uses_native_generate_content_shape_and_separate_key_head
         return httpx.Response(200, json=VERTEX_OK_BODY)
 
     out = _vertex_transport(handler)(
-        "PROMPT-BODY", api_key="vertex-only-key", model="gemini-3.6-flash", timeout_s=5
+        "PROMPT-BODY", api_key="vertex-only-key", model=model, timeout_s=5
     )
 
     assert out == '{"activities": []}'
-    assert seen["url"] == f"{VERTEX_BASE_URL}/models/gemini-3.6-flash:generateContent"
+    assert seen["url"] == f"{VERTEX_BASE_URL}/models/{model}:generateContent"
     assert seen["authorization"] is None
     assert seen["vertex_key"] == "vertex-only-key"
+    assert seen["body"]["generationConfig"]["responseMimeType"] == "application/json"
     assert seen["body"] == {
         "contents": [{"role": "user", "parts": [{"text": "PROMPT-BODY"}]}],
-        "generationConfig": {"temperature": 0.2},
+        "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
     }
     assert "tools" not in seen["body"]
 
@@ -200,6 +202,43 @@ def test_vertex_retries_5xx_and_refuses_prefixed_model_ids():
         _vertex_transport(handler)(
             "p", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5
         )
+
+
+def test_vertex_400_fallback_retries_without_json_mime(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(400, text="responseMimeType is unsupported")
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    context = providers.TelemetryContext(
+        job_id="test-vertex-400",
+        phases_total=1,
+        calls_planned=1,
+        calls_done=0,
+    )
+    token = providers.telemetry_ctx.set(context)
+    try:
+        assert _vertex_transport(handler)(
+            "prompt", api_key="k", model="gemini-3.6-flash", timeout_s=5
+        ) == ('{"activities": []}')
+    finally:
+        providers.telemetry_ctx.reset(token)
+
+    assert len(calls) == 2
+    assert calls[0]["generationConfig"]["responseMimeType"] == "application/json"
+    assert "responseMimeType" not in calls[1]["generationConfig"]
+    events = [trace for trace in context.traces if trace.get("event") == "json_mode_unsupported"]
+    assert events == [
+        {
+            "event": "json_mode_unsupported",
+            "host": "google-vertex",
+            "model": "gemini-3.6-flash",
+        }
+    ]
 
 
 # --- retry semantics: bounded backoff on transient provider failures --------
@@ -630,7 +669,7 @@ def test_calls_done_never_regresses_under_concurrent_updates():
 
 
 # --- Multi-model selectable generation -------------------------------------
-def test_make_generator_resolves_all_4_models(monkeypatch):
+def test_make_generator_resolves_all_allowed_models(monkeypatch):
     monkeypatch.setenv("HRAMATKA_PAID_MODEL_OK", "1")
     monkeypatch.setenv("HRAMATKA_DEEPSEEK_API_KEY", "test-ds-key")
 
@@ -673,6 +712,16 @@ def test_gemini_paid_model_gate(monkeypatch):
     with pytest.raises(ValueError) as exc:
         providers.make_generator("google-ais/gemini-3.1-pro-preview")
     assert "HRAMATKA_PAID_MODEL_OK=1 is not set" in str(exc.value)
+
+
+def test_gemini_flash_is_an_allowed_free_seat(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemini-3.6-flash")
+    monkeypatch.delenv("HRAMATKA_PAID_MODEL_OK", raising=False)
+
+    assert providers.validate_and_get_model() == "google-ais/gemini-3.6-flash"
+    assert providers.make_generator("google-ais/gemini-3.6-flash")._model == (
+        "google-ais/gemini-3.6-flash"
+    )
 
 
 def test_deepseek_key_gate(monkeypatch):
@@ -806,28 +855,38 @@ def test_payload_env_overrides_honored(monkeypatch):
     assert "response_format" not in seen["body"]
 
 
-def test_json_mode_denied_on_google_ais_even_when_env_on(monkeypatch):
-    """#171: AIS host must never attach response_format (hang + probe)."""
-    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
+@pytest.mark.parametrize(
+    ("model", "enabled"),
+    (
+        ("google-ais/gemini-3.6-flash", True),
+        ("google-ais/gemini-3.1-pro-preview", True),
+        ("google-ais/gemma-4-31b-it", False),
+        ("google-ais/gemma-4-26b-a4b-it", False),
+    ),
+)
+def test_ais_json_mode_is_enforced_for_gemini_seats_not_gemma(monkeypatch, model, enabled):
+    """Gemini uses the API contract by default; #171's Gemma deny remains."""
+    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=OK_BODY)
 
-    for host in ("google-ais", "ais"):
-        seen.clear()
-        transport = providers.HttpChatTransport(
-            base_url="https://prov.example/v1",
-            client=_client(handler),
-            host=host,
-            retry_backoff_s=0,
-        )
-        transport("prompt", api_key="k", model="m", timeout_s=5)
-        assert "response_format" not in seen["body"], host
+    transport = providers.HttpChatTransport(
+        base_url="https://prov.example/v1",
+        client=_client(handler),
+        host="google-ais",
+        retry_backoff_s=0,
+    )
+    transport("prompt", api_key="k", model=model, timeout_s=5)
+    if enabled:
+        assert seen["body"]["response_format"] == {"type": "json_object"}
+    else:
+        assert "response_format" not in seen["body"]
 
 
-def test_json_mode_enabled_on_openrouter_when_env_on(monkeypatch):
+def test_gemma_json_mode_remains_denied_even_when_legacy_env_is_enabled(monkeypatch):
     monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
     seen = {}
 
@@ -843,7 +902,37 @@ def test_json_mode_enabled_on_openrouter_when_env_on(monkeypatch):
         retry_backoff_s=0,
     )
     transport("prompt", api_key="k", model="google/gemma-4-31b-it", timeout_s=5)
-    assert seen["body"]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in seen["body"]
+
+
+def test_json_mode_can_be_disabled_per_run_for_gemini(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "0")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    transport = providers.HttpChatTransport(
+        base_url="https://prov.example/v1",
+        client=_client(handler),
+        host="google-ais",
+        retry_backoff_s=0,
+    )
+    transport("prompt", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5)
+    assert "response_format" not in seen["body"]
+
+
+def test_vertex_json_mode_can_be_disabled_per_run_for_gemini(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "0")
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    _vertex_transport(handler)("prompt", api_key="k", model="gemini-3.6-flash", timeout_s=5)
+    assert "responseMimeType" not in seen["body"]["generationConfig"]
 
 
 def test_400_fallback_retry_without_json_mode(monkeypatch):
@@ -868,15 +957,17 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
     token = providers.telemetry_ctx.set(ctx)
 
     try:
-        # #171: JSON mode is AIS-denied; exercise 400 fallback on openrouter.
+        # Gemini JSON mode must retain the one-call 400 fallback without weakening
+        # the non-Gemini (Gemma) deny policy.
         transport = providers.HttpChatTransport(
-            base_url="https://openrouter.example/v1",
+            base_url="https://ais.example/v1",
             client=_client(handler),
-            host="openrouter",
-            strip_model_prefix=False,
+            host="google-ais",
             retry_backoff_s=0,
         )
-        out = transport("prompt", api_key="k", model="m", timeout_s=5)
+        out = transport(
+            "prompt", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5
+        )
         assert out == '{"activities": []}'
 
         # Verify first call had json_object and second didn't
@@ -887,8 +978,8 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
         # Verify telemetry event was recorded
         events = [t for t in ctx.traces if t.get("event") == "json_mode_unsupported"]
         assert len(events) == 1
-        assert events[0]["host"] == "openrouter"
-        assert events[0]["model"] == "m"
+        assert events[0]["host"] == "google-ais"
+        assert events[0]["model"] == "google-ais/gemini-3.6-flash"
     finally:
         providers.telemetry_ctx.reset(token)
 
