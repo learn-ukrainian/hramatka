@@ -215,6 +215,56 @@ after publishing.
 - **Receipts are head-bound.** If the PR head moves after sealing, the old
   record is invalid. Create a new review comment at the new head and re-run the
   full ceremony.
+
+### Post-merge: trusted workflow digest rotation
+
+Trigger: a merged PR changed `.github/workflows/review-attestation.yml`.
+
+Symptom signature: every subsequent `review-attestation` workflow run fails
+with the generic «attestor request failed». The failure is not in the lifecycle
+marker, the sealed SQLite record, or the OIDC layer: the merge replaced the
+pinned workflow file while the API environment still holds the pre-merge
+SHA-256 digest, so every new workflow run is rejected by the digest allow-list.
+
+Proven instance recorded in issue #293 (2026-07-28):
+
+> **Operational companion step (post-merge, completed 2026-07-28 ~13:0xZ) — for the record:** this PR changed `.github/workflows/review-attestation.yml`, and the attestor service pins that file's sha256 (`HRAMATKA_REVIEW_ATTESTATION_TRUSTED_WORKFLOW_DIGEST`). After the merge, every attest ran the NEW workflow against the OLD pin and failed as the generic «attestor request failed» (proven: old pin a8dc6be8… = pre-merge file, new file 17bc7967…; all content-layer checks — marker, sealed record, claims, digests — verified green locally). Rotated the pin to 17bc7967e2a65b98fc8f3117eee2ef6b2806b7b434a56a026837e2920c545bc0 on the host (env backup taken), service restarted, readyz 200.
+>
+> **Standing rule: any merge touching `review-attestation.yml` requires this digest rotation on the host as its finalize leg.**
+
+Rotation recipe (host-side, root only; never print or commit secret values):
+
+1. At the merged commit, compute the digest of the new workflow file:
+
+   ```sh
+   git show <merged-commit>:.github/workflows/review-attestation.yml | sha256sum
+   ```
+
+2. Back up `/etc/hramatka/api.env` before editing.
+
+3. Set `HRAMATKA_REVIEW_ATTESTATION_TRUSTED_WORKFLOW_DIGEST` in
+   `/etc/hramatka/api.env` to the new SHA-256 value. Do not change any other
+   variable and do not print the file.
+
+4. Restart the API service:
+
+   ```sh
+   systemctl restart hramatka-api.service
+   ```
+
+5. Verify `/api/readyz` returns HTTP 200 from the activated release.
+
+6. Verify with a fresh attest/label cycle on an eligible PR: apply the
+   `review-attestation` label, wait for the bot receipt, and rerun the latest
+   `PR lifecycle` workflow. Only after that cycle is green treat the merge as
+   fully finalized.
+
+Standing rail: a PR that touches `.github/workflows/review-attestation.yml`
+can **never** self-attest. An operator must merge such a PR by hand and
+immediately run the rotation above as the finalize leg. The workflow change
+must still be reviewed and attested from a different PR/head, following the
+same cross-family rule.
+
 7. Generate and install the signing key only in a root shell on the host. Never
    redirect its contents to a terminal, paste it into a ticket, or copy it to a
    checkout:
