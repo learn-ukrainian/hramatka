@@ -78,7 +78,11 @@ change, provisioning, or disclosure of any secret.
    process-local concurrency limit of one are application-level defenses;
    Caddy independently enforces exact method/path, body size, timeouts, no
    cache, no CORS, and skipped access logging.
-### Sealed review records
+### Attestation ceremony walkthrough
+
+This is the agent-runnable cross-family review attestation flow proven on
+PRs #301, #302, and #303 (2026-07-27/28). It is documentation only: it does not
+authorize host access, grant OIDC credentials, or expose the signing key.
 
 An existing cross-family review is eligible for attestation only after a sealed
 review record is added to the host-side attestation database. The record is
@@ -89,6 +93,33 @@ Actions token and rejects an edited, deleted, swapped, or head-mismatched
 record. A lifecycle marker is only a consistency check; it cannot authorize a
 signature by itself.
 
+#### 1. Write the review-of-record comment
+
+The review comment that will be sealed must explicitly contain all three
+elements the attestor prompt looks for:
+
+- an approve/clean verdict phrase (`APPROVE — clean`, `approved`, or `clean`);
+- the reviewer **family** word (e.g. `anthropic`);
+- the concrete **model** words (e.g. `claude fable 5`).
+
+Proven examples from #301/#302/#303:
+
+> Review of record — cross-family: reviewer family **anthropic**, model
+> **claude fable 5**; author lane grok/xAI.
+> **Verdict: APPROVE — clean.**
+
+> Review of record — cross-family: reviewer family **anthropic**, model
+> **claude fable 5**; author lane codex/OpenAI.
+> **Verdict: APPROVE — clean.**
+
+> Review of record — cross-family: reviewer family **anthropic**, model
+> **claude fable 5**; author lane kimi/moonshot.
+> **Verdict: APPROVE — clean.**
+
+The comment must be left on the PR at the exact head that will be sealed.
+
+#### 2. Seal the review record on the host
+
 Fetch the private review comment through an authenticated local GitHub client
 and stream its JSON to the host registrar. Do not put a token in the command,
 terminal output, host environment, or repository. The command prints only the
@@ -96,20 +127,94 @@ sealed record identifiers and digest:
 
 ```sh
 gh api repos/<owner>/<repo>/issues/comments/<comment-id> | \
-  ~/.local/bin/hramatka-vps \
-    'sudo -u hramatka /opt/hramatka/current/.venv/bin/python \
-    -m hramatka.ops.register_review_record \
+  ssh ops@<host> 'cd /opt/hramatka/current && \
+    sudo -n .venv/bin/python -m hramatka.ops.register_review_record \
     --database /var/lib/hramatka/review-attestations.sqlite3 \
-    --repository <owner>/<repo> --pr-number <n> --head-sha <40-hex-sha> \
-    --reviewer-family <family> --reviewer-model <family>/<concrete-model> \
-    --provider-host https://<provider-origin>'
+    --repository <owner>/<repo> \
+    --pr-number <n> \
+    --head-sha <40-hex-sha> \
+    --reviewer-family <family> \
+    --reviewer-model <family>/<concrete-model> \
+    --provider-host <https-url>'
 ```
 
-The input comment must itself state a clean/approved review and name the
-declared reviewer family and concrete model. To replace review evidence, create
-a new review at a new PR head; do not modify the sealed SQLite row. After
-registration, apply `review-attestation`; the bot publisher replaces the first
-lifecycle marker with its own signed receipt URL before it removes the label.
+`--reviewer-model` **must** be in `family/model` form, for example
+`anthropic/claude-fable-5`. The concrete model must match the model words in the
+review comment.
+
+To replace review evidence, create a new review at a new PR head; do not modify
+the sealed SQLite row.
+
+#### 3. Add the lifecycle marker to the PR body
+
+Add a single HTML comment to the PR body. It must contain exactly eight fields
+in one JSON blob:
+
+```html
+<!-- hramatka-pr-lifecycle:v1
+  {"owner":"claude-hramatka",
+   "state":"ready",
+   "blocked_by":"none",
+   "next_action":"trusted review attestation published",
+   "author_family":"<author-family>",
+   "review_receipt":"<sealed-review-comment-html-url>",
+   "reviewer_family":"<reviewer-family>",
+   "review_head":"<current-40-hex-head>"}
+-->
+```
+
+Proven markers from the attested PRs:
+
+- #301 (head `273139ae3bc84c6303561aa142a4fa689019fc7d`):
+  ```html
+  <!-- hramatka-pr-lifecycle:v1 {"author_family":"xai","blocked_by":"none","next_action":"trusted review attestation published","owner":"claude-hramatka","review_head":"273139ae3bc84c6303561aa142a4fa689019fc7d","review_receipt":"https://github.com/learn-ukrainian/learn-ukrainian-infra-private/pull/301#issuecomment-5097486342","reviewer_family":"anthropic","state":"ready"} -->
+  ```
+- #302 (head `9352fa8b0c65de23f4e3404a15e72e1562c4adae`):
+  ```html
+  <!-- hramatka-pr-lifecycle:v1 {"author_family":"openai","blocked_by":"none","next_action":"trusted review attestation published","owner":"claude-hramatka","review_head":"9352fa8b0c65de23f4e3404a15e72e1562c4adae","review_receipt":"https://github.com/learn-ukrainian/learn-ukrainian-infra-private/pull/302#issuecomment-5097322925","reviewer_family":"anthropic","state":"ready"} -->
+  ```
+- #303 (head `a707493d9a20d7f76bcee7c21b8175f41724d4a8`):
+  ```html
+  <!-- hramatka-pr-lifecycle:v1 {"author_family":"moonshot","blocked_by":"none","next_action":"trusted review attestation published","owner":"claude-hramatka","review_head":"a707493d9a20d7f76bcee7c21b8175f41724d4a8","review_receipt":"https://github.com/learn-ukrainian/learn-ukrainian-infra-private/pull/303#issuecomment-5097562414","reviewer_family":"anthropic","state":"ready"} -->
+  ```
+
+`review_receipt` is the **human review comment URL** at the time the marker is
+first written. The bot will rewrite it to its own signed receipt comment URL
+after publishing.
+
+#### 4. Apply the label and complete the lifecycle
+
+1. Apply the `review-attestation` label to the PR.
+2. Wait for the `Review attestation` workflow to publish the bot receipt
+   (proven green runs: #301 run `30335798445`, #302 run `30309956993`, #303 run
+   `30311436701`). The bot removes the label and posts a receipt comment that
+   includes a signed `hramatka-review-attestation:v2` payload.
+3. After the bot receipt appears, **rerun the latest `PR lifecycle` workflow
+   run** (do not create a new run manually; use the rerun button on the latest
+   run). Proven green validate jobs: #301 run `30335790672`, #302 run
+   `30309955879`, #303 run `30311435994`.
+4. Confirm the lifecycle validate job is green and the marker in the PR body now
+   points to the bot receipt URL with `next_action` set to `published`.
+5. Merge from a private-repository working directory. Do not merge across a
+   public checkout or from a bridge state directory.
+
+#### 5. ⚠️ Gotchas
+
+- **Bot rewrites the marker.** After successful attestation the bot publisher
+  replaces the marker: `review_receipt` becomes the bot receipt comment URL and
+  `next_action` becomes `published`. On any subsequent push, **rewrite the whole
+  marker cleanly** with the new head and a fresh human review URL; never patch
+  individual fields in place.
+- **"Attestor request failed" is a generic surface.** It most often means the
+  lifecycle marker and the sealed SQLite record disagree (wrong head, wrong
+  comment URL, wrong reviewer family/model, or a stale marker). Check the marker
+  **before** suspecting the attestor service or OIDC layer.
+- **A PR touching `.github/workflows/review-attestation.yml` can never
+  self-attest.** That workflow change must be reviewed and attested from a
+  different PR/head, following the same cross-family rule.
+- **Receipts are head-bound.** If the PR head moves after sealing, the old
+  record is invalid. Create a new review comment at the new head and re-run the
+  full ceremony.
 7. Generate and install the signing key only in a root shell on the host. Never
    redirect its contents to a terminal, paste it into a ticket, or copy it to a
    checkout:
