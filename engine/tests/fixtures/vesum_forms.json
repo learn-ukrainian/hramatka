@@ -186,6 +186,12 @@
   "pos": "noun"
  },
  {
+  "word_form": "вікон",
+  "lemma": "вікно",
+  "tags": "noun:inanim:p:v_rod",
+  "pos": "noun"
+ },
+ {
   "word_form": "годин",
   "lemma": "година",
   "tags": "noun:inanim:p:v_rod",
@@ -514,6 +520,12 @@
   "lemma": "зате",
   "tags": "conj:coord",
   "pos": "conj"
+ },
+ {
+  "word_form": "зі",
+  "lemma": "зі",
+  "tags": "prep",
+  "pos": "prep"
  },
  {
   "word_form": "знаходять",
@@ -1036,6 +1048,12 @@
   "lemma": "не",
   "tags": "part",
   "pos": "part"
+ },
+ {
+  "word_form": "ніж",
+  "lemma": "ніж",
+  "tags": "conj:subord",
+  "pos": "conj"
  },
  {
   "word_form": "неспішного",

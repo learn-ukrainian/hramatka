@@ -302,4 +302,5 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         "hramatka.engine.true_false_catalog_v3",
         "hramatka.engine.short_writing_constraints_v3",
         "hramatka.engine.lesson_capacity_v3",
+        "hramatka.engine.prompt_pack_v3",
     }.isdisjoint(set(json.loads(completed.stdout)))
