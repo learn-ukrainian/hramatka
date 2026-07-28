@@ -178,6 +178,34 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class CertifiedTargetToken:
+    """One closed mark-the-words target, located in its verbatim anchor span."""
+
+    sentence_id: str
+    token_id: str
+    start_offset: int
+    end_offset: int
+    surface: str
+
+    def __post_init__(self) -> None:
+        if not self.sentence_id.strip() or not self.token_id.strip() or not self.surface.strip():
+            raise ValueError(
+                "Certified target tokens need sentence, token, and surface identities."
+            )
+        if self.start_offset < 0 or self.end_offset <= self.start_offset:
+            raise ValueError("Certified target token offsets must be ordered, non-negative bounds.")
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "sentence_id": self.sentence_id,
+            "token_id": self.token_id,
+            "start_offset": self.start_offset,
+            "end_offset": self.end_offset,
+            "surface": self.surface,
+        }
+
+
+@dataclass(frozen=True)
 class CertifiedUnit:
     """One immutable, allocatable unit of a v3 activity plan."""
 
@@ -225,6 +253,7 @@ class UnitPlan:
     disposition: Literal["certified", "unavailable"]
     units: tuple[CertifiedUnit, ...]
     registered_constraints: tuple[str, ...] = ()
+    certified_target_tokens: tuple[CertifiedTargetToken, ...] = ()
 
     def __post_init__(self) -> None:
         floor = floor_for(self.activity_type)
@@ -234,9 +263,10 @@ class UnitPlan:
             raise ValueError("Unit plans are certified or unavailable only.")
         object.__setattr__(self, "units", tuple(self.units))
         object.__setattr__(self, "registered_constraints", tuple(self.registered_constraints))
+        object.__setattr__(self, "certified_target_tokens", tuple(self.certified_target_tokens))
         if self.disposition == "unavailable":
-            if self.units:
-                raise ValueError("Unavailable plans cannot carry partial units.")
+            if self.units or self.certified_target_tokens:
+                raise ValueError("Unavailable plans cannot carry partial certified substrate.")
             return
         if len(self.units) < floor.minimum_units:
             raise ValueError("Certified plans must meet their complete activity floor.")
@@ -244,8 +274,7 @@ class UnitPlan:
         if len(unit_ids) != len(set(unit_ids)):
             raise ValueError("Certified unit IDs must be distinct.")
         normalized = [
-            normalize_distinctness_key(self.activity_type, unit.distinctness)
-            for unit in self.units
+            normalize_distinctness_key(self.activity_type, unit.distinctness) for unit in self.units
         ]
         if len(normalized) != len(set(normalized)):
             raise ValueError("Duplicate or paraphrased units cannot satisfy a v3 floor.")
@@ -259,6 +288,32 @@ class UnitPlan:
             for unit in self.units
         ):
             raise ValueError("Each error-correction unit needs exactly one certified error.")
+        if self.activity_type != "mark-the-words" and self.certified_target_tokens:
+            raise ValueError("Only mark-the-words plans may carry certified target tokens.")
+        if self.activity_type == "mark-the-words":
+            try:
+                token_positions = {
+                    (token.sentence_id, token.token_id) for token in self.certified_target_tokens
+                }
+                unit_positions = {
+                    (
+                        str(unit.distinctness["target"]["sentence_id"]),
+                        str(unit.distinctness["target"]["token_id"]),
+                    )
+                    for unit in self.units
+                }
+            except (AttributeError, KeyError, TypeError) as exc:
+                raise ValueError(
+                    "Mark-the-words units need target positions matching their token records."
+                ) from exc
+            if len(token_positions) != len(self.certified_target_tokens):
+                raise ValueError("Certified mark-the-words target tokens must be unique.")
+            if len(self.certified_target_tokens) < floor.minimum_units:
+                raise ValueError("Mark-the-words plans need their complete certified target list.")
+            if token_positions != unit_positions:
+                raise ValueError(
+                    "Target-token records must match the certified mark-the-words units."
+                )
 
     @property
     def floor_met(self) -> bool:
@@ -272,6 +327,9 @@ class UnitPlan:
             "disposition": self.disposition,
             "units": [unit.to_dict() for unit in self.units],
             "registered_constraints": list(self.registered_constraints),
+            "certified_target_tokens": [
+                target.to_dict() for target in self.certified_target_tokens
+            ],
             "floor_met": self.floor_met,
         }
 
@@ -308,11 +366,13 @@ def certify_unit_plan(
     activity_type: str,
     units: Sequence[CertifiedUnit],
     registered_constraints: Sequence[str] = (),
+    certified_target_tokens: Sequence[CertifiedTargetToken] = (),
 ) -> UnitPlan:
     """Return a complete immutable plan or the only allowed alternative: unavailable."""
     floor_for(activity_type)
     candidate_units = tuple(units)
     constraints = tuple(registered_constraints)
+    targets = tuple(certified_target_tokens)
     if not _is_certifiable(activity_type, candidate_units, constraints):
         return UnitPlan(
             slot_id=slot_id,
@@ -321,11 +381,21 @@ def certify_unit_plan(
             disposition="unavailable",
             units=(),
         )
-    return UnitPlan(
-        slot_id=slot_id,
-        phase=phase,
-        activity_type=activity_type,
-        disposition="certified",
-        units=candidate_units,
-        registered_constraints=constraints,
-    )
+    try:
+        return UnitPlan(
+            slot_id=slot_id,
+            phase=phase,
+            activity_type=activity_type,
+            disposition="certified",
+            units=candidate_units,
+            registered_constraints=constraints,
+            certified_target_tokens=targets,
+        )
+    except (KeyError, TypeError, ValueError):
+        return UnitPlan(
+            slot_id=slot_id,
+            phase=phase,
+            activity_type=activity_type,
+            disposition="unavailable",
+            units=(),
+        )
