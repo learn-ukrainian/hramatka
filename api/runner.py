@@ -8,11 +8,13 @@ import time
 
 from jsonschema import ValidationError
 
-# Floor failures use a typed exception (FloorUnmetError) so classification
-# never relies on string matching. THIN vs SHORTFALL is carried by blames_source.
-from hramatka.engine.content_density import FLOOR_SHORTFALL_UA_MESSAGE
-
-from .baking.port import BakeError, FloorUnmetError, LessonBaker, ProviderUnavailable
+from .baking.port import (
+    FLOOR_SHORTFALL_UA_MESSAGE,
+    BakeError,
+    FloorUnmetError,
+    LessonBaker,
+    ProviderUnavailable,
+)
 from .lesson import materialize_lesson
 from .store import JobStore, PersistenceUnavailable
 from .validation import validate_lesson
@@ -281,10 +283,6 @@ class BakeRunner:
                 )
 
     def _bake_with_one_provider_retry(self, job) -> dict:  # JobRecord is deliberately duck-typed.
-        # The runner supplies cancellation/deadline context once, but remains
-        # deliberately blind to slots, selection, density, and floor policy.
-        from hramatka.engine import repair
-
         request = {
             "anchor_id": job.id,
             "body_uk": job.anchor_text,
@@ -301,7 +299,6 @@ class BakeRunner:
             else self._baker
         )
         for attempt in range(2):
-            deadline_token = repair.set_hard_deadline(time.monotonic() + self._hard_timeout_seconds)
             try:
                 return baker.bake(request, job.duration, job.focus)
             except ProviderUnavailable as error:
@@ -315,8 +312,6 @@ class BakeRunner:
                     or self._stop.wait(_PROVIDER_RETRY_DELAY_SECONDS * (2**attempt))
                 ):
                     raise
-            finally:
-                repair.reset_hard_deadline(deadline_token)
         raise AssertionError("Provider retry loop must return or raise.")  # pragma: no cover
 
     def _log_safe_bake_error(self, job, error: Exception) -> None:

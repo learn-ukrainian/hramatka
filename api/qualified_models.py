@@ -14,15 +14,14 @@ from typing import Final
 
 QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # These literals are the output of qualification tooling's v3 authorities.
-# Keep this production selector import-free with respect to ``*_v3`` modules
-# until slice 7 performs the atomic runtime cutover.  The tooling validates
-# them against ``template_digest()`` and ``density_floor_fingerprint()`` before
-# it may transcribe a route aggregate.
+# The live baker now imports the v3 path; transcription still validates these
+# fail-closed selector literals against its template and density authorities
+# before it may copy a route aggregate here.
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3"
 # This is the canonical three-anchor aggregate of the currently pinned v3
-# qualification prompts.  It is intentionally a selector literal, rather than
-# a v3 import, until slice 7 opens the production v3 runtime boundary.
-PROMPT_SHA256: Final = "677dcff7bdb48337dd54c6921a373b7fb51339f3f545f0fff86a594536d687f3"
+# qualification prompts.  It remains a selector literal so an empty registry
+# fails closed until the orchestrator transcribes a new matrix.
+PROMPT_SHA256: Final = "38bbbb3b98f0ef64fea655beb561e12eb7d426a74d23d9cd9c80bab766663376"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.2"
 TEMPLATE_SHA256: Final = "517ad0ab9cac2a21ede0bf158e423d08c986f848197f23ce37e5bc3da94d6d03"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"

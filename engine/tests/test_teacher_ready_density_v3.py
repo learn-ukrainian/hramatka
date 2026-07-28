@@ -47,9 +47,7 @@ def _distinctness(activity_type: str, index: int) -> dict[str, object]:
         return {"target": {"sentence_id": "s-1", "token_id": f"t-{index}"}}
     if activity_type == "text-questions":
         categories = (
-            ("comprehension",) * 3
-            + ("explanation_inference",) * 3
-            + ("anchored_application",) * 2
+            ("comprehension",) * 3 + ("explanation_inference",) * 3 + ("anchored_application",) * 2
         )
         return {
             "stem": f"Нормований навчальний пункт {index}",
@@ -280,7 +278,7 @@ def test_density_floor_fingerprint_tracks_the_locked_v3_authority() -> None:
     )
 
 
-def test_v3_contract_modules_are_unreachable_from_the_default_production_import_graph() -> None:
+def test_v3_contract_modules_are_the_default_production_import_graph() -> None:
     root = Path(__file__).resolve().parents[3]
     env = os.environ.copy()
     for name in tuple(env):
@@ -303,7 +301,7 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         text=True,
     )
 
-    assert json.loads(completed.stdout) == []
+    loaded = set(json.loads(completed.stdout))
     assert {
         "hramatka.engine.unit_builders_v3",
         "hramatka.engine.true_false_catalog_v3",
@@ -311,16 +309,31 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         "hramatka.engine.density_evaluator_v3",
         "hramatka.engine.lesson_capacity_v3",
         "hramatka.engine.prompt_pack_v3",
-    }.isdisjoint(set(json.loads(completed.stdout)))
+        "hramatka.engine.density_receipt_v3",
+        "hramatka.engine.teacher_ready_density_v3",
+        "hramatka.engine.unit_plan_v3",
+    }.issubset(loaded)
+    assert {
+        "hramatka.engine.content_density",
+        "hramatka.engine.generate",
+        "hramatka.engine.pipeline",
+        "hramatka.engine.prompt_pack",
+        "hramatka.engine.registry",
+        "hramatka.engine.repair",
+        "hramatka.engine.selector",
+    }.isdisjoint(_production_engine_modules(root, env))
 
-    tooling = subprocess.run(
+
+def _production_engine_modules(root: Path, env: dict[str, str]) -> set[str]:
+    """Return the engine modules loaded by a clean production API import."""
+    completed = subprocess.run(
         [
             sys.executable,
             "-c",
             (
-                "import json, sys; import hramatka.qualification; "
+                "import json, sys; import hramatka.api.app; "
                 "print(json.dumps(sorted(name for name in sys.modules "
-                "if name.startswith('hramatka.engine.') and name.endswith('_v3'))))"
+                "if name.startswith('hramatka.engine.'))))"
             ),
         ],
         check=True,
@@ -329,14 +342,4 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         env=env,
         text=True,
     )
-    assert set(json.loads(tooling.stdout)) == {
-        "hramatka.engine.density_evaluator_v3",
-        "hramatka.engine.density_receipt_v3",
-        "hramatka.engine.lesson_capacity_v3",
-        "hramatka.engine.prompt_pack_v3",
-        "hramatka.engine.short_writing_constraints_v3",
-        "hramatka.engine.teacher_ready_density_v3",
-        "hramatka.engine.true_false_catalog_v3",
-        "hramatka.engine.unit_builders_v3",
-        "hramatka.engine.unit_plan_v3",
-    }
+    return set(json.loads(completed.stdout))

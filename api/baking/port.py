@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+FLOOR_SHORTFALL_UA_MESSAGE = (
+    "Цього разу не вдалося скласти повний урок. Спробуйте, будь ласка, ще раз."
+)
+
 
 class LessonBaker(Protocol):
     """Future engines must return a ``lu.lesson.v1`` document template."""

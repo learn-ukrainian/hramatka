@@ -1,9 +1,9 @@
-"""Pre-cutover per-slot evaluation and bounded repair for density v3.
+"""Live per-slot evaluation and bounded repair for density v3.
 
-This boundary intentionally consumes a completed :class:`LessonAllocation`.
+This boundary consumes a completed :class:`LessonAllocation`.
 Capacity, substitutions, and replacement eligibility were settled at t=0 by
-``lesson_capacity_v3``; this module only judges a model's serialization of
-that immutable substrate.  It is not imported by the v2 runtime.
+``lesson_capacity_v3``; this module judges a model's serialization of that
+immutable substrate.
 """
 
 from __future__ import annotations

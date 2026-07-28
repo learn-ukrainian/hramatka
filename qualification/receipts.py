@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hramatka.api import qualified_models
 from hramatka.api.qualified_models import (
     DENSITY_CONTRACT_DIGEST,
     DENSITY_CONTRACT_VERSION,
@@ -23,7 +24,15 @@ from hramatka.api.qualified_models import (
     QualificationReceipt,
 )
 from hramatka.engine.prompt_pack_v3 import PROMPT_PACK_VERSION, template_digest
-from hramatka.engine.teacher_ready_density_v3 import FLOOR_TABLE, density_floor_fingerprint
+from hramatka.engine.prompt_pack_v3 import (
+    TEMPLATE_VERSION as LIVE_TEMPLATE_VERSION,
+)
+from hramatka.engine.prompt_pack_v3 import TYPE_KIT_IDENTITY as LIVE_TYPE_KIT_IDENTITY
+from hramatka.engine.teacher_ready_density_v3 import (
+    FLOOR_TABLE,
+    TEACHER_READY_DENSITY_VERSION,
+    density_floor_fingerprint,
+)
 
 CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v3"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
@@ -52,6 +61,28 @@ _QUALIFICATION_SLOT_PHASES = {
 
 class QualificationError(ValueError):
     """A receipt is incomplete, stale, duplicate, or otherwise untrustworthy."""
+
+
+def assert_live_v3_authorities() -> None:
+    """Reject qualification work when selector literals drift from live v3 code.
+
+    The production registry intentionally contains literals so an empty
+    qualification registry can remain fail-closed.  A transcription must still
+    prove every one of those literals names the currently importable v3
+    authority; otherwise a self-consistent but stale receipt run could be
+    copied into the selector.
+    """
+    if (
+        PROMPT_PACK_VERSION != qualified_models.PROMPT_PACK_VERSION
+        or LIVE_TEMPLATE_VERSION != qualified_models.TEMPLATE_VERSION
+        or template_digest() != qualified_models.TEMPLATE_SHA256
+        or TEACHER_READY_DENSITY_VERSION != qualified_models.DENSITY_CONTRACT_VERSION
+        or density_floor_fingerprint() != qualified_models.DENSITY_CONTRACT_DIGEST
+        or LIVE_TYPE_KIT_IDENTITY != qualified_models.TYPE_KIT_IDENTITY
+    ):
+        raise QualificationError(
+            "Production qualification literals do not match the live v3 authorities."
+        )
 
 
 def _canonical_digest(value: object) -> str:
@@ -411,9 +442,11 @@ class CellReceipt:
         if not trace:
             raise QualificationError("Cell receipt must contain a route-bound generation trace.")
         slot_telemetry = tuple(SlotTelemetry.from_dict(entry) for entry in row["slot_telemetry"])
-        if not slot_telemetry or tuple(
-            sorted(slot_telemetry, key=lambda entry: (entry.phase, entry.slot_id))
-        ) != slot_telemetry:
+        if (
+            not slot_telemetry
+            or tuple(sorted(slot_telemetry, key=lambda entry: (entry.phase, entry.slot_id)))
+            != slot_telemetry
+        ):
             raise QualificationError(
                 "v3 slot telemetry must be non-empty and deterministically ordered."
             )
@@ -447,9 +480,10 @@ class CellReceipt:
             )
         ):
             raise QualificationError("v3 density totals must derive from accepted slot receipts.")
-        if density.disposition == "teacher_ready" and {
-            entry.slot_id: entry.phase for entry in accepted
-        } != _QUALIFICATION_SLOT_PHASES:
+        if (
+            density.disposition == "teacher_ready"
+            and {entry.slot_id: entry.phase for entry in accepted} != _QUALIFICATION_SLOT_PHASES
+        ):
             raise QualificationError(
                 "Teacher-ready v3 density requires every scheduled qualification slot exactly once."
             )
@@ -543,7 +577,8 @@ def _diagnostic_density_trace(value: object) -> dict[str, object]:
             phases[phase], {"response_units", "visible_blocks"}, "diagnostic phase density"
         )
         gate = _require_exact_keys(
-            outcomes[phase], {"dropped", "generated", "ready", "requested", "review"},
+            outcomes[phase],
+            {"dropped", "generated", "ready", "requested", "review"},
             "diagnostic gate outcomes",
         )
         if not all(type(count) is int and count >= 0 for count in density.values()) or not all(
@@ -747,13 +782,7 @@ def aggregate_receipts(
     them exactly; missing, stale, duplicate, route-mismatched, or failed cells
     are rejected before any selector receipt can exist.
     """
-    if (
-        template_digest() != TEMPLATE_SHA256
-        or density_floor_fingerprint() != DENSITY_CONTRACT_DIGEST
-    ):
-        raise QualificationError(
-            "Qualification authority literals do not match the current v3 contract."
-        )
+    assert_live_v3_authorities()
     # Re-parse in-memory dataclasses too.  Callers and tests can use
     # ``dataclasses.replace``; qualification must never trust those objects
     # without applying the same strict receipt invariants as persisted JSON.

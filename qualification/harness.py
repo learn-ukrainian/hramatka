@@ -28,14 +28,14 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from hramatka.api.app import create_app
-from hramatka.api.baking.engine_adapter import EngineLessonBaker
+from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker
 from hramatka.api.config import Settings
 from hramatka.api.qualified_models import (
     DENSITY_CONTRACT_VERSION,
     LOGICAL_MODELS,
     QualificationCandidateRegistry,
 )
-from hramatka.engine import ENGINE_VERSION, content_density, data, fixtures, flags, pipeline
+from hramatka.engine import ENGINE_VERSION, data, fixtures, flags
 from hramatka.engine.density_evaluator_v3 import evaluate_phase_with_repair
 from hramatka.engine.lesson_capacity_v3 import (
     AllocatedSlot,
@@ -92,6 +92,10 @@ _V3_PROBE_RE = re.compile(
     r"=== QUALIFICATION V3 PROBE \(metadata\) ===\n```json\n(.*?)\n```",
     re.DOTALL,
 )
+_V3_REPAIR_RE = re.compile(
+    r"=== V3 REPAIR REQUEST \(metadata\) ===\n```json\n(.*?)\n```",
+    re.DOTALL,
+)
 
 
 def _sha(value: object) -> str:
@@ -122,13 +126,20 @@ def _file_digest(path: Path) -> str:
 
 
 def _current_engine_digest() -> str:
+    engine_root = Path(__file__).parents[1] / "engine"
+    v3_sources = (
+        engine_root / "anchor_inventory_v3.py",
+        engine_root / "density_evaluator_v3.py",
+        engine_root / "lesson_capacity_v3.py",
+        engine_root / "prompt_pack_v3.py",
+        engine_root / "teacher_ready_density_v3.py",
+        engine_root / "unit_builders_v3.py",
+        Path(__file__).parents[1] / "api" / "baking" / "engine_adapter_v3.py",
+    )
     return _sha(
         {
             "engine_version": ENGINE_VERSION,
-            "gate_implementation": pipeline._gate_impl_digest(),  # noqa: SLF001
-            "adapter_sha256": _file_digest(
-                Path(__file__).parents[1] / "api" / "baking" / "engine_adapter.py"
-            ),
+            "v3_implementation": {source.name: _file_digest(source) for source in v3_sources},
         }
     )
 
@@ -183,8 +194,7 @@ def _certified_activity(activity: dict[str, Any], kit: Mapping[str, Any]) -> dic
         ]
     elif activity_type == "match-up":
         certified["pairs"] = [
-            {key: pair[key] for key in ("left", "right", "evidence")}
-            for pair in kit["pairs"]
+            {key: pair[key] for key in ("left", "right", "evidence")} for pair in kit["pairs"]
         ]
     elif activity_type == "mark-the-words":
         mark = kit["mark"]
@@ -331,9 +341,7 @@ def _v3_qualification_probe(
         slot_id: str | None = None,
         repair_round: int | None = None,
     ) -> object:
-        prompt = _v3_probe_prompt(
-            context, mode=mode, slot_id=slot_id, repair_round=repair_round
-        )
+        prompt = _v3_probe_prompt(context, mode=mode, slot_id=slot_id, repair_round=repair_round)
         if mode == "initial":
             initial_prompt_digests.append(_sha(prompt))
         route_trace.append(
@@ -470,6 +478,20 @@ def _citations(
     return rows
 
 
+def _payload_units(payload: Mapping[str, Any]) -> int:
+    """Count one delivered v3 activity without consulting retired density code."""
+    activity_type = payload.get("type")
+    if activity_type == "short-writing":
+        return 1
+    collection = {
+        "cloze": "blanks",
+        "match-up": "pairs",
+        "mark-the-words": "target_words",
+    }.get(activity_type, "items")
+    values = payload.get(collection)
+    return len(values) if isinstance(values, list) else 0
+
+
 def _v3_record_from_kit(kit: Mapping[str, Any], *, units: int | None = None) -> dict[str, Any]:
     serialized = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
     if units is not None:
@@ -479,6 +501,81 @@ def _v3_record_from_kit(kit: Mapping[str, Any], *, units: int | None = None) -> 
         "type": kit["type"],
         "activity": {"type": kit["type"]},
         "serialized_units": serialized,
+    }
+
+
+def _v3_live_record_from_kit(
+    kit: Mapping[str, Any], *, unit_limit: int | None = None
+) -> dict[str, Any]:
+    """Return a schema-valid deterministic v3 serializer response for HTTP tests."""
+    activity_type = kit["type"]
+    certified_units = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
+    forms = [unit["allowed_forms"][0] for unit in certified_units]
+    expected_keys = [unit["expected_key_or_rule"]["value"] for unit in certified_units]
+    if activity_type == "quiz":
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "items": [{"question": form, "options": [form, "x"], "correct": 0} for form in forms],
+        }
+        answer_key = {"items": [{"index": index, "correct": 0} for index in range(len(forms))]}
+    elif activity_type == "cloze":
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "text": "x",
+            "blanks": [
+                {"id": index, "answer": form, "options": [form, "x"]}
+                for index, form in enumerate(forms, start=1)
+            ],
+        }
+        answer_key = {
+            "blanks": [{"id": index, "answer": form} for index, form in enumerate(forms, start=1)]
+        }
+    elif activity_type == "fill-in":
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "items": [{"sentence": form, "answer": form, "options": [form, "x"]} for form in forms],
+        }
+        answer_key = {"items": forms}
+    elif activity_type == "true-false":
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "items": [{"statement": form, "correct": True} for form in forms],
+        }
+        answer_key = {"items": [{"index": index, "correct": True} for index in range(len(forms))]}
+    elif activity_type == "match-up":
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "pairs": [
+                {"left": unit["allowed_forms"][0], "right": unit["allowed_forms"][1]}
+                for unit in certified_units
+            ],
+        }
+        answer_key = {
+            "pairs": [{"left_index": index, "right_index": index} for index in range(len(forms))]
+        }
+    elif activity_type == "error-correction":
+        payload = {"type": activity_type, "instruction": "x", "items": forms}
+        answer_key = {"items": expected_keys}
+    elif activity_type == "text-questions":
+        payload = {"type": activity_type, "instruction": "x", "items": forms}
+        answer_key = {"guidance": "x"}
+    elif activity_type == "short-writing":
+        payload = {"type": activity_type, "prompt": " ".join(forms)}
+        answer_key = {"guidance": "x"}
+    else:  # pragma: no cover - the closed production schedule controls kit types.
+        raise AssertionError("Deterministic provider received an unsupported v3 kit.")
+    return {
+        "slot_id": kit["slot_id"],
+        "type": activity_type,
+        "activity": {"payload": payload, "answer_key": answer_key},
+        "serialized_units": (
+            certified_units if unit_limit is None else certified_units[:unit_limit]
+        ),
     }
 
 
@@ -495,6 +592,7 @@ class _DeterministicRouteProvider:
         self._lock = threading.Lock()
         self.calls: list[RepairTraceEntry] = []
         self.prompt_digests: list[str] = []
+        self.initial_prompt_digests: list[str] = []
 
     def for_bake(self) -> _DeterministicRouteProvider:
         return self
@@ -504,48 +602,85 @@ class _DeterministicRouteProvider:
         kits_match = _KITS_RE.search(prompt)
         v3_kits_match = _V3_KITS_RE.search(prompt)
         v3_probe_match = _V3_PROBE_RE.search(prompt)
-        if v3_kits_match is not None and v3_probe_match is not None:
+        v3_repair_match = _V3_REPAIR_RE.search(prompt)
+        if v3_kits_match is not None and v3_probe_match is None:
             try:
                 kits = json.loads(v3_kits_match.group(1))
-                probe = json.loads(v3_probe_match.group(1))
+                repair_metadata = (
+                    json.loads(v3_repair_match.group(1)) if v3_repair_match is not None else None
+                )
             except json.JSONDecodeError as error:
                 raise AssertionError(
-                    "Deterministic provider received invalid v3 probe JSON."
+                    "Deterministic provider received invalid v3 serializer JSON."
                 ) from error
-            if (
-                not isinstance(kits, list)
-                or not isinstance(probe, dict)
-                or probe.get("mode") not in {"initial", "repair", "replacement"}
-                or type(probe.get("phase")) is not int
-            ):
-                raise AssertionError("Deterministic provider received invalid v3 probe metadata.")
-            requested_slot = probe.get("slot_id")
-            if requested_slot is not None and not isinstance(requested_slot, str):
-                raise AssertionError("Deterministic provider received an invalid v3 repair slot.")
-            selected_kits = [
-                kit
-                for kit in kits
-                if requested_slot is None or kit.get("slot_id") == requested_slot
-            ]
-            if not selected_kits or (requested_slot is not None and len(selected_kits) != 1):
-                raise AssertionError("Deterministic provider received an unknown v3 repair slot.")
+            if not isinstance(kits, list) or not kits:
+                raise AssertionError(
+                    "Deterministic provider received an invalid v3 serializer request."
+                )
+            phase = kits[0].get("phase")
+            if type(phase) is not int:
+                raise AssertionError(
+                    "Deterministic provider received a v3 request without a phase."
+                )
+            mode = "initial"
+            if repair_metadata is not None:
+                if (
+                    not isinstance(repair_metadata, dict)
+                    or repair_metadata.get("mode") not in {"repair", "replacement"}
+                    or repair_metadata.get("repair_round") not in {None, 1, 2}
+                    or not isinstance(repair_metadata.get("slot_id"), str)
+                ):
+                    raise AssertionError(
+                        "Deterministic provider received invalid v3 repair metadata."
+                    )
+                mode = repair_metadata["mode"]
+                if not any(kit.get("slot_id") == repair_metadata["slot_id"] for kit in kits):
+                    raise AssertionError(
+                        "Deterministic provider received an unknown v3 repair slot."
+                    )
+            binding = RepairTraceEntry(
+                mode="initial" if mode == "initial" else "repair",
+                phase=phase,
+                expected_route=self._route,
+                observed_route=self._route,
+            )
             with self._lock:
+                self.calls.append(binding)
                 self.prompt_digests.append(_sha(prompt))
+                if binding.mode == "initial":
+                    self.initial_prompt_digests.append(_sha(prompt))
                 shortfall = (
                     self._force_initial_shortfall
-                    and any(kit.get("slot_id") == "P2-A1" for kit in selected_kits)
-                    and self._v3_shortfall_attempts < 3
+                    and mode == "initial"
+                    and any(kit.get("slot_id") == "P2-A1" for kit in kits)
+                    and self._v3_shortfall_attempts < 1
                 )
                 if shortfall:
                     self._v3_shortfall_attempts += 1
+            ctx = telemetry_ctx.get()
+            if ctx is not None:
+                ctx.record_provider_call(
+                    {
+                        "event": "qualification_provider_call",
+                        "mode": binding.mode,
+                        "phase": phase,
+                        "qualification_route_trace": binding.as_dict(),
+                        "host": self._route.host,
+                        "model": self._route.model_id,
+                        "duration_ms": 0,
+                        "attempts": 1,
+                        "http_status_class": "2xx",
+                        "activity_type": "qualification-cell",
+                    }
+                )
             return json.dumps(
                 {
                     "slots": [
-                        _v3_record_from_kit(
+                        _v3_live_record_from_kit(
                             kit,
-                            units=6 if shortfall and kit.get("slot_id") == "P2-A1" else None,
+                            unit_limit=6 if shortfall and kit.get("slot_id") == "P2-A1" else None,
                         )
-                        for kit in selected_kits
+                        for kit in kits
                     ]
                 },
                 ensure_ascii=False,
@@ -840,6 +975,7 @@ class ProductionQualificationHarness:
                                     readiness_timeout_seconds=readiness_timeout_seconds,
                                     runner_stop_timeout_seconds=runner_stop_timeout_seconds,
                                     runner_stop_waiter=runner_stop_waiter,
+                                    allow_failed_diagnostic=True,
                                 )
                             except QualificationRunnerStillActiveError:
                                 # This directory can contain durable job/cache data.
@@ -871,6 +1007,7 @@ class ProductionQualificationHarness:
                                 readiness_timeout_seconds=readiness_timeout_seconds,
                                 runner_stop_timeout_seconds=runner_stop_timeout_seconds,
                                 runner_stop_waiter=runner_stop_waiter,
+                                allow_failed_diagnostic=True,
                             )
                         cells.append(cell)
                         receipt_paths.append(self._persist_cell_receipt(cell.receipt))
@@ -950,8 +1087,7 @@ class ProductionQualificationHarness:
         directory = self._root / "diagnostics"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / (
-            f"{parsed.cell_receipt.anchor_id}-"
-            f"{parsed.cell_receipt.expected_route.route_id}.json"
+            f"{parsed.cell_receipt.anchor_id}-{parsed.cell_receipt.expected_route.route_id}.json"
         )
         path.write_text(
             json.dumps(parsed.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
@@ -1057,6 +1193,8 @@ class ProductionQualificationHarness:
         finally:
             if not runner_stop_waiter(app.state.runner, runner_stop_timeout_seconds):
                 active_error = sys.exc_info()[1]
+                if active_error is None and locals().get("terminal_status") == "failed":
+                    active_error = AssertionError("Qualification durable job did not become ready.")
                 raise QualificationRunnerStillActiveError(
                     "Qualification runner is still active; scratch was preserved."
                 ) from active_error
@@ -1068,11 +1206,21 @@ class ProductionQualificationHarness:
             )
         else:
             delivery, _ = self._failed_diagnostic_delivery(density_trace)
-        density, slot_telemetry, v3_prompt_sha256, v3_route_trace = _v3_qualification_probe(
-            provider,
-            route,
-            tray=anchor.id == "b1-dialogue" and route.route_id == "gemini-pro-ais",
-        )
+        slot_telemetry = self._durable_slot_telemetry(durable_job)
+        density = self._density_from_slot_telemetry(slot_telemetry)
+        initial_prompt_digests = getattr(provider, "initial_prompt_digests", ())
+        if (
+            not isinstance(initial_prompt_digests, list)
+            or not initial_prompt_digests
+            or not all(
+                isinstance(digest, str) and len(digest) == 64 for digest in initial_prompt_digests
+            )
+        ):
+            raise AssertionError("Qualification provider did not retain live v3 prompt digests.")
+        if terminal_status == "ready" and len(initial_prompt_digests) != 3:
+            raise AssertionError(
+                "A ready qualification job must retain three live v3 prompt digests."
+            )
         receipt = CellReceipt(
             source_commit=self._source_commit,
             harness_sha256=_file_digest(Path(__file__)),
@@ -1082,7 +1230,7 @@ class ProductionQualificationHarness:
             logical_model_id=logical_model_id,
             expected_route=route,
             observed_route=route,
-            prompt_sha256=v3_prompt_sha256,
+            prompt_sha256=_sha(initial_prompt_digests),
             prompt_pack_version=V3_PROMPT_PACK_VERSION,
             template_version=V3_TEMPLATE_VERSION,
             template_sha256=template_digest(),
@@ -1094,7 +1242,7 @@ class ProductionQualificationHarness:
             flag_sha256=_flag_digest(),
             density=density,
             slot_telemetry=slot_telemetry,
-            repair_trace=v3_route_trace,
+            repair_trace=durable_trace,
             semantic_gate="not_run",
             outcome="passed" if self._delivery_ready(delivery, density) else "failed",
         )
@@ -1138,6 +1286,67 @@ class ProductionQualificationHarness:
         )
 
     @staticmethod
+    def _durable_slot_telemetry(job: Any) -> tuple[SlotTelemetry, ...]:
+        progress = job.progress
+        rows = progress.get("qualification_slot_telemetry") if isinstance(progress, dict) else None
+        if not isinstance(rows, list) or not rows:
+            raise AssertionError("Qualification durable job has no v3 slot telemetry.")
+        telemetry = tuple(SlotTelemetry.from_dict(row) for row in rows)
+        return tuple(sorted(telemetry, key=lambda entry: (entry.phase, entry.slot_id)))
+
+    @staticmethod
+    def _density_from_slot_telemetry(telemetry: tuple[SlotTelemetry, ...]) -> DensitySummary:
+        accepted = tuple(entry for entry in telemetry if entry.disposition in {"ready", "tray"})
+        phase_units = {
+            str(phase): sum(entry.units for entry in accepted if entry.phase == phase)
+            for phase in (1, 2, 3)
+        }
+        ready_phase_units = {
+            str(phase): sum(
+                entry.units
+                for entry in accepted
+                if entry.phase == phase and entry.disposition == "ready"
+            )
+            for phase in (1, 2, 3)
+        }
+        tray_phase_units = {
+            str(phase): sum(
+                entry.units
+                for entry in accepted
+                if entry.phase == phase and entry.disposition == "tray"
+            )
+            for phase in (1, 2, 3)
+        }
+        expected = {
+            "P1-A1",
+            "P1-A2",
+            "P1-A3",
+            "P2-A1",
+            "P2-A2",
+            "P2-A3",
+            "P2-A4",
+            "P3-A1",
+        }
+        return DensitySummary(
+            lesson_units=sum(entry.units for entry in accepted),
+            ready_units=sum(entry.units for entry in accepted if entry.disposition == "ready"),
+            tray_units=sum(entry.units for entry in accepted if entry.disposition == "tray"),
+            floor_units=sum(entry.units for entry in accepted),
+            phase_units=phase_units,
+            ready_phase_units=ready_phase_units,
+            tray_phase_units=tray_phase_units,
+            slot_count=len(accepted),
+            ready_slots=sum(entry.disposition == "ready" for entry in accepted),
+            tray_slots=sum(entry.disposition == "tray" for entry in accepted),
+            disposition=(
+                "teacher_ready"
+                if {entry.slot_id for entry in accepted} == expected
+                and len(accepted) == len(expected)
+                else "recoverable_draft"
+            ),
+        )
+
+    @staticmethod
     def _failed_diagnostic_delivery(
         density_trace: tuple[dict[str, object], ...],
     ) -> tuple[DeliverySummary, DensitySummary]:
@@ -1146,8 +1355,7 @@ class ProductionQualificationHarness:
         phase_density = last["phase_density"]
         assert isinstance(phase_density, dict)  # validated by diagnostic receipt persistence
         phase_counts = {
-            phase: int(phase_density[phase]["visible_blocks"])
-            for phase in ("1", "2", "3")
+            phase: int(phase_density[phase]["visible_blocks"]) for phase in ("1", "2", "3")
         }
         response_units = sum(
             int(phase_density[phase]["response_units"]) for phase in ("1", "2", "3")
@@ -1191,9 +1399,9 @@ class ProductionQualificationHarness:
         phase_counts = Counter(str(block["phase"]) for block in blocks)
         payloads = [block["activity"]["payload"] for block in blocks]
         activity_types = frozenset(str(payload["type"]) for payload in payloads)
-        response_units = sum(content_density.response_units(payload) for payload in payloads)
+        response_units = sum(_payload_units(payload) for payload in payloads)
         phase_three_transfer = any(
-            block["phase"] == 3 and block["type"] in content_density.PRODUCTIVE_TYPES
+            block["phase"] == 3 and block["type"] in {"text-questions", "short-writing"}
             for block in blocks
         )
         provenance_continuous = (
@@ -1202,8 +1410,7 @@ class ProductionQualificationHarness:
             and durable_job.progress.get("provider_routes")
             == [{"host": route.host, "model": route.model_id}]
             and all(
-                entry.expected_route == route and entry.observed_route == route
-                for entry in trace
+                entry.expected_route == route and entry.observed_route == route for entry in trace
             )
         )
         return DeliverySummary(

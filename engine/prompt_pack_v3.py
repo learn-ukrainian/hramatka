@@ -1,9 +1,8 @@
-"""Pre-cutover serializer pack for ``TeacherReadyDensity.v3``.
+"""Live v3.2 serializer pack for ``TeacherReadyDensity.v3``.
 
 This module consumes only the exact-cover allocation made before generation.
-It deliberately has no production import path: slice 7 owns the atomic
-cutover.  Until then, this is a testable protocol boundary between immutable
-unit plans and a future raw-activity renderer.
+It is the protocol boundary between immutable unit plans and the live raw
+activity renderer.
 """
 
 from __future__ import annotations
@@ -221,7 +220,7 @@ def _validate_slot_identity(
 def validate_slot_shape(record: object, type_kit: Mapping[str, Any]) -> Mapping[str, Any]:
     """Validate one response record against one immutable scheduled slot.
 
-    This is the slot-local shape boundary used by the pre-cutover evaluator.
+    This is the slot-local shape boundary used by the live evaluator.
     ``validate_response`` remains phase-atomic: callers that need that
     behavior must continue to use it.  Keeping this narrow helper public lets
     the evaluator retain the same validation stages while reporting a failure

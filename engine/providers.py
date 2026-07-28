@@ -217,8 +217,7 @@ def _content_free_qualification_density_trace(value: object) -> dict[str, Any] |
             or not isinstance(outcomes, dict)
             or set(outcomes) != {"dropped", "generated", "ready", "review", "requested"}
             or not all(type(count) is int and count >= 0 for count in outcomes.values())
-            or outcomes["generated"]
-            != outcomes["ready"] + outcomes["review"] + outcomes["dropped"]
+            or outcomes["generated"] != outcomes["ready"] + outcomes["review"] + outcomes["dropped"]
         ):
             return None
     return deepcopy(value)
@@ -252,6 +251,48 @@ def _content_free_qualification_repair_trace(value: object) -> dict[str, Any] | 
     return deepcopy(value)
 
 
+def _content_free_qualification_slot_trace(value: object) -> dict[str, Any] | None:
+    """Allowlist one content-free v3 slot evaluation for qualification.
+
+    The durable proof needs each scheduled slot's count and disposition, but
+    must never retain its prompt, learner activity, source text, or answer.
+    Final receipt validation remains in ``qualification.receipts``; this
+    boundary only ensures the generic progress blob cannot carry extra data.
+    """
+    expected = {
+        "disposition",
+        "floor_met",
+        "phase",
+        "repair_rounds",
+        "replacement_used",
+        "slot_id",
+        "type",
+        "unassigned_errors_count",
+        "units",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return None
+    if (
+        not isinstance(value["slot_id"], str)
+        or not value["slot_id"]
+        or type(value["phase"]) is not int
+        or value["phase"] not in {1, 2, 3}
+        or not isinstance(value["type"], str)
+        or not value["type"]
+        or value["disposition"] not in {"ready", "tray", "density_shortfall", "dropped"}
+        or type(value["units"]) is not int
+        or value["units"] < 0
+        or type(value["floor_met"]) is not bool
+        or type(value["repair_rounds"]) is not int
+        or value["repair_rounds"] not in {0, 1, 2}
+        or type(value["replacement_used"]) is not bool
+        or type(value["unassigned_errors_count"]) is not int
+        or value["unassigned_errors_count"] < 0
+    ):
+        return None
+    return deepcopy(value)
+
+
 @dataclass
 class _TelemetryState:
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -270,6 +311,7 @@ class _TelemetryState:
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_slot_telemetry: list[dict[str, Any]] = field(default_factory=list)
     teacher_ready_density: dict[str, Any] | None = None
 
 
@@ -295,6 +337,7 @@ class TelemetryContext:
     qualification_route_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_density_traces: list[dict[str, Any]] = field(default_factory=list)
     qualification_repair_traces: list[dict[str, Any]] = field(default_factory=list)
+    qualification_slot_telemetry: list[dict[str, Any]] = field(default_factory=list)
     teacher_ready_density: dict[str, Any] | None = None
     _state: _TelemetryState | None = field(default=None, repr=False, compare=False)
     _report_phase: bool = field(default=True, repr=False, compare=False)
@@ -316,6 +359,7 @@ class TelemetryContext:
                 qualification_route_traces=self.qualification_route_traces,
                 qualification_density_traces=self.qualification_density_traces,
                 qualification_repair_traces=self.qualification_repair_traces,
+                qualification_slot_telemetry=self.qualification_slot_telemetry,
                 teacher_ready_density=self.teacher_ready_density,
             )
         else:
@@ -339,6 +383,7 @@ class TelemetryContext:
         self.qualification_route_traces = self._state.qualification_route_traces
         self.qualification_density_traces = self._state.qualification_density_traces
         self.qualification_repair_traces = self._state.qualification_repair_traces
+        self.qualification_slot_telemetry = self._state.qualification_slot_telemetry
         self.teacher_ready_density = self._state.teacher_ready_density
 
     def fork(self, *, phase: int) -> TelemetryContext:
@@ -411,6 +456,10 @@ class TelemetryContext:
             if self._state.qualification_repair_traces:
                 progress_obj["qualification_repair_traces"] = deepcopy(
                     self._state.qualification_repair_traces
+                )
+            if self._state.qualification_slot_telemetry:
+                progress_obj["qualification_slot_telemetry"] = deepcopy(
+                    self._state.qualification_slot_telemetry
                 )
             if self._state.teacher_ready_density is not None:
                 progress_obj["teacher_ready_density"] = deepcopy(self._state.teacher_ready_density)
@@ -545,6 +594,19 @@ class TelemetryContext:
         with self._state.lock:
             self._state.qualification_repair_traces.append(trace)
             self._state.traces.append({"event": "qualification_repair", **trace})
+            self._sync_from_shared_state()
+            self.save_traces()
+        self.update_progress_db()
+
+    def record_qualification_slot_trace(self, trace_entry: dict) -> None:
+        """Persist one allowlisted v3 slot receipt for a qualification cell."""
+        trace = _content_free_qualification_slot_trace(trace_entry)
+        if trace is None:
+            raise ValueError("Qualification slot trace is not content-free or valid.")
+        assert self._state is not None
+        with self._state.lock:
+            self._state.qualification_slot_telemetry.append(trace)
+            self._state.traces.append({"event": "qualification_slot", **trace})
             self._sync_from_shared_state()
             self.save_traces()
         self.update_progress_db()
@@ -1344,9 +1406,7 @@ def make_logical_model_generator(
         model_id = "google-ais/gemini-3.5-flash"
     elif logical_model_id == "gemini-3.1-pro":
         if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
-            raise ValueError(
-                "Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1."
-            )
+            raise ValueError("Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1.")
         model_id = "google-ais/gemini-3.1-pro-preview"
     else:
         raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
@@ -1356,9 +1416,7 @@ def make_logical_model_generator(
         timeout_s=GEMMA_TIMEOUT_S,
         transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
     )
-    route_id = (
-        "gemini-flash-ais" if logical_model_id == "gemini-3.5-flash" else "gemini-pro-ais"
-    )
+    route_id = "gemini-flash-ais" if logical_model_id == "gemini-3.5-flash" else "gemini-pro-ais"
     _require_exact_qualified_routes(
         qualified_routes,
         {route_id: ("google-ais", model_id)},

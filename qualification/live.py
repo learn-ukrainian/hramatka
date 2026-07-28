@@ -26,7 +26,9 @@ from hramatka.engine.transport import GEMMA_TIMEOUT_S
 
 from .harness import (
     _PHASE_RE,
+    _V3_KITS_RE,
     _V3_PROBE_RE,
+    _V3_REPAIR_RE,
     ProductionQualificationHarness,
     QualificationRunnerStillActiveError,
     _sha,
@@ -99,9 +101,7 @@ def _repository_state(repository_root: Path) -> tuple[str, bool]:
             text=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError) as error:
-        raise LiveQualificationError(
-            "Git repository state could not be verified."
-        ) from error
+        raise LiveQualificationError("Git repository state could not be verified.") from error
     return head, not bool(dirty.strip())
 
 
@@ -278,15 +278,27 @@ class _PinnedRouteProvider:
         self._route = route
         self._port = port
         self.prompt_digests: list[str] = []
+        self.initial_prompt_digests: list[str] = []
 
     def for_bake(self) -> _PinnedRouteProvider:
         return self
 
     def __call__(self, prompt: str) -> str:
         phase_match = _PHASE_RE.search(prompt)
+        v3_kits_match = _V3_KITS_RE.search(prompt)
         v3_probe_match = _V3_PROBE_RE.search(prompt)
+        v3_repair_match = _V3_REPAIR_RE.search(prompt)
         try:
-            if phase_match is not None:
+            if v3_kits_match is not None:
+                kits = json.loads(v3_kits_match.group(1))
+                if not isinstance(kits, list) or not kits:
+                    raise ValueError("missing v3 type-kits")
+                phase = kits[0]["phase"]
+                repair_metadata = (
+                    json.loads(v3_repair_match.group(1)) if v3_repair_match is not None else None
+                )
+                mode = "initial" if repair_metadata is None else repair_metadata["mode"]
+            elif phase_match is not None:
                 phase_request = json.loads(phase_match.group(1))
                 mode = phase_request["mode"]
                 phase = phase_request["phase"]
@@ -307,7 +319,10 @@ class _PinnedRouteProvider:
         ):
             raise LiveQualificationError("Pinned route received an invalid generation mode.")
         result = self._port(prompt)
-        self.prompt_digests.append(_sha(prompt))
+        prompt_digest = _sha(prompt)
+        self.prompt_digests.append(prompt_digest)
+        if mode == "initial":
+            self.initial_prompt_digests.append(prompt_digest)
         context = telemetry_ctx.get()
         if context is not None:
             context.record_qualification_route_trace(

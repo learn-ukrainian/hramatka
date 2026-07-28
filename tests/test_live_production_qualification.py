@@ -278,9 +278,7 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
     assert parsed.cell_receipt.expected_route.route_id == "gemini-flash-ais"
     assert parsed.density_trace[0]["stage"] == "initial"
     assert set(parsed.density_trace[0]["phase_density"]) == {"1", "2", "3"}
-    assert parsed.density_trace[-1]["repair_invocations"] == len(
-        parsed.repair_invocation_trace
-    )
+    assert parsed.density_trace[-1]["repair_invocations"] == len(parsed.repair_invocation_trace)
     assert request.qualification.scratch_root.is_dir()
     assert list(request.qualification.scratch_root.iterdir()) == []
 
@@ -310,9 +308,7 @@ def test_missing_anchor_pack_has_explicit_content_free_error(tmp_path) -> None:
         subprocess.CalledProcessError(128, ["git"], stderr="sensitive repository path"),
     ],
 )
-def test_repository_state_failure_is_content_free(
-    tmp_path, monkeypatch, repository_error
-) -> None:
+def test_repository_state_failure_is_content_free(tmp_path, monkeypatch, repository_error) -> None:
     def fail_git(*_args, **_kwargs):
         raise repository_error
 
@@ -389,9 +385,7 @@ def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factor
         (GEMMA_FALLBACK_BASE_URL_ENV, f"{DEFAULT_GEMMA_FALLBACK_BASE_URL}/"),
     ],
 )
-def test_canonical_route_base_accepts_one_trailing_slash(
-    monkeypatch, environment, value
-) -> None:
+def test_canonical_route_base_accepts_one_trailing_slash(monkeypatch, environment, value) -> None:
     monkeypatch.setenv(environment, value)
     for logical_model_id, route in _matrix():
         validate_qualification_route_runtime(
@@ -483,6 +477,10 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
         @property
         def prompt_digests(self) -> list[str]:
             return self._inner.prompt_digests
+
+        @property
+        def initial_prompt_digests(self) -> list[str]:
+            return self._inner.initial_prompt_digests
 
         def for_bake(self):
             return self
@@ -597,11 +595,15 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     )
     # The locked shadow-tier ruling keeps ``semantic_gate=not_run`` advisory;
     # only the current v3 aggregate may create this candidate receipt.
-    assert RouteAggregate(
-        logical_model_id="gemini-3.5-flash",
-        route=route_cells[0].expected_route,
-        cells=route_cells,
-    ).as_model_receipt().passed
+    assert (
+        RouteAggregate(
+            logical_model_id="gemini-3.5-flash",
+            route=route_cells[0].expected_route,
+            cells=route_cells,
+        )
+        .as_model_receipt()
+        .passed
+    )
 
 
 def test_live_wait_false_preserves_scratch_and_prevents_receipt_completion(
@@ -652,9 +654,7 @@ def test_live_wait_failure_preserves_active_qualification_error_as_cause(
     assert isinstance(runner_error.__cause__, AssertionError)
 
 
-def test_cleanup_failure_does_not_mask_original_cell_failure(
-    tmp_path, monkeypatch
-) -> None:
+def test_cleanup_failure_does_not_mask_original_cell_failure(tmp_path, monkeypatch) -> None:
     class OriginalCellError(RuntimeError):
         pass
 
@@ -681,9 +681,7 @@ def test_cleanup_failure_does_not_mask_original_cell_failure(
         )
 
 
-def test_cleanup_failure_cannot_report_a_successful_cell(
-    tmp_path, monkeypatch
-) -> None:
+def test_cleanup_failure_cannot_report_a_successful_cell(tmp_path, monkeypatch) -> None:
     harness = ProductionQualificationHarness(tmp_path / "receipts", source_commit=_HEAD)
 
     def fail_cleanup(_path):
@@ -704,9 +702,7 @@ def test_cleanup_failure_cannot_report_a_successful_cell(
         )
 
 
-def test_cli_unexpected_failure_is_content_free(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_cli_unexpected_failure_is_content_free(tmp_path, monkeypatch, capsys) -> None:
     import hramatka.qualification.live as live_module
 
     manifest = load_manifest()

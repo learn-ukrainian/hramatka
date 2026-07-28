@@ -31,7 +31,7 @@ from hramatka.engine.providers import (
 )
 
 from .agent_monitor import router as agent_monitor_router
-from .baking.engine_adapter import EngineLessonBaker
+from .baking.engine_adapter_v3 import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
 from .models import (
@@ -1083,7 +1083,11 @@ def create_app(
 
     @app.get("/api/readyz")
     def readyz() -> dict[str, str]:
-        if settings.mock_mode or not isinstance(baker, EngineLessonBaker) or not store.is_ready():
+        if (
+            settings.mock_mode
+            or not callable(getattr(baker, "resolve_data_bundle", None))
+            or not store.is_ready()
+        ):
             raise PilotError(
                 503,
                 "service_not_ready",

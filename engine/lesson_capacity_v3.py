@@ -1,9 +1,8 @@
-"""Deterministic, pre-generation lesson capacity for TeacherReadyDensity.v3.
+"""Deterministic, pre-generation capacity for live TeacherReadyDensity.v3.
 
-The module is deliberately isolated from the live v2 planner.  It receives
-only already-certified v3 plans, reserves their shared inventory claims across
-the complete lesson, and returns either immutable scheduled substrate or a
-recoverable capacity event.  It never calls a model.
+It receives only already-certified v3 plans, reserves their shared inventory
+claims across the complete lesson, and returns either immutable scheduled
+substrate or a recoverable capacity event.  It never calls a model.
 """
 
 from __future__ import annotations
@@ -15,8 +14,12 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Literal
 
-from .content_density import COGNITIVE_OPERATION
-from .teacher_ready_density_v3 import floor_for, phase_shape_for, type_allowed_in_phase
+from .teacher_ready_density_v3 import (
+    COGNITIVE_OPERATION,
+    floor_for,
+    phase_shape_for,
+    type_allowed_in_phase,
+)
 from .unit_builders_v3 import BUILDERS, CertificationInventory
 from .unit_plan_v3 import (
     CertifiedUnit,
@@ -152,9 +155,9 @@ class AllocatedSlot:
     requested_type: str
     scheduled_type: str
     plan: UnitPlan
-    substitution_reason: Literal[
-        "preflight_unavailable", "capacity", "serialization_exhausted"
-    ] | None = None
+    substitution_reason: (
+        Literal["preflight_unavailable", "capacity", "serialization_exhausted"] | None
+    ) = None
     conditional_replacements: tuple[ConditionalReplacement, ...] = ()
 
     def __post_init__(self) -> None:
@@ -266,9 +269,7 @@ class LessonPreflightResult:
     @property
     def generation_authorization(self) -> GenerationAuthorization | None:
         """Expose, but never invoke, the post-preflight serialization seam."""
-        return (
-            GenerationAuthorization(self.allocation) if self.allocation is not None else None
-        )
+        return GenerationAuthorization(self.allocation) if self.allocation is not None else None
 
     @property
     def generation_authorized(self) -> bool:
@@ -335,9 +336,7 @@ def _non_evidence_claims(plan: UnitPlan) -> tuple[tuple[str, str], ...]:
 
 def _source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
     """Count an evidence source once per slot, never once per constituent unit."""
-    return frozenset(
-        unit.anchor.anchor_id for unit in plan.units if unit.anchor.kind == "evidence"
-    )
+    return frozenset(unit.anchor.anchor_id for unit in plan.units if unit.anchor.kind == "evidence")
 
 
 def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:

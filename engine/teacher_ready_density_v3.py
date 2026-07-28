@@ -1,9 +1,4 @@
-"""Locked, pre-cutover authority for ``TeacherReadyDensity.v3``.
-
-This module is deliberately isolated from the live v2 engine.  Later build
-slices may consume it, but no production import path may do so before the
-atomic v2-to-v3 cutover.
-"""
+"""Live authority for the atomic ``TeacherReadyDensity.v3`` production path."""
 
 from __future__ import annotations
 
@@ -17,6 +12,23 @@ from typing import Final
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
 TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v3"
+
+# Allocation owns the operation identity used by its immutable ≤2 evidence
+# reuse rule.  Keeping it beside the v3 floor authority preserves the
+# cutover's self-contained preflight path.
+COGNITIVE_OPERATION: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "true-false": "evaluate",
+        "quiz": "recall",
+        "cloze": "recall",
+        "fill-in": "form",
+        "error-correction": "form",
+        "mark-the-words": "identify",
+        "match-up": "associate",
+        "text-questions": "discuss",
+        "short-writing": "write",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -156,7 +168,7 @@ def phase_shape_for(duration_minutes: int) -> PhaseShape:
 
 
 def type_allowed_in_phase(duration_minutes: int, phase: int, activity_type: str) -> bool:
-    """Apply the central v3 phase-shape rule without touching the v2 scheduler."""
+    """Apply the central v3 phase-shape rule for a live lesson duration."""
     return phase_shape_for(duration_minutes).allows(phase, activity_type)
 
 
@@ -164,8 +176,7 @@ def density_floor_fingerprint() -> str:
     """Return the content-free identity of the locked v3 floor authority.
 
     Qualification records this value rather than copying individual floor
-    values into a receipt.  It deliberately lives next to the authority and
-    is never imported by the pre-cutover v2 production path.
+    values into a receipt.  It deliberately lives next to the live authority.
     """
     payload = {
         "version": TEACHER_READY_DENSITY_VERSION,
