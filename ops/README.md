@@ -42,16 +42,16 @@ files under optional `HRAMATKA_SECRET_DIR` (no default). Never prints key values
 
 | Knob | Default | Notes |
 | --- | --- | --- |
-| `HRAMATKA_GEN_JSON_MODE` | unset or `"1"` | Gemini JSON mode is on by default. Set to `"0"` to disable it for one run; local-loop and local-soak do this intentionally. |
-| Gemini 3.6 Flash / 3.1 Pro Preview | **enforced** | AIS OpenAI-compat requests send `response_format: {"type":"json_object"}`; native Vertex requests send `generationConfig.responseMimeType: "application/json"`. Either transport retries once without JSON mode after a 400 rejection. |
+| `HRAMATKA_GEN_JSON_MODE` | unset or `"0"` | Gemini JSON mode is off by default. Set to `"1"` to enable it for one run. |
+| Gemini 3.6 Flash / 3.1 Pro Preview | **opt-in** | With `HRAMATKA_GEN_JSON_MODE=1`, AIS OpenAI-compat requests send `response_format: {"type":"json_object"}` and native Vertex requests send `generationConfig.responseMimeType: "application/json"`. Either transport retries once without JSON mode after a 400 rejection. |
 | Gemma seats | **hard-denied** | #171's Gemini-host/Gemma-model measurements remain authoritative: Gemma never receives JSON mode, even when the environment value is `"1"`. |
 | Latency watchdog | always on when telemetry ctx present | Emits `latency_watchdog` when a call exceeds 3× rolling median of prior samples in the bake. |
 
-For a v3 parse failure, the raw model response is retained only in a per-bake UUID directory
-below the configured private engine output root as `generation-raw-attempt<N>.txt` (capped at
-64 KiB). The established 14-day artifact retention applies. Qualification diagnostics place this
-beneath their private `raw-parse-failures/` scratch subtree; raw output never enters receipts,
-durable job telemetry, or logs.
+For a v3 parse failure or serialized phase floor shortfall, the raw model response is retained
+only in a per-bake UUID directory below the configured private engine output root as
+`generation-raw-attempt<N>.txt` (capped at 64 KiB). The established 14-day artifact retention
+applies. Qualification diagnostics place this beneath their private `raw-parse-failures/` scratch
+subtree; raw output never enters receipts, durable job telemetry, or logs.
 
 ## Local Test Loop
 

@@ -38,9 +38,9 @@ from .transport import (
 
 log = logging.getLogger(__name__)
 
-# JSON output is a transport contract for current Gemini seats, not a prompt
-# convention. The #171 Gemma measurements remain valid, so Gemma is excluded
-# by model identity rather than through a stale host-wide deny.
+# JSON output is opt-in for Gemini seats, not a prompt convention. The #171
+# Gemma measurements remain valid, so Gemma is excluded by model identity
+# rather than through a stale host-wide deny.
 _GEMINI_JSON_MODE_MODELS = frozenset({"gemini-3.6-flash", "gemini-3.1-pro-preview"})
 
 # Latency watchdog: fire when one call exceeds multiplier × rolling median of
@@ -86,12 +86,12 @@ def evaluate_latency_watchdog(
 def json_mode_enabled_for_model(model: str) -> bool:
     """Whether a model gets API-enforced JSON output for this run.
 
-    Gemini seats default to constrained JSON on every supported transport.
-    Set ``HRAMATKA_GEN_JSON_MODE=0`` to disable it for one run. Gemma remains
-    denied because #171 measured its JSON mode as unsafe; its prompt contract
-    is intentionally not promoted to a transport contract.
+    Gemini seats get constrained JSON on every supported transport only when
+    ``HRAMATKA_GEN_JSON_MODE=1``. Gemma remains denied because #171 measured
+    its JSON mode as unsafe; its prompt contract is intentionally not promoted
+    to a transport contract.
     """
-    if os.environ.get("HRAMATKA_GEN_JSON_MODE") == "0":
+    if os.environ.get("HRAMATKA_GEN_JSON_MODE") != "1":
         return False
     return model.split("/", 1)[-1] in _GEMINI_JSON_MODE_MODELS
 
@@ -798,9 +798,8 @@ class HttpChatTransport:
             except ValueError:
                 pass
 
-        # Current Gemini seats enforce JSON at the API boundary, including AIS.
-        # Gemma remains excluded by the #171 measurements. The per-run escape
-        # hatch is HRAMATKA_GEN_JSON_MODE=0.
+        # Gemini can enforce JSON at the API boundary, including AIS, when
+        # explicitly enabled. Gemma remains excluded by the #171 measurements.
         json_mode_enabled = json_mode_enabled_for_model(model)
 
         payload = {

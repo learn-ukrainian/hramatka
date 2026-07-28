@@ -142,7 +142,10 @@ def test_wire_model_strips_our_provider_prefix():
 
 
 @pytest.mark.parametrize("model", ("gemini-3.6-flash", "gemini-3.1-pro-preview"))
-def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header(model):
+def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header(
+    monkeypatch, model
+):
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -205,7 +208,7 @@ def test_vertex_retries_5xx_and_refuses_prefixed_model_ids():
 
 
 def test_vertex_400_fallback_retries_without_json_mime(monkeypatch):
-    monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
     calls: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -856,16 +859,15 @@ def test_payload_env_overrides_honored(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("model", "enabled"),
+    "model",
     (
-        ("google-ais/gemini-3.6-flash", True),
-        ("google-ais/gemini-3.1-pro-preview", True),
-        ("google-ais/gemma-4-31b-it", False),
-        ("google-ais/gemma-4-26b-a4b-it", False),
+        "google-ais/gemini-3.6-flash",
+        "google-ais/gemini-3.1-pro-preview",
+        "google-ais/gemma-4-31b-it",
+        "google-ais/gemma-4-26b-a4b-it",
     ),
 )
-def test_ais_json_mode_is_enforced_for_gemini_seats_not_gemma(monkeypatch, model, enabled):
-    """Gemini uses the API contract by default; #171's Gemma deny remains."""
+def test_ais_json_mode_is_off_by_default(monkeypatch, model):
     monkeypatch.delenv("HRAMATKA_GEN_JSON_MODE", raising=False)
     seen = {}
 
@@ -880,10 +882,25 @@ def test_ais_json_mode_is_enforced_for_gemini_seats_not_gemma(monkeypatch, model
         retry_backoff_s=0,
     )
     transport("prompt", api_key="k", model=model, timeout_s=5)
-    if enabled:
-        assert seen["body"]["response_format"] == {"type": "json_object"}
-    else:
-        assert "response_format" not in seen["body"]
+    assert "response_format" not in seen["body"]
+
+
+def test_json_mode_can_be_enabled_per_run_for_gemini(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OK_BODY)
+
+    transport = providers.HttpChatTransport(
+        base_url="https://prov.example/v1",
+        client=_client(handler),
+        host="google-ais",
+        retry_backoff_s=0,
+    )
+    transport("prompt", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5)
+    assert seen["body"]["response_format"] == {"type": "json_object"}
 
 
 def test_gemma_json_mode_remains_denied_even_when_legacy_env_is_enabled(monkeypatch):

@@ -14,11 +14,10 @@ retried with a bounded budget, then raised as `GenerationUnparseable`.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 
-from . import prompt_pack
+from . import json_tolerance, prompt_pack
 from .providers import make_generator
 from .transport import (
     GEMMA_MODEL,
@@ -51,143 +50,25 @@ _ENVELOPE_SHAPE_ERROR = "Prompt-pack response requires activities and citations 
 call_gemma = make_generator("gemma-ais")
 
 
+def _activities_envelope(payload: dict) -> bool:
+    return "activities" in payload and _activities_from_parsed(payload) is not None
+
+
 def _extract_json(text: str) -> dict | list | None:
-    """Extract the best activity-shaped JSON object or array from `text`.
-
-    Tolerates leading prose / a stripped <thought> block / trailing text.
-    Prefers a dict with usable ``activities``, then any dict, then an
-    all-dicts list. Returns None when no candidate has one of those shapes.
-    """
-    if not text:
-        return None
-
-    decoder = json.JSONDecoder()
-    first_dict: dict | None = None
-    first_dict_list: list | None = None
-    search_from = 0
-    while search_from < len(text):
-        starts = [text.find(char, search_from) for char in "[{"]
-        starts = [start for start in starts if start >= 0]
-        if not starts:
-            break
-        start = min(starts)
-        try:
-            obj, end = decoder.raw_decode(text, start)
-        except ValueError:
-            search_from = start + 1
-            continue
-        # Nested containers belong to this candidate; do not bypass the
-        # documented one-level wrapper boundary by treating them as new roots.
-        search_from = end
-        if isinstance(obj, dict):
-            if "activities" in obj and _activities_from_parsed(obj) is not None:
-                return obj
-            if first_dict is None:
-                first_dict = obj
-        elif isinstance(obj, list) and all(isinstance(item, dict) for item in obj):
-            if first_dict_list is None:
-                first_dict_list = obj
-    return first_dict if first_dict is not None else first_dict_list
-
-
-def _repair_trailing_commas(text: str) -> str:
-    """Remove only JSON trailing commas outside strings, preserving all content."""
-    repaired: list[str] = []
-    in_string = False
-    escaped = False
-    for index, char in enumerate(text):
-        if in_string:
-            repaired.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-            repaired.append(char)
-            continue
-        if char == ",":
-            next_index = index + 1
-            while next_index < len(text) and text[next_index].isspace():
-                next_index += 1
-            if next_index < len(text) and text[next_index] in "}]":
-                continue
-        repaired.append(char)
-    return "".join(repaired)
+    """Extract the best activity-shaped JSON object or array from ``text``."""
+    return json_tolerance.extract_json(text, preferred_object=_activities_envelope)
 
 
 def extract_json(text: str) -> dict | list | None:
     """Extract JSON, then apply the narrow trailing-comma repair if needed."""
-    extracted = _extract_json(text)
-    if extracted is not None:
-        return extracted
-    repaired = _repair_trailing_commas(text)
-    return _extract_json(repaired) if repaired != text else None
+    return _extract_json(text)
 
 
 def _repair_split_envelope(raw: str) -> tuple[dict, int] | None:
-    """Merge adjacent, disjoint top-level objects from a split pack envelope.
-
-    The pack response contract is one object, but the known host failure closes
-    the activities object before emitting a comma and a citations object.  Keep
-    this deliberately narrow: only a contiguous comma-separated object region
-    that can be parsed as a JSON array, has disjoint keys, and supplies both
-    envelope keys can be repaired.
-    """
-    decoder = json.JSONDecoder()
-    search_from = 0
-    while search_from < len(raw):
-        starts = [raw.find(char, search_from) for char in "[{"]
-        starts = [start for start in starts if start >= 0]
-        if not starts:
-            return None
-        start = min(starts)
-        try:
-            first, first_end = decoder.raw_decode(raw, start)
-        except ValueError:
-            search_from = start + 1
-            continue
-        if not isinstance(first, dict):
-            search_from = first_end
-            continue
-
-        region_end = first_end
-        while True:
-            next_start = region_end
-            while next_start < len(raw) and raw[next_start].isspace():
-                next_start += 1
-            if next_start >= len(raw) or raw[next_start] != ",":
-                break
-            next_start += 1
-            while next_start < len(raw) and raw[next_start].isspace():
-                next_start += 1
-            try:
-                next_object, next_end = decoder.raw_decode(raw, next_start)
-            except ValueError:
-                break
-            if not isinstance(next_object, dict):
-                break
-            region_end = next_end
-
-        if region_end != first_end:
-            try:
-                objects = json.loads(f"[{raw[start:region_end]}]")
-            except json.JSONDecodeError:
-                objects = None
-            if isinstance(objects, list) and all(isinstance(item, dict) for item in objects):
-                merged: dict = {}
-                for item in objects:
-                    if not set(merged).isdisjoint(item):
-                        break
-                    merged.update(item)
-                else:
-                    if {"activities", "citations"} <= set(merged):
-                        return merged, len(objects)
-        search_from = region_end
-    return None
+    """Repair only the legacy activities/citations envelope split."""
+    return json_tolerance.repair_split_envelope(
+        raw, required_keys=frozenset({"activities", "citations"})
+    )
 
 
 def _record_envelope_repaired(context: dict, object_count: int) -> None:

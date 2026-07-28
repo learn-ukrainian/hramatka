@@ -23,6 +23,7 @@ from hramatka.engine.density_evaluator_v3 import (
     ReplacementRequest,
     evaluate_phase_with_repair,
 )
+from hramatka.engine.json_tolerance import extract_json, repair_split_envelope
 from hramatka.engine.lesson_capacity_v3 import (
     AnchorParagraph,
     AnchorWindow,
@@ -41,6 +42,7 @@ from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 _ACTIVITY_SCHEMA = vendoring.read_json(vendoring.PILOT_LU_ACTIVITY, "lu.activity.v1.schema.json")
 _ACTIVITY_VALIDATOR = Draft7Validator(_ACTIVITY_SCHEMA)
 _RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
+_V3_TOP_LEVEL_KEYS = frozenset({"slots"})
 
 _TITLES = {
     "true-false": "Перевірмо розуміння",
@@ -172,10 +174,23 @@ def _anchor_text(anchor: str | Mapping[str, object]) -> str:
 def _parse_payload(raw: object) -> object:
     if not isinstance(raw, str):
         raise GenerationUnparseable("v3 serializer returned a non-string response.")
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise GenerationUnparseable("v3 serializer returned invalid JSON.") from error
+    parsed = extract_json(raw, preferred_keys=_V3_TOP_LEVEL_KEYS)
+    if _is_v3_slots_payload(parsed):
+        return parsed
+    repaired = repair_split_envelope(raw, required_keys=_V3_TOP_LEVEL_KEYS)
+    if repaired is not None and _is_v3_slots_payload(repaired[0]):
+        return repaired[0]
+    if parsed is not None:
+        return parsed
+    raise GenerationUnparseable("v3 serializer returned invalid JSON.")
+
+
+def _is_v3_slots_payload(payload: object) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and set(payload) == _V3_TOP_LEVEL_KEYS
+        and isinstance(payload.get("slots"), list)
+    )
 
 
 def _activity_gate(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
@@ -402,15 +417,18 @@ class EngineLessonBaker:
         raw_attempt_counter: list[int],
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
-    ) -> object:
+    ) -> tuple[object, str, int]:
         generator = (
             self._generator.for_bake() if hasattr(self._generator, "for_bake") else self._generator
         )
         raw: object = None
         try:
             raw_attempt_counter[0] += 1
+            attempt = raw_attempt_counter[0]
             raw = generator(prompt)
-            return _parse_payload(raw)
+            parsed = _parse_payload(raw)
+            assert isinstance(raw, str)  # enforced by _parse_payload
+            return parsed, raw, attempt
         except GeneratorUnavailable as error:
             raise ProviderUnavailable(str(error), retry_exhausted=error.retry_exhausted) from error
         except GenerationUnparseable as error:
@@ -515,7 +533,7 @@ class EngineLessonBaker:
                 context.update_progress_db(phase=phase, step="generation")
                 # The evaluator independently recreates and hashes this same context.
                 phase_context = build_phase_context(preflight.allocation, phase=phase)
-                initial_payload = self._call_generator(
+                initial_payload, initial_raw, initial_attempt = self._call_generator(
                     render_phase_prompt(phase_context),
                     raw_attempt_counter=raw_attempt_counter,
                     raw_out_root=raw_out_root,
@@ -542,6 +560,12 @@ class EngineLessonBaker:
                 )
                 self._record_qualification_evaluation(phase, evaluated)
                 if evaluated.disposition != "teacher_ready":
+                    if raw_out_root is not None:
+                        _persist_raw_parse_failure(
+                            initial_raw,
+                            bake_artifact_dir(raw_out_root, bake_id=raw_bake_id),
+                            initial_attempt,
+                        )
                     raise FloorUnmetError(
                         "Bake failed: v3 serialization did not produce every certified slot.",
                         blames_source=False,
@@ -655,7 +679,7 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
-        payload = self._call_generator(
+        payload, _raw, _attempt = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="repair",
@@ -676,7 +700,7 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
-        payload = self._call_generator(
+        payload, _raw, _attempt = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="replacement",
