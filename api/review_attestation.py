@@ -40,9 +40,10 @@ _LIFECYCLE_FIELDS = frozenset(
         "review_head",
     }
 )
-_FAMILIES = frozenset(
+_MODEL_FAMILIES = frozenset(
     {"openai", "anthropic", "google", "xai", "deepseek", "moonshot", "zhipu", "poolside"}
 )
+_AUTHOR_FAMILIES = _MODEL_FAMILIES | {"automation"}
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _MARKER_RE = re.compile(r"<!--\s*hramatka-pr-lifecycle:v1\s+(\{.*?\})\s*-->", re.DOTALL)
 _SCHEMA = "hramatka-review-attestation.v2"
@@ -175,7 +176,7 @@ def _parse_lifecycle_marker(body: object) -> dict[str, object]:
     if not isinstance(marker, dict) or set(marker) != _LIFECYCLE_FIELDS:
         raise ReviewAttestationError("malformed_lifecycle")
     family = marker.get("author_family")
-    if not isinstance(family, str) or family.casefold() not in _FAMILIES:
+    if not isinstance(family, str) or family.casefold() not in _AUTHOR_FAMILIES:
         raise ReviewAttestationError("malformed_lifecycle")
     return marker
 
@@ -295,7 +296,7 @@ def _sealed_review_record(
         or not isinstance(head_sha, str)
         or _SHA_RE.fullmatch(head_sha) is None
         or not isinstance(reviewer_family, str)
-        or reviewer_family.casefold() not in _FAMILIES
+        or reviewer_family.casefold() not in _MODEL_FAMILIES
         or not isinstance(reviewer_model, str)
         or reviewer_model.count("/") != 1
     ):
@@ -1285,7 +1286,7 @@ class ReviewAttestor:
         provider_host = semantic.get("provider_host", self._provider_host())
         if (
             not isinstance(reviewer_family, str)
-            or reviewer_family not in _FAMILIES
+            or reviewer_family not in _MODEL_FAMILIES
             or not isinstance(reviewer_model, str)
             or not isinstance(provider_host, str)
         ):
