@@ -109,7 +109,8 @@ def _complete_fake_run(request: LiveQualificationRequest, *, failed: bool = Fals
 
 
 @pytest.fixture
-def qualification_flags(monkeypatch):
+def v2_delivery_flags(monkeypatch):
+    """Enable only the legacy HTTP diagnostic that slice 6 intentionally retains."""
     monkeypatch.setenv("HRAMATKA_SLOT_REPAIR", "1")
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
 
@@ -124,7 +125,7 @@ def qualification_flags(monkeypatch):
     ],
 )
 def test_preflight_refuses_execution_before_provider_construction(
-    tmp_path, qualification_flags, changes, message
+    tmp_path, v2_delivery_flags, changes, message
 ) -> None:
     request = _request(tmp_path, **changes)
     called = False
@@ -178,7 +179,7 @@ def test_cli_refuses_anchor_pack_inside_repository_before_loading(
 
 
 def test_preflight_refuses_dirty_tree_anchor_and_path_defects_before_provider(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = _request(tmp_path)
     with pytest.raises(LiveQualificationError, match="clean source"):
@@ -246,7 +247,7 @@ def test_preflight_refuses_dirty_tree_anchor_and_path_defects_before_provider(
 
 
 def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_counts(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = _diagnostic_request(tmp_path)
     constructed: list[tuple[str, str]] = []
@@ -285,7 +286,7 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
 
 
 def test_live_density_diagnostic_rejects_an_unconfigured_route_before_provider(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = replace(_diagnostic_request(tmp_path), route_id="wrong-route")
     with pytest.raises(LiveQualificationError, match="unique configured"):
@@ -324,7 +325,7 @@ def test_repository_state_failure_is_content_free(
 
 
 def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = _request(tmp_path)
     constructed = False
@@ -359,7 +360,7 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
     ],
 )
 def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factory(
-    tmp_path, qualification_flags, monkeypatch, environment, value
+    tmp_path, v2_delivery_flags, monkeypatch, environment, value
 ) -> None:
     monkeypatch.setenv(environment, value)
     request = _request(tmp_path)
@@ -402,10 +403,14 @@ def test_canonical_route_base_accepts_one_trailing_slash(
 
 
 def test_live_passes_production_timeouts_to_shared_harness(
-    tmp_path, qualification_flags, monkeypatch
+    tmp_path, v2_delivery_flags, monkeypatch
 ) -> None:
     request = _request(tmp_path)
     received: dict[str, int] = {}
+
+    class PassingAggregate:
+        def as_model_receipt(self) -> object:
+            return object()
 
     def fake_run(_self, _anchors, **kwargs):
         received["hard"] = kwargs["bake_hard_timeout_seconds"]
@@ -413,6 +418,11 @@ def test_live_passes_production_timeouts_to_shared_harness(
         return _complete_fake_run(request)
 
     monkeypatch.setattr(ProductionQualificationHarness, "run_with_provider_factory", fake_run)
+    monkeypatch.setattr(
+        ProductionQualificationHarness,
+        "aggregates",
+        lambda _self, _run: tuple(PassingAggregate() for _ in _matrix()),
+    )
     execute_live_qualification(
         request,
         bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
@@ -423,7 +433,7 @@ def test_live_passes_production_timeouts_to_shared_harness(
 
 
 def test_live_rejects_a_failed_cell_from_the_shared_harness(
-    tmp_path, qualification_flags, monkeypatch
+    tmp_path, v2_delivery_flags, monkeypatch
 ) -> None:
     request = _request(tmp_path)
     monkeypatch.setattr(
@@ -440,8 +450,31 @@ def test_live_rejects_a_failed_cell_from_the_shared_harness(
         )
 
 
+def test_live_refuses_cells_without_passing_current_v3_aggregates(
+    tmp_path, v2_delivery_flags, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+    monkeypatch.setattr(
+        ProductionQualificationHarness,
+        "run_with_provider_factory",
+        lambda _self, _anchors, **_kwargs: _complete_fake_run(request),
+    )
+
+    def refuse_aggregate(_self, _run):
+        raise QualificationError("receipt is stale for the current qualification contract")
+
+    monkeypatch.setattr(ProductionQualificationHarness, "aggregates", refuse_aggregate)
+    with pytest.raises(LiveQualificationError, match="passing current v3 aggregates"):
+        execute_live_qualification(
+            request,
+            bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
+            repository_state=_clean_repository_state,
+            credential_present=_credential_present,
+        )
+
+
 def test_shared_runner_waits_for_injected_live_readiness_timeout(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     class SlowProvider:
         def __init__(self, route: RouteBinding) -> None:
@@ -516,7 +549,7 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports() -> None:
 
 
 def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate(
-    tmp_path, qualification_flags, monkeypatch
+    tmp_path, v2_delivery_flags, monkeypatch
 ) -> None:
     request = _request(tmp_path)
     environment_root = tmp_path / "environment-engine-out"
@@ -562,18 +595,17 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         for cell in run.cells
         if cell.receipt.expected_route.route_id == "gemini-flash-ais"
     )
-    with pytest.raises(QualificationError, match="Path proof alone"):
-        # The semantic gate remains a separate command and cannot be implied by
-        # a successful live transport/path run.
-        RouteAggregate(
-            logical_model_id="gemini-3.5-flash",
-            route=route_cells[0].expected_route,
-            cells=route_cells,
-        ).as_model_receipt()
+    # The locked shadow-tier ruling keeps ``semantic_gate=not_run`` advisory;
+    # only the current v3 aggregate may create this candidate receipt.
+    assert RouteAggregate(
+        logical_model_id="gemini-3.5-flash",
+        route=route_cells[0].expected_route,
+        cells=route_cells,
+    ).as_model_receipt().passed
 
 
 def test_live_wait_false_preserves_scratch_and_prevents_receipt_completion(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = _request(tmp_path)
 
@@ -595,7 +627,7 @@ def test_live_wait_false_preserves_scratch_and_prevents_receipt_completion(
 
 
 def test_live_wait_failure_preserves_active_qualification_error_as_cause(
-    tmp_path, qualification_flags
+    tmp_path, v2_delivery_flags
 ) -> None:
     request = _request(tmp_path)
 

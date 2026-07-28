@@ -273,6 +273,13 @@ def test_45_minute_lone_phase_three_rejects_text_questions_without_full_budget()
     assert explicitly_budgeted.text_question_budget_by_phase[3] == TEXT_QUESTION_3_3_2
 
 
+def test_density_floor_fingerprint_tracks_the_locked_v3_authority() -> None:
+    assert (
+        teacher_ready_density_v3.density_floor_fingerprint()
+        == "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
+    )
+
+
 def test_v3_contract_modules_are_unreachable_from_the_default_production_import_graph() -> None:
     root = Path(__file__).resolve().parents[3]
     env = os.environ.copy()
@@ -305,3 +312,31 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         "hramatka.engine.lesson_capacity_v3",
         "hramatka.engine.prompt_pack_v3",
     }.isdisjoint(set(json.loads(completed.stdout)))
+
+    tooling = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, sys; import hramatka.qualification; "
+                "print(json.dumps(sorted(name for name in sys.modules "
+                "if name.startswith('hramatka.engine.') and name.endswith('_v3'))))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        cwd=root,
+        env=env,
+        text=True,
+    )
+    assert set(json.loads(tooling.stdout)) == {
+        "hramatka.engine.density_evaluator_v3",
+        "hramatka.engine.density_receipt_v3",
+        "hramatka.engine.lesson_capacity_v3",
+        "hramatka.engine.prompt_pack_v3",
+        "hramatka.engine.short_writing_constraints_v3",
+        "hramatka.engine.teacher_ready_density_v3",
+        "hramatka.engine.true_false_catalog_v3",
+        "hramatka.engine.unit_builders_v3",
+        "hramatka.engine.unit_plan_v3",
+    }

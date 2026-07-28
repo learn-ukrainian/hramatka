@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -27,12 +26,13 @@ from hramatka.engine.transport import GEMMA_TIMEOUT_S
 
 from .harness import (
     _PHASE_RE,
+    _V3_PROBE_RE,
     ProductionQualificationHarness,
     QualificationRunnerStillActiveError,
     _sha,
 )
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
-from .receipts import RepairTraceEntry, RouteBinding
+from .receipts import QualificationError, RepairTraceEntry, RouteBinding
 
 _ACK_PREFIX = "HRAMATKA-QUALIFICATION-SPEND"
 _MATRIX_LABEL = "B1-45M-3x4"
@@ -165,10 +165,6 @@ def _preflight_live_cells(
         raise LiveQualificationError(
             "Real provider spend acknowledgement is missing or does not match."
         )
-    if os.environ.get("HRAMATKA_SLOT_REPAIR") != "1":
-        raise LiveQualificationError("Qualification requires explicit generic slot repair.")
-    if os.environ.get("HRAMATKA_PROMPT_PACK") != "1":
-        raise LiveQualificationError("Qualification requires explicit prompt-pack routing.")
     active_manifest.validate_runtime_anchors(request.anchors)
     if not _outside_repository(request.receipt_root, request.repository_root):
         raise LiveQualificationError("Receipt storage must be outside the repository.")
@@ -288,17 +284,27 @@ class _PinnedRouteProvider:
 
     def __call__(self, prompt: str) -> str:
         phase_match = _PHASE_RE.search(prompt)
-        if phase_match is None:
-            raise LiveQualificationError("Pinned route received no prompt-pack phase boundary.")
+        v3_probe_match = _V3_PROBE_RE.search(prompt)
         try:
-            phase_request = json.loads(phase_match.group(1))
-            mode = phase_request["mode"]
-            phase = phase_request["phase"]
-        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            if phase_match is not None:
+                phase_request = json.loads(phase_match.group(1))
+                mode = phase_request["mode"]
+                phase = phase_request["phase"]
+            elif v3_probe_match is not None:
+                probe = json.loads(v3_probe_match.group(1))
+                mode = probe["mode"]
+                phase = probe["phase"]
+            else:
+                raise ValueError("missing prompt boundary")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise LiveQualificationError(
-                "Pinned route received an invalid phase boundary."
+                "Pinned route received an invalid qualification prompt boundary."
             ) from error
-        if mode not in {"initial", "repair"} or type(phase) is not int or phase not in {1, 2, 3}:
+        if (
+            mode not in {"initial", "repair", "replacement"}
+            or type(phase) is not int
+            or phase not in {1, 2, 3}
+        ):
             raise LiveQualificationError("Pinned route received an invalid generation mode.")
         result = self._port(prompt)
         self.prompt_digests.append(_sha(prompt))
@@ -306,7 +312,7 @@ class _PinnedRouteProvider:
         if context is not None:
             context.record_qualification_route_trace(
                 RepairTraceEntry(
-                    mode=mode,
+                    mode="initial" if mode == "initial" else "repair",
                     phase=phase,
                     expected_route=self._route,
                     observed_route=self._route,
@@ -425,6 +431,20 @@ def execute_live_qualification(
             "Qualification runner remained active; scratch was preserved."
         ) from error
     _validate_complete_live_run(run, request)
+    try:
+        aggregates = harness.aggregates(run)
+        # This is intentionally validation only.  Constructing the candidate
+        # receipts proves each route has a complete current v3 aggregate, but
+        # slice 7 alone may transcribe those receipts into the production
+        # registry or expose v3 generation to teachers.
+        if len(aggregates) != len(_matrix()):
+            raise QualificationError("Live qualification did not produce every route aggregate.")
+        for aggregate in aggregates:
+            aggregate.as_model_receipt()
+    except (QualificationError, RuntimeError) as error:
+        raise LiveQualificationError(
+            "Live qualification did not produce passing current v3 aggregates."
+        ) from error
     return run
 
 

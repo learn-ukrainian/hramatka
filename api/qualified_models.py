@@ -12,15 +12,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from hramatka.engine.content_density import (
-    TEACHER_READY_DENSITY_VERSION,
-    teacher_ready_density_digest,
-)
-from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
-
 QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
-DENSITY_CONTRACT_VERSION: Final = TEACHER_READY_DENSITY_VERSION
-DENSITY_CONTRACT_DIGEST: Final = teacher_ready_density_digest()
+# These literals are the output of qualification tooling's v3 authorities.
+# Keep this production selector import-free with respect to ``*_v3`` modules
+# until slice 7 performs the atomic runtime cutover.  The tooling validates
+# them against ``template_digest()`` and ``density_floor_fingerprint()`` before
+# it may transcribe a route aggregate.
+PROMPT_PACK_VERSION: Final = "PromptPackInput.v3"
+# This is the canonical three-anchor aggregate of the currently pinned v3
+# qualification prompts.  It is intentionally a selector literal, rather than
+# a v3 import, until slice 7 opens the production v3 runtime boundary.
+PROMPT_SHA256: Final = "677dcff7bdb48337dd54c6921a373b7fb51339f3f545f0fff86a594536d687f3"
+TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.2"
+TEMPLATE_SHA256: Final = "517ad0ab9cac2a21ede0bf158e423d08c986f848197f23ce37e5bc3da94d6d03"
+DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
+DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
+TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v1"
 QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
 
 
@@ -54,8 +61,12 @@ class QualificationReceipt:
     provider_model_id: str
     registry_version: str
     prompt_pack_version: str
+    prompt_sha256: str
+    template_version: str
+    template_sha256: str
     density_contract_version: str
     density_contract_digest: str
+    type_kit_identity: str
     passed_anchors: frozenset[str]
     passed: bool
 
@@ -92,68 +103,10 @@ LOGICAL_MODELS: Final = (
     ),
 )
 
-# Transcribed from the 12 receipt files for the 2026-07-28 12/12 matrix run
-# (3 anchors x 4 routes, all outcome=passed, ProductionQualificationCellReceipt.v2)
-# located at: /Users/krisztiankoos/hramatka-qual/matrix-receipts-20260727/receipts/
-#
-# AUTHORIZED RULING (driver decision, Sol concurrence bridge msg 5544):
-# - `semantic_gate: not_run` does NOT block qualification (shadow-tier advisory per
-#   LLM-QG contract; keeping `semantic_gate: not_run` EXPLICIT here as future cutover seam).
-# - `prompt_pack_version='PromptPackInput.v3'` derived from pinned commit
-#   2e621ef8add554065f11092ed0b241dee54e9b97.
-# - All 12 cell receipts passed across anchors ('b1-narrative', 'b1-dialogue', 'b1-morphology')
-#   with density contract TeacherReadyDensity.v2 (digest
-#   07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b).
-PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
-    QualificationReceipt(
-        logical_model_id="gemini-3.5-flash",
-        provider_route="gemini-flash-ais",
-        provider_host="google-ais",
-        provider_model_id="google-ais/gemini-3.5-flash",
-        registry_version="QualifiedLogicalModels.v1",
-        prompt_pack_version="PromptPackInput.v3",
-        density_contract_version="TeacherReadyDensity.v2",
-        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
-        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
-        passed=True,
-    ),
-    QualificationReceipt(
-        logical_model_id="gemini-3.1-pro",
-        provider_route="gemini-pro-ais",
-        provider_host="google-ais",
-        provider_model_id="google-ais/gemini-3.1-pro-preview",
-        registry_version="QualifiedLogicalModels.v1",
-        prompt_pack_version="PromptPackInput.v3",
-        density_contract_version="TeacherReadyDensity.v2",
-        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
-        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
-        passed=True,
-    ),
-    QualificationReceipt(
-        logical_model_id="gemma-4-31b",
-        provider_route="gemma-ais",
-        provider_host="google-ais",
-        provider_model_id="google-ais/gemma-4-31b-it",
-        registry_version="QualifiedLogicalModels.v1",
-        prompt_pack_version="PromptPackInput.v3",
-        density_contract_version="TeacherReadyDensity.v2",
-        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
-        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
-        passed=True,
-    ),
-    QualificationReceipt(
-        logical_model_id="gemma-4-31b",
-        provider_route="gemma-openrouter",
-        provider_host="openrouter",
-        provider_model_id="google/gemma-4-31b-it",
-        registry_version="QualifiedLogicalModels.v1",
-        prompt_pack_version="PromptPackInput.v3",
-        density_contract_version="TeacherReadyDensity.v2",
-        density_contract_digest="07081556724c1818c0df2461e679aa03c3d2268607b56152590ef57478e3288b",
-        passed_anchors=frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"}),
-        passed=True,
-    ),
-)
+# The prior 12-cell transcription proved TeacherReadyDensity.v2 only.  It is
+# intentionally absent: until a full current v3 aggregate is transcribed,
+# the teacher UI must remain fail-closed.
+PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
 
 
 class QualificationCandidateRegistry:
@@ -232,8 +185,12 @@ class QualifiedModelRegistry:
         models: tuple[LogicalModelSpec, ...] = LOGICAL_MODELS,
         receipts: tuple[QualificationReceipt, ...] = PRODUCTION_QUALIFICATION_RECEIPTS,
         prompt_pack_version: str = PROMPT_PACK_VERSION,
+        prompt_sha256: str = PROMPT_SHA256,
+        template_version: str = TEMPLATE_VERSION,
+        template_sha256: str = TEMPLATE_SHA256,
         density_contract_version: str = DENSITY_CONTRACT_VERSION,
         density_contract_digest: str = DENSITY_CONTRACT_DIGEST,
+        type_kit_identity: str = TYPE_KIT_IDENTITY,
     ) -> None:
         ids = [model.id for model in models]
         if len(ids) != len(set(ids)):
@@ -241,8 +198,12 @@ class QualifiedModelRegistry:
         self._models = {model.id: model for model in models}
         self._receipts = receipts
         self.prompt_pack_version = prompt_pack_version
+        self.prompt_sha256 = prompt_sha256
+        self.template_version = template_version
+        self.template_sha256 = template_sha256
         self.density_contract_version = density_contract_version
         self.density_contract_digest = density_contract_digest
+        self.type_kit_identity = type_kit_identity
 
     def qualified_models(self) -> tuple[LogicalModelSpec, ...]:
         return tuple(
@@ -319,8 +280,12 @@ class QualifiedModelRegistry:
             and receipt.passed
             and receipt.registry_version == QUALIFIED_MODEL_REGISTRY_VERSION
             and receipt.prompt_pack_version == self.prompt_pack_version
+            and receipt.prompt_sha256 == self.prompt_sha256
+            and receipt.template_version == self.template_version
+            and receipt.template_sha256 == self.template_sha256
             and receipt.density_contract_version == self.density_contract_version
             and receipt.density_contract_digest == self.density_contract_digest
+            and receipt.type_kit_identity == self.type_kit_identity
             and receipt.passed_anchors == QUALIFICATION_ANCHORS
         )
 

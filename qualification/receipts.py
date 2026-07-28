@@ -17,17 +17,37 @@ from hramatka.api.qualified_models import (
     LOGICAL_MODELS,
     QUALIFICATION_ANCHORS,
     QUALIFIED_MODEL_REGISTRY_VERSION,
+    TEMPLATE_SHA256,
+    TEMPLATE_VERSION,
+    TYPE_KIT_IDENTITY,
     QualificationReceipt,
 )
-from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
+from hramatka.engine.prompt_pack_v3 import PROMPT_PACK_VERSION, template_digest
+from hramatka.engine.teacher_ready_density_v3 import FLOOR_TABLE, density_floor_fingerprint
 
-CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v2"
-DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v1"
-AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v1"
+CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v3"
+DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
+AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v2"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COMMIT_RE = re.compile(r"^[a-f0-9]{40,64}$")
 _OUTCOMES = frozenset({"passed", "failed"})
 _SEMANTIC_GATES = frozenset({"not_run", "passed", "failed"})
+_V3_SLOT_DISPOSITIONS = frozenset({"ready", "tray", "density_shortfall", "dropped"})
+_SLOT_ID_RE = re.compile(r"^P([1-3])-A([1-9][0-9]*)$")
+# The 45-minute qualification matrix has the same immutable 3/4/1 phase
+# shape as the v3 allocation contract.  A passing cell must account for each
+# scheduled position separately; it may not repeat a dense slot to compensate
+# for a sparse or absent one.
+_QUALIFICATION_SLOT_PHASES = {
+    "P1-A1": 1,
+    "P1-A2": 1,
+    "P1-A3": 1,
+    "P2-A1": 2,
+    "P2-A2": 2,
+    "P2-A3": 2,
+    "P2-A4": 2,
+    "P3-A1": 3,
+}
 
 
 class QualificationError(ValueError):
@@ -109,18 +129,18 @@ class RepairTraceEntry:
 
 @dataclass(frozen=True)
 class DensitySummary:
-    """Content-free accounting of ready and teacher-tray floor capacity."""
+    """Secondary content-free totals, derived from v3 block receipts."""
 
-    delivered_blocks: int
-    ready_blocks: int
-    tray_blocks: int
-    floor_blocks: int
-    phase_counts: Mapping[str, int]
-    ready_phase_counts: Mapping[str, int]
-    tray_phase_counts: Mapping[str, int]
-    response_units: int
-    ready_response_units: int
-    tray_response_units: int
+    lesson_units: int
+    ready_units: int
+    tray_units: int
+    floor_units: int
+    phase_units: Mapping[str, int]
+    ready_phase_units: Mapping[str, int]
+    tray_phase_units: Mapping[str, int]
+    slot_count: int
+    ready_slots: int
+    tray_slots: int
     disposition: str
 
     @classmethod
@@ -128,30 +148,30 @@ class DensitySummary:
         row = _require_exact_keys(
             value,
             {
-                "delivered_blocks",
-                "ready_blocks",
-                "tray_blocks",
-                "floor_blocks",
-                "phase_counts",
-                "ready_phase_counts",
-                "tray_phase_counts",
-                "response_units",
-                "ready_response_units",
-                "tray_response_units",
+                "lesson_units",
+                "ready_units",
+                "tray_units",
+                "floor_units",
+                "phase_units",
+                "ready_phase_units",
+                "tray_phase_units",
+                "slot_count",
+                "ready_slots",
+                "tray_slots",
                 "disposition",
             },
             "density",
         )
         count_fields = (
-            "delivered_blocks",
-            "ready_blocks",
-            "tray_blocks",
-            "floor_blocks",
-            "response_units",
-            "ready_response_units",
-            "tray_response_units",
+            "lesson_units",
+            "ready_units",
+            "tray_units",
+            "floor_units",
+            "slot_count",
+            "ready_slots",
+            "tray_slots",
         )
-        phase_count_fields = ("phase_counts", "ready_phase_counts", "tray_phase_counts")
+        phase_count_fields = ("phase_units", "ready_phase_units", "tray_phase_units")
         if (
             any(type(row[field]) is not int or row[field] < 0 for field in count_fields)
             or row["disposition"] not in {"teacher_ready", "recoverable_draft"}
@@ -161,44 +181,132 @@ class DensitySummary:
                 or any(type(count) is not int or count < 0 for count in row[field].values())
                 for field in phase_count_fields
             )
-            or row["delivered_blocks"] != row["ready_blocks"]
-            or row["floor_blocks"] != row["ready_blocks"] + row["tray_blocks"]
-            or row["response_units"]
-            != row["ready_response_units"] + row["tray_response_units"]
+            or row["floor_units"] != row["ready_units"] + row["tray_units"]
+            or row["lesson_units"] != row["floor_units"]
+            or row["lesson_units"] != sum(row["phase_units"].values())
+            or row["ready_units"] != sum(row["ready_phase_units"].values())
+            or row["tray_units"] != sum(row["tray_phase_units"].values())
+            or row["slot_count"] != row["ready_slots"] + row["tray_slots"]
             or any(
-                row["phase_counts"][phase]
-                != row["ready_phase_counts"][phase] + row["tray_phase_counts"][phase]
+                row["phase_units"][phase]
+                != row["ready_phase_units"][phase] + row["tray_phase_units"][phase]
                 for phase in ("1", "2", "3")
             )
         ):
             raise QualificationError("Density summary has invalid values.")
         return cls(
-            delivered_blocks=row["delivered_blocks"],
-            ready_blocks=row["ready_blocks"],
-            tray_blocks=row["tray_blocks"],
-            floor_blocks=row["floor_blocks"],
-            phase_counts=dict(row["phase_counts"]),
-            ready_phase_counts=dict(row["ready_phase_counts"]),
-            tray_phase_counts=dict(row["tray_phase_counts"]),
-            response_units=row["response_units"],
-            ready_response_units=row["ready_response_units"],
-            tray_response_units=row["tray_response_units"],
+            lesson_units=row["lesson_units"],
+            ready_units=row["ready_units"],
+            tray_units=row["tray_units"],
+            floor_units=row["floor_units"],
+            phase_units=dict(row["phase_units"]),
+            ready_phase_units=dict(row["ready_phase_units"]),
+            tray_phase_units=dict(row["tray_phase_units"]),
+            slot_count=row["slot_count"],
+            ready_slots=row["ready_slots"],
+            tray_slots=row["tray_slots"],
             disposition=row["disposition"],
         )
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "delivered_blocks": self.delivered_blocks,
-            "ready_blocks": self.ready_blocks,
-            "tray_blocks": self.tray_blocks,
-            "floor_blocks": self.floor_blocks,
-            "phase_counts": dict(self.phase_counts),
-            "ready_phase_counts": dict(self.ready_phase_counts),
-            "tray_phase_counts": dict(self.tray_phase_counts),
-            "response_units": self.response_units,
-            "ready_response_units": self.ready_response_units,
-            "tray_response_units": self.tray_response_units,
+            "lesson_units": self.lesson_units,
+            "ready_units": self.ready_units,
+            "tray_units": self.tray_units,
+            "floor_units": self.floor_units,
+            "phase_units": dict(self.phase_units),
+            "ready_phase_units": dict(self.ready_phase_units),
+            "tray_phase_units": dict(self.tray_phase_units),
+            "slot_count": self.slot_count,
+            "ready_slots": self.ready_slots,
+            "tray_slots": self.tray_slots,
             "disposition": self.disposition,
+        }
+
+
+@dataclass(frozen=True)
+class SlotTelemetry:
+    """One content-free v3 evaluation attempt for a scheduled slot."""
+
+    slot_id: str
+    phase: int
+    activity_type: str
+    disposition: str
+    units: int
+    floor_met: bool
+    repair_rounds: int
+    replacement_used: bool
+    unassigned_errors_count: int
+
+    @classmethod
+    def from_dict(cls, value: object) -> SlotTelemetry:
+        row = _require_exact_keys(
+            value,
+            {
+                "slot_id",
+                "phase",
+                "type",
+                "disposition",
+                "units",
+                "floor_met",
+                "repair_rounds",
+                "replacement_used",
+                "unassigned_errors_count",
+            },
+            "v3 slot telemetry",
+        )
+        slot_id = row["slot_id"]
+        activity_type = row["type"]
+        slot_match = _SLOT_ID_RE.fullmatch(slot_id) if isinstance(slot_id, str) else None
+        if (
+            slot_match is None
+            or type(row["phase"]) is not int
+            or row["phase"] not in {1, 2, 3}
+            or int(slot_match.group(1)) != row["phase"]
+            or not isinstance(activity_type, str)
+            or activity_type not in FLOOR_TABLE
+            or row["disposition"] not in _V3_SLOT_DISPOSITIONS
+            or type(row["units"]) is not int
+            or row["units"] < 0
+            or type(row["floor_met"]) is not bool
+            or type(row["repair_rounds"]) is not int
+            or row["repair_rounds"] < 0
+            or row["repair_rounds"] > 2
+            or type(row["replacement_used"]) is not bool
+            or type(row["unassigned_errors_count"]) is not int
+            or row["unassigned_errors_count"] < 0
+        ):
+            raise QualificationError("v3 slot telemetry has invalid values.")
+        floor_met = row["units"] >= FLOOR_TABLE[activity_type].minimum_units
+        if row["floor_met"] != floor_met:
+            raise QualificationError("v3 slot telemetry floor status must derive from its units.")
+        if row["disposition"] in {"ready", "tray"} and not floor_met:
+            raise QualificationError("Ready/tray v3 telemetry must meet its own floor.")
+        if row["disposition"] == "density_shortfall" and floor_met:
+            raise QualificationError("Density shortfall telemetry must be below its own floor.")
+        return cls(
+            slot_id=slot_id,
+            phase=row["phase"],
+            activity_type=activity_type,
+            disposition=row["disposition"],
+            units=row["units"],
+            floor_met=row["floor_met"],
+            repair_rounds=row["repair_rounds"],
+            replacement_used=row["replacement_used"],
+            unassigned_errors_count=row["unassigned_errors_count"],
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "slot_id": self.slot_id,
+            "phase": self.phase,
+            "type": self.activity_type,
+            "disposition": self.disposition,
+            "units": self.units,
+            "floor_met": self.floor_met,
+            "repair_rounds": self.repair_rounds,
+            "replacement_used": self.replacement_used,
+            "unassigned_errors_count": self.unassigned_errors_count,
         }
 
 
@@ -215,12 +323,17 @@ class CellReceipt:
     expected_route: RouteBinding
     observed_route: RouteBinding
     prompt_sha256: str
+    prompt_pack_version: str
+    template_version: str
+    template_sha256: str
     density_contract_version: str
     density_contract_sha256: str
+    type_kit_identity: str
     registry_sha256: str
     engine_sha256: str
     flag_sha256: str
     density: DensitySummary
+    slot_telemetry: tuple[SlotTelemetry, ...]
     repair_trace: tuple[RepairTraceEntry, ...]
     semantic_gate: str
     outcome: str
@@ -245,11 +358,16 @@ class CellReceipt:
                 "observed_route",
                 "outcome",
                 "prompt_sha256",
+                "prompt_pack_version",
                 "registry_sha256",
                 "repair_trace",
                 "schema_version",
                 "semantic_gate",
                 "source_commit",
+                "slot_telemetry",
+                "template_sha256",
+                "template_version",
+                "type_kit_identity",
             },
             "cell receipt",
         )
@@ -263,6 +381,7 @@ class CellReceipt:
             "manifest_sha256",
             "anchor_sha256",
             "prompt_sha256",
+            "template_sha256",
             "density_contract_sha256",
             "registry_sha256",
             "engine_sha256",
@@ -276,14 +395,64 @@ class CellReceipt:
             or not row["logical_model_id"]
             or not isinstance(row["density_contract_version"], str)
             or not row["density_contract_version"]
+            or not isinstance(row["prompt_pack_version"], str)
+            or not row["prompt_pack_version"]
+            or not isinstance(row["template_version"], str)
+            or not row["template_version"]
+            or not isinstance(row["type_kit_identity"], str)
+            or not row["type_kit_identity"]
             or row["outcome"] not in _OUTCOMES
             or row["semantic_gate"] not in _SEMANTIC_GATES
             or not isinstance(row["repair_trace"], list)
+            or not isinstance(row["slot_telemetry"], list)
         ):
             raise QualificationError("Cell receipt has invalid required values.")
         trace = tuple(RepairTraceEntry.from_dict(entry) for entry in row["repair_trace"])
         if not trace:
             raise QualificationError("Cell receipt must contain a route-bound generation trace.")
+        slot_telemetry = tuple(SlotTelemetry.from_dict(entry) for entry in row["slot_telemetry"])
+        if not slot_telemetry or tuple(
+            sorted(slot_telemetry, key=lambda entry: (entry.phase, entry.slot_id))
+        ) != slot_telemetry:
+            raise QualificationError(
+                "v3 slot telemetry must be non-empty and deterministically ordered."
+            )
+        accepted = tuple(
+            entry for entry in slot_telemetry if entry.disposition in {"ready", "tray"}
+        )
+        if len({entry.slot_id for entry in accepted}) != len(accepted):
+            raise QualificationError("Accepted v3 slot telemetry may not repeat a scheduled slot.")
+        density = DensitySummary.from_dict(row["density"])
+        if (
+            density.lesson_units != sum(entry.units for entry in accepted)
+            or density.slot_count != len(accepted)
+            or density.ready_slots != sum(entry.disposition == "ready" for entry in accepted)
+            or density.tray_slots != sum(entry.disposition == "tray" for entry in accepted)
+            or any(
+                density.phase_units[phase]
+                != sum(entry.units for entry in accepted if str(entry.phase) == phase)
+                or density.ready_phase_units[phase]
+                != sum(
+                    entry.units
+                    for entry in accepted
+                    if str(entry.phase) == phase and entry.disposition == "ready"
+                )
+                or density.tray_phase_units[phase]
+                != sum(
+                    entry.units
+                    for entry in accepted
+                    if str(entry.phase) == phase and entry.disposition == "tray"
+                )
+                for phase in ("1", "2", "3")
+            )
+        ):
+            raise QualificationError("v3 density totals must derive from accepted slot receipts.")
+        if density.disposition == "teacher_ready" and {
+            entry.slot_id: entry.phase for entry in accepted
+        } != _QUALIFICATION_SLOT_PHASES:
+            raise QualificationError(
+                "Teacher-ready v3 density requires every scheduled qualification slot exactly once."
+            )
         return cls(
             source_commit=source_commit,
             harness_sha256=row["harness_sha256"],
@@ -294,12 +463,17 @@ class CellReceipt:
             expected_route=RouteBinding.from_dict(row["expected_route"], label="expected route"),
             observed_route=RouteBinding.from_dict(row["observed_route"], label="observed route"),
             prompt_sha256=row["prompt_sha256"],
+            prompt_pack_version=row["prompt_pack_version"],
+            template_version=row["template_version"],
+            template_sha256=row["template_sha256"],
             density_contract_version=row["density_contract_version"],
             density_contract_sha256=row["density_contract_sha256"],
+            type_kit_identity=row["type_kit_identity"],
             registry_sha256=row["registry_sha256"],
             engine_sha256=row["engine_sha256"],
             flag_sha256=row["flag_sha256"],
-            density=DensitySummary.from_dict(row["density"]),
+            density=density,
+            slot_telemetry=slot_telemetry,
             repair_trace=trace,
             semantic_gate=row["semantic_gate"],
             outcome=row["outcome"],
@@ -317,12 +491,17 @@ class CellReceipt:
             "expected_route": self.expected_route.as_dict(),
             "observed_route": self.observed_route.as_dict(),
             "prompt_sha256": self.prompt_sha256,
+            "prompt_pack_version": self.prompt_pack_version,
+            "template_version": self.template_version,
+            "template_sha256": self.template_sha256,
             "density_contract_version": self.density_contract_version,
             "density_contract_sha256": self.density_contract_sha256,
+            "type_kit_identity": self.type_kit_identity,
             "registry_sha256": self.registry_sha256,
             "engine_sha256": self.engine_sha256,
             "flag_sha256": self.flag_sha256,
             "density": self.density.as_dict(),
+            "slot_telemetry": [entry.as_dict() for entry in self.slot_telemetry],
             "repair_trace": [entry.as_dict() for entry in self.repair_trace],
             "semantic_gate": self.semantic_gate,
             "outcome": self.outcome,
@@ -479,12 +658,36 @@ class RouteAggregate:
 
     @property
     def semantic_gate_passed(self) -> bool:
-        return all(cell.semantic_gate == "passed" for cell in self.cells)
+        # The shadow-tier semantic gate remains advisory by the locked #305
+        # ruling.  A reported semantic failure is still not transcribable.
+        return all(cell.semantic_gate in {"not_run", "passed"} for cell in self.cells)
+
+    @property
+    def current_v3(self) -> bool:
+        """Return whether this is a complete current v3 aggregate, not path-only data."""
+        return (
+            len(self.cells) == len(QUALIFICATION_ANCHORS)
+            and self.passed_anchors == QUALIFICATION_ANCHORS
+            and all(
+                cell.outcome == "passed"
+                and cell.density.disposition == "teacher_ready"
+                and cell.density.slot_count >= 8
+                and cell.density.lesson_units >= 57
+                and cell.prompt_pack_version == PROMPT_PACK_VERSION
+                and cell.template_version == TEMPLATE_VERSION
+                and cell.template_sha256 == template_digest()
+                and cell.density_contract_version == DENSITY_CONTRACT_VERSION
+                and cell.density_contract_sha256 == density_floor_fingerprint()
+                and cell.type_kit_identity == TYPE_KIT_IDENTITY
+                for cell in self.cells
+            )
+        )
 
     def as_model_receipt(self) -> QualificationReceipt:
-        """Produce a selector receipt only after the separate semantic gate passes."""
-        if self.passed_anchors != QUALIFICATION_ANCHORS or not self.semantic_gate_passed:
-            raise QualificationError("Path proof alone cannot qualify a production provider route.")
+        """Produce a selector receipt only from a passing current v3 aggregate."""
+        if not self.current_v3 or not self.semantic_gate_passed:
+            raise QualificationError("Only a passing current v3 aggregate may qualify a route.")
+        cells = tuple(sorted(self.cells, key=lambda cell: cell.anchor_id))
         return QualificationReceipt(
             logical_model_id=self.logical_model_id,
             provider_route=self.route.route_id,
@@ -492,8 +695,17 @@ class RouteAggregate:
             provider_model_id=self.route.model_id,
             registry_version=QUALIFIED_MODEL_REGISTRY_VERSION,
             prompt_pack_version=PROMPT_PACK_VERSION,
+            prompt_sha256=_canonical_digest(
+                [
+                    {"anchor_id": cell.anchor_id, "prompt_sha256": cell.prompt_sha256}
+                    for cell in cells
+                ]
+            ),
+            template_version=TEMPLATE_VERSION,
+            template_sha256=TEMPLATE_SHA256,
             density_contract_version=DENSITY_CONTRACT_VERSION,
             density_contract_digest=DENSITY_CONTRACT_DIGEST,
+            type_kit_identity=TYPE_KIT_IDENTITY,
             passed_anchors=self.passed_anchors,
             passed=True,
         )
@@ -535,8 +747,20 @@ def aggregate_receipts(
     them exactly; missing, stale, duplicate, route-mismatched, or failed cells
     are rejected before any selector receipt can exist.
     """
+    if (
+        template_digest() != TEMPLATE_SHA256
+        or density_floor_fingerprint() != DENSITY_CONTRACT_DIGEST
+    ):
+        raise QualificationError(
+            "Qualification authority literals do not match the current v3 contract."
+        )
+    # Re-parse in-memory dataclasses too.  Callers and tests can use
+    # ``dataclasses.replace``; qualification must never trust those objects
+    # without applying the same strict receipt invariants as persisted JSON.
     parsed = tuple(
-        receipt if isinstance(receipt, CellReceipt) else CellReceipt.from_dict(receipt)
+        CellReceipt.from_dict(receipt.as_dict())
+        if isinstance(receipt, CellReceipt)
+        else CellReceipt.from_dict(receipt)
         for receipt in receipts
     )
     expected_routes = {
@@ -578,25 +802,35 @@ def aggregate_receipts(
             or receipt.registry_sha256 != registry_digest()
             or receipt.engine_sha256 != engine_sha256
             or receipt.flag_sha256 != flag_sha256
+            or receipt.prompt_pack_version != PROMPT_PACK_VERSION
+            or receipt.template_version != TEMPLATE_VERSION
+            or receipt.template_sha256 != template_digest()
             or receipt.density_contract_version != DENSITY_CONTRACT_VERSION
             or receipt.density_contract_sha256 != DENSITY_CONTRACT_DIGEST
+            or receipt.density_contract_sha256 != density_floor_fingerprint()
+            or receipt.type_kit_identity != TYPE_KIT_IDENTITY
         ):
             raise QualificationError("Receipt is stale for the current qualification contract.")
         if receipt.outcome != "passed" or receipt.density.disposition != "teacher_ready":
             raise QualificationError(
                 "A failed or non-deliverable qualification cell cannot aggregate."
             )
-        expected_phase_counts = {"1": 3, "2": 4, "3": 1}
+        expected_phase_slots = {"1": 3, "2": 4, "3": 1}
         if (
-            receipt.density.floor_blocks < 8
+            receipt.density.slot_count < 8
             or any(
-                receipt.density.phase_counts[phase] < expected
-                for phase, expected in expected_phase_counts.items()
+                receipt.density.ready_slots + receipt.density.tray_slots < 8
+                or sum(
+                    entry.disposition in {"ready", "tray"} and str(entry.phase) == phase
+                    for entry in receipt.slot_telemetry
+                )
+                < expected
+                for phase, expected in expected_phase_slots.items()
             )
-            or receipt.density.response_units < 28
+            or receipt.density.lesson_units < 57
         ):
             raise QualificationError(
-                "Receipt density counts do not meet the B1 45-minute contract."
+                "Receipt v3 unit totals do not meet the B1 45-minute contract."
             )
         for trace in receipt.repair_trace:
             if trace.expected_route != expected_route or trace.observed_route != expected_route:

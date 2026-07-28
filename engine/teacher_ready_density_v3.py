@@ -7,6 +7,8 @@ atomic v2-to-v3 cutover.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -156,3 +158,36 @@ def phase_shape_for(duration_minutes: int) -> PhaseShape:
 def type_allowed_in_phase(duration_minutes: int, phase: int, activity_type: str) -> bool:
     """Apply the central v3 phase-shape rule without touching the v2 scheduler."""
     return phase_shape_for(duration_minutes).allows(phase, activity_type)
+
+
+def density_floor_fingerprint() -> str:
+    """Return the content-free identity of the locked v3 floor authority.
+
+    Qualification records this value rather than copying individual floor
+    values into a receipt.  It deliberately lives next to the authority and
+    is never imported by the pre-cutover v2 production path.
+    """
+    payload = {
+        "version": TEACHER_READY_DENSITY_VERSION,
+        "floors": [
+            {
+                "type": activity_type,
+                "minimum_units": floor.minimum_units,
+                "unit_kind": floor.unit_kind,
+                "category_minima": (
+                    None
+                    if floor.category_minima is None
+                    else {
+                        "comprehension": floor.category_minima.comprehension,
+                        "explanation_inference": floor.category_minima.explanation_inference,
+                        "anchored_application": floor.category_minima.anchored_application,
+                    }
+                ),
+                "minimum_registered_constraints": floor.minimum_registered_constraints,
+                "certified_errors_per_unit": floor.certified_errors_per_unit,
+            }
+            for activity_type, floor in sorted(FLOOR_TABLE.items())
+        ],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
