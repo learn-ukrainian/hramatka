@@ -18,7 +18,9 @@ from hramatka.engine.providers import (
     GEMMA_AIS_BASE_URL_ENV,
     GEMMA_FALLBACK_BASE_URL_ENV,
     GEMMA_FALLBACK_MODEL_ENV,
+    VERTEX_BASE_URL_ENV,
     FailoverGeneratorPort,
+    VertexGenerateContentTransport,
     make_qualification_pinned_generator,
     validate_qualification_route_runtime,
 )
@@ -46,6 +48,9 @@ from hramatka.qualification.manifest import ManifestError
 from hramatka.qualification.receipts import DensityDiagnosticReceipt, RouteBinding
 
 _HEAD = "a" * 40
+_VERTEX_BASE_URL = (
+    "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google"
+)
 
 
 def _request(tmp_path: Path, **changes: object) -> LiveQualificationRequest:
@@ -113,6 +118,7 @@ def v2_delivery_flags(monkeypatch):
     """Enable only the legacy HTTP diagnostic that slice 6 intentionally retains."""
     monkeypatch.setenv("HRAMATKA_SLOT_REPAIR", "1")
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
+    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
 
 
 @pytest.mark.parametrize(
@@ -144,6 +150,22 @@ def test_preflight_refuses_execution_before_provider_construction(
             pinned_port_factory=port_factory,
         )
     assert not called
+
+
+def test_matrix_is_six_routes_and_spend_acknowledgement_rebinds_to_18_cells() -> None:
+    manifest = load_manifest()
+    assert len(_matrix()) == 6
+    assert {route.route_id for _logical_model_id, route in _matrix()} == {
+        "gemini-flash-ais",
+        "gemini-flash-vertex",
+        "gemini-pro-ais",
+        "gemini-pro-vertex",
+        "gemma-ais",
+        "gemma-openrouter",
+    }
+    assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
+        ":B1-45M-3x6"
+    )
 
 
 def test_cli_refuses_anchor_pack_inside_repository_before_loading(
@@ -269,7 +291,7 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
         pinned_port_factory=fake_port_factory,
     )
 
-    assert constructed == [("gemini-3.5-flash", "gemini-flash-ais")]
+    assert constructed == [("gemini-3.6-flash", "gemini-flash-ais")]
     assert credential_routes == ["gemini-flash-ais"]
     assert run.cell.receipt.outcome == "passed"
     parsed = DensityDiagnosticReceipt.from_dict(
@@ -353,6 +375,7 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
         (GEMMA_AIS_BASE_URL_ENV, "https://untrusted.example/v1"),
         (GEMMA_FALLBACK_MODEL_ENV, "other/model"),
         (GEMMA_FALLBACK_BASE_URL_ENV, "https://untrusted.example/v1"),
+        (VERTEX_BASE_URL_ENV, "https://untrusted.example/v1"),
     ],
 )
 def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factory(
@@ -383,9 +406,14 @@ def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factor
     [
         (GEMMA_AIS_BASE_URL_ENV, f"{DEFAULT_GEMMA_AIS_BASE_URL}/"),
         (GEMMA_FALLBACK_BASE_URL_ENV, f"{DEFAULT_GEMMA_FALLBACK_BASE_URL}/"),
+        (
+            VERTEX_BASE_URL_ENV,
+            "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/",
+        ),
     ],
 )
 def test_canonical_route_base_accepts_one_trailing_slash(monkeypatch, environment, value) -> None:
+    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
     monkeypatch.setenv(environment, value)
     for logical_model_id, route in _matrix():
         validate_qualification_route_runtime(
@@ -491,7 +519,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
 
     anchors = deterministic_runtime_anchors()
     anchor = anchors["b1-narrative"]
-    route = RouteBinding("gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash")
+    route = RouteBinding("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash")
     bundle = fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data")
     harness = ProductionQualificationHarness(tmp_path / "receipts", source_commit=_HEAD)
     (tmp_path / "short").mkdir()
@@ -502,7 +530,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
         with pytest.raises(QualificationError, match="terminal state"):
             harness._run_cell(
                 anchor,
-                "gemini-3.5-flash",
+                "gemini-3.6-flash",
                 route,
                 bundle,
                 provider=SlowProvider(route),
@@ -514,7 +542,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
             )
         result = harness._run_cell(
             anchor,
-            "gemini-3.5-flash",
+            "gemini-3.6-flash",
             route,
             bundle,
             provider=SlowProvider(route),
@@ -529,9 +557,10 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
     assert result.receipt.outcome == "passed"
 
 
-def test_pinned_factory_never_builds_failover_or_round_robin_ports() -> None:
+def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) -> None:
     from hramatka.qualification.live import _matrix
 
+    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
     for logical_model_id, route in _matrix():
         port = make_qualification_pinned_generator(
             route_id=route.route_id,
@@ -543,7 +572,10 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports() -> None:
         assert port._model == route.model_id
         assert port._transport.host == route.host
         assert port._transport.max_attempts == 1
-        assert port._transport.retry_json_mode_on_400 is False
+        if route.host == "google-vertex":
+            assert isinstance(port._transport, VertexGenerateContentTransport)
+        else:
+            assert port._transport.retry_json_mode_on_400 is False
 
 
 def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate(
@@ -566,11 +598,13 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 12
-    assert len(constructed) == 12
+    assert len(run.cells) == 18
+    assert len(constructed) == 18
     assert set(constructed) == {
-        ("gemini-3.5-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"),
+        ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
+        ("gemini-3.6-flash", "gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
         ("gemini-3.1-pro", "gemini-pro-ais", "google-ais", "google-ais/gemini-3.1-pro-preview"),
+        ("gemini-3.1-pro", "gemini-pro-vertex", "google-vertex", "gemini-3.1-pro-preview"),
         ("gemma-4-31b", "gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"),
         ("gemma-4-31b", "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
     }
@@ -597,7 +631,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     # only the current v3 aggregate may create this candidate receipt.
     assert (
         RouteAggregate(
-            logical_model_id="gemini-3.5-flash",
+            logical_model_id="gemini-3.6-flash",
             route=route_cells[0].expected_route,
             cells=route_cells,
         )

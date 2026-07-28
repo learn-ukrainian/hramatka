@@ -14,10 +14,15 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
+from hramatka.api.qualified_models import LOGICAL_MODELS
 from hramatka.engine import providers
 from hramatka.engine.transport import GEMMA_MODEL, AISGeneratorPort, GeneratorUnavailable
 
 OK_BODY = {"choices": [{"message": {"content": '{"activities": []}'}}]}
+VERTEX_BASE_URL = (
+    "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google"
+)
+VERTEX_OK_BODY = {"candidates": [{"content": {"parts": [{"text": '{"activities": []}'}]}}]}
 
 
 def _client(handler) -> httpx.Client:
@@ -46,6 +51,14 @@ def _seq(steps: list, ok_body: dict | None = None):
 def _transport(handler) -> providers.HttpChatTransport:
     return providers.HttpChatTransport(
         base_url="https://prov.example/v1",
+        client=_client(handler),
+        retry_backoff_s=0,
+    )
+
+
+def _vertex_transport(handler) -> providers.VertexGenerateContentTransport:
+    return providers.VertexGenerateContentTransport(
+        base_url=VERTEX_BASE_URL,
         client=_client(handler),
         retry_backoff_s=0,
     )
@@ -126,6 +139,50 @@ def test_wire_model_strips_our_provider_prefix():
     _transport(handler)("p", api_key="k", model="google-ais/gemma-4-31b-it", timeout_s=5)
     assert seen["body"]["model"] == "gemma-4-31b-it"
     assert "/" not in seen["body"]["model"]
+
+
+def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["authorization"] = request.headers.get("authorization")
+        seen["vertex_key"] = request.headers.get("x-goog-api-key")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    out = _vertex_transport(handler)(
+        "PROMPT-BODY", api_key="vertex-only-key", model="gemini-3.6-flash", timeout_s=5
+    )
+
+    assert out == '{"activities": []}'
+    assert seen["url"] == f"{VERTEX_BASE_URL}/models/gemini-3.6-flash:generateContent"
+    assert seen["authorization"] is None
+    assert seen["vertex_key"] == "vertex-only-key"
+    assert seen["body"] == {
+        "contents": [{"role": "user", "parts": [{"text": "PROMPT-BODY"}]}],
+        "generationConfig": {"temperature": 0.2},
+    }
+    assert "tools" not in seen["body"]
+
+
+def test_vertex_retries_5xx_and_refuses_prefixed_model_ids():
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    assert _vertex_transport(handler)("p", api_key="k", model="gemini-3.6-flash", timeout_s=5) == (
+        '{"activities": []}'
+    )
+    assert calls["n"] == 2
+    with pytest.raises(GeneratorUnavailable, match="bare model ID"):
+        _vertex_transport(handler)(
+            "p", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5
+        )
 
 
 # --- retry semantics: bounded backoff on transient provider failures --------
@@ -313,6 +370,83 @@ def test_ais_retry_exhaustion_without_fallback_key_preserves_existing_failure(mo
 
     assert primary_calls["n"] == 3
     assert fallback_calls["n"] == 0
+
+
+def test_gemini_ais_outage_uses_vertex_once_and_stamps_vertex_model(monkeypatch, caplog):
+    monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
+    monkeypatch.setenv(providers.VERTEX_API_KEY_ENV, "vertex-key")
+    monkeypatch.setenv(providers.VERTEX_BASE_URL_ENV, VERTEX_BASE_URL)
+    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
+    selector = providers.make_logical_model_generator(
+        flash.id,
+        ("google-ais",),
+        qualified_routes=flash.provider_routes,
+    )
+    generator = selector._generators["google-ais"]
+    primary_handler, primary_calls = _seq([503, 500, 502])
+    seen: dict = {}
+
+    def vertex_handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers.get("x-goog-api-key")
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    generator._transport = providers.HttpChatTransport(
+        base_url="https://ais.example/v1",
+        client=_client(primary_handler),
+        host="google-ais",
+        retry_backoff_s=0,
+    )
+    generator._fallback._transport = providers.VertexGenerateContentTransport(
+        base_url=VERTEX_BASE_URL,
+        client=_client(vertex_handler),
+        retry_backoff_s=0,
+    )
+    from hramatka.engine.transport import generator_model_id
+
+    token = generator_model_id.set(None)
+    try:
+        with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
+            assert generator("PROMPT-BODY") == '{"activities": []}'
+        assert generator_model_id.get() == "gemini-3.6-flash"
+    finally:
+        generator_model_id.reset(token)
+
+    assert primary_calls["n"] == 3
+    assert seen == {
+        "url": f"{VERTEX_BASE_URL}/models/gemini-3.6-flash:generateContent",
+        "key": "vertex-key",
+    }
+    assert caplog.text.count("gemini fallback engaged host=google-vertex") == 1
+
+
+def test_gemini_ais_auth_failure_never_uses_vertex(monkeypatch):
+    monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
+    monkeypatch.setenv(providers.VERTEX_API_KEY_ENV, "vertex-key")
+    monkeypatch.setenv(providers.VERTEX_BASE_URL_ENV, VERTEX_BASE_URL)
+    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
+    selector = providers.make_logical_model_generator(
+        flash.id,
+        ("google-ais",),
+        qualified_routes=flash.provider_routes,
+    )
+    generator = selector._generators["google-ais"]
+    primary_handler, primary_calls = _seq([401])
+    generator._transport = providers.HttpChatTransport(
+        base_url="https://ais.example/v1",
+        client=_client(primary_handler),
+        host="google-ais",
+        retry_backoff_s=0,
+    )
+    generator._fallback._transport = providers.VertexGenerateContentTransport(
+        base_url=VERTEX_BASE_URL,
+        client=_client(lambda _request: pytest.fail("401 must not use Vertex")),
+        retry_backoff_s=0,
+    )
+
+    with pytest.raises(GeneratorUnavailable, match="HTTP 401"):
+        generator("prompt")
+    assert primary_calls["n"] == 1
 
 
 def test_fallback_key_file_is_read_at_call_time(monkeypatch, tmp_path):
@@ -547,13 +681,15 @@ def test_failover_isolation(monkeypatch):
     gen = providers.make_generator("gemma-ais")
     assert isinstance(gen, providers.FailoverGeneratorPort)
 
-    # Gemini and DeepSeek get NO failover (failover port does not engage):
+    # Gemini keeps AIS primary with a native Vertex outage fallback.
     monkeypatch.setenv("HRAMATKA_PAID_MODEL_OK", "1")
     monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemini-3.1-pro-preview")
     gen = providers.make_generator("google-ais/gemini-3.1-pro-preview")
-    assert not isinstance(gen, providers.FailoverGeneratorPort)
+    assert isinstance(gen, providers.FailoverGeneratorPort)
     assert isinstance(gen, AISGeneratorPort)
     assert gen._model == "google-ais/gemini-3.1-pro-preview"
+    assert gen._fallback._model == "gemini-3.1-pro-preview"
+    assert isinstance(gen._fallback._transport, providers.VertexGenerateContentTransport)
 
     # Verify that trying to resolve legacy names fails for non-gemma models
     with pytest.raises(ValueError) as exc:

@@ -26,6 +26,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from .transport import (
     AIS_API_KEY_ENV,
@@ -696,6 +697,35 @@ DEFAULT_GEMMA_FALLBACK_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_GEMMA_FALLBACK_MODEL = "google/gemma-4-31b-it"
 _BAKE_PROVIDERS = ("google-ais", "openrouter")
 
+# Vertex uses Google's native ``generateContent`` API, not the OpenAI-compatible
+# AIS endpoint. The complete project/location/publisher prefix remains operator
+# configuration: a project identity must never be compiled into this repository.
+VERTEX_BASE_URL_ENV = "HRAMATKA_VERTEX_BASE_URL"
+VERTEX_API_KEY_ENV = "HRAMATKA_VERTEX_API_KEY"
+VERTEX_API_KEY_FILE_ENV = "HRAMATKA_VERTEX_API_KEY_FILE"
+
+
+def _validate_vertex_base_url(value: str) -> str:
+    """Return one configured global Google Vertex publisher prefix or fail closed."""
+    parsed = urlsplit(value)
+    parts = tuple(part for part in parsed.path.split("/") if part)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "aiplatform.googleapis.com"
+        or parts[:2] != ("v1", "projects")
+        or len(parts) != 7
+        or not parts[2]
+        or parts[3:] != ("locations", "global", "publishers", "google")
+        or parsed.path.rstrip("/")
+        != f"/v1/projects/{parts[2]}/locations/global/publishers/google"
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError("Vertex base URL must be the global Google publisher prefix.")
+    return value.rstrip("/")
+
 DEEPINFRA_API_KEY_ENV = "DEEPINFRA_API_KEY"
 DEEPINFRA_BASE_URL_ENV = "HRAMATKA_DEEPINFRA_BASE_URL"
 DEFAULT_DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
@@ -936,12 +966,198 @@ class HttpChatTransport:
                 ctx.record_provider_call(trace_entry)
 
 
-class FailoverGeneratorPort(AISGeneratorPort):
-    """One Gemma primary with the other provider as outage-only fallback."""
+def _extract_vertex_text(body: Any) -> str:
+    """Pull text parts from a native Vertex ``generateContent`` envelope."""
+    try:
+        parts = body["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise GeneratorUnavailable("Vertex response had no candidates[0].content.parts") from exc
+    if not isinstance(parts, list):
+        raise GeneratorUnavailable("Vertex response content parts were not a list")
+    text = "".join(
+        part["text"]
+        for part in parts
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    )
+    if not text:
+        raise GeneratorUnavailable("Vertex response content had no text parts")
+    return text
 
-    def __init__(self, *, fallback: AISGeneratorPort, **kwargs: Any) -> None:
+
+@dataclass
+class VertexGenerateContentTransport:
+    """Google Vertex native ``generateContent`` transport.
+
+    Vertex is intentionally not sent through the OpenAI-compatible AIS client:
+    it requires a publisher-model URL, ``x-goog-api-key`` authentication, and a
+    ``contents``/``parts`` envelope.  ``client`` remains injectable so tests can
+    prove the wire contract without any provider I/O.
+    """
+
+    base_url: str
+    client: Any | None = None  # httpx.Client | None (injected in tests)
+    host: str = "google-vertex"
+    max_attempts: int = 3
+    retry_backoff_s: float = 0.75
+
+    def __call__(self, prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
+        import time
+
+        import httpx
+
+        try:
+            base_url = _validate_vertex_base_url(self.base_url)
+        except ValueError as exc:
+            raise GeneratorUnavailable("Vertex base URL is invalid") from exc
+        if not model or "/" in model:
+            raise GeneratorUnavailable("Vertex model identifier must be a bare model ID")
+        url = f"{base_url}/models/{quote(model, safe='-._')}:generateContent"
+
+        temp_env = os.environ.get("HRAMATKA_GEN_TEMPERATURE")
+        temperature = 0.2
+        if temp_env is not None:
+            try:
+                temperature = float(temp_env)
+            except ValueError:
+                pass
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": temperature},
+        }  # TOOLLESS: native Vertex payload has no ``tools`` key by construction
+        headers = {
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        }
+        prompt_bytes = len(prompt.encode("utf-8"))
+        last_error: GeneratorUnavailable | None = None
+
+        start_time = time.perf_counter()
+        started_at_ms = int(start_time * 1000)
+        attempts = 0
+        status_class = "error"
+        try:
+            for attempt in range(1, self.max_attempts + 1):
+                attempts = attempt
+                log.info(
+                    "%s request model=%s attempt=%d prompt_bytes=%d",
+                    self.host,
+                    model,
+                    attempt,
+                    prompt_bytes,
+                )
+                client = self.client or httpx.Client(timeout=timeout_s)
+                owned = self.client is None
+                try:
+                    with provider_call_slot():
+                        response = client.post(url, json=payload, headers=headers)
+                except httpx.TimeoutException:
+                    log.warning("%s timeout model=%s attempt=%d", self.host, model, attempt)
+                    last_error = GeneratorUnavailable(f"provider timed out after {timeout_s}s")
+                    status_class = "timeout"
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
+                except httpx.HTTPError as exc:
+                    log.warning(
+                        "%s transport error=%s model=%s attempt=%d",
+                        self.host,
+                        type(exc).__name__,
+                        model,
+                        attempt,
+                    )
+                    last_error = GeneratorUnavailable(
+                        f"provider transport error: {type(exc).__name__}"
+                    )
+                    status_class = "error"
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
+                finally:
+                    if owned:
+                        client.close()
+
+                code = response.status_code
+                if code >= 500:
+                    log.warning(
+                        "%s 5xx model=%s status=%d attempt=%d",
+                        self.host,
+                        model,
+                        code,
+                        attempt,
+                    )
+                    last_error = GeneratorUnavailable(f"provider returned HTTP {code}")
+                    status_class = "5xx"
+                    if attempt < self.max_attempts:
+                        time.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+                        continue
+                    break
+                if code == 429:
+                    log.warning("%s 429 model=%s fallback-eligible", self.host, model)
+                    status_class = "4xx"
+                    raise GeneratorUnavailable(
+                        f"provider returned HTTP {code} for model {model}", retry_exhausted=True
+                    )
+                if code >= 400:
+                    status_class = "4xx"
+                    raise GeneratorUnavailable(f"provider returned HTTP {code} for model {model}")
+                text = _extract_vertex_text(response.json())
+                log.info(
+                    "%s response model=%s status=%d response_bytes=%d attempt=%d",
+                    self.host,
+                    model,
+                    code,
+                    len(response.content),
+                    attempt,
+                )
+                status_class = "2xx"
+                return text
+
+            if last_error is not None:
+                raise GeneratorUnavailable(str(last_error), retry_exhausted=True) from last_error
+            raise GeneratorUnavailable("provider generation failed")
+        finally:
+            ended_at_ms = int(time.perf_counter() * 1000)
+            duration_ms = ended_at_ms - started_at_ms
+            ctx = telemetry_ctx.get()
+            phase = ctx.phase if ctx is not None else None
+            activity_types = ctx.activity_types if ctx is not None else []
+            phase_str = str(phase) if phase is not None else "null"
+            type_slug = "+".join(activity_types) if activity_types else "unknown"
+            log.info(
+                "gen call phase=%s type=%s host=%s dur_ms=%d attempts=%d",
+                phase_str,
+                type_slug,
+                self.host,
+                duration_ms,
+                attempts,
+            )
+            if ctx is not None:
+                ctx.record_provider_call(
+                    {
+                        "duration_ms": duration_ms,
+                        "host": self.host,
+                        "model": model,
+                        "attempts": attempts,
+                        "http_status_class": status_class,
+                        "phase": phase,
+                        "activity_type": type_slug,
+                        "started_at_ms": started_at_ms,
+                        "ended_at_ms": ended_at_ms,
+                    }
+                )
+
+
+class FailoverGeneratorPort(AISGeneratorPort):
+    """One primary with an outage-only fallback that preserves actual provenance."""
+
+    def __init__(
+        self, *, fallback: AISGeneratorPort, fallback_label: str = "gemma", **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self._fallback = fallback
+        self._fallback_label = fallback_label
 
     def __call__(self, prompt: str) -> str:
         try:
@@ -953,7 +1169,7 @@ class FailoverGeneratorPort(AISGeneratorPort):
             if not primary_error.retry_exhausted or not self._fallback.is_configured():
                 raise
             fallback_host = getattr(self._fallback._transport, "host", "fallback")
-            log.warning("gemma fallback engaged host=%s", fallback_host)
+            log.warning("%s fallback engaged host=%s", self._fallback_label, fallback_host)
             try:
                 return self._fallback(prompt)
             except GeneratorUnavailable as fallback_error:
@@ -1004,30 +1220,70 @@ def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPor
     return ais, openrouter, deepinfra
 
 
-_QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None]] = {
+def _gemini_routes(
+    *, ais_model: str, vertex_model: str
+) -> tuple[AISGeneratorPort, AISGeneratorPort]:
+    """Construct AIS-primary and native-Vertex fallback ports without I/O."""
+    ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+    vertex_base = os.environ.get(VERTEX_BASE_URL_ENV, "")
+    ais = AISGeneratorPort(
+        api_key_env=AIS_API_KEY_ENV,
+        model=ais_model,
+        timeout_s=GEMMA_TIMEOUT_S,
+        transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+    )
+    vertex = AISGeneratorPort(
+        api_key_env=VERTEX_API_KEY_ENV,
+        api_key_file_env=VERTEX_API_KEY_FILE_ENV,
+        model=vertex_model,
+        timeout_s=GEMMA_TIMEOUT_S,
+        transport=VertexGenerateContentTransport(base_url=vertex_base),
+    )
+    return ais, vertex
+
+
+_QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | None]] = {
     "gemini-flash-ais": (
-        "gemini-3.5-flash",
+        "gemini-3.6-flash",
         "google-ais",
-        "google-ais/gemini-3.5-flash",
+        "google-ais/gemini-3.6-flash",
         AIS_API_KEY_ENV,
+        None,
+    ),
+    "gemini-flash-vertex": (
+        "gemini-3.6-flash",
+        "google-vertex",
+        "gemini-3.6-flash",
+        VERTEX_API_KEY_ENV,
+        VERTEX_API_KEY_FILE_ENV,
     ),
     "gemini-pro-ais": (
         "gemini-3.1-pro",
         "google-ais",
         "google-ais/gemini-3.1-pro-preview",
         AIS_API_KEY_ENV,
+        None,
+    ),
+    "gemini-pro-vertex": (
+        "gemini-3.1-pro",
+        "google-vertex",
+        "gemini-3.1-pro-preview",
+        VERTEX_API_KEY_ENV,
+        VERTEX_API_KEY_FILE_ENV,
     ),
     "gemma-ais": (
         "gemma-4-31b",
         "google-ais",
         GEMMA_MODEL,
         AIS_API_KEY_ENV,
+        None,
     ),
     "gemma-openrouter": (
         "gemma-4-31b",
         "openrouter",
         DEFAULT_GEMMA_FALLBACK_MODEL,
         GEMMA_FALLBACK_API_KEY_ENV,
+        GEMMA_FALLBACK_API_KEY_FILE_ENV,
     ),
 }
 
@@ -1044,9 +1300,7 @@ def _require_qualification_route(
     expected = _QUALIFICATION_ROUTE_SPECS.get(route_id)
     if expected is None or expected[:3] != (logical_model_id, host, model_id):
         raise ValueError("Qualification route is not an exact configured matrix cell.")
-    return expected[3], (
-        GEMMA_FALLBACK_API_KEY_FILE_ENV if route_id == "gemma-openrouter" else None
-    )
+    return expected[3], expected[4]
 
 
 def qualification_route_credential_present(
@@ -1104,6 +1358,11 @@ def validate_qualification_route_runtime(
             raise ValueError("Qualification route has a noncanonical OpenRouter base URL.")
         if configured_model not in {None, DEFAULT_GEMMA_FALLBACK_MODEL}:
             raise ValueError("Qualification route has a noncanonical OpenRouter model.")
+    elif host == "google-vertex":
+        configured_base = os.environ.get(VERTEX_BASE_URL_ENV)
+        if configured_base is None:
+            raise ValueError("Qualification route requires a Vertex base URL.")
+        _validate_vertex_base_url(configured_base)
     else:  # _require_qualification_route keeps this defensive branch unreachable.
         raise ValueError("Qualification route has an unknown provider host.")
 
@@ -1123,7 +1382,18 @@ def make_qualification_pinned_generator(
         host=host,
         model_id=model_id,
     )
-    if route_id == "gemma-ais":
+    if host == "google-vertex":
+        port = AISGeneratorPort(
+            api_key_env=VERTEX_API_KEY_ENV,
+            api_key_file_env=VERTEX_API_KEY_FILE_ENV,
+            model=model_id,
+            timeout_s=GEMMA_TIMEOUT_S,
+            transport=VertexGenerateContentTransport(
+                base_url=_validate_vertex_base_url(os.environ[VERTEX_BASE_URL_ENV]),
+                max_attempts=1,
+            ),
+        )
+    elif route_id == "gemma-ais":
         port = AISGeneratorPort(
             api_key_env=AIS_API_KEY_ENV,
             model=GEMMA_MODEL,
@@ -1167,7 +1437,9 @@ def make_qualification_pinned_generator(
     return port
 
 
-def _with_failover(primary: AISGeneratorPort, fallback: AISGeneratorPort) -> FailoverGeneratorPort:
+def _with_failover(
+    primary: AISGeneratorPort, fallback: AISGeneratorPort, *, fallback_label: str = "gemma"
+) -> FailoverGeneratorPort:
     """Promote one configured port to primary without resolving either secret."""
     return FailoverGeneratorPort(
         fallback=fallback,
@@ -1177,6 +1449,7 @@ def _with_failover(primary: AISGeneratorPort, fallback: AISGeneratorPort) -> Fai
         model=primary._model,
         timeout_s=primary._timeout_s,
         transport=primary._transport,
+        fallback_label=fallback_label,
     )
 
 
@@ -1277,14 +1550,11 @@ def _build_generator_port(model_id: str) -> AISGeneratorPort:
         return _with_failover(ais, openrouter)
 
     elif model_id == "google-ais/gemini-3.1-pro-preview":
-        # Gemini gets NO fallback/failover to OpenRouter
-        ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
-        return AISGeneratorPort(
-            api_key_env=AIS_API_KEY_ENV,
-            model="google-ais/gemini-3.1-pro-preview",
-            timeout_s=GEMMA_TIMEOUT_S,
-            transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+        ais, vertex = _gemini_routes(
+            ais_model="google-ais/gemini-3.1-pro-preview",
+            vertex_model="gemini-3.1-pro-preview",
         )
+        return _with_failover(ais, vertex, fallback_label="gemini")
 
     elif model_id == "deepseek/deepseek-v4-pro":
         # DeepSeek gets NO fallback/failover to OpenRouter
@@ -1370,9 +1640,9 @@ def make_logical_model_generator(
 ) -> RoundRobinGeneratorSelector:
     """Build one job-scoped generator without consulting or mutating model env.
 
-    ``logical_model_id`` is the durable teacher choice.  Provider names and
-    wire model IDs stay behind this boundary; a Gemma job may use either of its
-    qualified routes and each route retains outage-only opposite-host failover.
+    ``logical_model_id`` is the durable teacher choice. Provider names and wire
+    model IDs stay behind this boundary; a Gemma job may use either qualified
+    route, while Gemini keeps AIS primary with an outage-only Vertex fallback.
     """
     if logical_model_id == "gemma-4-31b":
         ais, openrouter, _ = _gemma_routes()
@@ -1401,30 +1671,44 @@ def make_logical_model_generator(
             raise ValueError("A qualified provider route has no configured credential source.")
         return RoundRobinGeneratorSelector({name: routes[name] for name in selected})
 
-    ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
-    if logical_model_id == "gemini-3.5-flash":
-        model_id = "google-ais/gemini-3.5-flash"
+    if logical_model_id == "gemini-3.6-flash":
+        model_id = "google-ais/gemini-3.6-flash"
+        vertex_model_id = "gemini-3.6-flash"
+        ais_route_id = "gemini-flash-ais"
+        vertex_route_id = "gemini-flash-vertex"
     elif logical_model_id == "gemini-3.1-pro":
         if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
             raise ValueError("Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1.")
         model_id = "google-ais/gemini-3.1-pro-preview"
+        vertex_model_id = "gemini-3.1-pro-preview"
+        ais_route_id = "gemini-pro-ais"
+        vertex_route_id = "gemini-pro-vertex"
     else:
         raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
-    port = AISGeneratorPort(
-        api_key_env=AIS_API_KEY_ENV,
-        model=model_id,
-        timeout_s=GEMMA_TIMEOUT_S,
-        transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
-    )
-    route_id = "gemini-flash-ais" if logical_model_id == "gemini-3.5-flash" else "gemini-pro-ais"
+    ais, vertex = _gemini_routes(ais_model=model_id, vertex_model=vertex_model_id)
+    primary = _with_failover(ais, vertex, fallback_label="gemini")
+    configured_hosts = set(provider_names or ("google-ais",))
+    # Vertex is an automatic outage fallback, not an independently selected
+    # bake primary. Its configured route remains receipt-bound nevertheless.
+    configured_hosts.add("google-vertex")
     _require_exact_qualified_routes(
         qualified_routes,
-        {route_id: ("google-ais", model_id)},
-        configured_hosts=set(provider_names or ("google-ais",)),
+        {
+            ais_route_id: (getattr(ais._transport, "host", ""), ais._model),
+            vertex_route_id: (getattr(vertex._transport, "host", ""), vertex._model),
+        },
+        configured_hosts=configured_hosts,
     )
-    if qualified_routes is not None and not port.is_configured():
-        raise ValueError("A qualified provider route has no configured credential source.")
-    return RoundRobinGeneratorSelector({"google-ais": port})
+    if qualified_routes is not None:
+        if not ais.is_configured() or not vertex.is_configured():
+            raise ValueError("A qualified provider route has no configured credential source.")
+        try:
+            _validate_vertex_base_url(os.environ.get(VERTEX_BASE_URL_ENV, ""))
+        except ValueError as exc:
+            raise ValueError(
+                "A qualified provider route has no canonical Vertex base URL."
+            ) from exc
+    return RoundRobinGeneratorSelector({"google-ais": primary})
 
 
 def _require_exact_qualified_routes(

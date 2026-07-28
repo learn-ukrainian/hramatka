@@ -1,6 +1,6 @@
 # TRAIL 01 — #258 qualification matrix to a populated #244 selector
 
-Goal: the density root-cause fix is merged, the real 12-cell matrix has current receipts,
+Goal: the density root-cause fix is merged, the real 18-cell matrix has current receipts,
 and only receipt-backed models reach the teacher selector.
 Issue: private #258. In-flight dispatch: `258-density-matrix-v2` (codex, worktree
 `.worktrees/dispatch/codex/258-density-matrix`).
@@ -31,13 +31,13 @@ measurement source.
 5. **Merge** (manual): `gh pr checks <n>` all green on the exact head, review receipt URL in PR → `gh pr merge <n> --squash` → delete remote branch → `git worktree remove` the dispatch worktree → delete local branch.
 6. **Verify matrix receipts on main**.
    do: `.venv/bin/python -m hramatka.qualification.receipts aggregate --receipt-dir <operator-local-receipt-root>/receipts`
-   verify: it prints `Qualification receipts aggregated: 4 routes` plus one `anchors=3/3` line per configured route only when every cell is current, passed, and teacher-ready; otherwise it refuses with `QualificationError`. Quote the aggregate lines or the refusal on issue #258.
+   verify: it prints `Qualification receipts aggregated: 6 routes` plus one `anchors=3/3` line per configured route only when every cell is current, passed, and teacher-ready; otherwise it refuses with `QualificationError`. Quote the aggregate lines or the refusal on issue #258.
 7. **Feed #244**: only routes with current aggregate receipts become selector-eligible. Post the eligible set + receipt refs on #258 and close it if all acceptance boxes hold.
 
 ## STOP GATES
 - Any cell that passes only via a floor/gate relaxation → STOP.
 - google-ais 503 storms: retry policy as implemented, then park the cell and record it; never hammer.
-- New paid spend beyond the 12-cell matrix → operator.
+- New paid spend beyond the 18-cell matrix → operator.
 
 ## DONE WHEN
 #258 acceptance boxes all check with quoted receipts, the eligible-model set is posted, and the selector consumes only current receipts.

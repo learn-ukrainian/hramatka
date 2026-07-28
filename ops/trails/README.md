@@ -56,7 +56,7 @@ Only T2 creates or edits trails; drivers execute them exactly as written.
 
 | Trail | Goal | State |
 |---|---|---|
-| [trail-01](trail-01-qualification-matrix.md) | #258 qualification matrix: land the density fix, complete the 12-cell run, feed the #244 selector | active (codex dispatch in flight) |
+| [trail-01](trail-01-qualification-matrix.md) | #258 qualification matrix: land the density fix, complete the 18-cell run, feed the #244 selector | active (codex dispatch in flight) |
 | [trail-02](trail-02-benchmark-v3.md) | Benchmark v3: land the report layer, run all seats + reference seats, blind cross-family judging, regenerate the report of record | active (agy dispatch in flight) |
 | [trail-03](trail-03-teacher-beta.md) | Teacher beta: local HTTPS proof → operator manual gate → deploy | blocked on trails 01–02 |
 

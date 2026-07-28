@@ -42,9 +42,9 @@ from hramatka.engine.providers import telemetry_ctx
 LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 EXPECTED_STATE_DIRECTORY = Path(__file__).resolve().parents[1] / ".real-e2e"
-TEST_LOGICAL_MODEL_ID = "gemini-3.5-flash"
+TEST_LOGICAL_MODEL_ID = "gemini-3.6-flash"
 TEST_PROVIDER_ROUTE = QualifiedProviderRoute(
-    "gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"
+    "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"
 )
 
 

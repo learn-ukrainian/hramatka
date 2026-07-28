@@ -37,7 +37,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     anchors = deterministic_runtime_anchors()
     run = harness.run(anchors)
 
-    assert len(run.cells) == 12
+    assert len(run.cells) == 18
     assert {cell.receipt.anchor_id for cell in run.cells} == {
         "b1-narrative",
         "b1-dialogue",
@@ -45,7 +45,9 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     }
     assert {cell.receipt.expected_route.route_id for cell in run.cells} == {
         "gemini-flash-ais",
+        "gemini-flash-vertex",
         "gemini-pro-ais",
+        "gemini-pro-vertex",
         "gemma-ais",
         "gemma-openrouter",
     }
@@ -56,7 +58,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         and cell.receipt.expected_route.route_id == "gemma-openrouter"
     )
     assert any(trace.mode == "repair" for trace in forced_cell.receipt.repair_trace)
-    assert len(run.receipt_paths) == 12
+    assert len(run.receipt_paths) == 18
     assert all(path.is_file() for path in run.receipt_paths)
     assert all(
         all(anchor.text not in path.read_text(encoding="utf-8") for anchor in anchors.values())
@@ -100,7 +102,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         )
 
     aggregates = harness.aggregates(run)
-    assert len(aggregates) == 4
+    assert len(aggregates) == 6
     assert all(
         aggregate.passed_anchors == frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
         for aggregate in aggregates
@@ -123,6 +125,14 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
 
     with pytest.raises(QualificationError, match="requires every"):
         harness.aggregate_cells(run.receipts[:-1])
+
+    missing_vertex = tuple(
+        receipt
+        for receipt in run.receipts
+        if receipt.expected_route.route_id != "gemini-flash-vertex"
+    )
+    with pytest.raises(QualificationError, match="requires every"):
+        harness.aggregate_cells(missing_vertex)
 
     route_mismatch = (
         *run.receipts[:-1],
@@ -275,8 +285,8 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
 
     assert receipt_main(["aggregate", "--receipt-dir", str(runtime_root / "receipts")]) == 0
     output = capsys.readouterr().out
-    assert "Qualification receipts aggregated: 4 routes" in output
-    assert "gemini-3.5-flash gemini-flash-ais anchors=3/3" in output
+    assert "Qualification receipts aggregated: 6 routes" in output
+    assert "gemini-3.6-flash gemini-flash-ais anchors=3/3" in output
 
     prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
     prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
@@ -306,8 +316,8 @@ def test_transcription_prints_the_exact_registry_block_without_editing_it(
     assert block.startswith(
         "PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (\n"
     )
-    assert block.count("    QualificationReceipt(\n") == 4
-    assert block.count("passed_anchors=frozenset({") == 4
+    assert block.count("    QualificationReceipt(\n") == 6
+    assert block.count("passed_anchors=frozenset({") == 6
     assert 'prompt_pack_version="PromptPackInput.v3"' in block
     assert 'template_version="gemma-phase-pack.v3.2"' in block
     assert 'density_contract_version="TeacherReadyDensity.v3"' in block

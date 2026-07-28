@@ -74,11 +74,12 @@ class QualificationReceipt:
 # model IDs, endpoints, and fallback order deliberately live in providers.py.
 LOGICAL_MODELS: Final = (
     LogicalModelSpec(
-        id="gemini-3.5-flash",
-        label="Gemini 3.5 Flash",
+        id="gemini-3.6-flash",
+        label="Gemini 3.6 Flash",
         description_uk="Швидке складання уроку.",
         provider_routes=(
-            QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.5-flash"),
+            QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
+            QualifiedProviderRoute("gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
         ),
     ),
     LogicalModelSpec(
@@ -89,6 +90,7 @@ LOGICAL_MODELS: Final = (
             QualifiedProviderRoute(
                 "gemini-pro-ais", "google-ais", "google-ais/gemini-3.1-pro-preview"
             ),
+            QualifiedProviderRoute("gemini-pro-vertex", "google-vertex", "gemini-3.1-pro-preview"),
         ),
     ),
     LogicalModelSpec(

@@ -128,7 +128,7 @@ class Settings:
     review_attestation_db_path: Path | None = None
     review_attestation_signing_key_file: Path | None = None
     review_attestation_ais_base_url: str = _DEFAULT_GOOGLE_AIS_BASE_URL
-    review_attestation_model: str = "google-ais/gemini-3.5-flash"
+    review_attestation_model: str = "google-ais/gemini-3.6-flash"
     review_attestation_max_calls_per_run: int = 1
     review_attestation_prompt_version: str = "hramatka-review-attestation-prompt.v2"
     review_attestation_max_diff_bytes: int = 500_000
@@ -189,8 +189,8 @@ class Settings:
                 "review_attestation_ais_base_url",
                 _validate_google_ais_base_url(self.review_attestation_ais_base_url),
             )
-            if self.review_attestation_model != "google-ais/gemini-3.5-flash":
-                raise ValueError("review attestation model must be google-ais/gemini-3.5-flash.")
+            if self.review_attestation_model != "google-ais/gemini-3.6-flash":
+                raise ValueError("review attestation model must be google-ais/gemini-3.6-flash.")
             if self.review_attestation_max_calls_per_run != 1:
                 raise ValueError("review attestation cost cap must be exactly one provider call.")
             if not self.review_attestation_prompt_version:
@@ -283,7 +283,7 @@ class Settings:
             ),
             review_attestation_model=os.environ.get(
                 "HRAMATKA_REVIEW_ATTESTATION_REVIEWER_MODEL",
-                "google-ais/gemini-3.5-flash",
+                "google-ais/gemini-3.6-flash",
             ),
             review_attestation_prompt_version=os.environ.get(
                 "HRAMATKA_REVIEW_ATTESTATION_PROMPT_VERSION",

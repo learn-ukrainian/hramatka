@@ -2,6 +2,8 @@
 
 # FINAL BUILD CONTRACT — TeacherReadyDensity.v3 + gemma-phase-pack.v3.2
 
+Amended 2026-07-28: release-gate matrix 12→18 cells (Gemini Flash 3.6 rotation + Vertex routes, operator order).
+
 Core invariant: no list activity reaches a model unless deterministic preflight has already certified its complete ≥8-unit substrate under the lesson-wide capacity budget. Density failures never reject the teacher’s text.
 
 ## §0. Panel change disposition
@@ -77,7 +79,7 @@ Prompt-pack requirements remain:
 
 Qualification aggregates pin both the pack-input version and exact v3.2 template digest; density and kit identities remain fingerprint inputs.
 
-Old v2 receipts are invalidated. Run the full 12-cell matrix on one new source pin, transcribe the registry only from passing current aggregates, and keep the UI fail-closed until then. This is straight re-qualification, not an A/B authorization decision.
+Old v2 receipts are invalidated. Run the full 18-cell matrix on one new source pin, transcribe the registry only from passing current aggregates, and keep the UI fail-closed until then. This is straight re-qualification, not an A/B authorization decision.
 
 There is no production v2/v3 selector: pre-cutover v3 code remains unreachable; the cutover removes v2 authority and exposes v3 atomically.
 
@@ -100,5 +102,4 @@ There is no production v2/v3 selector: pre-cutover v3 code remains unreachable; 
 4. **Prompt pack v3.2:** new kit identity, full-density exemplars, immutable-plan serialization, inclusion/count gates, and benchmark fixes.
 5. **Evaluator and repair:** per-block ready/tray grading, `density_shortfall`, same-plan two-round repair, slot-specific errors, and recoverable draft behavior.
 6. **Qualification surfaces:** harness totals, receipts/digests, telemetry, benchmark rendering, fixtures, UI fail-closed behavior, and removal of every bypass.
-7. **Release gate:** qualify the pinned candidate across all 12 cells, transcribe passing receipts, then atomically remove v2 authority and enable v3.
-
+7. **Release gate:** qualify the pinned candidate across all 18 cells, transcribe passing receipts, then atomically remove v2 authority and enable v3.

@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const STUB_PORT = 8787;
 const APP = 'http://localhost:5173';
 const TEST_TOKEN = 'A'.repeat(42) + 'Q'; // valid pattern
-const TEST_LOGICAL_MODEL_ID = 'gemini-3.5-flash';
+const TEST_LOGICAL_MODEL_ID = 'gemini-3.6-flash';
 
 let stubProc: ChildProcess | null = null;
 

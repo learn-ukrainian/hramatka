@@ -64,7 +64,7 @@ change, provisioning, or disclosure of any secret.
    workflow ref, and workflow-content digest are allow-list inputs, not hints.
    Review calls use the host's existing `HRAMATKA_AIS_API_KEY`; GitHub Actions
    receives no Google credential. The default reviewer is
-   `google-ais/gemini-3.5-flash`. It never falls back automatically to Pro or
+   `google-ais/gemini-3.6-flash`. It never falls back automatically to Pro or
    another paid model. The signing-key path is the exception: do not assign it
    in `api.env`. The service unit sets
    `HRAMATKA_REVIEW_ATTESTATION_SIGNING_KEY_FILE` to its `%d` systemd credential

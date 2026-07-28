@@ -216,7 +216,7 @@ function loadPilotTypes() {
 const PILOT_TYPES = loadPilotTypes();
 const QUALIFIED_MODEL_REGISTRY_VERSION = 'QualifiedLogicalModels.v1';
 const QUALIFIED_LOGICAL_MODEL = Object.freeze({
-  id: 'gemini-3.5-flash',
+  id: 'gemini-3.6-flash',
   label: 'Gemini 3.5 Flash',
   description: 'Детермінована тестова модель.',
 });
