@@ -24,6 +24,11 @@ _DISTINCTNESS_FIELD: Final[dict[str, str]] = {
     "mark-the-words": "target",
     "short-writing": "stem",
 }
+_TEXT_QUESTION_CATEGORIES: Final = (
+    "comprehension",
+    "explanation_inference",
+    "anchored_application",
+)
 
 
 def _normalized_text(value: object) -> str:
@@ -92,6 +97,24 @@ def normalize_distinctness_key(activity_type: str, distinctness: Mapping[str, ob
     )
     basis = "semantic_target" if "semantic_target" in distinctness else field
     return f"{activity_type}:{basis}:{canonical}"
+
+
+def _has_text_question_categories(units: Sequence[CertifiedUnit]) -> bool:
+    """Require the locked 3+3+2 composition before a plan is certifiable."""
+    minima = floor_for("text-questions").category_minima
+    assert minima is not None
+    required = {
+        "comprehension": minima.comprehension,
+        "explanation_inference": minima.explanation_inference,
+        "anchored_application": minima.anchored_application,
+    }
+    counts = {category: 0 for category in _TEXT_QUESTION_CATEGORIES}
+    for unit in units:
+        category = unit.distinctness.get("question_category")
+        if not isinstance(category, str) or category not in counts:
+            return False
+        counts[category] += 1
+    return all(counts[category] >= minimum for category, minimum in required.items())
 
 
 def _freeze(value: object) -> object:
@@ -278,6 +301,8 @@ class UnitPlan:
         ]
         if len(normalized) != len(set(normalized)):
             raise ValueError("Duplicate or paraphrased units cannot satisfy a v3 floor.")
+        if self.activity_type == "text-questions" and not _has_text_question_categories(self.units):
+            raise ValueError("Text-question plans must retain the complete 3+3+2 composition.")
         constraints = {_normalized_text(constraint) for constraint in self.registered_constraints}
         if len(constraints) != len(self.registered_constraints):
             raise ValueError("Registered deterministic constraints must be distinct.")
@@ -350,6 +375,8 @@ def _is_certifiable(
     except ValueError:
         return False
     if len(set(keys)) != len(keys) or len(set(constraints)) != len(constraints):
+        return False
+    if activity_type == "text-questions" and not _has_text_question_categories(units):
         return False
     if len(constraints) < floor.minimum_registered_constraints:
         return False

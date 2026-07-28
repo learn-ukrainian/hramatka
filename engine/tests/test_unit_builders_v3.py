@@ -110,6 +110,15 @@ def test_mark_the_words_plan_records_exact_certified_target_token_records() -> N
     )
 
 
+def test_text_question_builder_preserves_the_locked_3_3_2_categories() -> None:
+    plan = BUILDERS["text-questions"](complete_inventory(), slot_id="P1-A1", phase=1)
+    categories = [str(unit.distinctness["question_category"]) for unit in plan.units]
+
+    assert categories.count("comprehension") >= 3
+    assert categories.count("explanation_inference") >= 3
+    assert categories.count("anchored_application") >= 2
+
+
 def test_mark_the_words_rejects_a_partial_or_non_verbatim_target_list() -> None:
     inventory = complete_inventory()
     request = inventory.mark_requests[0]

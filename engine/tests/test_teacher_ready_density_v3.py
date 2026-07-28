@@ -45,6 +45,16 @@ def _distinctness(activity_type: str, index: int) -> dict[str, object]:
         return {"pair": {"left": f"lemma-{index}", "right": f"atlas-{index}"}}
     if activity_type == "mark-the-words":
         return {"target": {"sentence_id": "s-1", "token_id": f"t-{index}"}}
+    if activity_type == "text-questions":
+        categories = (
+            ("comprehension",) * 3
+            + ("explanation_inference",) * 3
+            + ("anchored_application",) * 2
+        )
+        return {
+            "stem": f"Нормований навчальний пункт {index}",
+            "question_category": categories[index],
+        }
     return {"stem": f"Нормований навчальний пункт {index}"}
 
 
@@ -291,4 +301,5 @@ def test_v3_contract_modules_are_unreachable_from_the_default_production_import_
         "hramatka.engine.unit_builders_v3",
         "hramatka.engine.true_false_catalog_v3",
         "hramatka.engine.short_writing_constraints_v3",
+        "hramatka.engine.lesson_capacity_v3",
     }.isdisjoint(set(json.loads(completed.stdout)))

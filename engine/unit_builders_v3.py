@@ -203,6 +203,8 @@ def _candidate_unit(
             "stem": candidate.candidate_id,
             "semantic_target": candidate.semantic_target,
         }
+        if candidate.activity_type == "text-questions":
+            distinctness["question_category"] = candidate.category
     return CertifiedUnit(
         unit_id=candidate.candidate_id,
         resource_claims=(
@@ -240,6 +242,7 @@ def _generic_builder(
             "explanation_inference": minima.explanation_inference,
             "anchored_application": minima.anchored_application,
         }
+        candidates = tuple(candidate for candidate in candidates if candidate.category in required)
         if any(
             sum(candidate.category == category for candidate in candidates) < minimum
             for category, minimum in required.items()
