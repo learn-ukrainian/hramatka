@@ -152,7 +152,9 @@ class AllocatedSlot:
     requested_type: str
     scheduled_type: str
     plan: UnitPlan
-    substitution_reason: Literal["preflight_unavailable", "capacity"] | None = None
+    substitution_reason: Literal[
+        "preflight_unavailable", "capacity", "serialization_exhausted"
+    ] | None = None
     conditional_replacements: tuple[ConditionalReplacement, ...] = ()
 
     def __post_init__(self) -> None:
@@ -166,7 +168,7 @@ class AllocatedSlot:
         if self.scheduled_type == self.requested_type and self.substitution_reason is not None:
             raise ValueError("Requested types cannot carry a substitution reason.")
         if self.scheduled_type != self.requested_type and self.substitution_reason is None:
-            raise ValueError("A substituted type needs its deterministic t=0 reason.")
+            raise ValueError("A substituted type needs a deterministic provenance reason.")
         replacements = tuple(self.conditional_replacements)
         if len({replacement.activity_type for replacement in replacements}) != len(replacements):
             raise ValueError("Conditional replacement types must be distinct.")

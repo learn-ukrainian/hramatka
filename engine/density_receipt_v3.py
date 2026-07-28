@@ -38,6 +38,10 @@ class BlockDensityReceipt:
             raise ValueError(f"Unknown v3 receipt disposition: {self.disposition!r}")
         if self.floor_met != (self.units >= floor.minimum_units):
             raise ValueError("floor_met must be derived from the central v3 floor table.")
+        if self.disposition in {"ready", "tray"} and not self.floor_met:
+            raise ValueError("Ready and tray receipts must independently meet their v3 floor.")
+        if self.disposition == "density_shortfall" and self.floor_met:
+            raise ValueError("A density shortfall receipt must be below its v3 floor.")
 
     @classmethod
     def from_unit_plan(

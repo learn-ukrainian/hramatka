@@ -218,6 +218,55 @@ def _validate_slot_identity(
     return record
 
 
+def validate_slot_shape(record: object, type_kit: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Validate one response record against one immutable scheduled slot.
+
+    This is the slot-local shape boundary used by the pre-cutover evaluator.
+    ``validate_response`` remains phase-atomic: callers that need that
+    behavior must continue to use it.  Keeping this narrow helper public lets
+    the evaluator retain the same validation stages while reporting a failure
+    for every affected slot.
+    """
+    return _validate_slot_identity(record, type_kit, 0)
+
+
+def validate_slot_deterministic_gates(
+    record: Mapping[str, Any],
+    type_kit: Mapping[str, Any],
+    *,
+    deterministic_gates: Sequence[DeterministicGate],
+) -> None:
+    """Run the always-on gates for one already shape-valid response record."""
+    if not deterministic_gates:
+        raise PromptPackV3Error("v3.2 validation requires the always-on deterministic gate runner.")
+    activity = record.get("activity")
+    if not isinstance(activity, Mapping):  # guarded by ``validate_slot_shape``
+        raise PromptPackV3Error("v3.2 slot activity must be an object.")
+    validate_learner_facing_fields(activity, type_kit)
+    for gate in deterministic_gates:
+        gate(activity, type_kit)
+
+
+def validate_slot_serialization(
+    record: Mapping[str, Any], type_kit: Mapping[str, Any]
+) -> None:
+    """Validate the exact immutable substrate for one gated response record."""
+    _validate_exact_serialization(record, type_kit)
+
+
+def validate_slot_raw_contract(
+    record: Mapping[str, Any], *, raw_contract_validator: RawContractValidator
+) -> dict[str, Any]:
+    """Apply the final raw contract only after a slot passed prior stages."""
+    if raw_contract_validator is None:
+        raise PromptPackV3Error("v3.2 validation requires the raw-contract validator.")
+    activity = record.get("activity")
+    if not isinstance(activity, Mapping):  # guarded by ``validate_slot_shape``
+        raise PromptPackV3Error("v3.2 slot activity must be an object.")
+    raw_contract_validator(activity)
+    return dict(activity)
+
+
 def _validate_exact_serialization(record: Mapping[str, Any], type_kit: Mapping[str, Any]) -> None:
     """Enforce exact scheduled IDs first, then literal certified substrate equality."""
     actual = record.get("serialized_units")
