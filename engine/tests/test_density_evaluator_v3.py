@@ -131,6 +131,7 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
     )
 
     assert "serialized_units is an ordered reference list" in prompt
+    assert "the slots array is an exact one-to-one cover" in prompt
     assert "activity is an object, never a type string or an ID" in prompt
     assert [(block.disposition, block.observed_units) for block in evaluated.blocks] == [
         ("ready", 8)
@@ -282,6 +283,67 @@ def test_ready_tray_does_not_block_repair_for_another_slot() -> None:
         ("P1-A2", "ready"),
     ]
     assert evaluated.disposition == "teacher_ready"
+
+
+def test_missing_scheduled_slots_repair_only_the_missing_ids() -> None:
+    allocation = _allocation("quiz", "cloze", "fill-in")
+    subset = _payload(allocation)
+    subset["slots"] = [
+        record for record in subset["slots"] if record["slot_id"] == "P1-A1"
+    ]
+    repair_calls: list[tuple[int, str]] = []
+
+    def repair(request: object) -> dict:
+        repair_calls.append((request.round, request.slot_id))
+        return _record_from_context(request.prompt_context, slot_id=request.slot_id)
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload=subset,
+        deterministic_gates=(_passing_gate,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+    )
+
+    assert repair_calls == [(1, "P1-A2"), (1, "P1-A3")]
+    assert [
+        (block.slot_id, block.disposition, block.observed_units) for block in evaluated.blocks
+    ] == [
+        ("P1-A1", "ready", 8),
+        ("P1-A2", "ready", 8),
+        ("P1-A3", "ready", 8),
+    ]
+    assert evaluated.disposition == "teacher_ready"
+
+
+def test_missing_scheduled_slot_exhausts_both_repairs_then_fails_closed() -> None:
+    allocation = _allocation("quiz", "cloze")
+    subset = _payload(allocation)
+    subset["slots"] = [
+        record for record in subset["slots"] if record["slot_id"] == "P1-A1"
+    ]
+    repair_calls: list[tuple[int, str]] = []
+
+    def repair(request: object) -> dict:
+        repair_calls.append((request.round, request.slot_id))
+        return {"slots": []}
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload=subset,
+        deterministic_gates=(_passing_gate,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+    )
+
+    assert repair_calls == [(1, "P1-A2"), (2, "P1-A2")]
+    assert [(block.slot_id, block.disposition) for block in evaluated.blocks] == [
+        ("P1-A1", "ready"),
+        ("P1-A2", "dropped"),
+    ]
+    assert evaluated.disposition == "recoverable_draft"
 
 
 def test_stray_responses_are_unassigned_without_poisoning_scheduled_slots() -> None:

@@ -146,9 +146,18 @@ class BlockEvaluation:
 
     @property
     def repairable(self) -> bool:
-        """Only a serializer's count/ID/substrate failure may consume repair rounds."""
+        """Only a serializer's count/ID/substrate failure may consume repair rounds.
+
+        The evaluator expands an omitted scheduled ID into this slot-local
+        error before the other validation stages.  It is a response count
+        failure, so it must use the same immutable-plan repair path as an
+        incomplete ``serialized_units`` reference list.
+        """
         return self.disposition == "density_shortfall" or any(
-            error.cause.startswith("serialization:") for error in self.errors
+            error.cause.startswith(
+                ("serialization:", "response_shape: missing slot response")
+            )
+            for error in self.errors
         )
 
 
