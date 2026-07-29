@@ -41,7 +41,8 @@ from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
 _ACTIVITY_SCHEMA = vendoring.read_json(vendoring.PILOT_LU_ACTIVITY, "lu.activity.v1.schema.json")
 _ACTIVITY_VALIDATOR = Draft7Validator(_ACTIVITY_SCHEMA)
-_RAW_PARSE_FAILURE_MAX_BYTES = 64 * 1024
+_RAW_PARSE_FAILURE_MAX_BYTES = 512 * 1024
+_RAW_PARSE_FAILURE_TRUNCATION_MARKER = "\n...TRUNCATED\n"
 _V3_TOP_LEVEL_KEYS = frozenset({"slots"})
 
 _TITLES = {
@@ -64,8 +65,12 @@ def _persist_raw_parse_failure(raw: str, out_dir: str | Path, attempt: int) -> N
     generation graph into the production-only v3 adapter.
     """
     raw_path = out_dir / f"generation-raw-attempt{attempt}.txt"
-    capped = raw.encode("utf-8")[:_RAW_PARSE_FAILURE_MAX_BYTES]
-    raw_path.write_text(capped.decode("utf-8", errors="ignore"), encoding="utf-8")
+    encoded = raw.encode("utf-8")
+    if len(encoded) > _RAW_PARSE_FAILURE_MAX_BYTES:
+        capped = encoded[:_RAW_PARSE_FAILURE_MAX_BYTES].decode("utf-8", errors="ignore")
+        raw_path.write_text(capped + _RAW_PARSE_FAILURE_TRUNCATION_MARKER, encoding="utf-8")
+        return
+    raw_path.write_text(raw, encoding="utf-8")
 
 
 def _mode(phase: int, activity_type: str) -> str:

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from copy import deepcopy
 
 import pytest
 
+from hramatka.api.baking.engine_adapter_v3 import _activity_gate, _raw_activity_contract
 from hramatka.engine.density_evaluator_v3 import (
     _replacement_slot,
     evaluate_phase_response,
@@ -57,7 +57,9 @@ def _payload(allocation: LessonAllocation, *, unit_counts: dict[str, int] | None
                 "slot_id": kit["slot_id"],
                 "type": kit["type"],
                 "activity": {"type": kit["type"], "instruction": "fixture"},
-                "serialized_units": deepcopy(kit["certified_units"])[: counts.get(kit["slot_id"])],
+                "serialized_units": [
+                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
+                ][: counts.get(kit["slot_id"])],
             }
             for kit in context["type_kits"]
         ]
@@ -70,18 +72,11 @@ def _record_from_context(context: object, *, slot_id: str | None = None) -> dict
         item for item in context["type_kits"] if slot_id is None or item["slot_id"] == slot_id
     )
 
-    def thaw(value: object) -> object:
-        if isinstance(value, Mapping):
-            return {key: thaw(item) for key, item in value.items()}
-        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
-            return [thaw(item) for item in value]
-        return value
-
     return {
         "slot_id": kit["slot_id"],
         "type": kit["type"],
         "activity": {"type": kit["type"], "instruction": "fixture"},
-        "serialized_units": thaw(kit["certified_units"]),
+        "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]],
     }
 
 
@@ -91,6 +86,55 @@ def _passing_gate(_activity: dict, _kit: dict) -> None:
 
 def _passing_raw_contract(_activity: dict) -> None:
     return None
+
+
+def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
+    """The prompt-requested response shape resolves real kit references to a ready block."""
+    allocation = _allocation("quiz")
+    context = build_phase_context(allocation, phase=1)
+    prompt = render_phase_prompt(context)
+    kit = context["type_kits"][0]
+    forms = [unit["allowed_forms"][0] for unit in kit["certified_units"]]
+    response = {
+        "slots": [
+            {
+                "slot_id": kit["slot_id"],
+                "type": "quiz",
+                "activity": {
+                    "payload": {
+                        "type": "quiz",
+                        "instruction": "Оберіть правильний варіант.",
+                        "items": [
+                            {"question": form, "options": [form, "Інший варіант."], "correct": 0}
+                            for form in forms
+                        ],
+                    },
+                    "answer_key": {
+                        "items": [
+                            {"index": index, "correct": 0} for index in range(len(forms))
+                        ]
+                    },
+                },
+                "serialized_units": [
+                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
+                ],
+            }
+        ]
+    }
+
+    evaluated = evaluate_phase_response(
+        allocation,
+        phase=1,
+        payload=response,
+        deterministic_gates=(_activity_gate,),
+        raw_contract_validator=_raw_activity_contract,
+    )
+
+    assert "serialized_units is an ordered reference list" in prompt
+    assert "activity is an object, never a type string or an ID" in prompt
+    assert [(block.disposition, block.observed_units) for block in evaluated.blocks] == [
+        ("ready", 8)
+    ]
 
 
 def test_ready_and_tray_are_graded_independently_and_emit_only_content_free_receipts() -> None:
@@ -406,7 +450,7 @@ def test_repair_exhaustion_without_a_certified_replacement_drops_only_its_slot()
     allocation = _allocation("quiz")
     calls: list[int] = []
     bad_payload = _payload(allocation)
-    bad_payload["slots"][0]["serialized_units"][0]["expected_key_or_rule"]["value"] = "changed"
+    bad_payload["slots"][0]["serialized_units"][0]["unit_id"] = "changed"
 
     def repair(request: object) -> dict:
         calls.append(request.round)

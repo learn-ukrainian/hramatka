@@ -57,7 +57,9 @@ def _payload(context: dict, *, activity: dict | None = None) -> dict:
                 "activity": activity
                 if index == 0 and activity is not None
                 else {"type": kit["type"], "instruction": "…"},
-                "serialized_units": deepcopy(kit["certified_units"]),
+                "serialized_units": [
+                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
+                ],
             }
             for index, kit in enumerate(context["type_kits"])
         ],
@@ -99,6 +101,8 @@ def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_item
 
     exemplars = full_density_exemplars(context["type_kits"])
     assert [row["type"] for row in exemplars] == ["quiz"]
+    assert exemplars[0]["slot_id"] == "<synthetic-quiz-slot>"
+    assert exemplars[0]["activity"]["payload"]["type"] == "quiz"
     assert len(exemplars[0]["serialized_units"]) == 8
     negative = six_item_negative_exemplar()
     assert len(negative["serialized_units"]) == 6
@@ -142,7 +146,7 @@ def test_immutable_plan_rejects_extra_missing_duplicated_or_altered_substrate(
     elif mutation == "duplicate":
         units[-1] = deepcopy(units[0])
     else:
-        units[0]["expected_key_or_rule"]["value"] = "altered"
+        units[0]["unit_id"] = "altered"
 
     with pytest.raises(PromptPackV3Error, match="serialization failure"):
         _validate(payload, context)

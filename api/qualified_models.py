@@ -21,9 +21,9 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3"
 # This is the canonical three-anchor aggregate of the currently pinned v3
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
-PROMPT_SHA256: Final = "38bbbb3b98f0ef64fea655beb561e12eb7d426a74d23d9cd9c80bab766663376"
+PROMPT_SHA256: Final = "872ed6c7869843b5d504943732a29df4439e0effa2aa55c65627106a2b82ca4a"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.2"
-TEMPLATE_SHA256: Final = "517ad0ab9cac2a21ede0bf158e423d08c986f848197f23ce37e5bc3da94d6d03"
+TEMPLATE_SHA256: Final = "efc1192daffb4b7e2bd6774ae2982cff8fb97e82ee4de3921ef1992bf94653f2"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v1"

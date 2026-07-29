@@ -49,9 +49,10 @@ files under optional `HRAMATKA_SECRET_DIR` (no default). Never prints key values
 
 For a v3 parse failure or serialized phase floor shortfall, the raw model response is retained
 only in a per-bake UUID directory below the configured private engine output root as
-`generation-raw-attempt<N>.txt` (capped at 64 KiB). The established 14-day artifact retention
-applies. Qualification diagnostics place this beneath their private `raw-parse-failures/` scratch
-subtree; raw output never enters receipts, durable job telemetry, or logs.
+`generation-raw-attempt<N>.txt` (capped at 512 KiB of raw response bytes). A capped artifact ends
+with `...TRUNCATED`. The established 14-day artifact retention applies. Qualification diagnostics
+place this beneath their private `raw-parse-failures/` scratch subtree; raw output never enters
+receipts, durable job telemetry, or logs.
 
 ## Local Test Loop
 

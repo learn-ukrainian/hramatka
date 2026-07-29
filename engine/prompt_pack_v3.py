@@ -101,7 +101,9 @@ def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[
         seen.add(activity_type)
         exemplars.append(
             {
+                "slot_id": f"<synthetic-{activity_type}-slot>",
                 "type": activity_type,
+                "activity": _synthetic_activity_example(activity_type, count),
                 "serialized_units": [
                     {"unit_id": f"<{activity_type}-unit-{index}>"}
                     for index in range(1, count + 1)
@@ -109,6 +111,109 @@ def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[
             }
         )
     return exemplars
+
+
+def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any]:
+    """Return a concrete, non-copyable full-density activity shape for one requested type."""
+    forms = [f"Синтетичний приклад {index}" for index in range(1, count + 1)]
+    if activity_type == "quiz":
+        return {
+            "payload": {
+                "type": "quiz",
+                "instruction": "Оберіть правильний варіант.",
+                "items": [
+                    {"question": form, "options": [form, "Інший варіант."], "correct": 0}
+                    for form in forms
+                ],
+            },
+            "answer_key": {"items": [{"index": index, "correct": 0} for index in range(count)]},
+        }
+    if activity_type == "cloze":
+        return {
+            "payload": {
+                "type": "cloze",
+                "instruction": "Заповніть пропуски.",
+                "text": "Синтетичний текст.",
+                "blanks": [
+                    {"id": index, "answer": form, "options": [form, "Інший варіант."]}
+                    for index, form in enumerate(forms, start=1)
+                ],
+            },
+            "answer_key": {
+                "blanks": [
+                    {"id": index, "answer": form} for index, form in enumerate(forms, start=1)
+                ]
+            },
+        }
+    if activity_type == "fill-in":
+        return {
+            "payload": {
+                "type": "fill-in",
+                "instruction": "Вставте слово.",
+                "items": [
+                    {"sentence": form, "answer": form, "options": [form, "Інший варіант."]}
+                    for form in forms
+                ],
+            },
+            "answer_key": {"items": forms},
+        }
+    if activity_type == "true-false":
+        return {
+            "payload": {
+                "type": "true-false",
+                "instruction": "Визначте правильність твердження.",
+                "items": [{"statement": form, "correct": True} for form in forms],
+            },
+            "answer_key": {"items": [{"index": index, "correct": True} for index in range(count)]},
+        }
+    if activity_type == "match-up":
+        return {
+            "payload": {
+                "type": "match-up",
+                "instruction": "Знайдіть пару.",
+                "pairs": [
+                    {"left": f"Ліва частина {index}", "right": f"Права частина {index}"}
+                    for index in range(1, count + 1)
+                ],
+            },
+            "answer_key": {
+                "pairs": [{"left_index": index, "right_index": index} for index in range(count)]
+            },
+        }
+    if activity_type == "error-correction":
+        return {
+            "payload": {
+                "type": "error-correction",
+                "instruction": "Виправте помилку.",
+                "items": forms,
+            },
+            "answer_key": {"items": [f"Виправлення {index}" for index in range(1, count + 1)]},
+        }
+    if activity_type == "text-questions":
+        return {
+            "payload": {
+                "type": "text-questions",
+                "instruction": "Дайте відповідь.",
+                "items": forms,
+            },
+            "answer_key": {"guidance": "Синтетична вказівка."},
+        }
+    if activity_type == "short-writing":
+        return {
+            "payload": {"type": "short-writing", "prompt": " ".join(forms)},
+            "answer_key": {"guidance": "Синтетична вказівка."},
+        }
+    if activity_type == "mark-the-words":
+        return {
+            "payload": {
+                "type": "mark-the-words",
+                "instruction": "Позначте слова.",
+                "text": " ".join(forms),
+                "target_words": forms,
+            },
+            "answer_key": {"target_words": forms},
+        }
+    raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
 
 
 def six_item_negative_exemplar() -> dict[str, Any]:
@@ -267,14 +372,12 @@ def validate_slot_raw_contract(
 
 
 def _validate_exact_serialization(record: Mapping[str, Any], type_kit: Mapping[str, Any]) -> None:
-    """Enforce exact scheduled IDs first, then literal certified substrate equality."""
+    """Resolve only exact ordered scheduled-unit references against the immutable kit."""
     actual = record.get("serialized_units")
-    expected = type_kit.get("certified_units")
     expected_ids = type_kit.get("scheduled_unit_ids")
     expected_count = type_kit.get("scheduled_unit_count")
     if (
         not isinstance(actual, list)
-        or not isinstance(expected, list)
         or not isinstance(expected_ids, list)
         or not isinstance(expected_count, int)
     ):
@@ -283,13 +386,15 @@ def _validate_exact_serialization(record: Mapping[str, Any], type_kit: Mapping[s
         raise PromptPackV3Error(
             "serialization failure: exact scheduled unit count is required before raw validation."
         )
-    actual_ids = [unit.get("unit_id") if isinstance(unit, Mapping) else None for unit in actual]
+    if any(not isinstance(unit, Mapping) or set(unit) != {"unit_id"} for unit in actual):
+        raise PromptPackV3Error(
+            "serialization failure: serialized units must contain only unit_id references."
+        )
+    actual_ids = [unit["unit_id"] for unit in actual]
     if actual_ids != expected_ids or len(actual_ids) != len(set(actual_ids)):
         raise PromptPackV3Error(
-            "serialization failure: unit IDs must exactly match the scheduled allocation."
+            "serialization failure: unit ID references must exactly match the scheduled allocation."
         )
-    if actual != expected:
-        raise PromptPackV3Error("serialization failure: certified substrate was altered.")
 
 
 def validate_response(

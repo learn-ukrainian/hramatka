@@ -493,7 +493,7 @@ def _payload_units(payload: Mapping[str, Any]) -> int:
 
 
 def _v3_record_from_kit(kit: Mapping[str, Any], *, units: int | None = None) -> dict[str, Any]:
-    serialized = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
+    serialized = [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]]
     if units is not None:
         serialized = serialized[:units]
     return {
@@ -573,9 +573,9 @@ def _v3_live_record_from_kit(
         "slot_id": kit["slot_id"],
         "type": activity_type,
         "activity": {"payload": payload, "answer_key": answer_key},
-        "serialized_units": (
-            certified_units if unit_limit is None else certified_units[:unit_limit]
-        ),
+        "serialized_units": [
+            {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
+        ][:unit_limit],
     }
 
 
