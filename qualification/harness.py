@@ -565,7 +565,12 @@ def _v3_live_record_from_kit(
         payload = {"type": activity_type, "instruction": "x", "items": forms}
         answer_key = {"guidance": "x"}
     elif activity_type == "short-writing":
-        payload = {"type": activity_type, "prompt": " ".join(forms)}
+        prompt_fragments = [
+            fragment
+            for unit in certified_units
+            for fragment in unit["allowed_forms"]
+        ]
+        payload = {"type": activity_type, "prompt": " ".join(prompt_fragments)}
         answer_key = {"guidance": "x"}
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")

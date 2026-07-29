@@ -99,6 +99,20 @@ def test_short_writing_registry_is_closed_and_uses_regex_and_vesum_evidence() ->
     assert not validate_constraints((ConstraintSpec("llm_judgment", {}),), task.sample_tokens)
 
 
+def test_short_writing_plan_carries_exact_learner_facing_constraint_fragments() -> None:
+    task = complete_inventory().writing_tasks[0]
+    lemma = task.constraints[0].params["lemmas"][0]
+
+    plan = build_short_writing(complete_inventory(), slot_id="P3-A1", phase=3)
+
+    assert plan.disposition == "certified"
+    assert plan.units[0].allowed_forms == (
+        f"«{lemma}»",
+        "мінімум 1 дієслово",
+        "до 200 слів",
+    )
+
+
 def test_mark_the_words_plan_records_exact_certified_target_token_records() -> None:
     plan = build_mark_the_words(complete_inventory(), slot_id="P1-A1", phase=1)
 

@@ -33,6 +33,16 @@ RepairRenderer = Callable[["RepairRequest"], object]
 ReplacementRenderer = Callable[["ReplacementRequest"], object]
 
 
+class RepairableSerializationError(ValueError):
+    """A deterministic gate found a model-side immutable-plan binding error.
+
+    The gate still runs before serialization and still fails closed.  This
+    marker only says that the bad learner payload can be re-rendered from the
+    unchanged certified slot plan, so it is eligible for the same two bounded
+    serializer repair rounds as a bad unit-ID list.
+    """
+
+
 class _FrozenDict(dict[str, object]):
     """A JSON-serializable immutable mapping for a repair renderer's input."""
 
@@ -151,7 +161,10 @@ class BlockEvaluation:
         The evaluator expands an omitted scheduled ID into this slot-local
         error before the other validation stages.  It is a response count
         failure, so it must use the same immutable-plan repair path as an
-        incomplete ``serialized_units`` reference list.
+        incomplete ``serialized_units`` reference list.  The production
+        binding gate can also mark a learner payload detached from that same
+        immutable substrate as ``serialization``; arbitrary gate failures
+        remain ineligible.
         """
         return self.disposition == "density_shortfall" or any(
             error.cause.startswith(
@@ -459,6 +472,8 @@ def _evaluate_payload(
                 record, type_kits[slot_id], deterministic_gates=deterministic_gates
             )
             gated[slot_id] = record
+        except RepairableSerializationError as exc:
+            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "serialization", exc))
         except Exception as exc:
             errors_by_slot.setdefault(slot_id, []).append(
                 _error(slot_id, "deterministic_gate", exc)

@@ -39,6 +39,17 @@ from .unit_plan_v3 import (
 )
 
 _TOKEN_RE: Final = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
+_UKRAINIAN_CASE_FORMS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "nom": "називному",
+        "gen": "родовому",
+        "dat": "давальному",
+        "acc": "знахідному",
+        "instr": "орудному",
+        "loc": "місцевому",
+        "voc": "кличному",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -452,6 +463,95 @@ def _build_mark_the_words(
     return certify_unit_plan(slot_id=slot_id, phase=phase, activity_type="mark-the-words", units=())
 
 
+def _short_writing_prompt_markers(
+    constraints: tuple[ConstraintSpec, ...],
+) -> tuple[str, ...] | None:
+    """Return the concrete learner-facing markers for the currently built task.
+
+    Constraint registry names certify the plan, but are implementation labels,
+    not text a learner should see.  The serializer instead receives complete,
+    canonical Ukrainian prompt fragments for each configured constraint.  A
+    one-word response already satisfies a minimum of one, so its exact
+    learner-facing range is ``до N слів``; higher minima must state both ends.
+    Unknown future constraint kinds stay unavailable until they gain an
+    equally deterministic learner-facing fragment.
+    """
+
+    def verb_noun(minimum: int) -> str:
+        remainder = minimum % 100
+        if 11 <= remainder <= 14:
+            return "дієслів"
+        if minimum % 10 == 1:
+            return "дієслово"
+        if minimum % 10 in {2, 3, 4}:
+            return "дієслова"
+        return "дієслів"
+
+    markers: list[str] = []
+    for spec in constraints:
+        if spec.kind == "contains_lemma_set":
+            lemmas = spec.params.get("lemmas")
+            if set(spec.params) != {"lemmas"} or not isinstance(lemmas, (list, tuple)) or not all(
+                isinstance(lemma, str) and lemma.strip() for lemma in lemmas
+            ):
+                return None
+            markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
+            continue
+        if spec.kind == "word_count_range":
+            minimum = spec.params.get("minimum")
+            maximum = spec.params.get("maximum")
+            if (
+                set(spec.params) != {"minimum", "maximum"}
+                or not isinstance(minimum, int)
+                or isinstance(minimum, bool)
+                or not isinstance(maximum, int)
+                or isinstance(maximum, bool)
+                or minimum < 1
+                or maximum < minimum
+            ):
+                return None
+            markers.append(
+                f"до {maximum} слів"
+                if minimum == 1
+                else f"від {minimum} до {maximum} слів"
+            )
+            continue
+        if spec.kind == "min_verb_count":
+            minimum = spec.params.get("minimum")
+            if (
+                set(spec.params) != {"minimum"}
+                or not isinstance(minimum, int)
+                or isinstance(minimum, bool)
+                or minimum < 1
+            ):
+                return None
+            markers.append(f"мінімум {minimum} {verb_noun(minimum)}")
+            continue
+        if spec.kind == "target_case_usage":
+            case = spec.params.get("case")
+            minimum = spec.params.get("minimum")
+            lemmas = spec.params.get("lemmas", ())
+            if (
+                not {"case", "minimum"} <= set(spec.params)
+                or bool(set(spec.params) - {"case", "minimum", "lemmas"})
+                or not isinstance(case, str)
+                or case not in _UKRAINIAN_CASE_FORMS
+                or not isinstance(minimum, int)
+                or isinstance(minimum, bool)
+                or minimum < 1
+                or not isinstance(lemmas, (list, tuple))
+                or not all(isinstance(lemma, str) and lemma.strip() for lemma in lemmas)
+            ):
+                return None
+            markers.append(
+                f"мінімум {minimum} слів у {_UKRAINIAN_CASE_FORMS[case]} відмінку"
+            )
+            markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
+            continue
+        return None
+    return tuple(markers) if markers else None
+
+
 def _build_short_writing(
     inventory: CertificationInventory, *, slot_id: str, phase: int
 ) -> UnitPlan:
@@ -459,10 +559,12 @@ def _build_short_writing(
     for task in inventory.writing_tasks:
         sentence = sentences.get(task.sentence_id)
         names = registered_constraint_names(task.constraints)
+        prompt_markers = _short_writing_prompt_markers(task.constraints)
         if (
             sentence is None
             or task.prompt not in sentence.text
             or names is None
+            or prompt_markers is None
             or "word_count_range" not in names
             or not validate_constraints(task.constraints, task.sample_tokens)
         ):
@@ -474,7 +576,7 @@ def _build_short_writing(
                 ResourceClaim("writing_task", task.task_id),
             ),
             anchor=UnitAnchor("evidence", f"{inventory.source_id}:{task.sentence_id}"),
-            allowed_forms=names,
+            allowed_forms=prompt_markers,
             expected_key_or_rule=ExpectedKeyRule("rule", "short-writing-constraints.v1"),
             citation_plan=(Citation(inventory.source_id, f"sentence:{task.sentence_id}"),),
             distinctness={

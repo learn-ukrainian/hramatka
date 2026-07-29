@@ -19,6 +19,7 @@ from jsonschema import Draft7Validator
 from hramatka.engine import data, vendoring
 from hramatka.engine.anchor_inventory_v3 import inventory_for_group, inventory_from_anchor
 from hramatka.engine.density_evaluator_v3 import (
+    RepairableSerializationError,
     RepairRequest,
     ReplacementRequest,
     evaluate_phase_with_repair,
@@ -206,7 +207,16 @@ def _activity_gate(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
         raise ValueError("v3 activity payload is not the scheduled type.")
     if not isinstance(activity.get("answer_key"), Mapping):
         raise ValueError("v3 activity answer_key must be an object.")
-    _bind_learner_payload_to_certified_units(activity, kit)
+    try:
+        _bind_learner_payload_to_certified_units(activity, kit)
+    except ValueError as error:
+        # This is a model-side rendering of an already certified slot, rather
+        # than an arbitrary content gate or an allocation failure.  Preserve
+        # the immutable-plan-only repair contract by marking just this exact
+        # substrate-binding class for the evaluator's bounded repair path.
+        if "detached from certified units" in str(error):
+            raise RepairableSerializationError(str(error)) from error
+        raise
 
 
 def _certified_forms(kit: Mapping[str, Any]) -> tuple[tuple[str, ...], ...]:
@@ -347,7 +357,10 @@ def _bind_learner_payload_to_certified_units(
         return
     if activity_type == "short-writing":
         prompt = payload.get("prompt")
-        if not isinstance(prompt, str) or any(form not in prompt for form in primary):
+        prompt_fragments = tuple(fragment for unit_forms in forms for fragment in unit_forms)
+        if not isinstance(prompt, str) or any(
+            fragment not in prompt for fragment in prompt_fragments
+        ):
             raise ValueError("v3 short-writing prompt is detached from certified constraints.")
         return
     raise ValueError("v3 activity payload has no certified-unit binding rule.")
