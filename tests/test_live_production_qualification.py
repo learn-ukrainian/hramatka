@@ -152,19 +152,17 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_six_routes_and_spend_acknowledgement_rebinds_to_18_cells() -> None:
+def test_matrix_is_four_routes_and_spend_acknowledgement_rebinds_to_12_cells() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 6
+    assert len(_matrix()) == 4
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
         "gemini-flash-ais",
         "gemini-flash-vertex",
-        "gemini-pro-ais",
-        "gemini-pro-vertex",
         "gemma-ais",
         "gemma-openrouter",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x6"
+        ":B1-45M-3x4"
     )
 
 
@@ -599,10 +597,7 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
         assert port._transport.max_attempts == 1
         if route.host == "google-vertex":
             assert isinstance(port._transport, VertexGenerateContentTransport)
-        elif route.model_id in {
-            "google-ais/gemini-3.6-flash",
-            "google-ais/gemini-3.1-pro-preview",
-        }:
+        elif route.model_id == "google-ais/gemini-3.6-flash":
             assert port._transport.retry_json_mode_on_400 is True
         else:
             assert port._transport.retry_json_mode_on_400 is False
@@ -628,13 +623,11 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 18
-    assert len(constructed) == 18
+    assert len(run.cells) == 12
+    assert len(constructed) == 12
     assert set(constructed) == {
         ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
         ("gemini-3.6-flash", "gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
-        ("gemini-3.1-pro", "gemini-pro-ais", "google-ais", "google-ais/gemini-3.1-pro-preview"),
-        ("gemini-3.1-pro", "gemini-pro-vertex", "google-vertex", "gemini-3.1-pro-preview"),
         ("gemma-4-31b", "gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"),
         ("gemma-4-31b", "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
     }

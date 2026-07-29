@@ -83,17 +83,6 @@ LOGICAL_MODELS: Final = (
         ),
     ),
     LogicalModelSpec(
-        id="gemini-3.1-pro",
-        label="Gemini 3.1 Pro",
-        description_uk="Ретельніше складання; зазвичай потребує більше часу.",
-        provider_routes=(
-            QualifiedProviderRoute(
-                "gemini-pro-ais", "google-ais", "google-ais/gemini-3.1-pro-preview"
-            ),
-            QualifiedProviderRoute("gemini-pro-vertex", "google-vertex", "gemini-3.1-pro-preview"),
-        ),
-    ),
-    LogicalModelSpec(
         id="gemma-4-31b",
         label="Gemma 4 31B",
         description_uk="Відкрита модель із внутрішнім резервним маршрутом.",
