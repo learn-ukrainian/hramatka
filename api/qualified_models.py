@@ -82,20 +82,11 @@ LOGICAL_MODELS: Final = (
             QualifiedProviderRoute("gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
         ),
     ),
-    LogicalModelSpec(
-        id="gemma-4-31b",
-        label="Gemma 4 31B",
-        description_uk="Відкрита модель із внутрішнім резервним маршрутом.",
-        provider_routes=(
-            QualifiedProviderRoute("gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"),
-            QualifiedProviderRoute("gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
-        ),
-    ),
 )
 
-# The prior 12-cell transcription proved TeacherReadyDensity.v2 only.  It is
-# intentionally absent: until a full current v3 aggregate is transcribed,
-# the teacher UI must remain fail-closed.
+# The prior TeacherReadyDensity.v2 transcription is intentionally absent: until
+# a full current v3 aggregate is transcribed, the teacher UI must remain
+# fail-closed.
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
 
 

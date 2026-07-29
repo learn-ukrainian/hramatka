@@ -41,16 +41,12 @@ Run the proof locally with:
 .venv/bin/python -m pytest -q tests/test_production_qualification.py tests/test_qualified_model_selector.py
 ```
 
-The harness executes these eighteen exact cells:
+The harness executes these six exact cells:
 
 | Logical model | Route ID |
 | --- | --- |
 | Gemini 3.6 Flash | `gemini-flash-ais` |
 | Gemini 3.6 Flash | `gemini-flash-vertex` |
-| Gemini 3.1 Pro | `gemini-pro-ais` |
-| Gemini 3.1 Pro | `gemini-pro-vertex` |
-| Gemma 4 31B | `gemma-ais` |
-| Gemma 4 31B | `gemma-openrouter` |
 
 For each of the three anchors, the content-free receipt binds source commit,
 harness/manifest/anchor hashes, logical model, expected and observed route,
@@ -87,7 +83,7 @@ a `QualificationReceipt` and be considered for the production registry.
 ## Real-provider runs
 
 The real mode is an operator-only command and is never invoked by pytest or by
-the teacher API. It runs the exact fixed 3-anchor × 6-route matrix, not a
+the teacher API. It runs the exact fixed 3-anchor × 2-route matrix, not a
 selected subset. Before it constructs a provider it requires a clean worktree,
 the current source commit, the immutable manifest digest, all three external
 anchor hashes, both production-path feature flags, every route's credential
@@ -122,7 +118,7 @@ First obtain the exact acknowledgement string without running the command's
 provider mode:
 
 ```text
-HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x6
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x2
 ```
 
 The operator then supplies that exact value together with
@@ -132,10 +128,9 @@ operator-local object containing only `id`, `source_identity`, and `text` for
 the three manifest anchors. It must not be stored in the repository. Receipt
 and scratch roots must also be outside the repository.
 
-Each cell constructs one pinned provider port. Gemma's normal production
-failover, Gemini AIS-to-Vertex outage fallback, and all round-robin selection
-are deliberately bypassed: a provider failure is a failure of that same cell,
-never evidence for a sibling route.
+Each cell constructs one pinned provider port. Gemini AIS-to-Vertex outage
+fallback and all round-robin selection are deliberately bypassed: a provider
+failure is a failure of that same cell, never evidence for a sibling route.
 The ordinary `BakeRunner` may repeat a failed whole bake, but every initial and
 repair call remains pinned to the same route and is recorded as content-free
 route telemetry.
@@ -150,7 +145,7 @@ Real cells use the production 1,800-second bake hard timeout and keep the
 authenticated API lifecycle open for 1,830 seconds, rather than the no-cost
 test harness's 600-second/20-second bounds. A cell that has not reached a
 terminal durable state by that deadline is refused; a terminal failed job is
-also refused. The command exits nonzero unless all eighteen cells are present,
+also refused. The command exits nonzero unless all six cells are present,
 passed, and remain `semantic_gate: not_run`; it reports only anchor/route IDs,
 never lesson or provider content.
 

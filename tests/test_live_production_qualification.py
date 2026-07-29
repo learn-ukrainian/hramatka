@@ -13,11 +13,6 @@ import pytest
 
 from hramatka.engine import data, fixtures
 from hramatka.engine.providers import (
-    DEFAULT_GEMMA_AIS_BASE_URL,
-    DEFAULT_GEMMA_FALLBACK_BASE_URL,
-    GEMMA_AIS_BASE_URL_ENV,
-    GEMMA_FALLBACK_BASE_URL_ENV,
-    GEMMA_FALLBACK_MODEL_ENV,
     VERTEX_BASE_URL_ENV,
     FailoverGeneratorPort,
     VertexGenerateContentTransport,
@@ -152,17 +147,15 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_four_routes_and_spend_acknowledgement_rebinds_to_12_cells() -> None:
+def test_matrix_is_two_routes_and_spend_acknowledgement_rebinds_to_6_cells() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 4
+    assert len(_matrix()) == 2
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
         "gemini-flash-ais",
         "gemini-flash-vertex",
-        "gemma-ais",
-        "gemma-openrouter",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x4"
+        ":B1-45M-3x2"
     )
 
 
@@ -377,7 +370,7 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
         raise AssertionError("a provider must not be constructed")
 
     def runtime_route_valid(**route: str) -> None:
-        if route["route_id"] == "gemma-openrouter":
+        if route["route_id"] == "gemini-flash-vertex":
             raise ValueError("noncanonical runtime configuration")
 
     with pytest.raises(LiveQualificationError, match="runtime configuration"):
@@ -395,9 +388,6 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
 @pytest.mark.parametrize(
     ("environment", "value"),
     [
-        (GEMMA_AIS_BASE_URL_ENV, "https://untrusted.example/v1"),
-        (GEMMA_FALLBACK_MODEL_ENV, "other/model"),
-        (GEMMA_FALLBACK_BASE_URL_ENV, "https://untrusted.example/v1"),
         (VERTEX_BASE_URL_ENV, "https://untrusted.example/v1"),
     ],
 )
@@ -427,8 +417,6 @@ def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factor
 @pytest.mark.parametrize(
     ("environment", "value"),
     [
-        (GEMMA_AIS_BASE_URL_ENV, f"{DEFAULT_GEMMA_AIS_BASE_URL}/"),
-        (GEMMA_FALLBACK_BASE_URL_ENV, f"{DEFAULT_GEMMA_FALLBACK_BASE_URL}/"),
         (
             VERTEX_BASE_URL_ENV,
             "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/",
@@ -623,13 +611,11 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 12
-    assert len(constructed) == 12
+    assert len(run.cells) == 6
+    assert len(constructed) == 6
     assert set(constructed) == {
         ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
         ("gemini-3.6-flash", "gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
-        ("gemma-4-31b", "gemma-ais", "google-ais", "google-ais/gemma-4-31b-it"),
-        ("gemma-4-31b", "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
     }
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []

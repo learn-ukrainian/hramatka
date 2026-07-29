@@ -812,7 +812,7 @@ class QualificationRunnerStillActiveError(QualificationError):
 
 
 class ProductionQualificationHarness:
-    """Execute the exact 3 anchors × 4 configured route cells without spend."""
+    """Execute the exact 3 anchors × 2 configured route cells without spend."""
 
     def __init__(
         self,
@@ -839,7 +839,7 @@ class ProductionQualificationHarness:
             provider_factory=lambda anchor, _logical_model_id, route: _DeterministicRouteProvider(
                 route,
                 force_initial_shortfall=(
-                    anchor.id == "b1-morphology" and route.route_id == "gemma-openrouter"
+                    anchor.id == "b1-morphology" and route.route_id == "gemini-flash-vertex"
                 ),
             ),
             scratch_root=self._root,
