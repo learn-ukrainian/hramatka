@@ -127,6 +127,7 @@ def test_unit_plan_records_every_certified_unit_field_and_consumes_floor_authori
         "expected_key_or_rule",
         "citation_plan",
         "distinctness",
+        "rendering_surface",
     }
     with pytest.raises(FrozenInstanceError):
         plan.units[0].unit_id = "changed"  # type: ignore[misc]

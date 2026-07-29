@@ -105,7 +105,11 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
                         "type": "quiz",
                         "instruction": "Оберіть правильний варіант.",
                         "items": [
-                            {"question": form, "options": [form, "Інший варіант."], "correct": 0}
+                            {
+                                "question": f"Вкажіть правильну форму: {form}",
+                                "options": [form, "Інший варіант."],
+                                "correct": 0,
+                            }
                             for form in forms
                         ],
                     },

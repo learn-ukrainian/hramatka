@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from .lesson_capacity_v3 import LessonAllocation
+from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3"
 TEMPLATE_VERSION = "gemma-phase-pack.v3.2"
-TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v1"
+TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v2"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
 _TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.2.md"
@@ -76,6 +77,7 @@ def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str
         "template_version": TEMPLATE_VERSION,
         "template_sha256": template_digest(),
         "type_kit_identity": TYPE_KIT_IDENTITY,
+        "serializer_temperature": serializer_temperature(),
         "phase": phase,
         "paragraph_ids": list(allocation.paragraph_ids),
         "response_order": [kit["slot_id"] for kit in type_kits],
@@ -122,7 +124,11 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
                 "type": "quiz",
                 "instruction": "Оберіть правильний варіант.",
                 "items": [
-                    {"question": form, "options": [form, "Інший варіант."], "correct": 0}
+                    {
+                        "question": f"Вкажіть правильну форму: {form}",
+                        "options": [form, "Інший варіант."],
+                        "correct": 0,
+                    }
                     for form in forms
                 ],
             },
@@ -151,7 +157,11 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
                 "type": "fill-in",
                 "instruction": "Вставте слово.",
                 "items": [
-                    {"sentence": form, "answer": form, "options": [form, "Інший варіант."]}
+                    {
+                        "sentence": f"Синтетичний контекст: {form}.",
+                        "answer": form,
+                        "options": [form, "Інший варіант."],
+                    }
                     for form in forms
                 ],
             },

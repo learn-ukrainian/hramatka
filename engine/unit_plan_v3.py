@@ -239,6 +239,7 @@ class CertifiedUnit:
     expected_key_or_rule: ExpectedKeyRule
     citation_plan: tuple[Citation, ...]
     distinctness: Mapping[str, object]
+    rendering_surface: str | None = None
 
     def __post_init__(self) -> None:
         if not self.unit_id.strip():
@@ -249,6 +250,10 @@ class CertifiedUnit:
             raise ValueError("Certified units need at least one citation.")
         if any(not form.strip() for form in self.allowed_forms):
             raise ValueError("Allowed forms cannot contain blanks.")
+        if self.rendering_surface is not None and (
+            not isinstance(self.rendering_surface, str) or not self.rendering_surface.strip()
+        ):
+            raise ValueError("Rendering surfaces must be non-blank strings when present.")
         object.__setattr__(self, "resource_claims", tuple(self.resource_claims))
         object.__setattr__(self, "allowed_forms", tuple(self.allowed_forms))
         object.__setattr__(self, "citation_plan", tuple(self.citation_plan))
@@ -263,6 +268,7 @@ class CertifiedUnit:
             "expected_key_or_rule": self.expected_key_or_rule.to_dict(),
             "citation_plan": [citation.to_dict() for citation in self.citation_plan],
             "distinctness": _thaw(self.distinctness),
+            "rendering_surface": self.rendering_surface,
         }
 
 

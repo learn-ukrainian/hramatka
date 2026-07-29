@@ -231,6 +231,9 @@ def _candidate_unit(
         ),
         citation_plan=(Citation(inventory.source_id, f"sentence:{candidate.sentence_id}"),),
         distinctness=distinctness,
+        rendering_surface=(
+            candidate.literal_evidence if candidate.activity_type == "fill-in" else None
+        ),
     )
 
 

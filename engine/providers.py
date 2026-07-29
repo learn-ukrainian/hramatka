@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from .serializer_policy import serializer_temperature
 from .transport import (
     AIS_API_KEY_ENV,
     GEMMA_MODEL,
@@ -790,13 +791,7 @@ class HttpChatTransport:
         # wire; keep the canonical id in fingerprints/meta.
         wire_model = model.split("/", 1)[1] if self.strip_model_prefix and "/" in model else model
 
-        temp_env = os.environ.get("HRAMATKA_GEN_TEMPERATURE")
-        temperature = 0.2
-        if temp_env is not None:
-            try:
-                temperature = float(temp_env)
-            except ValueError:
-                pass
+        temperature = serializer_temperature()
 
         # Gemini can enforce JSON at the API boundary, including AIS, when
         # explicitly enabled. Gemma remains excluded by the #171 measurements.
@@ -1013,13 +1008,7 @@ class VertexGenerateContentTransport:
             raise GeneratorUnavailable("Vertex model identifier must be a bare model ID")
         url = f"{base_url}/models/{quote(model, safe='-._')}:generateContent"
 
-        temp_env = os.environ.get("HRAMATKA_GEN_TEMPERATURE")
-        temperature = 0.2
-        if temp_env is not None:
-            try:
-                temperature = float(temp_env)
-            except ValueError:
-                pass
+        temperature = serializer_temperature()
         generation_config = {"temperature": temperature}
         if json_mode_enabled_for_model(model):
             generation_config["responseMimeType"] = "application/json"

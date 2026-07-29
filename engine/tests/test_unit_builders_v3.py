@@ -52,6 +52,20 @@ def test_each_builder_returns_unavailable_for_an_insufficient_anchor(activity_ty
     assert plan.units == ()
 
 
+def test_fill_in_builder_carries_exact_evidence_rendering_surfaces() -> None:
+    inventory = complete_inventory()
+
+    plan = BUILDERS["fill-in"](inventory, slot_id="P1-A3", phase=1)
+
+    assert plan.disposition == "certified"
+    assert all(unit.rendering_surface for unit in plan.units)
+    assert {unit.rendering_surface for unit in plan.units} <= {
+        candidate.literal_evidence
+        for candidate in inventory.candidates
+        if candidate.activity_type == "fill-in"
+    }
+
+
 def test_true_false_catalog_is_versioned_closed_and_literal_evidence_bound() -> None:
     inventory = complete_inventory()
     fact = inventory.true_false_facts[0]

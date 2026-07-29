@@ -28,13 +28,14 @@ from hramatka.engine.prompt_pack_v3 import (
     TEMPLATE_VERSION as LIVE_TEMPLATE_VERSION,
 )
 from hramatka.engine.prompt_pack_v3 import TYPE_KIT_IDENTITY as LIVE_TYPE_KIT_IDENTITY
+from hramatka.engine.serializer_policy import serializer_temperature
 from hramatka.engine.teacher_ready_density_v3 import (
     FLOOR_TABLE,
     TEACHER_READY_DENSITY_VERSION,
     density_floor_fingerprint,
 )
 
-CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v3"
+CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v4"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
 AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v2"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -360,6 +361,7 @@ class CellReceipt:
     density_contract_version: str
     density_contract_sha256: str
     type_kit_identity: str
+    serializer_temperature: float
     registry_sha256: str
     engine_sha256: str
     flag_sha256: str
@@ -394,6 +396,7 @@ class CellReceipt:
                 "repair_trace",
                 "schema_version",
                 "semantic_gate",
+                "serializer_temperature",
                 "source_commit",
                 "slot_telemetry",
                 "template_sha256",
@@ -432,6 +435,8 @@ class CellReceipt:
             or not row["template_version"]
             or not isinstance(row["type_kit_identity"], str)
             or not row["type_kit_identity"]
+            or type(row["serializer_temperature"]) not in {int, float}
+            or float(row["serializer_temperature"]) != serializer_temperature()
             or row["outcome"] not in _OUTCOMES
             or row["semantic_gate"] not in _SEMANTIC_GATES
             or not isinstance(row["repair_trace"], list)
@@ -503,6 +508,7 @@ class CellReceipt:
             density_contract_version=row["density_contract_version"],
             density_contract_sha256=row["density_contract_sha256"],
             type_kit_identity=row["type_kit_identity"],
+            serializer_temperature=float(row["serializer_temperature"]),
             registry_sha256=row["registry_sha256"],
             engine_sha256=row["engine_sha256"],
             flag_sha256=row["flag_sha256"],
@@ -531,6 +537,7 @@ class CellReceipt:
             "density_contract_version": self.density_contract_version,
             "density_contract_sha256": self.density_contract_sha256,
             "type_kit_identity": self.type_kit_identity,
+            "serializer_temperature": self.serializer_temperature,
             "registry_sha256": self.registry_sha256,
             "engine_sha256": self.engine_sha256,
             "flag_sha256": self.flag_sha256,
@@ -714,6 +721,7 @@ class RouteAggregate:
                 and cell.density_contract_version == DENSITY_CONTRACT_VERSION
                 and cell.density_contract_sha256 == density_floor_fingerprint()
                 and cell.type_kit_identity == TYPE_KIT_IDENTITY
+                and cell.serializer_temperature == serializer_temperature()
                 for cell in self.cells
             )
         )
@@ -741,6 +749,7 @@ class RouteAggregate:
             density_contract_version=DENSITY_CONTRACT_VERSION,
             density_contract_digest=DENSITY_CONTRACT_DIGEST,
             type_kit_identity=TYPE_KIT_IDENTITY,
+            serializer_temperature=self.cells[0].serializer_temperature,
             passed_anchors=self.passed_anchors,
             passed=True,
         )

@@ -38,6 +38,7 @@ from hramatka.api.qualified_models import (
 from hramatka.engine import fixtures
 from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
 from hramatka.engine.providers import telemetry_ctx
+from hramatka.engine.serializer_policy import DEFAULT_SERIALIZER_TEMPERATURE
 
 LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -69,6 +70,7 @@ def _qualified_test_registry() -> QualifiedModelRegistry:
         density_contract_version=DENSITY_CONTRACT_VERSION,
         density_contract_digest=DENSITY_CONTRACT_DIGEST,
         type_kit_identity=TYPE_KIT_IDENTITY,
+        serializer_temperature=DEFAULT_SERIALIZER_TEMPERATURE,
         passed_anchors=QUALIFICATION_ANCHORS,
         passed=True,
     )

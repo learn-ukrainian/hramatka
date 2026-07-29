@@ -55,6 +55,7 @@ from hramatka.engine.prompt_pack_v3 import (
     template_digest,
 )
 from hramatka.engine.providers import telemetry_ctx
+from hramatka.engine.serializer_policy import serializer_temperature
 from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
 from hramatka.engine.unit_builders_v3 import BUILDERS
@@ -516,7 +517,14 @@ def _v3_live_record_from_kit(
         payload = {
             "type": activity_type,
             "instruction": "x",
-            "items": [{"question": form, "options": [form, "x"], "correct": 0} for form in forms],
+            "items": [
+                {
+                    "question": f"Вкажіть правильну форму: {form}",
+                    "options": [form, "x"],
+                    "correct": 0,
+                }
+                for form in forms
+            ],
         }
         answer_key = {"items": [{"index": index, "correct": 0} for index in range(len(forms))]}
     elif activity_type == "cloze":
@@ -536,7 +544,14 @@ def _v3_live_record_from_kit(
         payload = {
             "type": activity_type,
             "instruction": "x",
-            "items": [{"sentence": form, "answer": form, "options": [form, "x"]} for form in forms],
+            "items": [
+                {
+                    "sentence": unit["rendering_surface"],
+                    "answer": form,
+                    "options": [form, "x"],
+                }
+                for unit, form in zip(certified_units, forms, strict=True)
+            ],
         }
         answer_key = {"items": forms}
     elif activity_type == "true-false":
@@ -1268,6 +1283,7 @@ class ProductionQualificationHarness:
             density_contract_version=DENSITY_CONTRACT_VERSION,
             density_contract_sha256=density_floor_fingerprint(),
             type_kit_identity=TYPE_KIT_IDENTITY,
+            serializer_temperature=serializer_temperature(),
             registry_sha256=registry_digest(),
             engine_sha256=_current_engine_digest(),
             flag_sha256=_flag_digest(),

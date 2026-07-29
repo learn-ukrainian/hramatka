@@ -145,6 +145,7 @@ def test_wire_model_strips_our_provider_prefix():
 def test_vertex_request_uses_native_generate_content_shape_and_separate_key_header(
     monkeypatch, model
 ):
+    monkeypatch.delenv("HRAMATKA_GEN_TEMPERATURE", raising=False)
     monkeypatch.setenv("HRAMATKA_GEN_JSON_MODE", "1")
     seen: dict = {}
 
@@ -166,7 +167,7 @@ def test_vertex_request_uses_native_generate_content_shape_and_separate_key_head
     assert seen["body"]["generationConfig"]["responseMimeType"] == "application/json"
     assert seen["body"] == {
         "contents": [{"role": "user", "parts": [{"text": "PROMPT-BODY"}]}],
-        "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
+        "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"},
     }
     assert "tools" not in seen["body"]
 
@@ -840,7 +841,7 @@ def test_default_payload_shape_and_temperature_present(monkeypatch):
         return httpx.Response(200, json=OK_BODY)
 
     _transport(handler)("prompt", api_key="k", model="m", timeout_s=5)
-    assert seen["body"]["temperature"] == 0.2
+    assert seen["body"]["temperature"] == 0.0
     assert "response_format" not in seen["body"]
 
 
@@ -856,6 +857,19 @@ def test_payload_env_overrides_honored(monkeypatch):
     _transport(handler)("prompt", api_key="k", model="m", timeout_s=5)
     assert seen["body"]["temperature"] == 0.7
     assert "response_format" not in seen["body"]
+
+
+def test_vertex_payload_temperature_override_is_honored(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_TEMPERATURE", "0.7")
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=VERTEX_OK_BODY)
+
+    _vertex_transport(handler)("prompt", api_key="k", model="gemini-3.6-flash", timeout_s=5)
+
+    assert seen["body"]["generationConfig"]["temperature"] == 0.7
 
 
 @pytest.mark.parametrize(

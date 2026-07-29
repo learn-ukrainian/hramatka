@@ -12,6 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from hramatka.engine.serializer_policy import (
+    serializer_temperature as effective_serializer_temperature,
+)
+
 QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # These literals are the output of qualification tooling's v3 authorities.
 # The live baker now imports the v3 path; transcription still validates these
@@ -21,12 +25,12 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3"
 # This is the canonical three-anchor aggregate of the currently pinned v3
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
-PROMPT_SHA256: Final = "868f55d166de53e7607fcdeb349a3bb16e62fa23f8e30dd42e1e7931cedee9c3"
+PROMPT_SHA256: Final = "c74660fbd12bd19cb766d190306f9467c5654f11ad402cfcc1a7b5e84c413b43"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.2"
 TEMPLATE_SHA256: Final = "071351bc6d609610f019205094985e46dc1d2a9347c733def06996a448aaf238"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
-TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v1"
+TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v2"
 QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
 
 
@@ -66,6 +70,7 @@ class QualificationReceipt:
     density_contract_version: str
     density_contract_digest: str
     type_kit_identity: str
+    serializer_temperature: float
     passed_anchors: frozenset[str]
     passed: bool
 
@@ -172,6 +177,7 @@ class QualifiedModelRegistry:
         density_contract_version: str = DENSITY_CONTRACT_VERSION,
         density_contract_digest: str = DENSITY_CONTRACT_DIGEST,
         type_kit_identity: str = TYPE_KIT_IDENTITY,
+        serializer_temperature: float | None = None,
     ) -> None:
         ids = [model.id for model in models]
         if len(ids) != len(set(ids)):
@@ -185,6 +191,11 @@ class QualifiedModelRegistry:
         self.density_contract_version = density_contract_version
         self.density_contract_digest = density_contract_digest
         self.type_kit_identity = type_kit_identity
+        self.serializer_temperature = (
+            effective_serializer_temperature()
+            if serializer_temperature is None
+            else serializer_temperature
+        )
 
     def qualified_models(self) -> tuple[LogicalModelSpec, ...]:
         return tuple(
@@ -267,6 +278,7 @@ class QualifiedModelRegistry:
             and receipt.density_contract_version == self.density_contract_version
             and receipt.density_contract_digest == self.density_contract_digest
             and receipt.type_kit_identity == self.type_kit_identity
+            and receipt.serializer_temperature == self.serializer_temperature
             and receipt.passed_anchors == QUALIFICATION_ANCHORS
         )
 

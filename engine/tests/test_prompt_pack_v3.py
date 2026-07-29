@@ -96,6 +96,18 @@ def test_v32_context_uses_the_new_template_and_type_kit_identity() -> None:
     assert kit["scheduled_unit_ids"] == [unit["unit_id"] for unit in kit["certified_units"]]
 
 
+def test_serializer_temperature_is_bound_into_the_prompt_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_context = _context()
+    monkeypatch.setenv("HRAMATKA_GEN_TEMPERATURE", "0.7")
+    overridden_context = _context()
+
+    assert default_context["serializer_temperature"] == 0.0
+    assert overridden_context["serializer_temperature"] == 0.7
+    assert default_context["context_sha256"] != overridden_context["context_sha256"]
+
+
 def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_items() -> None:
     context = _context()
 

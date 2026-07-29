@@ -341,6 +341,7 @@ def test_transcription_prints_the_exact_registry_block_without_editing_it(
         "density_contract_version",
         "density_contract_digest",
         "type_kit_identity",
+        "serializer_temperature",
         "passed_anchors",
         "passed",
     )

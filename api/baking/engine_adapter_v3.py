@@ -253,6 +253,20 @@ def _bound_list(value: object, expected: tuple[object, ...], *, label: str) -> N
         raise ValueError(f"v3 learner payload {label} is detached from certified units.")
 
 
+def _certified_rendering_surfaces(kit: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the exact evidence surface allocated to each fill-in unit."""
+    units = kit.get("certified_units")
+    if not isinstance(units, list):  # guarded by ``_certified_forms``
+        raise ValueError("v3 type-kit has no certified units.")
+    surfaces: list[str] = []
+    for unit in units:
+        surface = unit.get("rendering_surface") if isinstance(unit, Mapping) else None
+        if not isinstance(surface, str) or not surface:
+            raise ValueError("v3 fill-in unit has no certified rendering surface.")
+        surfaces.append(surface)
+    return tuple(surfaces)
+
+
 def _bind_learner_payload_to_certified_units(
     activity: Mapping[str, Any], kit: Mapping[str, Any]
 ) -> None:
@@ -282,7 +296,11 @@ def _bind_learner_payload_to_certified_units(
                 or item["options"][:1] != [form]
             ):
                 raise ValueError("v3 quiz payload is detached from certified units.")
-            if item.get("question") != form:
+            # The serializer has two certified quiz renderings: its legacy
+            # bare form and the explicit v3.2 learner instruction.  Substring
+            # matching would let unrelated question prose masquerade as a
+            # bound learner surface.
+            if item.get("question") not in {form, f"Вкажіть правильну форму: {form}"}:
                 raise ValueError("v3 quiz question is detached from certified units.")
         _bound_list(
             answer_key.get("items"),
@@ -312,13 +330,14 @@ def _bind_learner_payload_to_certified_units(
         items = payload.get("items")
         if not isinstance(items, list) or len(items) != len(primary):
             raise ValueError("v3 fill-in payload count is detached from certified units.")
-        for item, form in zip(items, primary, strict=True):
+        surfaces = _certified_rendering_surfaces(kit)
+        for item, form, surface in zip(items, primary, surfaces, strict=True):
             if (
                 not isinstance(item, Mapping)
-                or item.get("sentence") != form
                 or item.get("answer") != form
                 or not isinstance(item.get("options"), list)
                 or item["options"][:1] != [form]
+                or item.get("sentence") != surface
             ):
                 raise ValueError("v3 fill-in payload is detached from certified units.")
         _bound_list(answer_key.get("items"), primary, label="answer key")

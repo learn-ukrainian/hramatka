@@ -15,6 +15,7 @@ from pathlib import Path
 
 from hramatka.api import qualified_models
 from hramatka.api.qualified_models import QualificationReceipt
+from hramatka.engine.serializer_policy import serializer_temperature
 
 from .harness import _current_engine_digest, _file_digest, _flag_digest, _source_commit
 from .manifest import load_manifest
@@ -28,7 +29,7 @@ from .receipts import (
 )
 
 
-def _literal(value: str) -> str:
+def _literal(value: str | float) -> str:
     """Return one stable Python string literal for the committed registry."""
     return json.dumps(value, ensure_ascii=False)
 
@@ -65,6 +66,7 @@ def _format_receipt(receipt: QualificationReceipt) -> tuple[str, ...]:
         ("density_contract_version", receipt.density_contract_version),
         ("density_contract_digest", receipt.density_contract_digest),
         ("type_kit_identity", receipt.type_kit_identity),
+        ("serializer_temperature", receipt.serializer_temperature),
     )
     lines = ["    QualificationReceipt("]
     lines.extend(f"        {name}={_literal(value)}," for name, value in fields)
@@ -96,6 +98,7 @@ def _assert_registry_literals(aggregates: Iterable[RouteAggregate]) -> None:
         "density_contract_version": qualified_models.DENSITY_CONTRACT_VERSION,
         "density_contract_digest": qualified_models.DENSITY_CONTRACT_DIGEST,
         "type_kit_identity": qualified_models.TYPE_KIT_IDENTITY,
+        "serializer_temperature": serializer_temperature(),
     }
     for aggregate in aggregates:
         receipt = aggregate.as_model_receipt()
