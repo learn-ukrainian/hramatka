@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -45,10 +46,20 @@ _MODEL_FAMILIES = frozenset(
 )
 _AUTHOR_FAMILIES = _MODEL_FAMILIES | {"automation"}
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_SEMANTIC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _MARKER_RE = re.compile(r"<!--\s*hramatka-pr-lifecycle:v1\s+(\{.*?\})\s*-->", re.DOTALL)
 _SCHEMA = "hramatka-review-attestation.v2"
 _SIGNING_CONTEXT = b"hramatka-review-attestation.v2\0"
 _SEALED_REVIEW_RECORD_DOMAIN = "hramatka-sealed-review-record.v1"
+_RECOVERY_KEY_DOMAIN = "hramatka-review-attestation-recovery.v1"
+_RECOVERY_DISPOSITIONS = frozenset(
+    {"preserve", "rebind_without_spend", "authorize_one_paid_attempt"}
+)
+_MAX_RECOVERY_CHAIN_HOPS = 32
+_INSPECTABLE_FAILURE_CODES = frozenset(
+    {"provider_failure", "provider_not_configured", "provider_output_invalid"}
+)
 _PROCESS_REQUEST_LOCK = threading.Lock()
 _BASE64_WRAPPING_WHITESPACE = b" \t\r\n"
 _SYSTEM_PROMPT = (
@@ -377,6 +388,21 @@ class _StateStore:
                     UNIQUE (repository, receipt_comment_id)
                 )"""
             )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS review_attestation_recoveries (
+                    id INTEGER PRIMARY KEY,
+                    old_semantic_key TEXT NOT NULL UNIQUE,
+                    new_semantic_key TEXT NOT NULL UNIQUE,
+                    disposition TEXT NOT NULL CHECK(disposition IN (
+                        'preserve', 'rebind_without_spend', 'authorize_one_paid_attempt'
+                    )),
+                    operator_identity TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    new_spend_authorized INTEGER NOT NULL CHECK(new_spend_authorized IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    consumed_at TEXT
+                )"""
+            )
             columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(review_attestation_results)")
@@ -401,9 +427,228 @@ class _StateStore:
         finally:
             connection.close()
 
+    @contextmanager
+    def lifecycle_lock(
+        self, *, error_code: str, status_code: int = 409
+    ):  # type: ignore[no-untyped-def]
+        """Serialize provider work and root recovery across service processes.
+
+        SQLite transactions protect the reservation itself but deliberately end
+        before provider I/O.  This separate host-local lock closes that gap for
+        the one active service slot and the root-only recovery command.
+        """
+        lock_path = self.path.with_name(self.path.name + ".lifecycle.lock")
+        try:
+            database_stat = os.stat(self.path)
+            descriptor = os.open(
+                lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o660
+            )
+        except OSError as error:
+            raise ReviewAttestationError(
+                "review_attestation_lock_permission_denied", status_code=503
+            ) from error
+        try:
+            try:
+                lock_stat = os.fstat(descriptor)
+                if (lock_stat.st_uid, lock_stat.st_gid) != (
+                    database_stat.st_uid,
+                    database_stat.st_gid,
+                ):
+                    os.fchown(descriptor, database_stat.st_uid, database_stat.st_gid)
+                if stat.S_IMODE(lock_stat.st_mode) != 0o660:
+                    os.fchmod(descriptor, 0o660)
+            except OSError as error:
+                raise ReviewAttestationError(
+                    "review_attestation_lock_ownership_mismatch", status_code=503
+                ) from error
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ReviewAttestationError(error_code, status_code=status_code) from error
+            except PermissionError as error:
+                raise ReviewAttestationError(
+                    "review_attestation_lock_permission_denied", status_code=503
+                ) from error
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _result_row(connection: sqlite3.Connection, key: str) -> sqlite3.Row | None:
+        return connection.execute(
+            "SELECT state, semantic_json, reviewed_at, failure_code "
+            "FROM review_attestation_results WHERE idempotency_key = ?",
+            (key,),
+        ).fetchone()
+
+    @staticmethod
+    def _recovery_key(old_key: str) -> str:
+        return _sha256(
+            _canonical_json(
+                {
+                    "domain": _RECOVERY_KEY_DOMAIN,
+                    "old_semantic_key": old_key,
+                    "nonce": _b64url(os.urandom(32)),
+                }
+            )
+        )
+
+    @staticmethod
+    def _recovery_projection(row: sqlite3.Row) -> dict[str, object]:
+        """Return operator-safe audit metadata, never free-text reason or output."""
+        return {
+            "recovery_id": row["id"],
+            "old_semantic_key": _StateStore._inspection_semantic_key(
+                row["old_semantic_key"]
+            ),
+            "new_semantic_key": _StateStore._inspection_semantic_key(
+                row["new_semantic_key"]
+            ),
+            "disposition": (
+                row["disposition"] if row["disposition"] in _RECOVERY_DISPOSITIONS else None
+            ),
+            "new_spend_authorized": bool(row["new_spend_authorized"]),
+            "created_at": _StateStore._inspection_timestamp(row["created_at"]),
+            "consumed_at": _StateStore._inspection_timestamp(row["consumed_at"]),
+        }
+
+    @staticmethod
+    def _inspection_failure_code(value: object) -> str | None:
+        return value if value in _INSPECTABLE_FAILURE_CODES else None
+
+    @staticmethod
+    def _inspection_semantic_key(value: object) -> str | None:
+        return value if isinstance(value, str) and _SEMANTIC_KEY_RE.fullmatch(value) else None
+
+    @staticmethod
+    def _inspection_timestamp(value: object) -> str | None:
+        return value if isinstance(value, str) and _TIMESTAMP_RE.fullmatch(value) else None
+
+    def inspect(self, *, semantic_key: str | None = None) -> dict[str, object]:
+        """Inspect only safe state metadata; no semantic/provider payload is read."""
+        if semantic_key is not None and _SEMANTIC_KEY_RE.fullmatch(semantic_key) is None:
+            raise ReviewAttestationError("invalid_semantic_key", status_code=422)
+        with self.lifecycle_lock(error_code="recovery_busy"):
+            with self._connection() as connection:
+                result_sql = (
+                    "SELECT idempotency_key, state, failure_code, created_at, reviewed_at "
+                    "FROM review_attestation_results"
+                )
+                recovery_sql = (
+                    "SELECT id, old_semantic_key, new_semantic_key, disposition, "
+                    "new_spend_authorized, created_at, consumed_at "
+                    "FROM review_attestation_recoveries"
+                )
+                if semantic_key is None:
+                    results = connection.execute(
+                        result_sql + " ORDER BY created_at, idempotency_key"
+                    ).fetchall()
+                    recoveries = connection.execute(recovery_sql + " ORDER BY id").fetchall()
+                else:
+                    results = connection.execute(
+                        result_sql + " WHERE idempotency_key = ?", (semantic_key,)
+                    ).fetchall()
+                    recoveries = connection.execute(
+                        recovery_sql
+                        + " WHERE old_semantic_key = ? OR new_semantic_key = ? ORDER BY id",
+                        (semantic_key, semantic_key),
+                    ).fetchall()
+        return {
+            "status": "ok",
+            "attestations": [
+                {
+                    "semantic_key": self._inspection_semantic_key(row["idempotency_key"]),
+                    "state": row["state"]
+                    if row["state"] in {"pending", "success", "failure"}
+                    else None,
+                    "failure_code": self._inspection_failure_code(row["failure_code"]),
+                    "created_at": self._inspection_timestamp(row["created_at"]),
+                    "reviewed_at": self._inspection_timestamp(row["reviewed_at"]),
+                }
+                for row in results
+            ],
+            "recoveries": [self._recovery_projection(row) for row in recoveries],
+        }
+
+    def recover(
+        self,
+        *,
+        old_semantic_key: str,
+        disposition: str,
+        operator_identity: str,
+        reason: str,
+        created_at: str,
+    ) -> dict[str, object]:
+        """Append one explicit disposition without mutating the stranded row."""
+        if _SEMANTIC_KEY_RE.fullmatch(old_semantic_key) is None:
+            raise ReviewAttestationError("invalid_semantic_key", status_code=422)
+        if disposition not in _RECOVERY_DISPOSITIONS:
+            raise ReviewAttestationError("invalid_recovery_disposition", status_code=422)
+        operator_identity = _required_text(operator_identity, "operator_identity")
+        reason = _required_text(reason, "reason", max_length=500)
+        with self.lifecycle_lock(error_code="recovery_busy"):
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    source = self._result_row(connection, old_semantic_key)
+                    if source is None or source["state"] not in {"pending", "failure"}:
+                        raise ReviewAttestationError(
+                            "recovery_source_not_stranded", status_code=409
+                        )
+                    if connection.execute(
+                        "SELECT 1 FROM review_attestation_recoveries WHERE old_semantic_key = ?",
+                        (old_semantic_key,),
+                    ).fetchone() is not None:
+                        raise ReviewAttestationError("recovery_already_recorded", status_code=409)
+                    new_semantic_key = (
+                        old_semantic_key
+                        if disposition == "preserve"
+                        else self._recovery_key(old_semantic_key)
+                    )
+                    new_spend_authorized = disposition == "authorize_one_paid_attempt"
+                    try:
+                        cursor = connection.execute(
+                            """INSERT INTO review_attestation_recoveries (
+                                old_semantic_key, new_semantic_key, disposition, operator_identity,
+                                reason, new_spend_authorized, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                old_semantic_key,
+                                new_semantic_key,
+                                disposition,
+                                operator_identity,
+                                reason,
+                                int(new_spend_authorized),
+                                created_at,
+                            ),
+                        )
+                    except sqlite3.IntegrityError as error:
+                        code = (
+                            "recovery_preserve_conflict"
+                            if disposition == "preserve"
+                            else "recovery_state_conflict"
+                        )
+                        raise ReviewAttestationError(code, status_code=409) from error
+                    recovery = connection.execute(
+                        "SELECT id, old_semantic_key, new_semantic_key, disposition, "
+                        "new_spend_authorized, created_at, consumed_at "
+                        "FROM review_attestation_recoveries WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                    assert recovery is not None
+                    connection.execute("COMMIT")
+                    return {"status": "recovered", **self._recovery_projection(recovery)}
+                except BaseException:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                    raise
+
     def consume_and_reserve(
         self, *, jti: str, key: str, legacy_key: str, created_at: str
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, str]:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -414,27 +659,86 @@ class _StateStore:
                     )
                 except sqlite3.IntegrityError as error:
                     raise ReviewAttestationError("oidc_replay") from error
-                row = connection.execute(
-                    "SELECT state, semantic_json, reviewed_at, failure_code "
-                    "FROM review_attestation_results WHERE idempotency_key = ?",
-                    (key,),
-                ).fetchone()
+                source_key = key
+                row = self._result_row(connection, key)
                 if row is None and legacy_key != key:
-                    row = connection.execute(
-                        "SELECT state, semantic_json, reviewed_at, failure_code "
-                        "FROM review_attestation_results WHERE idempotency_key = ?",
-                        (legacy_key,),
+                    row = self._result_row(connection, legacy_key)
+                    source_key = legacy_key
+                for _ in range(_MAX_RECOVERY_CHAIN_HOPS):
+                    recovery = connection.execute(
+                        "SELECT id, new_semantic_key, disposition, new_spend_authorized, "
+                        "consumed_at FROM review_attestation_recoveries WHERE old_semantic_key = ?",
+                        (source_key,),
                     ).fetchone()
+                    if recovery is None:
+                        break
+                    disposition = recovery["disposition"]
+                    new_spend_authorized = recovery["new_spend_authorized"]
+                    if (
+                        disposition not in _RECOVERY_DISPOSITIONS
+                        or not isinstance(new_spend_authorized, int)
+                        or new_spend_authorized not in {0, 1}
+                        or (disposition == "authorize_one_paid_attempt")
+                        != bool(new_spend_authorized)
+                    ):
+                        raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                    if disposition in {"preserve", "rebind_without_spend"}:
+                        # Rebinding never creates a result or invokes a provider.
+                        if row is None:
+                            raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                        connection.execute("COMMIT")
+                        return dict(row), source_key
+                    recovered_key = recovery["new_semantic_key"]
+                    if not isinstance(recovered_key, str) or _SEMANTIC_KEY_RE.fullmatch(
+                        recovered_key
+                    ) is None:
+                        raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                    recovered = self._result_row(connection, recovered_key)
+                    if connection.execute(
+                        "SELECT 1 FROM review_attestation_recoveries WHERE old_semantic_key = ?",
+                        (recovered_key,),
+                    ).fetchone() is not None:
+                        if (
+                            recovery["consumed_at"] is None
+                            or recovered is None
+                            or recovered["state"] not in {"pending", "failure"}
+                        ):
+                            raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                        source_key, row = recovered_key, recovered
+                        continue
+                    if recovered is not None:
+                        if recovery["consumed_at"] is None:
+                            raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                        connection.execute("COMMIT")
+                        return dict(recovered), recovered_key
+                    if recovery["consumed_at"] is not None:
+                        raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                    claimed = connection.execute(
+                        """UPDATE review_attestation_recoveries
+                        SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL""",
+                        (created_at, recovery["id"]),
+                    )
+                    if claimed.rowcount != 1:
+                        raise ReviewAttestationError("recovery_state_conflict", status_code=503)
+                    connection.execute(
+                        "INSERT INTO review_attestation_results "
+                        "(idempotency_key, state, created_at) VALUES (?, 'pending', ?)",
+                        (recovered_key, created_at),
+                    )
+                    connection.execute("COMMIT")
+                    return None, recovered_key
+                else:
+                    raise ReviewAttestationError("recovery_chain_too_long", status_code=503)
                 if row is not None:
                     connection.execute("COMMIT")
-                    return dict(row)
+                    return dict(row), source_key
                 connection.execute(
                     "INSERT INTO review_attestation_results "
                     "(idempotency_key, state, created_at) VALUES (?, 'pending', ?)",
                     (key, created_at),
                 )
                 connection.execute("COMMIT")
-                return None
+                return None, key
             except BaseException:
                 if connection.in_transaction:
                     connection.execute("ROLLBACK")
@@ -534,6 +838,32 @@ class _StateStore:
                 )
             except sqlite3.IntegrityError as error:
                 raise ReviewAttestationError("oidc_replay") from error
+
+
+def inspect_review_attestations(
+    database_path: Path, *, semantic_key: str | None = None
+) -> dict[str, object]:
+    """Return the root-operator's deliberately redacted recovery view."""
+    return _StateStore(database_path).inspect(semantic_key=semantic_key)
+
+
+def recover_review_attestation(
+    database_path: Path,
+    *,
+    old_semantic_key: str,
+    disposition: str,
+    operator_identity: str,
+    reason: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Record one explicit, non-automatic disposition for a stranded result."""
+    return _StateStore(database_path).recover(
+        old_semantic_key=old_semantic_key,
+        disposition=disposition,
+        operator_identity=operator_identity,
+        reason=reason,
+        created_at=_timestamp(now or _now()),
+    )
 
 
 def seal_review_record(
@@ -722,39 +1052,55 @@ class ReviewAttestor:
                     }
                 )
             )
-            reservation_at = _timestamp(self.clock())
-            cached = self.store.consume_and_reserve(
-                jti=jti, key=key, legacy_key=legacy_key, created_at=reservation_at
+            lifecycle_lock = self.store.lifecycle_lock(
+                error_code="review_attestation_busy", status_code=429
             )
-            if cached is not None:
-                semantic = self._cached_semantic(cached)
-            else:
-                try:
-                    result = self._parse_provider_result(self.provider(user_input))
-                    reviewed_at = _timestamp(self.clock())
-                    semantic = {
-                        "review_task_id": key[:24],
-                        "result": result,
-                        "reviewed_at": reviewed_at,
-                        "base_sha": base,
-                        "head_sha": head,
-                        "author_family": author_family,
-                        "prompt_digest": prompt_digest,
-                        "input_digest": input_digest,
-                    }
-                except ReviewAttestationError as error:
-                    self.store.finish(
-                        key=key, semantic=None, reviewed_at=None, failure_code=error.code
-                    )
-                    raise
-                except Exception as error:
-                    self.store.finish(
-                        key=key, semantic=None, reviewed_at=None, failure_code="provider_failure"
-                    )
-                    raise ReviewAttestationError("provider_failure", status_code=503) from error
-                self.store.finish(
-                    key=key, semantic=semantic, reviewed_at=reviewed_at, failure_code=None
+            lifecycle_lock.__enter__()
+            try:
+                reservation_at = _timestamp(self.clock())
+                cached, reservation_key = self.store.consume_and_reserve(
+                    jti=jti, key=key, legacy_key=legacy_key, created_at=reservation_at
                 )
+                if cached is not None:
+                    semantic = self._cached_semantic(cached)
+                else:
+                    try:
+                        result = self._parse_provider_result(self.provider(user_input))
+                        reviewed_at = _timestamp(self.clock())
+                        semantic = {
+                            "review_task_id": reservation_key[:24],
+                            "result": result,
+                            "reviewed_at": reviewed_at,
+                            "base_sha": base,
+                            "head_sha": head,
+                            "author_family": author_family,
+                            "prompt_digest": prompt_digest,
+                            "input_digest": input_digest,
+                        }
+                    except ReviewAttestationError as error:
+                        self.store.finish(
+                            key=reservation_key,
+                            semantic=None,
+                            reviewed_at=None,
+                            failure_code=error.code,
+                        )
+                        raise
+                    except Exception as error:
+                        self.store.finish(
+                            key=reservation_key,
+                            semantic=None,
+                            reviewed_at=None,
+                            failure_code="provider_failure",
+                        )
+                        raise ReviewAttestationError("provider_failure", status_code=503) from error
+                    self.store.finish(
+                        key=reservation_key,
+                        semantic=semantic,
+                        reviewed_at=reviewed_at,
+                        failure_code=None,
+                    )
+            finally:
+                lifecycle_lock.__exit__(None, None, None)
             # This is a run-bound envelope timestamp, intentionally distinct
             # from the reservation timestamp and never earlier than review.
             created_at = _timestamp(self.clock())

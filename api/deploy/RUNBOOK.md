@@ -145,6 +145,51 @@ review comment.
 To replace review evidence, create a new review at a new PR head; do not modify
 the sealed SQLite row.
 
+#### Stranded paid-review reservation recovery
+
+There is no recovery HTTP endpoint, timer, background worker, or expiry.  A
+root operator must first inspect the host-local state.  This command prints
+only semantic-key hashes, state, failure code, and timestamps; it never prints
+diffs, provider text, tokens, credentials, receipt JSON, or stored semantics:
+
+```sh
+sudo -n /opt/hramatka/current/.venv/bin/python \
+  -m hramatka.ops.recover_review_attestation inspect \
+  --database /var/lib/hramatka/review-attestations.sqlite3
+```
+
+Choose exactly one final disposition for a stranded `pending` or `failure`
+semantic key.  Use a short non-sensitive reason: it is retained in the
+root-owned SQLite audit row with the `SUDO_USER` identity, old/new semantic
+keys, disposition, authorization flag, and timestamp, but it is intentionally
+not printed by the inspection tool.
+
+```sh
+sudo -n /opt/hramatka/current/.venv/bin/python \
+  -m hramatka.ops.recover_review_attestation recover \
+  --database /var/lib/hramatka/review-attestations.sqlite3 \
+  --old-semantic-key <64-lowercase-hex> \
+  --disposition <preserve|rebind_without_spend|authorize_one_paid_attempt> \
+  --reason '<non-sensitive operational reason>'
+```
+
+- `preserve` records that the existing pending/failure row remains final; its
+  new semantic key equals the old key.
+- `rebind_without_spend` records a distinct recovery semantic key but creates
+  no review-result row, invokes no provider, and does not fabricate a clean
+  receipt from an ambiguous result. The original row remains fail-closed.
+- `authorize_one_paid_attempt` records one distinct recovery semantic key and
+  authorizes only its next valid trusted-attestation reservation. The grant is
+  consumed atomically before provider invocation; a crash or ambiguous outcome
+  leaves that new row pending/failure and cannot trigger another call.
+
+The command takes the same host-local lifecycle lock as the attestor over its
+provider call. It therefore rejects recovery while an attestation may still be
+in flight rather than risking two charges. A subsequent trusted workflow run
+still performs all OIDC, exact-head, draft/blocked, and cross-family checks;
+the command never calls a provider or signs/publishes a receipt. Do not edit,
+delete, expire, or reset attestation rows with SQLite tools.
+
 #### 3. Add the lifecycle marker to the PR body
 
 Add a single HTML comment to the PR body. It must contain exactly eight fields
