@@ -11,6 +11,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -289,7 +290,7 @@ def _redeem(client: TestClient, token: str) -> dict[str, Any]:
     response = client.post(
         "/api/session/redeem",
         headers={"Origin": ORIGIN},
-        json={"token": token},
+        json={"token": token, "nonce": _canonical_token()},
     )
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
@@ -546,10 +547,19 @@ def _set_invite_revoked(database_path: Path, invite_id: str) -> None:
         )
 
 
-def _set_only_session(database_path: Path, column: str, value: str) -> None:
-    assert column in {"expires_at", "revoked_at"}
+def _set_only_session(
+    database_path: Path, column: str, value: str | None, *, session_id: str | None = None
+) -> None:
+    assert column in {"expires_at", "idle_expires_at", "revoked_at"}
     with sqlite3.connect(database_path) as connection:
-        updated = connection.execute(f"UPDATE pilot_sessions SET {column} = ?", (value,)).rowcount
+        if session_id is None:
+            updated = connection.execute(
+                f"UPDATE pilot_sessions SET {column} = ?", (value,)
+            ).rowcount
+        else:
+            updated = connection.execute(
+                f"UPDATE pilot_sessions SET {column} = ? WHERE id = ?", (value, session_id)
+            ).rowcount
     assert updated == 1
 
 
@@ -576,16 +586,24 @@ def test_invite_lifecycle_is_410_indistinguishable_and_rejects_padding_bits(app,
 
     assert _redeem(client, used_token)["teacher"]["display_name"] == "Використана"
     used_response = client.post(
-        "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": used_token}
+        "/api/session/redeem",
+        headers={"Origin": ORIGIN},
+        json={"token": used_token, "nonce": _canonical_token()},
     )
     expired_response = client.post(
-        "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": expired_token}
+        "/api/session/redeem",
+        headers={"Origin": ORIGIN},
+        json={"token": expired_token, "nonce": _canonical_token()},
     )
     revoked_response = client.post(
-        "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": revoked_token}
+        "/api/session/redeem",
+        headers={"Origin": ORIGIN},
+        json={"token": revoked_token, "nonce": _canonical_token()},
     )
     unknown_response = client.post(
-        "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": _canonical_token()}
+        "/api/session/redeem",
+        headers={"Origin": ORIGIN},
+        json={"token": _canonical_token(), "nonce": _canonical_token()},
     )
     unavailable = _error(used_response, 410, "invite_unavailable")
     assert _error(expired_response, 410, "invite_unavailable") == unavailable
@@ -595,7 +613,7 @@ def test_invite_lifecycle_is_410_indistinguishable_and_rejects_padding_bits(app,
     padding_response = client.post(
         "/api/session/redeem",
         headers={"Origin": ORIGIN},
-        json={"token": _noncanonical_padding_bits(_canonical_token())},
+        json={"token": _noncanonical_padding_bits(_canonical_token()), "nonce": _canonical_token()},
     )
     _error(padding_response, 422, "invalid_input")
 
@@ -634,6 +652,194 @@ def test_session_expiry_revocation_logout_and_unknown_are_401_indistinguishable(
     _error(client.get("/api/session"), 401, "session_required")
 
 
+def test_redeemed_session_survives_invite_expiry_and_has_idle_and_absolute_limits(
+    app, client
+) -> None:
+    _, invite, token = _issue_invite(app)
+    session = _redeem(client, token)
+    _set_invite_expired(app.state.settings.database_path, invite.id)
+
+    # Invite expiry applies only before the first committed exchange.
+    assert client.get("/api/session").json()["teacher"] == session["teacher"]
+
+    expired = (datetime.now(UTC) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    _set_only_session(app.state.settings.database_path, "idle_expires_at", expired)
+    _error(client.get("/api/session"), 401, "session_required")
+
+
+def test_lost_redeem_response_reissues_only_for_the_same_browser_nonce(app) -> None:
+    _, _, token = _issue_invite(app)
+    nonce = _canonical_token()
+    with TestClient(app, base_url=ORIGIN) as first, TestClient(app, base_url=ORIGIN) as other:
+        committed = first.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert committed.status_code == 200, committed.text
+        # Simulate the browser never receiving the committed Set-Cookie response.
+        first.cookies.clear()
+
+        retried = first.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert retried.status_code == 200, retried.text
+        assert first.get("/api/session").json()["teacher"] == retried.json()["teacher"]
+
+        replay = other.post(
+            "/api/session/redeem",
+            headers={"Origin": ORIGIN},
+            json={"token": token, "nonce": _canonical_token()},
+        )
+        _error(replay, 410, "invite_unavailable")
+
+
+def test_same_nonce_reissue_renews_idle_even_after_the_original_idle_deadline(app) -> None:
+    _, _, token = _issue_invite(app)
+    nonce = _canonical_token()
+    with TestClient(app, base_url=ORIGIN) as client:
+        initial = client.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert initial.status_code == 200, initial.text
+        client.cookies.clear()
+
+        near_boundary = datetime.now(UTC) + timedelta(minutes=1)
+        _set_only_session(
+            app.state.settings.database_path,
+            "idle_expires_at",
+            near_boundary.isoformat().replace("+00:00", "Z"),
+        )
+        renewed = client.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert renewed.status_code == 200, renewed.text
+        with sqlite3.connect(app.state.settings.database_path) as connection:
+            idle_expires_at = connection.execute(
+                "SELECT idle_expires_at FROM pilot_sessions"
+            ).fetchone()[0]
+        renewed_deadline = datetime.fromisoformat(idle_expires_at.replace("Z", "+00:00"))
+        assert renewed_deadline > datetime.now(UTC) + timedelta(hours=23)
+        assert client.get("/api/session").status_code == 200
+
+        client.cookies.clear()
+        _set_only_session(
+            app.state.settings.database_path,
+            "idle_expires_at",
+            (datetime.now(UTC) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+        )
+        past_idle = client.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert past_idle.status_code == 200, past_idle.text
+        assert client.get("/api/session").status_code == 200
+
+
+def test_same_nonce_reissue_rejects_null_idle_and_caps_cookie_to_absolute_lifetime(app) -> None:
+    _, _, token = _issue_invite(app)
+    nonce = _canonical_token()
+    with TestClient(app, base_url=ORIGIN) as client:
+        initial = client.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        assert initial.status_code == 200, initial.text
+        client.cookies.clear()
+        _set_only_session(app.state.settings.database_path, "idle_expires_at", None)
+        malformed = client.post(
+            "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+        )
+        _error(malformed, 410, "invite_unavailable")
+
+    _, _, capped_token = _issue_invite(app)
+    capped_nonce = _canonical_token()
+    with TestClient(app, base_url=ORIGIN) as client:
+        initial = client.post(
+            "/api/session/redeem",
+            headers={"Origin": ORIGIN},
+            json={"token": capped_token, "nonce": capped_nonce},
+        )
+        assert initial.status_code == 200, initial.text
+        client.cookies.clear()
+        with sqlite3.connect(app.state.settings.database_path) as connection:
+            capped_session_id = connection.execute(
+                "SELECT id FROM pilot_sessions ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0]
+        _set_only_session(
+            app.state.settings.database_path,
+            "expires_at",
+            (datetime.now(UTC) + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+            session_id=capped_session_id,
+        )
+        reissued = client.post(
+            "/api/session/redeem",
+            headers={"Origin": ORIGIN},
+            json={"token": capped_token, "nonce": capped_nonce},
+        )
+        assert reissued.status_code == 200, reissued.text
+        max_age = int(re.search(r"Max-Age=(\d+)", reissued.headers["set-cookie"])[1])
+        assert 0 < max_age <= 3600
+
+
+def test_revoke_teacher_sessions_counts_only_active_sessions(app) -> None:
+    teacher = app.state.store.create_teacher(display_name="Вчителька")
+    sessions = []
+    for _ in range(3):
+        _, token = app.state.store.create_invite(teacher.id)
+        sessions.append(app.state.store.redeem_invite(token, _canonical_token()).session)
+    past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    with sqlite3.connect(app.state.settings.database_path) as connection:
+        connection.execute(
+            "UPDATE pilot_sessions SET revoked_at = ? WHERE id = ?", (past, sessions[1].id)
+        )
+        connection.execute(
+            "UPDATE pilot_sessions SET expires_at = ? WHERE id = ?", (past, sessions[2].id)
+        )
+
+    assert app.state.store.revoke_teacher_sessions(teacher.id) == 1
+    assert app.state.store.revoke_teacher_sessions(teacher.id) == 0
+
+
+def test_session_survives_app_restart_and_operator_revoke_all_blocks_next_request(
+    app, client, monkeypatch, capsys
+) -> None:
+    teacher, _, token = _issue_invite(app)
+    session = _redeem(client, token)
+    cookie = client.cookies.get("__Host-hramatka_session")
+    assert cookie is not None
+
+    restarted = create_app(settings=app.state.settings, baker=FixtureBaker())
+    with TestClient(restarted, base_url=ORIGIN) as after_restart:
+        after_restart.cookies.set("__Host-hramatka_session", cookie)
+        assert after_restart.get("/api/session").json()["teacher"] == session["teacher"]
+
+        monkeypatch.setenv("HRAMATKA_DB_PATH", str(app.state.settings.database_path))
+        from hramatka.api import sessions
+
+        assert sessions.main(["revoke-all", "--teacher-id", teacher.id]) == 0
+        assert capsys.readouterr().out == '{"revoked_sessions": 1}\n'
+        _error(after_restart.get("/api/session"), 401, "session_required")
+
+
+def test_redemption_persists_only_digests_and_never_logs_raw_credentials(
+    app, client, caplog
+) -> None:
+    _, _, token = _issue_invite(app)
+    nonce = _canonical_token()
+    response = client.post(
+        "/api/session/redeem", headers={"Origin": ORIGIN}, json={"token": token, "nonce": nonce}
+    )
+    assert response.status_code == 200, response.text
+    cookie = client.cookies.get("__Host-hramatka_session")
+    assert cookie is not None
+    with sqlite3.connect(app.state.settings.database_path) as connection:
+        durable = repr(connection.execute("SELECT * FROM pilot_invites").fetchall())
+        durable += repr(connection.execute("SELECT * FROM pilot_sessions").fetchall())
+    assert token not in durable
+    assert nonce not in durable
+    assert cookie not in durable
+    assert token not in caplog.text
+    assert nonce not in caplog.text
+    assert cookie not in caplog.text
+
+
 def test_origin_and_csrf_matrix_rejects_before_any_mutation(app, client) -> None:
     _, _, token = _issue_invite(app)
     for headers in (
@@ -642,7 +848,11 @@ def test_origin_and_csrf_matrix_rejects_before_any_mutation(app, client) -> None
         {"Origin": "http://pilot.example.test"},
         {"Origin": "https://evil.example"},
     ):
-        response = client.post("/api/session/redeem", headers=headers, json={"token": token})
+        response = client.post(
+            "/api/session/redeem",
+            headers=headers,
+            json={"token": token, "nonce": _canonical_token()},
+        )
         _error(response, 403, "csrf_rejected")
 
     session = _redeem(client, token)

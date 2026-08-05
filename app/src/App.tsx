@@ -150,6 +150,24 @@ function isValidToken(t: string): boolean {
   return /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(t);
 }
 
+const ENTRY_NONCE_STORAGE_KEY = 'hramatka:entry-nonce';
+
+function entryNonce(): string {
+  const existing = sessionStorage.getItem(ENTRY_NONCE_STORAGE_KEY);
+  if (existing && isValidToken(existing)) return existing;
+  const raw = new Uint8Array(32);
+  crypto.getRandomValues(raw);
+  let binary = '';
+  raw.forEach(byte => { binary += String.fromCharCode(byte); });
+  const nonce = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  sessionStorage.setItem(ENTRY_NONCE_STORAGE_KEY, nonce);
+  return nonce;
+}
+
+function clearEntryNonce(): void {
+  sessionStorage.removeItem(ENTRY_NONCE_STORAGE_KEY);
+}
+
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = getApiBase();
   const url = base ? `${base}${path}` : path;
@@ -259,6 +277,7 @@ export default function TeacherApp() {
   // Track the id we are actively polling for. Used to make clear-on-id-change + start
   // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
   const activePollIdRef = useRef<string | null>(null);
+  const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
 
   // Last bake request: sessionStorage (+ in-memory fallback when storage unavailable).
   // Recovery path: API status does not expose anchor on failed lessons — see app-helpers.
@@ -320,54 +339,6 @@ export default function TeacherApp() {
     setRestoredTextNotice(true);
   }, [qualifiedModels]);
 
-  // Invite redemption (token only in memory)
-  const redeemFromFragment = useCallback(async () => {
-    const hash = window.location.hash || '';
-    const m = hash.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/);
-    if (!m) return false;
-    const token = m[1];
-    // scrub immediately in finally regardless of outcome
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await apiFetch('/api/session/redeem', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      });
-      if (res.status === 200) {
-        resetSessionScopedState();
-        const data = await res.json();
-        const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
-        setSession(s);
-        setCsrf(data.csrf_token);
-        setSessionReady(true);
-        navigate({ view: 'paste' });
-        // Fetch full session for display
-        await refreshSession();
-        await loadTeacherDefaultDuration();
-        await loadQualifiedModels();
-        // Load catalog so paste view is fully populated (used by some flows)
-        try { await loadCatalog(); } catch {}
-      } else if (res.status === 410) {
-        const e: ErrorEnvelope = await res.json();
-        setError(errOr(e.message, 'err.inviteGone'));
-      } else if (res.status === 422) {
-        setError(errKey('err.inviteBadToken'));
-      } else {
-        const e: ErrorEnvelope = await res.json().catch(() => ({ code: 'error', message: '', retryable: false }));
-        setError(errOr(e.message, 'err.loginFailed'));
-      }
-    } finally {
-      // SCRUB — token never stays in URL (contract)
-      try {
-        history.replaceState(null, '', '/teacher/');
-      } catch {}
-      setLoading(false);
-    }
-    return true;
-  }, [resetSessionScopedState, navigate]);
-
   const refreshSession = async () => {
     const res = await apiFetch('/api/session');
     if (res.ok) {
@@ -385,6 +356,67 @@ export default function TeacherApp() {
     }
     return null;
   };
+
+  // Invite redemption (token only in memory)
+  const redeemFromFragment = useCallback((capturedToken?: string): Promise<boolean> => {
+    if (redeemInFlightRef.current) return redeemInFlightRef.current;
+    const hash = window.location.hash || '';
+    const m = hash.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/);
+    const token = capturedToken ?? m?.[1];
+    if (!token) return Promise.resolve(false);
+    const run = async (): Promise<boolean> => {
+      // scrub immediately in finally regardless of outcome
+      try {
+        // A previously redeemed link can be reopened safely in its original
+        // browser: the existing cookie wins and no second redemption occurs.
+        if (await refreshSession()) return true;
+        setLoading(true);
+        setError(null);
+        const res = await apiFetch('/api/session/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, nonce: entryNonce() }),
+        });
+        if (res.status === 200) {
+          clearEntryNonce();
+          resetSessionScopedState();
+          const data = await res.json();
+          const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
+          setSession(s);
+          setCsrf(data.csrf_token);
+          setSessionReady(true);
+          navigate({ view: 'paste' });
+          // Fetch full session for display
+          await refreshSession();
+          await loadTeacherDefaultDuration();
+          await loadQualifiedModels();
+          // Load catalog so paste view is fully populated (used by some flows)
+          try { await loadCatalog(); } catch {}
+        } else if (res.status === 410) {
+          const e: ErrorEnvelope = await res.json();
+          setError(errOr(e.message, 'err.inviteGone'));
+        } else if (res.status === 422) {
+          setError(errKey('err.inviteBadToken'));
+        } else {
+          const e: ErrorEnvelope = await res.json().catch(() => ({ code: 'error', message: '', retryable: false }));
+          setError(errOr(e.message, 'err.loginFailed'));
+        }
+      } finally {
+        // SCRUB — token never stays in URL (contract)
+        try {
+          history.replaceState(null, '', '/teacher/');
+        } catch {}
+        setLoading(false);
+      }
+      return true;
+    };
+    let promise: Promise<boolean>;
+    promise = run().finally(() => {
+      if (redeemInFlightRef.current === promise) redeemInFlightRef.current = null;
+    });
+    redeemInFlightRef.current = promise;
+    return promise;
+  }, [resetSessionScopedState, navigate]);
 
   const loadTeacherDefaultDuration = useCallback(async () => {
     // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
@@ -430,19 +462,21 @@ export default function TeacherApp() {
     (async () => {
       setInitLoading(true);
       setError(null);
+      const h = window.location.hash || '';
+      const inviteToken = h.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/)?.[1];
+      // Keep the fragment token only in this closure, then remove it before
+      // any request, including a failing session refresh.
+      if (inviteToken) history.replaceState(null, '', '/teacher/');
       try {
-        const h = window.location.hash || '';
-        let did = false;
-        if (h.includes('invite=')) {
-          did = await redeemFromFragment();
-        }
-        if (!did && !cancelled) {
-          const s = await refreshSession();
-          if (s) {
-            did = true;
-            await loadTeacherDefaultDuration();
-            await loadQualifiedModels();
-          }
+        // An old one-use link is harmless in a browser that already holds a
+        // valid session. Confirm that state before attempting another exchange.
+        const existing = await refreshSession();
+        if (existing) {
+          if (inviteToken) history.replaceState(null, '', '/teacher/');
+          await loadTeacherDefaultDuration();
+          await loadQualifiedModels();
+        } else if (inviteToken) {
+          await redeemFromFragment(inviteToken);
         }
       } catch {
         if (!cancelled) {

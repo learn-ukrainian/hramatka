@@ -57,12 +57,18 @@ and `redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now`.
 | `teacher_id TEXT NOT NULL` | FK to `pilot_teachers(id)` |
 | `invite_id TEXT NOT NULL UNIQUE` | FK; enforces one session per invite |
 | `secret_hash BLOB NOT NULL UNIQUE` | Domain-separated SHA-256 digest only |
+| `redeem_nonce_hash BLOB NULL` | Domain-separated browser retry-proof digest; no raw nonce |
 | `created_at`, `expires_at TEXT NOT NULL` | Seven-day absolute session window |
+| `idle_expires_at`, `last_seen_at TEXT NULL` | Additive v006 columns: migration immediately backfills both from the original session lifetime; new/reissued sessions set a 24-hour renewable idle window and last authenticated use |
 | `revoked_at TEXT NULL` | Browser logout/operator/teacher-deactivation revocation |
 
 Raw session and CSRF secrets are never stored. Session lookup hashes the presented
-cookie and joins the teacher row so expiry, revocation, and deactivation are one
-authorization decision.
+cookie and joins the teacher row so absolute expiry, idle expiry, revocation, and
+deactivation are one authorization decision. A committed first exchange can reissue
+a fresh secret only when the presented invite and nonce digest match the same row.
+The same-nonce recovery is valid until absolute expiry even if the original idle
+deadline passed; it renews the idle window, capped at absolute expiry. A NULL idle
+deadline is malformed legacy state and must not reissue a credential.
 
 ### `teacher_preferences`
 
@@ -107,6 +113,10 @@ a distinct key and reveals nothing.
 Every successful state change commits all affected columns before the HTTP success is
 sent. A SQLite read/write/commit error is `503 persistence_unavailable`; it is never
 translated into success. No mutation silently retries a stale semantic write.
+
+Session lookup renews the idle deadline in a `BEGIN IMMEDIATE` transaction. SQLite has
+a single writer, so authenticated teacher traffic serializes at that point; this is an
+accepted one-teacher-pilot constraint, not a general multi-teacher scaling design.
 
 All aggregate transitions increment `revision` exactly once, including runner claim,
 step change, ready/failure completion, a newly persisted warning acknowledgement,

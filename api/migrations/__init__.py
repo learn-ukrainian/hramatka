@@ -10,6 +10,7 @@ from .v002_add_progress_column import apply as apply_v002
 from .v003_teacher_preferences import apply as apply_v003
 from .v004_floor_failure_code import apply as apply_v004
 from .v005_generation_failure_codes import apply as apply_v005
+from .v006_durable_teacher_sessions import apply as apply_v006
 
 
 class MigrationError(RuntimeError):
@@ -24,6 +25,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (3, "add_teacher_preferences", apply_v003),
     (4, "floor_failure_code", apply_v004),
     (5, "generation_failure_codes", apply_v005),
+    (6, "durable_teacher_sessions", apply_v006),
 )
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

@@ -33,6 +33,8 @@ from .validation import validate_lesson
 
 _OPAQUE_TOKEN_BYTES = 32
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+_SESSION_ABSOLUTE_HOURS = 24 * 7
+_SESSION_IDLE_HOURS = 24
 _FAILURE_CODES = frozenset(
     {
         "bake_timeout",
@@ -340,6 +342,11 @@ def session_secret_digest(raw_secret: bytes) -> bytes:
     return hashlib.sha256(b"hramatka-session\0" + raw_secret).digest()
 
 
+def redeem_nonce_digest(raw_nonce: bytes) -> bytes:
+    """Return the only browser-entry nonce value permitted in SQLite."""
+    return hashlib.sha256(b"hramatka-redeem-nonce\0" + raw_nonce).digest()
+
+
 def canonical_json(value: Any) -> str:
     """Canonical compact UTF-8-compatible JSON used for durable request values."""
     return json.dumps(
@@ -641,37 +648,103 @@ class JobStore:
             ).fetchone()
         return self._session_record(row) if row is not None else None
 
+    def revoke_teacher_sessions(self, teacher_id: str) -> int:
+        """Durably revoke every active session for one teacher without deactivation."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE pilot_sessions SET revoked_at = COALESCE(revoked_at, ?)
+                WHERE teacher_id = ? AND revoked_at IS NULL AND expires_at > ?
+                  AND idle_expires_at > ?
+                """,
+                (timestamp, teacher_id, timestamp, timestamp),
+            )
+        return cursor.rowcount
+
     # -- Browser session lifecycle -----------------------------------------
 
-    def redeem_invite(self, token: str) -> RedeemedSession:
-        """Consume one usable invite and create one absolute seven-day session."""
+    def redeem_invite(self, token: str, nonce: str) -> RedeemedSession:
+        """Consume an invite once, with same-browser recovery after a lost response."""
         raw_token = decode_opaque_token(token)
+        raw_nonce = decode_opaque_token(nonce)
         timestamp = now_iso()
         session_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)
+        idle_expires_at = _add_hours(timestamp, _SESSION_IDLE_HOURS)
         session = SessionRecord(
             id=str(uuid.uuid4()),
             teacher_id="",
             teacher_display_name="",
             invite_id="",
             created_at=timestamp,
-            expires_at=_add_hours(timestamp, 24 * 7),
+            expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
             revoked_at=None,
         )
         with self._write_transaction() as connection:
             invite_row = connection.execute(
                 """
-                SELECT i.id, i.teacher_id, t.display_name
+                SELECT i.id, i.teacher_id, i.redeemed_at, i.expires_at,
+                       t.display_name, s.id AS session_id, s.created_at AS session_created_at,
+                       s.expires_at AS session_expires_at,
+                       s.idle_expires_at, s.revoked_at AS session_revoked_at,
+                       s.redeem_nonce_hash
                 FROM pilot_invites AS i
                 JOIN pilot_teachers AS t ON t.id = i.teacher_id
+                LEFT JOIN pilot_sessions AS s ON s.invite_id = i.id
                 WHERE i.token_hash = ?
-                  AND i.redeemed_at IS NULL
                   AND i.revoked_at IS NULL
-                  AND i.expires_at > ?
                   AND t.deactivated_at IS NULL
                 """,
-                (invite_token_digest(raw_token), timestamp),
+                (invite_token_digest(raw_token),),
             ).fetchone()
             if invite_row is None:
+                raise InviteUnavailable("This invite is no longer available.")
+            if invite_row["redeemed_at"] is not None:
+                if (
+                    invite_row["session_id"] is None
+                    or invite_row["redeem_nonce_hash"] is None
+                    or not secrets.compare_digest(
+                        invite_row["redeem_nonce_hash"], redeem_nonce_digest(raw_nonce)
+                    )
+                    or invite_row["session_revoked_at"] is not None
+                    or invite_row["session_expires_at"] <= timestamp
+                    or invite_row["idle_expires_at"] is None
+                ):
+                    raise InviteUnavailable("This invite is no longer available.")
+                # The first transaction committed, but its Set-Cookie response was
+                # lost. Reissue only to the same browser proof, rotating the opaque
+                # credential without ever recovering or storing the old secret.
+                updated = connection.execute(
+                    """
+                    UPDATE pilot_sessions
+                    SET secret_hash = ?, last_seen_at = ?, idle_expires_at = CASE
+                        WHEN expires_at < ? THEN expires_at ELSE ? END
+                    WHERE id = ? AND redeem_nonce_hash = ? AND revoked_at IS NULL
+                    """,
+                    (
+                        session_secret_digest(session_secret),
+                        timestamp,
+                        _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                        _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                        invite_row["session_id"],
+                        redeem_nonce_digest(raw_nonce),
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise InviteUnavailable("This invite is no longer available.")
+                return RedeemedSession(
+                    session=SessionRecord(
+                        id=invite_row["session_id"],
+                        teacher_id=invite_row["teacher_id"],
+                        teacher_display_name=invite_row["display_name"],
+                        invite_id=invite_row["id"],
+                        created_at=invite_row["session_created_at"],
+                        expires_at=invite_row["session_expires_at"],
+                        revoked_at=None,
+                    ),
+                    raw_secret=session_secret,
+                )
+            if invite_row["expires_at"] <= timestamp:
                 raise InviteUnavailable("This invite is no longer available.")
             session = SessionRecord(
                 id=session.id,
@@ -695,16 +768,20 @@ class JobStore:
             connection.execute(
                 """
                 INSERT INTO pilot_sessions (
-                    id, teacher_id, invite_id, secret_hash, created_at, expires_at, revoked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+                    id, teacher_id, invite_id, secret_hash, redeem_nonce_hash,
+                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     session.id,
                     session.teacher_id,
                     session.invite_id,
                     session_secret_digest(session_secret),
+                    redeem_nonce_digest(raw_nonce),
                     session.created_at,
                     session.expires_at,
+                    idle_expires_at,
+                    timestamp,
                 ),
             )
         return RedeemedSession(session=session, raw_secret=session_secret)
@@ -715,7 +792,7 @@ class JobStore:
         if raw is None:
             return None
         timestamp = now_iso()
-        with self._read_connection() as connection:
+        with self._write_transaction() as connection:
             row = connection.execute(
                 """
                 SELECT s.id, s.teacher_id, t.display_name AS teacher_display_name,
@@ -725,10 +802,26 @@ class JobStore:
                 WHERE s.secret_hash = ?
                   AND s.revoked_at IS NULL
                   AND s.expires_at > ?
+                  AND s.idle_expires_at > ?
                   AND t.deactivated_at IS NULL
                 """,
-                (session_secret_digest(raw), timestamp),
+                (session_secret_digest(raw), timestamp, timestamp),
             ).fetchone()
+            if row is not None:
+                connection.execute(
+                    """
+                    UPDATE pilot_sessions
+                    SET last_seen_at = ?, idle_expires_at = CASE
+                        WHEN expires_at < ? THEN expires_at ELSE ? END
+                    WHERE id = ?
+                    """,
+                    (
+                        timestamp,
+                        _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                        _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                        row["id"],
+                    ),
+                )
         return self._session_record(row) if row is not None else None
 
     def logout_session(self, raw_secret: bytes | str) -> bool:
@@ -742,12 +835,13 @@ class JobStore:
                 """
                 UPDATE pilot_sessions SET revoked_at = ?
                 WHERE secret_hash = ? AND revoked_at IS NULL AND expires_at > ?
+                  AND idle_expires_at > ?
                   AND EXISTS (
                     SELECT 1 FROM pilot_teachers AS t
                     WHERE t.id = pilot_sessions.teacher_id AND t.deactivated_at IS NULL
                   )
                 """,
-                (timestamp, session_secret_digest(raw), timestamp),
+                (timestamp, session_secret_digest(raw), timestamp, timestamp),
             )
         return cursor.rowcount == 1
 

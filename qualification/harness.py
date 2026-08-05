@@ -1202,7 +1202,9 @@ class ProductionQualificationHarness:
                 teacher = app.state.store.create_teacher(display_name="Qualification teacher")
                 _, invite = app.state.store.create_invite(teacher.id)
                 redeemed = client.post(
-                    "/api/session/redeem", headers={"Origin": _ORIGIN}, json={"token": invite}
+                    "/api/session/redeem",
+                    headers={"Origin": _ORIGIN},
+                    json={"token": invite, "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
                 )
                 if redeemed.status_code != 200:
                     raise AssertionError("Qualification session could not be redeemed.")

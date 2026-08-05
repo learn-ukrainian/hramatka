@@ -663,6 +663,32 @@ def test_each_temporary_database_produces_a_fresh_unredeemed_invite(tmp_path: Pa
             assert raw_token not in serialized
 
 
+def test_launcher_invite_request_and_notice_agree_on_first_entry_expiry(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def run_private_command(command, *_args, **_kwargs) -> str:
+        commands.append(command)
+        if any("teachers" in part for part in command):
+            return '{"id": "teacher-1"}'
+        return f"https://127.0.0.1:8443/teacher/#invite={'A' * 43}"
+
+    monkeypatch.setattr(local_teacher, "_run_private_command", run_private_command)
+    invite = local_teacher._create_fresh_invite(
+        TEST_PYTHON,
+        local_teacher.LaunchConfig(repo_root=REPO_ROOT),
+        {},
+        local_teacher.StopState(),
+    )
+
+    assert local_teacher.INVITE_RE.fullmatch(invite)
+    invite_command = next(
+        command for command in commands if any("invites" in part for part in command)
+    )
+    requested_hours = invite_command[invite_command.index("--expires-in-hours") + 1]
+    assert requested_hours == str(local_teacher.FIRST_ENTRY_EXPIRY_HOURS) == "72"
+    assert f"expires in {requested_hours} hours" in local_teacher.FIRST_ENTRY_EXPIRY_NOTICE
+
+
 def test_child_failure_terminates_process_groups_and_removes_runtime() -> None:
     supervisor = local_teacher.ProcessSupervisor()
     children: list[subprocess.Popen[bytes]] = []

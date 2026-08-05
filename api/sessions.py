@@ -46,13 +46,20 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     revoke = commands.add_parser("revoke", help="revoke one session")
     revoke.add_argument("--session-id", required=True, type=_uuid)
+    revoke_all = commands.add_parser("revoke-all", help="revoke every session for one teacher")
+    revoke_all.add_argument("--teacher-id", required=True, type=_uuid)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    record = _store().revoke_session(args.session_id)
+    store = _store()
+    if args.command == "revoke-all":
+        payload = {"revoked_sessions": store.revoke_teacher_sessions(args.teacher_id)}
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    record = store.revoke_session(args.session_id)
     if record is None:
         parser.error("session not found")
     print(json.dumps(_session_payload(record), sort_keys=True))

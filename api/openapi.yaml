@@ -30,7 +30,8 @@ paths:
       summary: Exchange one invite token for a pilot session
       security: []
       description: |
-        The teacher bundle reads the token from `#invite=<token>`, posts it once,
+        The teacher bundle reads the token from `#invite=<token>`, binds a
+        tab-local `sessionStorage` entry nonce, and posts both once,
         and immediately replaces the URL with `/teacher/`. Missing, unknown,
         used, expired, and revoked invites all return the same `410` response.
       parameters:
@@ -849,12 +850,16 @@ components:
     InviteRedeemRequest:
       type: object
       additionalProperties: false
-      required: [token]
+      required: [token, nonce]
       properties:
         token:
           type: string
           pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
           description: Base64url without padding, decoded length exactly 32 bytes.
+        nonce:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+          description: Tab-local sessionStorage retry proof; only a domain-separated digest is persisted.
     Teacher:
       type: object
       additionalProperties: false

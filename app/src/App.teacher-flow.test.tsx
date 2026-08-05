@@ -49,6 +49,28 @@ describe('teacher lesson creation and list chrome', () => {
     window.history.replaceState(null, '', '#/');
   });
 
+  it('continues a valid session when an already-used invite fragment is reopened', async () => {
+    installFetch();
+    window.history.replaceState(null, '', '#invite=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+    renderApp();
+
+    await screen.findByTestId('anchor-text-input');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/api/session/redeem'))).toBe(false);
+    expect(window.location.pathname).toBe('/teacher/');
+  });
+
+  it('scrubs an invite fragment when the initial session refresh fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/session')) throw new Error('offline');
+      return response({});
+    }));
+    window.history.replaceState(null, '', '#invite=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+    renderApp();
+
+    await waitFor(() => expect(window.location.pathname).toBe('/teacher/'));
+    expect(window.location.hash).toBe('');
+  });
+
   it('shows the fixed TTT methodology and the optional grammar-focus field on the new lesson form', async () => {
     installFetch();
     renderApp();

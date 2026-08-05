@@ -12,7 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import cache
 from typing import Annotated, Any
 from uuid import UUID
@@ -98,6 +98,12 @@ def _is_rfc3339_timestamp(value: object) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None
+
+
+def _session_cookie_max_age(expires_at: str) -> int:
+    """Never keep a browser credential after its server-side absolute lifetime."""
+    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    return max(0, int((expiry - datetime.now(UTC)).total_seconds()))
 
 
 def _teacher_safe_progress(progress: object) -> dict[str, object] | None:
@@ -527,7 +533,7 @@ def create_app(
         __: None = Depends(require_origin),
     ) -> Response:
         try:
-            redeemed = store.redeem_invite(request_body.token)
+            redeemed = store.redeem_invite(request_body.token, request_body.nonce)
         except TokenFormatError as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         except InviteUnavailable as error:
@@ -538,7 +544,8 @@ def create_app(
         response = JSONResponse(content=session_payload(session))
         response.headers.append(
             "Set-Cookie",
-            f"{_SESSION_COOKIE}={_encode_opaque(redeemed.raw_secret)}; Path=/; Max-Age=604800; "
+            f"{_SESSION_COOKIE}={_encode_opaque(redeemed.raw_secret)}; Path=/; "
+            f"Max-Age={_session_cookie_max_age(redeemed.session.expires_at)}; "
             "HttpOnly; Secure; SameSite=Lax",
         )
         return response

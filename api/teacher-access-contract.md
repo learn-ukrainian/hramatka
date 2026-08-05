@@ -29,15 +29,22 @@ admin product.
 2. The only invite-link form is
    `https://<pilot-origin>/teacher/#invite=<opaque-token>`. A fragment is never sent
    in an HTTP request or `Referer` header.
-3. The static bundle keeps the token in memory, calls `POST /api/session/redeem` with
-   `{ "token": "..." }`, and in a `finally` path replaces the browser URL with
+3. The static bundle keeps the token in memory, creates a random browser-local entry
+   nonce, and calls `POST /api/session/redeem` with `{ "token": "...", "nonce": "..." }`.
+   It persists only that nonce (never the token) in `sessionStorage`, so the retry
+   proof is deliberately bound to one browser tab rather than the whole browser. It
+   persists the nonce long enough to retry a lost response,
+   and in a `finally` path replaces the browser URL with
    `/teacher/` using `history.replaceState`, whether redemption succeeds or fails.
    It must not put the token in logs, telemetry, browser storage, query parameters,
    or application state snapshots.
 4. Redemption requires an `Origin` header exactly equal to the configured HTTPS
    pilot origin. In one SQLite transaction the server verifies the invite digest,
    teacher state, expiry, revocation, and unused state; marks the invite redeemed;
-   and inserts the session. Success is returned only after commit.
+   and inserts the session. It stores only a domain-separated nonce digest. If the
+   commit succeeded but the response was lost, the same nonce can reissue a rotated
+   session credential; a different nonce receives the generic unavailable response.
+   Success is returned only after commit.
 5. Unknown, malformed-but-schema-valid, used, expired, and revoked invites are
    indistinguishable: `410 invite_unavailable`. Schema/format failures are
    `422 invalid_input`. A persistence/commit failure is `503` and consumes nothing.
@@ -54,19 +61,22 @@ bits, even when a permissive decoder could map them to the same bytes.
 
 A redeemed invite creates a fresh 32-byte random session secret. SQLite stores only
 `SHA-256("hramatka-session\0" || secret)`. The raw secret exists only in the browser
-cookie and transient request memory. Sessions expire at a fixed absolute time seven
-days after redemption; they do not slide. Expired, revoked, unknown, or inactive-
+cookie and transient request memory. Sessions have a fixed absolute time seven days
+after redemption and a 24-hour idle deadline renewed by successful authenticated use.
+Expired, idle-expired, revoked, unknown, or inactive-
 teacher sessions all return `401 session_required` and never reveal which condition
 matched.
 
 The exact success cookie is:
 
 ```text
-__Host-hramatka_session=<opaque>; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax
+__Host-hramatka_session=<opaque>; Path=/; Max-Age=<remaining-absolute-seconds>; HttpOnly; Secure; SameSite=Lax
 ```
 
 There is no `Domain` attribute. Logout commits `revoked_at` before returning `204` and
-clears the cookie with the same attributes and `Max-Age=0`. All session and lesson API
+clears the cookie with the same attributes and `Max-Age=0`. Operators can use
+`python -m hramatka.api.sessions revoke-all --teacher-id <uuid>` to revoke all of one
+teacher's sessions without deactivating the teacher. All session and lesson API
 responses carry `Cache-Control: no-store`.
 
 `GET /api/session` returns teacher display metadata, absolute expiry, and a CSRF token.

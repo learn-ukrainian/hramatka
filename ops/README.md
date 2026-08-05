@@ -165,7 +165,7 @@ Run the complete teacher UI and real baker locally with one foreground command:
 
 The launcher builds the frontend, starts Uvicorn on `127.0.0.1:8788`, and serves the
 same-origin teacher application over temporary HTTPS on `127.0.0.1:8443`. It prints one fresh,
-unredeemed invite URL once and does not open a browser. The browser will warn about the
+unredeemed invite URL with a 72-hour first-entry expiry once and does not open a browser. The browser will warn about the
 short-lived self-signed certificate; the launcher does not modify the system trust store.
 Both loopback ports are reserved before the build begins and handed directly to the child
 servers, so another process cannot claim either port during startup.

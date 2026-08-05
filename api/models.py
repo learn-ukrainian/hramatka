@@ -14,6 +14,7 @@ class FrozenModel(BaseModel):
 
 class InviteRedeem(FrozenModel):
     token: str = Field(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+    nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
 
 
 class AnchorInput(FrozenModel):
