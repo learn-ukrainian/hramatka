@@ -62,6 +62,8 @@ function parseReadyPayload(raw, child) {
     || !Number.isInteger(parsed.port)
     || parsed.port < 1
     || parsed.port > 65535
+    || typeof parsed.python_prefix !== 'string'
+    || !parsed.python_prefix
   ) {
     throw new Error('real-backend API published invalid readiness');
   }

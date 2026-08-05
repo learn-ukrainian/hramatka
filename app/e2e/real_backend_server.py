@@ -12,56 +12,74 @@ import os
 import re
 import socket
 import stat
+import sys
 import threading
 from pathlib import Path
 from typing import Any
-
-import uvicorn
-
-from hramatka.api.app import create_app
-from hramatka.api.baking.engine_adapter import EngineLessonBaker
-from hramatka.api.config import Settings
-from hramatka.api.qualified_models import (
-    DENSITY_CONTRACT_DIGEST,
-    DENSITY_CONTRACT_VERSION,
-    PROMPT_SHA256,
-    QUALIFICATION_ANCHORS,
-    QUALIFIED_MODEL_REGISTRY_VERSION,
-    TEMPLATE_SHA256,
-    TEMPLATE_VERSION,
-    TYPE_KIT_IDENTITY,
-    LogicalModelSpec,
-    QualificationReceipt,
-    QualifiedModelRegistry,
-    QualifiedProviderRoute,
-)
-from hramatka.engine import fixtures
-from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
-from hramatka.engine.providers import telemetry_ctx
-from hramatka.engine.serializer_policy import DEFAULT_SERIALIZER_TEMPERATURE
 
 LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 EXPECTED_STATE_DIRECTORY = Path(__file__).resolve().parents[1] / ".real-e2e"
 TEST_LOGICAL_MODEL_ID = "gemini-3.6-flash"
-TEST_PROVIDER_ROUTE = QualifiedProviderRoute(
-    "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"
-)
+class E2EInterpreterError(RuntimeError):
+    """Raised when the real-backend harness is not using its requested Python."""
 
 
-def _qualified_test_registry() -> QualifiedModelRegistry:
+def _assert_expected_interpreter() -> None:
+    """Refuse to start under an interpreter the launcher did not declare.
+
+    Deliberately unconditional.  An earlier revision skipped the whole check
+    whenever ``CI`` was set, which disabled it precisely where E2E results gate
+    a release, and let any process turn the guard off by exporting one
+    variable.  The launcher now declares the prefix on every path, CI included,
+    so there is nothing left to except.
+    """
+    expected_prefix = os.environ.get("HRAMATKA_E2E_VENV_PREFIX", "")
+    if not expected_prefix:
+        raise E2EInterpreterError("real-backend E2E requires HRAMATKA_E2E_VENV_PREFIX")
+    # Compare resolved paths.  A symlinked prefix, a relative value, or a
+    # trailing separator all name the same environment; rejecting those would
+    # be a false alarm, not a caught defect.
+    if Path(sys.prefix).resolve() != Path(expected_prefix).resolve():
+        raise E2EInterpreterError(
+            "real-backend E2E interpreter prefix mismatch: "
+            f"expected {expected_prefix}, got {sys.prefix}"
+        )
+
+
+def _qualified_test_registry() -> Any:
     """Return one explicit synthetic receipt; production defaults stay empty."""
+    from hramatka.api.qualified_models import (
+        DENSITY_CONTRACT_DIGEST,
+        DENSITY_CONTRACT_VERSION,
+        PROMPT_SHA256,
+        QUALIFICATION_ANCHORS,
+        QUALIFIED_MODEL_REGISTRY_VERSION,
+        TEMPLATE_SHA256,
+        TEMPLATE_VERSION,
+        TYPE_KIT_IDENTITY,
+        LogicalModelSpec,
+        QualificationReceipt,
+        QualifiedModelRegistry,
+        QualifiedProviderRoute,
+    )
+    from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
+    from hramatka.engine.serializer_policy import DEFAULT_SERIALIZER_TEMPERATURE
+
+    test_provider_route = QualifiedProviderRoute(
+        "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"
+    )
     model = LogicalModelSpec(
         id=TEST_LOGICAL_MODEL_ID,
         label="Gemini 3.5 Flash",
         description_uk="Детермінована тестова модель.",
-        provider_routes=(TEST_PROVIDER_ROUTE,),
+        provider_routes=(test_provider_route,),
     )
     receipt = QualificationReceipt(
         logical_model_id=model.id,
-        provider_route=TEST_PROVIDER_ROUTE.id,
-        provider_host=TEST_PROVIDER_ROUTE.host,
-        provider_model_id=TEST_PROVIDER_ROUTE.model_id,
+        provider_route=test_provider_route.id,
+        provider_host=test_provider_route.host,
+        provider_model_id=test_provider_route.model_id,
         registry_version=QUALIFIED_MODEL_REGISTRY_VERSION,
         prompt_pack_version=PROMPT_PACK_VERSION,
         prompt_sha256=PROMPT_SHA256,
@@ -77,48 +95,53 @@ def _qualified_test_registry() -> QualifiedModelRegistry:
     return QualifiedModelRegistry(models=(model,), receipts=(receipt,))
 
 
-class FixtureBaker(EngineLessonBaker):
-    """Fast deterministic LessonBaker port implementation; it never calls a provider.
+def _fixture_baker(runtime_dir: Path) -> Any:
+    from hramatka.api.baking.engine_adapter import EngineLessonBaker
+    from hramatka.engine import fixtures
+    from hramatka.engine.providers import telemetry_ctx
 
-    It reuses the engine E2E fake-generator seam and its miniature digest-verified
-    bundle. The submitted anchor is deliberately replaced with the synthetic
-    fixture anchor inside the baker; API materialization still binds the actual
-    browser paste to the durable lesson resource.
-    """
+    class FixtureBaker(EngineLessonBaker):
+        """Fast deterministic LessonBaker port implementation; it never calls a provider."""
 
-    def __init__(self, runtime_dir: Path, *, logical_model_id: str | None = None) -> None:
-        self._runtime_dir = runtime_dir
+        def __init__(
+            self, runtime_dir: Path, *, logical_model_id: str | None = None
+        ) -> None:
+            self._runtime_dir = runtime_dir
 
-        def generator(prompt: str) -> str:
-            ctx = telemetry_ctx.get()
-            phase = int(ctx.phase) if ctx is not None and ctx.phase else 1
-            activities = fixtures.e2e_activities_for_prompt(prompt, phase=phase)
-            return json.dumps({"activities": activities}, ensure_ascii=False)
+            def generator(prompt: str) -> str:
+                ctx = telemetry_ctx.get()
+                phase = int(ctx.phase) if ctx is not None and ctx.phase else 1
+                activities = fixtures.e2e_activities_for_prompt(prompt, phase=phase)
+                return json.dumps({"activities": activities}, ensure_ascii=False)
 
-        super().__init__(
-            generator=generator,
-            bundle=fixtures._bundle_with_matchup_vocabulary(runtime_dir / "data"),
-            cache_dir=runtime_dir / "cache",
-            logical_model_id=logical_model_id,
-        )
+            super().__init__(
+                generator=generator,
+                bundle=fixtures._bundle_with_matchup_vocabulary(runtime_dir / "data"),
+                cache_dir=runtime_dir / "cache",
+                logical_model_id=logical_model_id,
+            )
 
-    def for_logical_model(self, logical_model_id: str | None) -> FixtureBaker:
-        if logical_model_id != TEST_LOGICAL_MODEL_ID:
-            raise ValueError("real-backend fixture requires its qualified logical model")
-        routed = FixtureBaker.__new__(FixtureBaker)
-        routed._runtime_dir = self._runtime_dir
-        EngineLessonBaker.__init__(
-            routed,
-            generator=self._generator,
-            bundle=self._resolved_bundle,
-            cache_dir=self._cache_dir,
-            logical_model_id=logical_model_id,
-        )
-        return routed
+        def for_logical_model(self, logical_model_id: str | None) -> Any:
+            if logical_model_id != TEST_LOGICAL_MODEL_ID:
+                raise ValueError("real-backend fixture requires its qualified logical model")
+            routed = FixtureBaker.__new__(FixtureBaker)
+            routed._runtime_dir = self._runtime_dir
+            EngineLessonBaker.__init__(
+                routed,
+                generator=self._generator,
+                bundle=self._resolved_bundle,
+                cache_dir=self._cache_dir,
+                logical_model_id=logical_model_id,
+            )
+            return routed
 
-    def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
-        del anchor
-        return super().bake(fixtures.load_anchor(), duration, focus)
+        def bake(
+            self, anchor: str | dict, duration: int, focus: str | None
+        ) -> dict[str, Any]:
+            del anchor
+            return super().bake(fixtures.load_anchor(), duration, focus)
+
+    return FixtureBaker(runtime_dir)
 
 
 def _required_file_descriptor(name: str) -> int:
@@ -164,7 +187,9 @@ def _runtime_directory() -> tuple[Path, str]:
 
 
 def _write_ready(descriptor: int, *, pid: int, port: int) -> None:
-    payload = json.dumps({"pid": pid, "port": port}, separators=(",", ":")) + "\n"
+    payload = json.dumps(
+        {"pid": pid, "port": port, "python_prefix": sys.prefix}, separators=(",", ":")
+    ) + "\n"
     encoded = payload.encode("ascii")
     if len(encoded) > 256:
         raise RuntimeError("real-backend readiness payload is unexpectedly large")
@@ -176,7 +201,7 @@ def _write_ready(descriptor: int, *, pid: int, port: int) -> None:
         view = view[written:]
 
 
-def _watch_parent(parent_gone: threading.Event, server_holder: list[uvicorn.Server]) -> None:
+def _watch_parent(parent_gone: threading.Event, server_holder: list[Any]) -> None:
     try:
         while os.read(0, 4096):
             pass
@@ -188,6 +213,12 @@ def _watch_parent(parent_gone: threading.Event, server_holder: list[uvicorn.Serv
 
 
 def main() -> None:
+    _assert_expected_interpreter()
+    import uvicorn
+
+    from hramatka.api.app import create_app
+    from hramatka.api.config import Settings
+
     ready_descriptor = _required_file_descriptor("HRAMATKA_E2E_READY_FD")
     state_directory, _ = _runtime_directory()
     parent_gone = threading.Event()
@@ -212,7 +243,7 @@ def main() -> None:
                 pilot_origin=origin,
                 csrf_hmac_key=b"e2e-only-csrf-key-not-a-deployment-secret",
             ),
-            baker=FixtureBaker(database_path.parent),
+            baker=_fixture_baker(database_path.parent),
             model_registry=_qualified_test_registry(),
         )
         teacher = app.state.store.create_teacher("E2E викладач")

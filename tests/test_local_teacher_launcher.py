@@ -11,6 +11,7 @@ import sqlite3
 import ssl
 import stat
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -200,6 +201,9 @@ def _start_hung_playwright_proxy() -> tuple[subprocess.Popen[bytes], int, Path]:
     pytest.fail(f"hung-proxy rig did not start: {stdout!r} {stderr!r}")
 
 
+FAKE_CI_PREFIX = "/fake/ci-interpreter-prefix"
+
+
 def _make_real_backend_shell_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     fake_repo = tmp_path / "fake-repo"
     app_directory = fake_repo / "hramatka" / "app"
@@ -212,14 +216,26 @@ def _make_real_backend_shell_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
         e2e_directory / "run-real-backend.sh",
     )
     fake_python = fake_bin / "python"
-    fake_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_python.chmod(0o755)
-    fake_npm = fake_bin / "npm"
-    fake_npm.write_text(
-        '#!/bin/sh\nreadlink .real-e2e/python > "$E2E_PYTHON_CAPTURE"\nexit 23\n',
+    # The launcher asks the selected interpreter for its own prefix, so the
+    # stand-in has to answer like a Python rather than merely exist.
+    fake_python.write_text(
+        '#!/bin/sh\nif [ "$1" = "-c" ]; then printf "%s\\n" "'
+        f"{FAKE_CI_PREFIX}"
+        '"; fi\nexit 0\n',
         encoding="utf-8",
     )
+    fake_python.chmod(0o755)
+    fake_npm = fake_bin / "npm"
+    fake_npm.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_npm.chmod(0o755)
+    fake_node = fake_bin / "node"
+    fake_node.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$HRAMATKA_E2E_PYTHON" > "$E2E_PYTHON_CAPTURE"\n'
+        'printf "%s\\n" "$HRAMATKA_E2E_VENV_PREFIX" > "$E2E_PREFIX_CAPTURE"\n'
+        "printf '999999\\n' > .real-e2e/api.pid\nexit 23\n",
+        encoding="utf-8",
+    )
+    fake_node.chmod(0o755)
     return app_directory, fake_bin, fake_python
 
 
@@ -771,6 +787,7 @@ def test_cleanup_ignores_process_group_os_errors(monkeypatch: pytest.MonkeyPatch
 def test_real_backend_shell_allows_path_python_only_in_ci(tmp_path: Path) -> None:
     app_directory, fake_bin, fake_python = _make_real_backend_shell_repo(tmp_path)
     capture = tmp_path / "selected-python"
+    prefix_capture = tmp_path / "selected-prefix"
 
     completed = subprocess.run(
         [str(app_directory / "e2e" / "run-real-backend.sh")],
@@ -779,6 +796,7 @@ def test_real_backend_shell_allows_path_python_only_in_ci(tmp_path: Path) -> Non
             CI="true",
             PATH=f"{fake_bin}:{os.environ['PATH']}",
             E2E_PYTHON_CAPTURE=str(capture),
+            E2E_PREFIX_CAPTURE=str(prefix_capture),
         ),
         text=True,
         capture_output=True,
@@ -788,6 +806,11 @@ def test_real_backend_shell_allows_path_python_only_in_ci(tmp_path: Path) -> Non
 
     assert completed.returncode == 23
     assert Path(capture.read_text(encoding="utf-8").strip()) == fake_python
+    # CI declares the prefix of the interpreter it picked. It used to pass an
+    # empty one and rely on the server skipping the check, which is the hole
+    # this asserts is closed.
+    assert prefix_capture.read_text(encoding="utf-8").strip() == FAKE_CI_PREFIX
+    assert not (app_directory / ".real-e2e" / "python").exists()
     assert not (app_directory / ".real-e2e").exists()
 
 
@@ -812,6 +835,36 @@ def test_real_backend_shell_rejects_path_python_outside_ci(tmp_path: Path) -> No
     assert completed.returncode == 1
     assert "repository Python is required outside CI" in completed.stderr
     assert not capture.exists()
+    assert not (app_directory / ".real-e2e").exists()
+
+
+def test_real_backend_shell_selects_repository_venv_outside_ci(tmp_path: Path) -> None:
+    app_directory, fake_bin, fake_python = _make_real_backend_shell_repo(tmp_path)
+    repo_root = app_directory.parents[1]
+    repo_python = repo_root / ".venv" / "bin" / "python"
+    repo_python.parent.mkdir(parents=True)
+    repo_python.symlink_to(fake_python)
+    capture = tmp_path / "selected-python"
+    prefix_capture = tmp_path / "selected-prefix"
+
+    completed = subprocess.run(
+        [str(app_directory / "e2e" / "run-real-backend.sh")],
+        cwd=tmp_path,
+        env=_isolated_test_environment(
+            CI="",
+            PATH=f"{fake_bin}:{os.environ['PATH']}",
+            E2E_PYTHON_CAPTURE=str(capture),
+            E2E_PREFIX_CAPTURE=str(prefix_capture),
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 23
+    assert Path(capture.read_text(encoding="utf-8").strip()) == repo_python
+    assert prefix_capture.read_text(encoding="utf-8").strip() == str(repo_root / ".venv")
     assert not (app_directory / ".real-e2e").exists()
 
 
@@ -924,6 +977,111 @@ def test_real_backend_server_rejects_unexpected_state_path(
     with pytest.raises(RuntimeError, match="unexpected real-backend state directory"):
         real_backend_server._runtime_directory()
     assert sentinel.read_text(encoding="utf-8") == "outside the application state root"
+
+
+def test_real_backend_uses_repository_venv_prefix_outside_ci(tmp_path: Path) -> None:
+    # The subject is the enforcement mechanism: launched outside CI under a
+    # declared prefix, the server must accept it and report it back.  Pinning
+    # this to a repository-local .venv would make the test unrunnable exactly
+    # where it matters most -- a runner that installs into an ambient
+    # interpreter -- so it asserts against the interpreter actually running the
+    # suite, which is a real prefix on every host.
+    state_directory = REPO_ROOT / "hramatka" / "app" / ".real-e2e"
+    assert not state_directory.exists()
+    owner_token = "b" * 64
+    state_directory.mkdir(mode=0o700)
+    (state_directory / "owner").write_text(f"{owner_token}\n", encoding="ascii")
+    read_fd, write_fd = os.pipe()
+    os.set_inheritable(write_fd, True)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "hramatka.app.e2e.real_backend_server"],
+        cwd=REPO_ROOT / "hramatka" / "app",
+        env=_isolated_test_environment(
+            CI="",
+            PYTHONPATH=str(REPO_ROOT),
+            HRAMATKA_E2E_READY_FD=str(write_fd),
+            HRAMATKA_E2E_STATE_DIR=str(state_directory),
+            HRAMATKA_E2E_DB_PATH=str(state_directory / "pilot.sqlite3"),
+            HRAMATKA_E2E_INVITE_PATH=str(state_directory / "invite-token"),
+            HRAMATKA_E2E_OWNER_TOKEN=owner_token,
+            HRAMATKA_E2E_ORIGIN="https://127.0.0.1:5174",
+            HRAMATKA_E2E_VENV_PREFIX=sys.prefix,
+        ),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        pass_fds=(write_fd,),
+    )
+    os.close(write_fd)
+    try:
+        ready, _, _ = select.select([read_fd], [], [], 10)
+        assert ready
+        identity = json.loads(os.read(read_fd, 256).decode("ascii"))
+        assert identity["python_prefix"] == sys.prefix
+    finally:
+        os.close(read_fd)
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=10)
+        shutil.rmtree(state_directory)
+
+
+def test_real_backend_rejects_wrong_interpreter_before_runtime_imports(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [str(TEST_PYTHON), "-m", "hramatka.app.e2e.real_backend_server"],
+        cwd=REPO_ROOT,
+        env=_isolated_test_environment(
+            # An ambient CI must not change the outcome; the guard has no
+            # CI exception left. Setting it here is the point of the test.
+            CI="true",
+            PYTHONPATH=str(REPO_ROOT),
+            HRAMATKA_E2E_VENV_PREFIX=str(tmp_path / "wrong-venv"),
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "E2EInterpreterError: real-backend E2E interpreter prefix mismatch" in completed.stderr
+    assert "ModuleNotFoundError" not in completed.stderr
+
+
+@pytest.mark.parametrize("ci_value", ["true", "1", ""])
+def test_interpreter_guard_has_no_environment_escape_hatch(
+    monkeypatch: pytest.MonkeyPatch, ci_value: str
+) -> None:
+    """No environment variable may switch the interpreter check off.
+
+    The guard once returned early when CI was set, which disabled it exactly
+    where E2E results gate a release and let any process opt out by exporting
+    one variable. A harness that reports success without having checked is
+    worse than no harness, because the result still looks trustworthy.
+    """
+    monkeypatch.setenv("CI", ci_value)
+    monkeypatch.delenv("HRAMATKA_E2E_VENV_PREFIX", raising=False)
+
+    with pytest.raises(real_backend_server.E2EInterpreterError):
+        real_backend_server._assert_expected_interpreter()
+
+
+def test_interpreter_guard_accepts_an_equivalent_prefix_spelling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A different spelling of the same environment is not a mismatch.
+
+    Symlinked prefixes and trailing separators name the identical interpreter,
+    so rejecting them would be a false alarm that teaches everyone to work
+    around the guard.
+    """
+    link = tmp_path / "venv-link"
+    link.symlink_to(Path(sys.prefix), target_is_directory=True)
+
+    for spelling in (f"{sys.prefix}/", str(link)):
+        monkeypatch.setenv("HRAMATKA_E2E_VENV_PREFIX", spelling)
+        real_backend_server._assert_expected_interpreter()
 
 
 def test_readiness_wait_cancels_promptly() -> None:

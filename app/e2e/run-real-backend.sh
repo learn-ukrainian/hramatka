@@ -108,17 +108,25 @@ if ! mkdir -m 700 "$state_directory"; then
 fi
 printf '%s\n' "$owner_token" > "$owner_marker"
 
-repo_python=$(cd ../.. && pwd)/.venv/bin/python
+repo_root=$(dirname "$(dirname "$app_directory")")
+repo_python=$repo_root/.venv/bin/python
+repo_venv=$repo_root/.venv
+# The prefix is declared on every path, so the server's guard never needs an
+# exception. CI has no repository .venv -- it installs into the runner's
+# interpreter -- so CI declares that interpreter's own prefix instead of
+# switching the check off.
 if [ "${CI:-}" = true ]; then
   e2e_python=$(command -v python || command -v python3)
   [ -n "$e2e_python" ] && [ -x "$e2e_python" ]
+  expected_venv_prefix=$("$e2e_python" -c 'import sys; print(sys.prefix)')
+  [ -n "$expected_venv_prefix" ]
 elif [ -x "$repo_python" ]; then
   e2e_python=$repo_python
+  expected_venv_prefix=$repo_venv
 else
   echo "repository Python is required outside CI" >&2
   exit 1
 fi
-ln -s "$e2e_python" "$state_directory/python"
 
 npm run build
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -133,7 +141,8 @@ if [ "${HRAMATKA_E2E_TEST_HUNG_PROXY:-}" = 1 ]; then
 else
   /usr/bin/env -u FORCE_COLOR -u NO_COLOR \
   PYTHONPATH=../.. \
-  HRAMATKA_E2E_PYTHON="$state_directory/python" \
+  HRAMATKA_E2E_PYTHON="$e2e_python" \
+  HRAMATKA_E2E_VENV_PREFIX="$expected_venv_prefix" \
   HRAMATKA_E2E_ORIGIN=https://127.0.0.1:5174 \
   HRAMATKA_E2E_DB_PATH="$state_directory/pilot.sqlite3" \
   HRAMATKA_E2E_INVITE_PATH="$state_directory/invite-token" \
