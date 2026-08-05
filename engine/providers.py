@@ -16,11 +16,14 @@ SIZES, model id, HTTP status, and attempt number, all at INFO.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import logging
 import os
 import statistics
+import subprocess
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -38,6 +41,16 @@ from .transport import (
 )
 
 log = logging.getLogger(__name__)
+
+# The subscription client is deliberately an explicit route.  It is never a
+# fallback for an API route (or vice versa): the client has a different
+# authentication and provenance boundary.
+SUBSCRIPTION_PROVIDER = "antigravity"
+SUBSCRIPTION_HOST = "antigravity-cli"
+SUBSCRIPTION_EXECUTABLE_ENV = "HRAMATKA_SUBSCRIPTION_EXECUTABLE"
+SUBSCRIPTION_MODEL_ENV = "HRAMATKA_SUBSCRIPTION_MODEL"
+DEFAULT_SUBSCRIPTION_EXECUTABLE = "agy"
+DEFAULT_SUBSCRIPTION_MODEL = "gemini-3.6-flash-high"
 
 # JSON output is opt-in for Gemini seats, not a prompt convention. The #171
 # Gemma measurements remain valid, so Gemma is excluded by model identity
@@ -748,6 +761,181 @@ DEEPSEEK_V4_FLASH_MODEL = "deepseek-v4-flash"
 DEEPSEEK_V4_PRO_MODEL = "deepseek-v4-pro"
 
 
+@dataclass
+class SubscriptionGeneratorPort:
+    """One-shot, non-interactive subscription-client generator.
+
+    Every generation starts a new ``agy --print`` process.  The port retains
+    only content-free output hashes for a qualification receipt; it never
+    resumes a conversation and intentionally performs no automatic retry.
+    Retrying an interrupted CLI request could repeat a completed subscription
+    call because this client has no idempotency-key protocol.
+    """
+
+    executable: str = DEFAULT_SUBSCRIPTION_EXECUTABLE
+    model: str = DEFAULT_SUBSCRIPTION_MODEL
+    timeout_s: int = GEMMA_TIMEOUT_S
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
+    version_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
+    host: str = SUBSCRIPTION_HOST
+    _client_version: str | None = field(default=None, init=False, repr=False)
+    _raw_output_sha256: list[str] = field(default_factory=list, init=False, repr=False)
+
+    def is_configured(self) -> bool:
+        """Whether the explicitly configured local executable can be found."""
+        if not self.executable:
+            return False
+        if os.path.sep in self.executable:
+            return os.path.isfile(self.executable) and os.access(self.executable, os.X_OK)
+        return _which(self.executable) is not None
+
+    def receipt_provenance(self) -> dict[str, object]:
+        """Return only auditable, content-free CLI evidence for one receipt."""
+        if self._client_version is None or not self._raw_output_sha256:
+            raise GeneratorUnavailable("subscription provenance is incomplete")
+        return {
+            "tier": "cli_self_reported",
+            "client_version": self._client_version,
+            "requested_model": self.model,
+            "raw_output_sha256": tuple(self._raw_output_sha256),
+        }
+
+    def _resolve_client_version(self) -> str:
+        if self._client_version is not None:
+            return self._client_version
+        try:
+            completed = self.version_runner(
+                [self.executable, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=min(self.timeout_s, 30),
+                check=False,
+                env=_subscription_environment(),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise GeneratorUnavailable("subscription client version could not be read") from exc
+        version = completed.stdout.strip() if completed.returncode == 0 else ""
+        if not version:
+            raise GeneratorUnavailable("subscription client version could not be read")
+        self._client_version = version
+        return version
+
+    def __call__(self, prompt: str) -> str:
+        if not isinstance(prompt, str) or not prompt:
+            raise GeneratorUnavailable("subscription prompt is empty")
+        self._resolve_client_version()
+        command = [
+            self.executable,
+            "--print",
+            prompt,
+            "--model",
+            self.model,
+            "--disable-slash-commands",
+            "--sandbox",
+            "--output-format",
+            "text",
+            "--print-timeout",
+            f"{self.timeout_s}s",
+        ]
+        started_at_ms = int(time.perf_counter() * 1000)
+        try:
+            # Deliberately one invocation only.  A timeout/non-zero result is
+            # ambiguous at the subscription boundary and must not be replayed.
+            with provider_call_slot():
+                completed = self.runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_s,
+                    check=False,
+                    env=_subscription_environment(),
+                )
+        except subprocess.TimeoutExpired:
+            # Deliberately unchained.  TimeoutExpired carries the executed argv
+            # in .cmd, and this client takes the prompt as an argument, so any
+            # renderer of __cause__ -- log.exception, an unhandled-exception
+            # hook, a test report -- would write the whole prompt to a durable
+            # log.  The message below already carries every fact a caller needs.
+            raise GeneratorUnavailable(
+                f"subscription client timed out after {self.timeout_s}s"
+            ) from None
+        except OSError as exc:
+            # Safe to chain: a failed spawn names the executable, never argv.
+            raise GeneratorUnavailable("subscription client could not be started") from exc
+        if completed.returncode != 0:
+            raise GeneratorUnavailable("subscription client exited unsuccessfully")
+        raw = completed.stdout
+        if not _subscription_completion_text(raw):
+            raise GeneratorUnavailable("subscription client did not emit a serializer completion")
+        self._raw_output_sha256.append(hashlib.sha256(raw.encode("utf-8")).hexdigest())
+        ctx = telemetry_ctx.get()
+        if ctx is not None:
+            ended_at_ms = int(time.perf_counter() * 1000)
+            ctx.record_provider_call(
+                {
+                    "duration_ms": ended_at_ms - started_at_ms,
+                    "host": self.host,
+                    "model": self.model,
+                    "attempts": 1,
+                    "http_status_class": "cli",
+                    "phase": ctx.phase,
+                    "activity_type": "+".join(ctx.activity_types) or "unknown",
+                    "started_at_ms": started_at_ms,
+                    "ended_at_ms": ended_at_ms,
+                }
+            )
+        return raw
+
+
+def _which(executable: str) -> str | None:
+    """Small seam so tests do not need a real subscription client installed."""
+    import shutil
+
+    return shutil.which(executable)
+
+
+def _subscription_environment() -> dict[str, str]:
+    """Pass only the client runtime/auth context, never provider API keys."""
+    allowed = {"HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "USER"}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if value
+        and (
+            key in allowed
+            or key.startswith("AGY_")
+            or key.startswith("ANTIGRAVITY_")
+            or key.startswith("XDG_")
+        )
+    }
+
+
+def _subscription_completion_text(raw: object) -> bool:
+    """Reject CLI banners and the known wrong-argument conversational reply.
+
+    The engine accepts fenced JSON in its existing tolerance layer, but a
+    subscription invocation must still deliver a JSON completion to that layer
+    rather than a conversational acknowledgement or a progress banner.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    from .json_tolerance import extract_json
+
+    normalized = raw.lstrip().lower()
+    conversational = (
+        "understood",
+        "sure",
+        "certainly",
+        "i will",
+        "i'll",
+        "here is",
+        "as an ai",
+    )
+    if normalized.startswith(conversational):
+        return False
+    return extract_json(raw) is not None
+
+
 def _extract_text(body: Any) -> str:
     """Pull the assistant message text out of an OpenAI-compatible envelope."""
     try:
@@ -1272,6 +1460,13 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         VERTEX_API_KEY_ENV,
         VERTEX_API_KEY_FILE_ENV,
     ),
+    "gemini-flash-subscription": (
+        "gemini-3.6-flash",
+        SUBSCRIPTION_HOST,
+        DEFAULT_SUBSCRIPTION_MODEL,
+        None,
+        None,
+    ),
     "gemini-pro-ais": (
         "gemini-3.1-pro",
         "google-ais",
@@ -1332,6 +1527,11 @@ def qualification_route_credential_present(
         host=host,
         model_id=model_id,
     )
+    if host == SUBSCRIPTION_HOST:
+        return SubscriptionGeneratorPort(
+            executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
+            model=os.environ.get(SUBSCRIPTION_MODEL_ENV, DEFAULT_SUBSCRIPTION_MODEL),
+        ).is_configured()
     if key_env and os.environ.get(key_env):
         return True
     if key_file_env:
@@ -1378,13 +1578,22 @@ def validate_qualification_route_runtime(
         if configured_base is None:
             raise ValueError("Qualification route requires a Vertex base URL.")
         _validate_vertex_base_url(configured_base)
+    elif host == SUBSCRIPTION_HOST:
+        # Executable presence is a credential-source question, not a canonicity
+        # one: qualification_route_credential_present already probes it, and
+        # preflight calls that separately through its own injectable seam.
+        # Probing it here too made pure route validation depend on the host
+        # filesystem, which broke every offline test that validates a route
+        # without intending to reach a provider.
+        if os.environ.get(SUBSCRIPTION_MODEL_ENV, DEFAULT_SUBSCRIPTION_MODEL) != model_id:
+            raise ValueError("Qualification route has a noncanonical subscription model.")
     else:  # _require_qualification_route keeps this defensive branch unreachable.
         raise ValueError("Qualification route has an unknown provider host.")
 
 
 def make_qualification_pinned_generator(
     *, route_id: str, logical_model_id: str, host: str, model_id: str
-) -> AISGeneratorPort:
+) -> AISGeneratorPort | SubscriptionGeneratorPort:
     """Construct exactly one provider port for a real qualification cell.
 
     Unlike the normal job factory, this never wraps a port in failover or
@@ -1397,7 +1606,13 @@ def make_qualification_pinned_generator(
         host=host,
         model_id=model_id,
     )
-    if host == "google-vertex":
+    if host == SUBSCRIPTION_HOST:
+        port: AISGeneratorPort | SubscriptionGeneratorPort = SubscriptionGeneratorPort(
+            executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
+            model=model_id,
+            timeout_s=GEMMA_TIMEOUT_S,
+        )
+    elif host == "google-vertex":
         port = AISGeneratorPort(
             api_key_env=VERTEX_API_KEY_ENV,
             api_key_file_env=VERTEX_API_KEY_FILE_ENV,
@@ -1445,8 +1660,11 @@ def make_qualification_pinned_generator(
                 max_attempts=1,
             ),
         )
-    observed_host = getattr(port._transport, "host", "")
-    if observed_host != host or port._model != model_id:
+    observed_host = port.host if isinstance(port, SubscriptionGeneratorPort) else getattr(
+        port._transport, "host", ""
+    )
+    observed_model = port.model if isinstance(port, SubscriptionGeneratorPort) else port._model
+    if observed_host != host or observed_model != model_id:
         raise ValueError("Qualification route does not match current runtime configuration.")
     return port
 
@@ -1470,7 +1688,7 @@ def _with_failover(
 class RoundRobinGeneratorSelector:
     """Thread-safe per-bake primary selection across configured provider pairs."""
 
-    def __init__(self, generators: Mapping[str, AISGeneratorPort]) -> None:
+    def __init__(self, generators: Mapping[str, Callable[[str], str]]) -> None:
         if not generators:
             raise ValueError("At least one bake generator is required.")
         self._generators = dict(generators)
@@ -1478,7 +1696,7 @@ class RoundRobinGeneratorSelector:
         self._next = 0
         self._lock = threading.Lock()
 
-    def for_bake(self) -> AISGeneratorPort:
+    def for_bake(self) -> Callable[[str], str]:
         with self._lock:
             name = self._names[self._next % len(self._names)]
             self._next += 1
@@ -1649,6 +1867,33 @@ def make_bake_generator(
         if deepinfra is not None:
             routes["deepinfra"] = _with_failover(deepinfra, ais)
         return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(names)})
+    elif active_model == "google-ais/gemini-3.6-flash":
+        names = tuple(provider_names or ("google-ais",))
+        allowed = {"google-ais", SUBSCRIPTION_PROVIDER}
+        inert = {"openrouter", "deepinfra"}
+        unknown = sorted(set(names) - allowed - inert)
+        selected = tuple(name for name in names if name in allowed)
+        if not selected or unknown:
+            raise ValueError(
+                "Gemini Flash bake providers must be one or more of "
+                f"{', '.join(sorted(allowed))}."
+            )
+        routes: dict[str, Callable[[str], str]] = {}
+        if "google-ais" in selected:
+            ais, vertex = _gemini_routes(
+                ais_model=active_model,
+                vertex_model="gemini-3.6-flash",
+            )
+            routes["google-ais"] = _with_failover(ais, vertex, fallback_label="gemini")
+        if SUBSCRIPTION_PROVIDER in selected:
+            routes[SUBSCRIPTION_PROVIDER] = SubscriptionGeneratorPort(
+                executable=os.environ.get(
+                    SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE
+                ),
+                model=DEFAULT_SUBSCRIPTION_MODEL,
+                timeout_s=GEMMA_TIMEOUT_S,
+            )
+        return RoundRobinGeneratorSelector(routes)
     else:
         gen = _build_generator_port(active_model)
         return RoundRobinGeneratorSelector({active_model: gen})
@@ -1698,6 +1943,7 @@ def make_logical_model_generator(
         vertex_model_id = "gemini-3.6-flash"
         ais_route_id = "gemini-flash-ais"
         vertex_route_id = "gemini-flash-vertex"
+        subscription_route_id = "gemini-flash-subscription"
     elif logical_model_id == "gemini-3.1-pro":
         if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
             raise ValueError("Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1.")
@@ -1705,32 +1951,64 @@ def make_logical_model_generator(
         vertex_model_id = "gemini-3.1-pro-preview"
         ais_route_id = "gemini-pro-ais"
         vertex_route_id = "gemini-pro-vertex"
+        subscription_route_id = None
     else:
         raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
-    ais, vertex = _gemini_routes(ais_model=model_id, vertex_model=vertex_model_id)
-    primary = _with_failover(ais, vertex, fallback_label="gemini")
-    configured_hosts = set(provider_names or ("google-ais",))
-    # Vertex is an automatic outage fallback, not an independently selected
-    # bake primary. Its configured route remains receipt-bound nevertheless.
-    configured_hosts.add("google-vertex")
+    requested = tuple(provider_names or ("google-ais",))
+    allowed = {"google-ais"}
+    if subscription_route_id is not None:
+        allowed.add(SUBSCRIPTION_PROVIDER)
+    inert = {"openrouter", "deepinfra"}
+    unknown = sorted(set(requested) - allowed - inert)
+    selected = tuple(name for name in requested if name in allowed)
+    if not selected:
+        raise ValueError("A qualified provider route is not enabled for this deployment.")
+    if unknown:
+        raise ValueError(
+            f"Qualified Gemini routes must be one or more of {', '.join(sorted(allowed))}."
+        )
+    routes: dict[str, Callable[[str], str]] = {}
+    actual_routes: dict[str, tuple[str, str]] = {}
+    configured_hosts: set[str] = set()
+    if "google-ais" in selected:
+        ais, vertex = _gemini_routes(ais_model=model_id, vertex_model=vertex_model_id)
+        routes["google-ais"] = _with_failover(ais, vertex, fallback_label="gemini")
+        actual_routes[ais_route_id] = (getattr(ais._transport, "host", ""), ais._model)
+        actual_routes[vertex_route_id] = (getattr(vertex._transport, "host", ""), vertex._model)
+        configured_hosts.update({"google-ais", "google-vertex"})
+    if SUBSCRIPTION_PROVIDER in selected:
+        assert subscription_route_id is not None
+        subscription = SubscriptionGeneratorPort(
+            executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
+            model=DEFAULT_SUBSCRIPTION_MODEL,
+            timeout_s=GEMMA_TIMEOUT_S,
+        )
+        routes[SUBSCRIPTION_PROVIDER] = subscription
+        actual_routes[subscription_route_id] = (subscription.host, subscription.model)
+        configured_hosts.add(subscription.host)
+    selected_route_ids = set(actual_routes)
     _require_exact_qualified_routes(
-        qualified_routes,
-        {
-            ais_route_id: (getattr(ais._transport, "host", ""), ais._model),
-            vertex_route_id: (getattr(vertex._transport, "host", ""), vertex._model),
-        },
+        (
+            tuple(route for route in qualified_routes if route.id in selected_route_ids)
+            if qualified_routes is not None
+            else None
+        ),
+        actual_routes,
         configured_hosts=configured_hosts,
     )
     if qualified_routes is not None:
-        if not ais.is_configured() or not vertex.is_configured():
-            raise ValueError("A qualified provider route has no configured credential source.")
-        try:
-            _validate_vertex_base_url(os.environ.get(VERTEX_BASE_URL_ENV, ""))
-        except ValueError as exc:
-            raise ValueError(
-                "A qualified provider route has no canonical Vertex base URL."
-            ) from exc
-    return RoundRobinGeneratorSelector({"google-ais": primary})
+        if "google-ais" in selected:
+            if not ais.is_configured() or not vertex.is_configured():
+                raise ValueError("A qualified provider route has no configured credential source.")
+            try:
+                _validate_vertex_base_url(os.environ.get(VERTEX_BASE_URL_ENV, ""))
+            except ValueError as exc:
+                raise ValueError(
+                    "A qualified provider route has no canonical Vertex base URL."
+                ) from exc
+        if SUBSCRIPTION_PROVIDER in selected and not subscription.is_configured():
+            raise ValueError("A qualified subscription route has no configured client executable.")
+    return RoundRobinGeneratorSelector(routes)
 
 
 def _require_exact_qualified_routes(
@@ -1773,6 +2051,18 @@ def make_generator(name: str) -> AISGeneratorPort:
     # resolve it to the active model selected by HRAMATKA_GEN_MODEL.
     if key in ("gemma-ais", "gemma", "google-ais"):
         return _build_generator_port(active_model)
+
+    if key == SUBSCRIPTION_PROVIDER:
+        if active_model != "google-ais/gemini-3.6-flash":
+            raise ValueError(
+                "The subscription route requires HRAMATKA_GEN_MODEL="
+                "google-ais/gemini-3.6-flash."
+            )
+        return SubscriptionGeneratorPort(
+            executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
+            model=DEFAULT_SUBSCRIPTION_MODEL,
+            timeout_s=GEMMA_TIMEOUT_S,
+        )
 
     # If the requested name is one of the canonical 4 model IDs, build it directly.
     for allowed_model in ALLOWED_MODELS:

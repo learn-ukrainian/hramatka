@@ -67,6 +67,7 @@ def _format_receipt(receipt: QualificationReceipt) -> tuple[str, ...]:
         ("density_contract_digest", receipt.density_contract_digest),
         ("type_kit_identity", receipt.type_kit_identity),
         ("serializer_temperature", receipt.serializer_temperature),
+        ("provenance_tier", receipt.provenance_tier),
     )
     lines = ["    QualificationReceipt("]
     lines.extend(f"        {name}={_literal(value)}," for name, value in fields)

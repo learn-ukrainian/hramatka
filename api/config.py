@@ -16,6 +16,7 @@ _DEFAULT_BAKE_WORKERS = 4
 _MAX_BAKE_WORKERS = 8
 _DEFAULT_MAX_PROVIDER_CONCURRENCY = 8
 _DEFAULT_BAKE_PROVIDERS = ("google-ais", "openrouter")
+_EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
 _DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
@@ -31,7 +32,7 @@ def _get_default_bake_providers() -> tuple[str, ...]:
 
 
 def _parse_bake_providers(value: str | None) -> tuple[str, ...]:
-    allowed = _get_default_bake_providers()
+    allowed = (*_get_default_bake_providers(), _EXPLICIT_SUBSCRIPTION_PROVIDER)
     if value is None:
         return allowed
     providers = tuple(part.strip().lower() for part in value.split(",") if part.strip())
@@ -65,6 +66,13 @@ def _parse_zero_or_one_flag(name: str) -> bool:
     if value not in {"0", "1"}:
         raise RuntimeError(f"{name} must be the literal 0 or 1.")
     return value == "1"
+
+
+def _parse_provenance_tier(name: str, *, default: str = "api_observed") -> str:
+    value = os.environ.get(name, default)
+    if value not in {"api_observed", "cli_self_reported"}:
+        raise RuntimeError(f"{name} must be api_observed or cli_self_reported.")
+    return value
 
 
 def _validate_origin(origin: str) -> str:
@@ -112,6 +120,7 @@ class Settings:
     max_provider_concurrency: int = _DEFAULT_MAX_PROVIDER_CONCURRENCY
     bake_providers: tuple[str, ...] = _DEFAULT_BAKE_PROVIDERS
     mock_mode: bool = False
+    subscription_qualification_provenance_tier: str = "api_observed"
     # The review attestor is deliberately off by default.  Its configuration is
     # separate from the teacher-pilot surface because it accepts a GitHub
     # Actions credential, not a browser session.
@@ -149,6 +158,11 @@ class Settings:
             "bake_providers",
             _parse_bake_providers(",".join(self.bake_providers)),
         )
+        if self.subscription_qualification_provenance_tier not in {
+            "api_observed",
+            "cli_self_reported",
+        }:
+            raise ValueError("subscription qualification provenance tier is unsupported.")
         if self.review_attestation_enabled:
             required = {
                 "repository": self.review_attestation_repository,
@@ -238,6 +252,9 @@ class Settings:
             # never ready for the deployed pilot and the production service does
             # not select it as its default baker.
             mock_mode=os.environ.get("HRAMATKA_MOCK_MODE", "0") == "1",
+            subscription_qualification_provenance_tier=_parse_provenance_tier(
+                "HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER"
+            ),
             review_attestation_enabled=_parse_zero_or_one_flag(
                 "HRAMATKA_REVIEW_ATTESTATION_ENABLED"
             ),

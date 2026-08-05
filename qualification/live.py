@@ -37,7 +37,7 @@ from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import QualificationError, RepairTraceEntry, RouteBinding
 
 _ACK_PREFIX = "HRAMATKA-QUALIFICATION-SPEND"
-_MATRIX_LABEL = "B1-45M-3x2"
+_MATRIX_LABEL = "B1-45M-3x3"
 _DIAGNOSTIC_LABEL = "B1-45M-density-diagnostic"
 _LIVE_BAKE_HARD_TIMEOUT_SECONDS = 1800
 _LIVE_READINESS_TIMEOUT_SECONDS = 1830
@@ -215,8 +215,8 @@ def preflight_live_qualification(
 ) -> QualificationManifest:
     """Reject every deterministic defect before any matrix provider is constructed."""
     matrix = _matrix()
-    if len(matrix) != 2 or len({route.route_id for _, route in matrix}) != 2:
-        raise LiveQualificationError("Qualification matrix is not exactly two unique routes.")
+    if len(matrix) != 3 or len({route.route_id for _, route in matrix}) != 3:
+        raise LiveQualificationError("Qualification matrix is not exactly three unique routes.")
     return _preflight_live_cells(
         request,
         matrix=matrix,
@@ -282,6 +282,18 @@ class _PinnedRouteProvider:
 
     def for_bake(self) -> _PinnedRouteProvider:
         return self
+
+    def receipt_provenance(self) -> dict[str, object]:
+        """Expose only the port's content-free qualification evidence."""
+        provenance = getattr(self._port, "receipt_provenance", None)
+        if callable(provenance):
+            return provenance()
+        return {
+            "tier": "api_observed",
+            "client_version": None,
+            "requested_model": None,
+            "raw_output_sha256": (),
+        }
 
     def __call__(self, prompt: str) -> str:
         phase_match = _PHASE_RE.search(prompt)

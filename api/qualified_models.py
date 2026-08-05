@@ -9,6 +9,7 @@ until the production-path qualification run lands receipts for this contract.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -73,6 +74,7 @@ class QualificationReceipt:
     serializer_temperature: float
     passed_anchors: frozenset[str]
     passed: bool
+    provenance_tier: str = "api_observed"
 
 
 # This table is the teacher-routing allowlist.  Provider credentials, wire
@@ -85,6 +87,9 @@ LOGICAL_MODELS: Final = (
         provider_routes=(
             QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
             QualifiedProviderRoute("gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
+            QualifiedProviderRoute(
+                "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
+            ),
         ),
     ),
 )
@@ -178,6 +183,8 @@ class QualifiedModelRegistry:
         density_contract_digest: str = DENSITY_CONTRACT_DIGEST,
         type_kit_identity: str = TYPE_KIT_IDENTITY,
         serializer_temperature: float | None = None,
+        required_provenance_tier: str = "api_observed",
+        required_provenance_by_route: Mapping[str, str] | None = None,
     ) -> None:
         ids = [model.id for model in models]
         if len(ids) != len(set(ids)):
@@ -196,6 +203,13 @@ class QualifiedModelRegistry:
             if serializer_temperature is None
             else serializer_temperature
         )
+        if required_provenance_tier not in {"api_observed", "cli_self_reported"}:
+            raise ValueError("Qualification provenance tier is unsupported.")
+        self.required_provenance_tier = required_provenance_tier
+        route_tiers = dict(required_provenance_by_route or {})
+        if any(tier not in {"api_observed", "cli_self_reported"} for tier in route_tiers.values()):
+            raise ValueError("Qualification provenance tier is unsupported.")
+        self.required_provenance_by_route = route_tiers
 
     def qualified_models(self) -> tuple[LogicalModelSpec, ...]:
         return tuple(
@@ -280,8 +294,17 @@ class QualifiedModelRegistry:
             and receipt.type_kit_identity == self.type_kit_identity
             and receipt.serializer_temperature == self.serializer_temperature
             and receipt.passed_anchors == QUALIFICATION_ANCHORS
+            and receipt.provenance_tier
+            == self.required_provenance_by_route.get(route.id, self.required_provenance_tier)
         )
 
 
-def default_model_registry() -> QualifiedModelRegistry:
-    return QualifiedModelRegistry()
+def default_model_registry(
+    *,
+    required_provenance_tier: str = "api_observed",
+    required_provenance_by_route: Mapping[str, str] | None = None,
+) -> QualifiedModelRegistry:
+    return QualifiedModelRegistry(
+        required_provenance_tier=required_provenance_tier,
+        required_provenance_by_route=required_provenance_by_route,
+    )

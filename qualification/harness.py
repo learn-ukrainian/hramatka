@@ -66,6 +66,7 @@ from .receipts import (
     CellReceipt,
     DensityDiagnosticReceipt,
     DensitySummary,
+    ProviderProvenance,
     QualificationError,
     RepairTraceEntry,
     RouteBinding,
@@ -616,6 +617,25 @@ class _DeterministicRouteProvider:
 
     def for_bake(self) -> _DeterministicRouteProvider:
         return self
+
+    def receipt_provenance(self) -> dict[str, object]:
+        """Fixture-only stand-in for the real route's content-free receipt."""
+        if self._route.host != "antigravity-cli":
+            return {
+                "tier": "api_observed",
+                "client_version": None,
+                "requested_model": None,
+                "raw_output_sha256": (),
+            }
+        return {
+            "tier": "cli_self_reported",
+            "client_version": "fixture-agy/1",
+            "requested_model": self._route.model_id,
+            "raw_output_sha256": tuple(
+                _sha(f"fixture-subscription-output-{index}")
+                for index, _call in enumerate(self.calls, start=1)
+            ),
+        }
 
     def __call__(self, prompt: str) -> str:
         phase_match = _PHASE_RE.search(prompt)
@@ -1292,6 +1312,7 @@ class ProductionQualificationHarness:
             repair_trace=durable_trace,
             semantic_gate="not_run",
             outcome="passed" if self._delivery_ready(delivery, density) else "failed",
+            provider_provenance=self._provider_provenance(provider),
         )
         return QualificationCellResult(
             receipt=receipt,
@@ -1299,6 +1320,14 @@ class ProductionQualificationHarness:
             density_trace=density_trace,
             repair_invocation_trace=repair_invocation_trace,
         )
+
+    @staticmethod
+    def _provider_provenance(provider: Any) -> ProviderProvenance:
+        """Read content-free route provenance without retaining model output."""
+        raw = getattr(provider, "receipt_provenance", None)
+        if not callable(raw):
+            return ProviderProvenance("api_observed")
+        return ProviderProvenance.from_dict(raw())
 
     @staticmethod
     def _durable_route_trace(job: Any) -> tuple[RepairTraceEntry, ...]:

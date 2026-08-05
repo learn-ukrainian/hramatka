@@ -13,10 +13,13 @@ import pytest
 
 from hramatka.engine import data, fixtures
 from hramatka.engine.providers import (
+    SUBSCRIPTION_EXECUTABLE_ENV,
+    SUBSCRIPTION_HOST,
     VERTEX_BASE_URL_ENV,
     FailoverGeneratorPort,
     VertexGenerateContentTransport,
     make_qualification_pinned_generator,
+    qualification_route_credential_present,
     validate_qualification_route_runtime,
 )
 from hramatka.qualification import QualificationError, deterministic_runtime_anchors, load_manifest
@@ -147,15 +150,16 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_two_routes_and_spend_acknowledgement_rebinds_to_6_cells() -> None:
+def test_matrix_is_three_routes_and_spend_acknowledgement_rebinds_to_9_cells() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 2
+    assert len(_matrix()) == 3
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
         "gemini-flash-ais",
         "gemini-flash-vertex",
+        "gemini-flash-subscription",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x2"
+        ":B1-45M-3x3"
     )
 
 
@@ -435,6 +439,44 @@ def test_canonical_route_base_accepts_one_trailing_slash(monkeypatch, environmen
         )
 
 
+def test_route_validation_is_pure_config_and_never_probes_the_host_filesystem(
+    monkeypatch,
+) -> None:
+    """Route canonicity must not depend on a locally installed executable.
+
+    Executable presence is a credential-source question that belongs to
+    ``qualification_route_credential_present``, which preflight calls through a
+    separate injectable seam.  Probing it inside route validation made every
+    offline caller — the whole unit suite, and any host without the client —
+    fail canonicity for an environment reason.
+    """
+    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
+    monkeypatch.setenv(SUBSCRIPTION_EXECUTABLE_ENV, "/nonexistent/subscription-client")
+
+    subscription_routes = [
+        (logical_model_id, route)
+        for logical_model_id, route in _matrix()
+        if route.host == SUBSCRIPTION_HOST
+    ]
+    assert subscription_routes, "the matrix must pin one subscription route"
+
+    for logical_model_id, route in subscription_routes:
+        validate_qualification_route_runtime(
+            route_id=route.route_id,
+            logical_model_id=logical_model_id,
+            host=route.host,
+            model_id=route.model_id,
+        )
+        # The same absent executable must still be reported — as a missing
+        # credential source, which is the layer that owns provider reachability.
+        assert not qualification_route_credential_present(
+            route_id=route.route_id,
+            logical_model_id=logical_model_id,
+            host=route.host,
+            model_id=route.model_id,
+        )
+
+
 def test_live_passes_production_timeouts_to_shared_harness(
     tmp_path, v2_delivery_flags, monkeypatch
 ) -> None:
@@ -580,7 +622,10 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
             model_id=route.model_id,
         )
         assert not isinstance(port, FailoverGeneratorPort)
-        assert port._model == route.model_id
+        assert getattr(port, "_model", getattr(port, "model", None)) == route.model_id
+        if route.host == "antigravity-cli":
+            assert getattr(port, "host", None) == route.host
+            continue
         assert port._transport.host == route.host
         assert port._transport.max_attempts == 1
         if route.host == "google-vertex":
@@ -611,11 +656,17 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 6
-    assert len(constructed) == 6
+    assert len(run.cells) == 9
+    assert len(constructed) == 9
     assert set(constructed) == {
         ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
         ("gemini-3.6-flash", "gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
+        (
+            "gemini-3.6-flash",
+            "gemini-flash-subscription",
+            "antigravity-cli",
+            "gemini-3.6-flash-high",
+        ),
     }
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []

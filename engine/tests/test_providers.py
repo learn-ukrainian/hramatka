@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -61,6 +63,150 @@ def _vertex_transport(handler) -> providers.VertexGenerateContentTransport:
         base_url=VERTEX_BASE_URL,
         client=_client(handler),
         retry_backoff_s=0,
+    )
+
+
+def _subscription_completed(
+    stdout: str, *, returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(["agy"], returncode, stdout=stdout, stderr="ignored")
+
+
+def _subscription_port(runner):
+    return providers.SubscriptionGeneratorPort(
+        executable="agy",
+        model="gemini-3.6-flash-high",
+        timeout_s=17,
+        runner=runner,
+        version_runner=lambda *_args, **_kwargs: _subscription_completed("1.1.10\n"),
+    )
+
+
+# --- explicit headless subscription route ---------------------------------
+def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_json():
+    seen: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        seen.append(command)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 17
+        assert kwargs["check"] is False
+        assert "HRAMATKA_AIS_API_KEY" not in kwargs["env"]
+        return _subscription_completed("```json\n{\"activities\": []}\n```\n")
+
+    port = _subscription_port(runner)
+    assert port("SERIALIZER-STYLE-PROMPT") == "```json\n{\"activities\": []}\n```\n"
+    assert seen == [
+        [
+            "agy",
+            "--print",
+            "SERIALIZER-STYLE-PROMPT",
+            "--model",
+            "gemini-3.6-flash-high",
+            "--disable-slash-commands",
+            "--sandbox",
+            "--output-format",
+            "text",
+            "--print-timeout",
+            "17s",
+        ]
+    ]
+    assert port.receipt_provenance() == {
+        "tier": "cli_self_reported",
+        "client_version": "1.1.10",
+        "requested_model": "gemini-3.6-flash-high",
+        "raw_output_sha256": ("b587bd808c10e72c66e63fbc32b4f95a3a3780c2e544fdf7ac422257ab437886",),
+    }
+
+
+def test_subscription_generator_rejects_conversational_wrong_argument_reply():
+    port = _subscription_port(
+        lambda *_args, **_kwargs: _subscription_completed(
+            "Understood. I will not recommend any slash commands."
+        )
+    )
+    with pytest.raises(GeneratorUnavailable, match="serializer completion"):
+        port("PROMPT")
+
+
+def test_subscription_generator_is_stateless_between_calls():
+    prompts: list[str] = []
+
+    def runner(command, **_kwargs):
+        prompts.append(command[2])
+        assert "--continue" not in command
+        assert "--conversation" not in command
+        return _subscription_completed('{"activities": []}')
+
+    port = _subscription_port(runner)
+    assert port("first isolated prompt") == '{"activities": []}'
+    assert port("second isolated prompt") == '{"activities": []}'
+    assert prompts == ["first isolated prompt", "second isolated prompt"]
+    assert len(port.receipt_provenance()["raw_output_sha256"]) == 2
+
+
+@pytest.mark.parametrize(
+    "runner",
+    [
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["agy", "--print"], 17)
+        ),
+        lambda *_args, **_kwargs: _subscription_completed("", returncode=9),
+    ],
+)
+def test_subscription_timeout_and_nonzero_surface_typed_unavailable(runner):
+    with pytest.raises(GeneratorUnavailable):
+        _subscription_port(runner)("PROMPT")
+
+
+def test_subscription_timeout_never_carries_the_prompt_into_a_traceback():
+    """A timeout must not put prompt text anywhere a logger can render it.
+
+    This client takes the prompt as a command argument, so a real
+    TimeoutExpired carries it in ``.cmd``.  Chaining that exception publishes
+    the whole prompt through ``__cause__`` to log.exception, an unhandled
+    exception hook, or a test report -- which this module forbids for prompt
+    and response CONTENT.  The parametrised test above cannot catch this: its
+    fixture builds a TimeoutExpired whose cmd omits the prompt.
+    """
+    prompt = "TEACHER-PASTED-UKRAINIAN-TEXT-Привіт-світ"
+
+    def runner(command, **_kwargs):
+        assert prompt in command, "the fixture must reproduce the real argv"
+        raise subprocess.TimeoutExpired(command, 17)
+
+    try:
+        _subscription_port(runner)(prompt)
+    except GeneratorUnavailable:
+        rendered = traceback.format_exc()
+    else:  # pragma: no cover - the runner always raises
+        pytest.fail("a timing-out client must surface GeneratorUnavailable")
+
+    assert prompt not in rendered
+    assert "Привіт" not in rendered
+    assert "timed out after 17s" in rendered
+
+
+def test_subscription_bake_route_requires_explicit_selection(monkeypatch):
+    monkeypatch.setenv("HRAMATKA_GEN_MODEL", "google-ais/gemini-3.6-flash")
+    default = providers.make_bake_generator()
+    assert providers.SUBSCRIPTION_PROVIDER not in default._generators
+    selected = providers.make_bake_generator((providers.SUBSCRIPTION_PROVIDER,))
+    assert tuple(selected._generators) == (providers.SUBSCRIPTION_PROVIDER,)
+
+
+def test_logical_subscription_route_is_explicit_and_never_builds_api_fallback(monkeypatch):
+    monkeypatch.setattr(providers.SubscriptionGeneratorPort, "is_configured", lambda _self: True)
+    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
+    selector = providers.make_logical_model_generator(
+        flash.id,
+        (providers.SUBSCRIPTION_PROVIDER,),
+        qualified_routes=flash.provider_routes,
+    )
+    assert tuple(selector._generators) == (providers.SUBSCRIPTION_PROVIDER,)
+    assert isinstance(
+        selector._generators[providers.SUBSCRIPTION_PROVIDER], providers.SubscriptionGeneratorPort
     )
 
 

@@ -35,7 +35,7 @@ from hramatka.engine.teacher_ready_density_v3 import (
     density_floor_fingerprint,
 )
 
-CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v4"
+CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v5"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
 AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v2"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -44,6 +44,7 @@ _OUTCOMES = frozenset({"passed", "failed"})
 _SEMANTIC_GATES = frozenset({"not_run", "passed", "failed"})
 _V3_SLOT_DISPOSITIONS = frozenset({"ready", "tray", "density_shortfall", "dropped"})
 _SLOT_ID_RE = re.compile(r"^P([1-3])-A([1-9][0-9]*)$")
+_PROVENANCE_TIERS = frozenset({"api_observed", "cli_self_reported"})
 # The 45-minute qualification matrix has the same immutable 3/4/1 phase
 # shape as the v3 allocation contract.  A passing cell must account for each
 # scheduled position separately; it may not repeat a dense slot to compensate
@@ -125,6 +126,59 @@ class RouteBinding:
 
     def as_dict(self) -> dict[str, str]:
         return {"route_id": self.route_id, "host": self.host, "model_id": self.model_id}
+
+
+@dataclass(frozen=True)
+class ProviderProvenance:
+    """Content-free evidence tier for one route's raw generator outputs."""
+
+    tier: str
+    client_version: str | None = None
+    requested_model: str | None = None
+    raw_output_sha256: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: object) -> ProviderProvenance:
+        row = _require_exact_keys(
+            value,
+            {"tier", "client_version", "requested_model", "raw_output_sha256"},
+            "provider provenance",
+        )
+        tier = row["tier"]
+        if tier not in _PROVENANCE_TIERS:
+            raise QualificationError("Provider provenance tier is unsupported.")
+        hashes = row["raw_output_sha256"]
+        if not isinstance(hashes, (list, tuple)) or not all(
+            isinstance(item, str) and _SHA256_RE.fullmatch(item) is not None for item in hashes
+        ):
+            raise QualificationError("Provider provenance raw-output hashes are invalid.")
+        if tier == "api_observed":
+            if row["client_version"] is not None or row["requested_model"] is not None or hashes:
+                raise QualificationError(
+                    "API-observed provenance must not claim CLI-only evidence."
+                )
+        elif (
+            not isinstance(row["client_version"], str)
+            or not row["client_version"]
+            or not isinstance(row["requested_model"], str)
+            or not row["requested_model"]
+            or not hashes
+        ):
+            raise QualificationError("CLI provenance must record client, model, and output hashes.")
+        return cls(
+            tier=tier,
+            client_version=row["client_version"],
+            requested_model=row["requested_model"],
+            raw_output_sha256=tuple(hashes),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tier": self.tier,
+            "client_version": self.client_version,
+            "requested_model": self.requested_model,
+            "raw_output_sha256": list(self.raw_output_sha256),
+        }
 
 
 @dataclass(frozen=True)
@@ -370,6 +424,7 @@ class CellReceipt:
     repair_trace: tuple[RepairTraceEntry, ...]
     semantic_gate: str
     outcome: str
+    provider_provenance: ProviderProvenance = ProviderProvenance("api_observed")
     schema_version: str = CELL_RECEIPT_SCHEMA_VERSION
 
     @classmethod
@@ -390,6 +445,7 @@ class CellReceipt:
                 "manifest_sha256",
                 "observed_route",
                 "outcome",
+                "provider_provenance",
                 "prompt_sha256",
                 "prompt_pack_version",
                 "registry_sha256",
@@ -517,6 +573,7 @@ class CellReceipt:
             repair_trace=trace,
             semantic_gate=row["semantic_gate"],
             outcome=row["outcome"],
+            provider_provenance=ProviderProvenance.from_dict(row["provider_provenance"]),
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -546,6 +603,7 @@ class CellReceipt:
             "repair_trace": [entry.as_dict() for entry in self.repair_trace],
             "semantic_gate": self.semantic_gate,
             "outcome": self.outcome,
+            "provider_provenance": self.provider_provenance.as_dict(),
         }
 
 
@@ -722,8 +780,10 @@ class RouteAggregate:
                 and cell.density_contract_sha256 == density_floor_fingerprint()
                 and cell.type_kit_identity == TYPE_KIT_IDENTITY
                 and cell.serializer_temperature == serializer_temperature()
+                and cell.provider_provenance.tier in _PROVENANCE_TIERS
                 for cell in self.cells
             )
+            and len({cell.provider_provenance.tier for cell in self.cells}) == 1
         )
 
     def as_model_receipt(self) -> QualificationReceipt:
@@ -752,6 +812,7 @@ class RouteAggregate:
             serializer_temperature=self.cells[0].serializer_temperature,
             passed_anchors=self.passed_anchors,
             passed=True,
+            provenance_tier=cells[0].provider_provenance.tier,
         )
 
 
@@ -829,6 +890,17 @@ def aggregate_receipts(
             raise QualificationError("Receipt expected route does not match configured routing.")
         if receipt.observed_route != expected_route:
             raise QualificationError("Receipt observed route does not match its expected route.")
+        provenance = receipt.provider_provenance
+        if expected_route.host == "antigravity-cli":
+            if (
+                provenance.tier != "cli_self_reported"
+                or provenance.requested_model != expected_route.model_id
+            ):
+                raise QualificationError(
+                    "Subscription receipt must retain matching CLI self-reported provenance."
+                )
+        elif provenance.tier != "api_observed":
+            raise QualificationError("API receipt must retain API-observed provenance.")
         if receipt.anchor_sha256 != anchor_hashes.get(receipt.anchor_id):
             raise QualificationError("Receipt anchor hash is stale or mismatched.")
         if receipt.prompt_sha256 != prompt_hashes.get(key):

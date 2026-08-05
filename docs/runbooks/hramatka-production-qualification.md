@@ -41,17 +41,18 @@ Run the proof locally with:
 .venv/bin/python -m pytest -q tests/test_production_qualification.py tests/test_qualified_model_selector.py
 ```
 
-The harness executes these six exact cells:
+The harness executes these nine exact cells:
 
 | Logical model | Route ID |
 | --- | --- |
 | Gemini 3.6 Flash | `gemini-flash-ais` |
 | Gemini 3.6 Flash | `gemini-flash-vertex` |
+| Gemini 3.6 Flash | `gemini-flash-subscription` |
 
 For each of the three anchors, the content-free receipt binds source commit,
 harness/manifest/anchor hashes, logical model, expected and observed route,
 prompt/density/registry/engine/flag digests, density counts, route-bound
-generation/repair trace, and outcome. The deterministic run intentionally
+generation/repair trace, explicit provenance tier, and outcome. The deterministic run intentionally
 creates one shortfall so the ordinary generic slot-repair loop must run.
 
 The path gate requires a durable ready job, eight visible blocks in the 3/4/1
@@ -83,11 +84,11 @@ a `QualificationReceipt` and be considered for the production registry.
 ## Real-provider runs
 
 The real mode is an operator-only command and is never invoked by pytest or by
-the teacher API. It runs the exact fixed 3-anchor × 2-route matrix, not a
+the teacher API. It runs the exact fixed 3-anchor × 3-route matrix, not a
 selected subset. Before it constructs a provider it requires a clean worktree,
 the current source commit, the immutable manifest digest, all three external
-anchor hashes, both production-path feature flags, every route's credential
-source, separate scratch and receipt directories outside the repository, and a
+anchor hashes, both production-path feature flags, every route's credential or
+local-client availability, separate scratch and receipt directories outside the repository, and a
 spend acknowledgement bound to the current commit and manifest digest.
 
 ### One-cell density diagnostic
@@ -118,7 +119,7 @@ First obtain the exact acknowledgement string without running the command's
 provider mode:
 
 ```text
-HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x2
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x3
 ```
 
 The operator then supplies that exact value together with
@@ -135,6 +136,30 @@ The ordinary `BakeRunner` may repeat a failed whole bake, but every initial and
 repair call remains pinned to the same route and is recorded as content-free
 route telemetry.
 
+### Headless subscription route
+
+Select the route only with `HRAMATKA_BAKE_PROVIDERS=antigravity`; it never
+becomes an API fallback. The ordinary bake path also requires
+`HRAMATKA_GEN_MODEL=google-ais/gemini-3.6-flash`. The executable defaults to
+`agy` and can be explicitly set with `HRAMATKA_SUBSCRIPTION_EXECUTABLE`; the
+requested model defaults to `gemini-3.6-flash-high` and can be explicitly set
+with `HRAMATKA_SUBSCRIPTION_MODEL`. The requested model must match the pinned
+qualification route.
+
+Each call starts a fresh sandboxed `agy --print` process with slash-command and
+skill expansion disabled. It never retries timeouts or non-zero exits: the CLI
+has no idempotency-key protocol, so replaying an ambiguous call could duplicate
+a completed subscription request. The child receives only its runtime context
+(`HOME`, `PATH`, locale/temp/XDG variables, and `AGY_`/`ANTIGRAVITY_` values),
+never the parent process's provider API-key variables.
+
+Subscription receipts are `cli_self_reported`, not `api_observed`: they retain
+client version, requested model, and SHA-256 hashes of raw CLI outputs but not
+the outputs. The default selector gate requires `api_observed`. An operator may
+explicitly permit this route's lower-observability tier only with
+`HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER=cli_self_reported`; this
+does not turn CLI evidence into API-observed evidence.
+
 The run deletes its per-cell SQLite/cache/generated-content scratch directory
 and persists only validated content-free receipts. It leaves
 `semantic_gate: not_run`, invokes no semantic reviewer, and cannot populate
@@ -145,13 +170,13 @@ Real cells use the production 1,800-second bake hard timeout and keep the
 authenticated API lifecycle open for 1,830 seconds, rather than the no-cost
 test harness's 600-second/20-second bounds. A cell that has not reached a
 terminal durable state by that deadline is refused; a terminal failed job is
-also refused. The command exits nonzero unless all six cells are present,
+also refused. The command exits nonzero unless all nine cells are present,
 passed, and remain `semantic_gate: not_run`; it reports only anchor/route IDs,
 never lesson or provider content.
 
 After each TestClient lifecycle stops its runner, live qualification waits up
 to one provider timeout plus a 30-second margin before deleting that cell's
-scratch directory. Pinned qualification transports make one HTTP attempt only;
+scratch directory. Pinned qualification routes make one client invocation only;
 the ordinary whole-bake retry remains route-pinned. If a worker still has not
 stopped, the command fails without naming a filesystem path and preserves that
 one external scratch directory. Do not delete preserved scratch while the

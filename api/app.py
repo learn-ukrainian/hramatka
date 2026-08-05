@@ -290,7 +290,11 @@ def create_app(
     """Create the one-process application; it deliberately exposes no bearer path."""
     settings = settings or Settings.from_env()
     production_routing_required = baker is None
-    model_registry = model_registry or default_model_registry()
+    model_registry = model_registry or default_model_registry(
+        required_provenance_by_route={
+            "gemini-flash-subscription": settings.subscription_qualification_provenance_tier,
+        }
+    )
     store = JobStore(settings.database_path)
     store.initialize()
     configure_provider_concurrency(settings.max_provider_concurrency)
