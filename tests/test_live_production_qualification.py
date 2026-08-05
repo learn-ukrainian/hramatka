@@ -15,9 +15,7 @@ from hramatka.engine import data, fixtures
 from hramatka.engine.providers import (
     SUBSCRIPTION_EXECUTABLE_ENV,
     SUBSCRIPTION_HOST,
-    VERTEX_BASE_URL_ENV,
     FailoverGeneratorPort,
-    VertexGenerateContentTransport,
     make_qualification_pinned_generator,
     qualification_route_credential_present,
     validate_qualification_route_runtime,
@@ -46,11 +44,6 @@ from hramatka.qualification.manifest import ManifestError
 from hramatka.qualification.receipts import DensityDiagnosticReceipt, RouteBinding
 
 _HEAD = "a" * 40
-_VERTEX_BASE_URL = (
-    "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google"
-)
-
-
 def _request(tmp_path: Path, **changes: object) -> LiveQualificationRequest:
     manifest = load_manifest()
     request = LiveQualificationRequest(
@@ -116,7 +109,6 @@ def v2_delivery_flags(monkeypatch):
     """Enable only the legacy HTTP diagnostic that slice 6 intentionally retains."""
     monkeypatch.setenv("HRAMATKA_SLOT_REPAIR", "1")
     monkeypatch.setenv("HRAMATKA_PROMPT_PACK", "1")
-    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
 
 
 @pytest.mark.parametrize(
@@ -150,16 +142,15 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_three_routes_and_spend_acknowledgement_rebinds_to_9_cells() -> None:
+def test_matrix_is_two_routes_and_spend_acknowledgement_rebinds_to_6_cells() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 3
+    assert len(_matrix()) == 2
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
         "gemini-flash-ais",
-        "gemini-flash-vertex",
         "gemini-flash-subscription",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x3"
+        ":B1-45M-3x2"
     )
 
 
@@ -374,7 +365,7 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
         raise AssertionError("a provider must not be constructed")
 
     def runtime_route_valid(**route: str) -> None:
-        if route["route_id"] == "gemini-flash-vertex":
+        if route["route_id"] == "gemini-flash-subscription":
             raise ValueError("noncanonical runtime configuration")
 
     with pytest.raises(LiveQualificationError, match="runtime configuration"):
@@ -388,57 +379,6 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
         )
     assert not constructed
 
-
-@pytest.mark.parametrize(
-    ("environment", "value"),
-    [
-        (VERTEX_BASE_URL_ENV, "https://untrusted.example/v1"),
-    ],
-)
-def test_noncanonical_later_route_override_refuses_before_any_pinned_port_factory(
-    tmp_path, v2_delivery_flags, monkeypatch, environment, value
-) -> None:
-    monkeypatch.setenv(environment, value)
-    request = _request(tmp_path)
-    constructed = False
-
-    def port_factory(*_args):
-        nonlocal constructed
-        constructed = True
-        raise AssertionError("a provider must not be constructed")
-
-    with pytest.raises(LiveQualificationError, match="runtime configuration"):
-        execute_live_qualification(
-            request,
-            bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
-            repository_state=_clean_repository_state,
-            credential_present=_credential_present,
-            pinned_port_factory=port_factory,
-        )
-    assert not constructed
-
-
-@pytest.mark.parametrize(
-    ("environment", "value"),
-    [
-        (
-            VERTEX_BASE_URL_ENV,
-            "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/",
-        ),
-    ],
-)
-def test_canonical_route_base_accepts_one_trailing_slash(monkeypatch, environment, value) -> None:
-    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
-    monkeypatch.setenv(environment, value)
-    for logical_model_id, route in _matrix():
-        validate_qualification_route_runtime(
-            route_id=route.route_id,
-            logical_model_id=logical_model_id,
-            host=route.host,
-            model_id=route.model_id,
-        )
-
-
 def test_route_validation_is_pure_config_and_never_probes_the_host_filesystem(
     monkeypatch,
 ) -> None:
@@ -450,7 +390,6 @@ def test_route_validation_is_pure_config_and_never_probes_the_host_filesystem(
     offline caller — the whole unit suite, and any host without the client —
     fail canonicity for an environment reason.
     """
-    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
     monkeypatch.setenv(SUBSCRIPTION_EXECUTABLE_ENV, "/nonexistent/subscription-client")
 
     subscription_routes = [
@@ -613,7 +552,6 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
 def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) -> None:
     from hramatka.qualification.live import _matrix
 
-    monkeypatch.setenv(VERTEX_BASE_URL_ENV, _VERTEX_BASE_URL)
     for logical_model_id, route in _matrix():
         port = make_qualification_pinned_generator(
             route_id=route.route_id,
@@ -628,9 +566,7 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
             continue
         assert port._transport.host == route.host
         assert port._transport.max_attempts == 1
-        if route.host == "google-vertex":
-            assert isinstance(port._transport, VertexGenerateContentTransport)
-        elif route.model_id == "google-ais/gemini-3.6-flash":
+        if route.model_id == "google-ais/gemini-3.6-flash":
             assert port._transport.retry_json_mode_on_400 is True
         else:
             assert port._transport.retry_json_mode_on_400 is False
@@ -656,11 +592,10 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 9
-    assert len(constructed) == 9
+    assert len(run.cells) == 6
+    assert len(constructed) == 6
     assert set(constructed) == {
         ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
-        ("gemini-3.6-flash", "gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
         (
             "gemini-3.6-flash",
             "gemini-flash-subscription",

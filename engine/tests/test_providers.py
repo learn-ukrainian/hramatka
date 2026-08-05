@@ -19,6 +19,7 @@ import pytest
 from hramatka.api.qualified_models import LOGICAL_MODELS
 from hramatka.engine import providers
 from hramatka.engine.transport import GEMMA_MODEL, AISGeneratorPort, GeneratorUnavailable
+from hramatka.qualification.receipts import RouteBinding
 
 OK_BODY = {"choices": [{"message": {"content": '{"activities": []}'}}]}
 VERTEX_BASE_URL = (
@@ -578,81 +579,42 @@ def test_ais_retry_exhaustion_without_fallback_key_preserves_existing_failure(mo
     assert fallback_calls["n"] == 0
 
 
-def test_gemini_ais_outage_uses_vertex_once_and_stamps_vertex_model(monkeypatch, caplog):
+def test_qualified_flash_default_constructs_no_vertex_transport(monkeypatch):
+    def fail_if_vertex_path_is_constructed(*_args, **_kwargs):
+        raise AssertionError("qualified Flash must not construct a Vertex transport")
+
     monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
-    monkeypatch.setenv(providers.VERTEX_API_KEY_ENV, "vertex-key")
-    monkeypatch.setenv(providers.VERTEX_BASE_URL_ENV, VERTEX_BASE_URL)
-    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
-    selector = providers.make_logical_model_generator(
-        flash.id,
-        ("google-ais",),
-        qualified_routes=flash.provider_routes,
-    )
+    monkeypatch.setattr(providers, "_gemini_routes", fail_if_vertex_path_is_constructed)
+    monkeypatch.setattr(providers, "_validate_vertex_base_url", fail_if_vertex_path_is_constructed)
+
+    selector = providers.make_logical_model_generator("gemini-3.6-flash")
+
+    assert tuple(selector._generators) == ("google-ais",)
     generator = selector._generators["google-ais"]
-    primary_handler, primary_calls = _seq([503, 500, 502])
-    seen: dict = {}
-
-    def vertex_handler(request: httpx.Request) -> httpx.Response:
-        seen["url"] = str(request.url)
-        seen["key"] = request.headers.get("x-goog-api-key")
-        return httpx.Response(200, json=VERTEX_OK_BODY)
-
-    generator._transport = providers.HttpChatTransport(
-        base_url="https://ais.example/v1",
-        client=_client(primary_handler),
-        host="google-ais",
-        retry_backoff_s=0,
-    )
-    generator._fallback._transport = providers.VertexGenerateContentTransport(
-        base_url=VERTEX_BASE_URL,
-        client=_client(vertex_handler),
-        retry_backoff_s=0,
-    )
-    from hramatka.engine.transport import generator_model_id
-
-    token = generator_model_id.set(None)
-    try:
-        with caplog.at_level(logging.INFO, logger="hramatka.engine.providers"):
-            assert generator("PROMPT-BODY") == '{"activities": []}'
-        assert generator_model_id.get() == "gemini-3.6-flash"
-    finally:
-        generator_model_id.reset(token)
-
-    assert primary_calls["n"] == 3
-    assert seen == {
-        "url": f"{VERTEX_BASE_URL}/models/gemini-3.6-flash:generateContent",
-        "key": "vertex-key",
-    }
-    assert caplog.text.count("gemini fallback engaged host=google-vertex") == 1
+    assert isinstance(generator, AISGeneratorPort)
+    assert not isinstance(generator, providers.FailoverGeneratorPort)
+    assert generator._transport.host == "google-ais"
 
 
-def test_gemini_ais_auth_failure_never_uses_vertex(monkeypatch):
+def test_route_binding_qualified_routes_resolve_route_ids(monkeypatch):
     monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
-    monkeypatch.setenv(providers.VERTEX_API_KEY_ENV, "vertex-key")
-    monkeypatch.setenv(providers.VERTEX_BASE_URL_ENV, VERTEX_BASE_URL)
-    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
-    selector = providers.make_logical_model_generator(
-        flash.id,
-        ("google-ais",),
-        qualified_routes=flash.provider_routes,
-    )
-    generator = selector._generators["google-ais"]
-    primary_handler, primary_calls = _seq([401])
-    generator._transport = providers.HttpChatTransport(
-        base_url="https://ais.example/v1",
-        client=_client(primary_handler),
-        host="google-ais",
-        retry_backoff_s=0,
-    )
-    generator._fallback._transport = providers.VertexGenerateContentTransport(
-        base_url=VERTEX_BASE_URL,
-        client=_client(lambda _request: pytest.fail("401 must not use Vertex")),
-        retry_backoff_s=0,
+    bindings = (
+        RouteBinding(
+            "gemini-flash-ais",
+            "google-ais",
+            "google-ais/gemini-3.6-flash",
+        ),
     )
 
-    with pytest.raises(GeneratorUnavailable, match="HTTP 401"):
-        generator("prompt")
-    assert primary_calls["n"] == 1
+    selector = providers.make_logical_model_generator(
+        "gemini-3.6-flash",
+        ("google-ais",),
+        qualified_routes=bindings,
+    )
+
+    generator = selector._generators["google-ais"]
+    assert isinstance(generator, AISGeneratorPort)
+    assert generator._model == "google-ais/gemini-3.6-flash"
 
 
 def test_fallback_key_file_is_read_at_call_time(monkeypatch, tmp_path):

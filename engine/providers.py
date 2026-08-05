@@ -1427,14 +1427,8 @@ def _gemini_routes(
     *, ais_model: str, vertex_model: str
 ) -> tuple[AISGeneratorPort, AISGeneratorPort]:
     """Construct AIS-primary and native-Vertex fallback ports without I/O."""
-    ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
     vertex_base = os.environ.get(VERTEX_BASE_URL_ENV, "")
-    ais = AISGeneratorPort(
-        api_key_env=AIS_API_KEY_ENV,
-        model=ais_model,
-        timeout_s=GEMMA_TIMEOUT_S,
-        transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
-    )
+    ais = _gemini_ais_route(ais_model)
     vertex = AISGeneratorPort(
         api_key_env=VERTEX_API_KEY_ENV,
         api_key_file_env=VERTEX_API_KEY_FILE_ENV,
@@ -1445,6 +1439,17 @@ def _gemini_routes(
     return ais, vertex
 
 
+def _gemini_ais_route(model_id: str) -> AISGeneratorPort:
+    """Construct the shared OpenAI-compatible Gemini AIS port without I/O."""
+    ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
+    return AISGeneratorPort(
+        api_key_env=AIS_API_KEY_ENV,
+        model=model_id,
+        timeout_s=GEMMA_TIMEOUT_S,
+        transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
+    )
+
+
 _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | None]] = {
     "gemini-flash-ais": (
         "gemini-3.6-flash",
@@ -1452,13 +1457,6 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         "google-ais/gemini-3.6-flash",
         AIS_API_KEY_ENV,
         None,
-    ),
-    "gemini-flash-vertex": (
-        "gemini-3.6-flash",
-        "google-vertex",
-        "gemini-3.6-flash",
-        VERTEX_API_KEY_ENV,
-        VERTEX_API_KEY_FILE_ENV,
     ),
     "gemini-flash-subscription": (
         "gemini-3.6-flash",
@@ -1473,13 +1471,6 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         "google-ais/gemini-3.1-pro-preview",
         AIS_API_KEY_ENV,
         None,
-    ),
-    "gemini-pro-vertex": (
-        "gemini-3.1-pro",
-        "google-vertex",
-        "gemini-3.1-pro-preview",
-        VERTEX_API_KEY_ENV,
-        VERTEX_API_KEY_FILE_ENV,
     ),
     "gemma-ais": (
         "gemma-4-31b",
@@ -1909,7 +1900,7 @@ def make_logical_model_generator(
 
     ``logical_model_id`` is the durable teacher choice. Provider names and wire
     model IDs stay behind this boundary; a Gemma job may use either qualified
-    route, while Gemini keeps AIS primary with an outage-only Vertex fallback.
+    route, while qualified Gemini routes construct only their selected port.
     """
     if logical_model_id == "gemma-4-31b":
         ais, openrouter, _ = _gemma_routes()
@@ -1940,17 +1931,13 @@ def make_logical_model_generator(
 
     if logical_model_id == "gemini-3.6-flash":
         model_id = "google-ais/gemini-3.6-flash"
-        vertex_model_id = "gemini-3.6-flash"
         ais_route_id = "gemini-flash-ais"
-        vertex_route_id = "gemini-flash-vertex"
         subscription_route_id = "gemini-flash-subscription"
     elif logical_model_id == "gemini-3.1-pro":
         if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
             raise ValueError("Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1.")
         model_id = "google-ais/gemini-3.1-pro-preview"
-        vertex_model_id = "gemini-3.1-pro-preview"
         ais_route_id = "gemini-pro-ais"
-        vertex_route_id = "gemini-pro-vertex"
         subscription_route_id = None
     else:
         raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
@@ -1971,11 +1958,10 @@ def make_logical_model_generator(
     actual_routes: dict[str, tuple[str, str]] = {}
     configured_hosts: set[str] = set()
     if "google-ais" in selected:
-        ais, vertex = _gemini_routes(ais_model=model_id, vertex_model=vertex_model_id)
-        routes["google-ais"] = _with_failover(ais, vertex, fallback_label="gemini")
+        ais = _gemini_ais_route(model_id)
+        routes["google-ais"] = ais
         actual_routes[ais_route_id] = (getattr(ais._transport, "host", ""), ais._model)
-        actual_routes[vertex_route_id] = (getattr(vertex._transport, "host", ""), vertex._model)
-        configured_hosts.update({"google-ais", "google-vertex"})
+        configured_hosts.add("google-ais")
     if SUBSCRIPTION_PROVIDER in selected:
         assert subscription_route_id is not None
         subscription = SubscriptionGeneratorPort(
@@ -1989,7 +1975,11 @@ def make_logical_model_generator(
     selected_route_ids = set(actual_routes)
     _require_exact_qualified_routes(
         (
-            tuple(route for route in qualified_routes if route.id in selected_route_ids)
+            tuple(
+                route
+                for route in qualified_routes
+                if getattr(route, "id", getattr(route, "route_id", None)) in selected_route_ids
+            )
             if qualified_routes is not None
             else None
         ),
@@ -1998,14 +1988,8 @@ def make_logical_model_generator(
     )
     if qualified_routes is not None:
         if "google-ais" in selected:
-            if not ais.is_configured() or not vertex.is_configured():
+            if not ais.is_configured():
                 raise ValueError("A qualified provider route has no configured credential source.")
-            try:
-                _validate_vertex_base_url(os.environ.get(VERTEX_BASE_URL_ENV, ""))
-            except ValueError as exc:
-                raise ValueError(
-                    "A qualified provider route has no canonical Vertex base URL."
-                ) from exc
         if SUBSCRIPTION_PROVIDER in selected and not subscription.is_configured():
             raise ValueError("A qualified subscription route has no configured client executable.")
     return RoundRobinGeneratorSelector(routes)
@@ -2021,9 +2005,10 @@ def _require_exact_qualified_routes(
     if qualified_routes is None:
         return
     expected = {
-        route.id: (route.host, route.model_id)
+        route_id: (route.host, route.model_id)
         for route in qualified_routes
-        if all(hasattr(route, field) for field in ("id", "host", "model_id"))
+        if (route_id := getattr(route, "id", getattr(route, "route_id", None))) is not None
+        and all(hasattr(route, field) for field in ("host", "model_id"))
     }
     if expected != dict(actual_routes):
         raise ValueError("Qualified provider routes do not match runtime routing.")

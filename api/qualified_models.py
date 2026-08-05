@@ -86,7 +86,6 @@ LOGICAL_MODELS: Final = (
         description_uk="Швидке складання уроку.",
         provider_routes=(
             QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
-            QualifiedProviderRoute("gemini-flash-vertex", "google-vertex", "gemini-3.6-flash"),
             QualifiedProviderRoute(
                 "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
             ),

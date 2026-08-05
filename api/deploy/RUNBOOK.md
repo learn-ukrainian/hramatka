@@ -50,7 +50,9 @@ change, provisioning, or disclosure of any secret.
    `HRAMATKA_GEMMA_FALLBACK_BASE_URL`, `HRAMATKA_GEMMA_FALLBACK_MODEL`, and one
    host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
    `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Both routes are active round-robin
-   primaries; the other route is outage-only failover. Never print a key or its file.
+   primaries; the other route is outage-only failover. The qualified Gemini 3.6
+   Flash teacher routes are AIS and subscription; do not configure a paid Vertex fallback.
+   Never print a key or its file.
 5. For review attestation, first verify that `/etc/hramatka/api.env` contains
    the assigned `HRAMATKA_REVIEW_ATTESTATION_*` names from
    [`api.env.example`](api.env.example). The endpoint remains disabled unless

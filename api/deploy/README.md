@@ -87,7 +87,9 @@ unless measured provider limits justify a reviewed change. The worker setting is
 clamped to 1–8. The process picks an initial provider round-robin per durable bake:
 Google-AIS sends `gemma-4-31b-it`; OpenRouter sends `google/gemma-4-31b-it`.
 Each route retries the other provider only for retry-exhausted 5xx/timeout or 429;
-authentication and other 4xx errors never spend paid fallback tokens.
+authentication and other 4xx errors never spend paid fallback tokens. This shadow-bake
+routing does not change the teacher qualification matrix: Gemini 3.6 Flash has
+qualified AIS and subscription routes, with no paid Vertex fallback.
 
 Before pilot deployment, perform the separately driver-coordinated live check with
 four simultaneous teacher bakes. Record only concurrency counts, sanitized timing,
