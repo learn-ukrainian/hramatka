@@ -34,6 +34,7 @@ def _discover_test_python() -> Path:
 
 
 TEST_PYTHON = _discover_test_python()
+PROCESS_EXIT_TIMEOUT_SECONDS = 5.0
 _ESSENTIAL_RUNTIME_ENV_NAMES = {
     "CI",
     "HOME",
@@ -727,8 +728,76 @@ def test_interruptible_command_exits_conventionally_and_reaps_its_process_group(
     interrupter.join(timeout=1)
     assert descendant_pid.exists()
     pid = int(descendant_pid.read_text(encoding="utf-8"))
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    _wait_for_pid_exit(pid, timeout=PROCESS_EXIT_TIMEOUT_SECONDS)
+
+
+def test_process_group_cleanup_kills_term_ignoring_descendants(tmp_path: Path) -> None:
+    descendant_pid = tmp_path / "descendant.pid"
+    descendant_ready = tmp_path / "descendant.ready"
+    descendant_command = (
+        "import pathlib, signal, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        f"pathlib.Path({str(descendant_ready)!r}).write_text('ready'); "
+        "time.sleep(60)"
+    )
+    command = (
+        "import pathlib, subprocess, time; "
+        f"child = subprocess.Popen([{str(TEST_PYTHON)!r}, '-c', {descendant_command!r}]); "
+        f"pathlib.Path({str(descendant_pid)!r}).write_text(str(child.pid)); "
+        "time.sleep(60)"
+    )
+    process = subprocess.Popen(
+        [
+            str(TEST_PYTHON),
+            "-c",
+            command,
+        ],
+        cwd=REPO_ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not descendant_ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert descendant_ready.exists()
+        assert descendant_pid.exists()
+        pid = int(descendant_pid.read_text(encoding="utf-8"))
+
+        local_teacher._terminate_process_group(process, grace_seconds=0.1)
+
+        _wait_for_pid_exit(pid, timeout=PROCESS_EXIT_TIMEOUT_SECONDS)
+    finally:
+        local_teacher._terminate_process_group(process, grace_seconds=0.1)
+
+
+def test_process_group_exit_wait_has_a_bounded_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter((0.0, 0.0, 0.05, 0.1))
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(local_teacher.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(local_teacher.time, "sleep", sleeps.append)
+    monkeypatch.setattr(local_teacher.os, "killpg", lambda _pid, _signal: None)
+
+    assert not local_teacher._wait_for_process_group_exit(12345, timeout=0.1)
+    assert sleeps == [0.05, 0.05]
+
+
+def test_pid_exit_wait_has_a_bounded_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = iter((0.0, 0.0, 0.05, 0.1))
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(os, "kill", lambda _pid, _signal: None)
+
+    with pytest.raises(pytest.fail.Exception, match="process 12345 did not exit"):
+        _wait_for_pid_exit(12345, timeout=0.1)
+    assert sleeps == [0.05, 0.05]
 
 
 def test_interruptible_capture_drains_output_larger_than_pipe_buffers() -> None:
@@ -769,7 +838,7 @@ def test_cleanup_ignores_process_group_os_errors(monkeypatch: pytest.MonkeyPatch
 
         @staticmethod
         def wait(timeout: float) -> int:
-            assert timeout > 0
+            assert timeout >= 0
             return 0
 
     def unavailable_group(_pid: int, _signum: int) -> None:
@@ -782,6 +851,84 @@ def test_cleanup_ignores_process_group_os_errors(monkeypatch: pytest.MonkeyPatch
     supervisor = local_teacher.ProcessSupervisor()
     supervisor.add("worker", process)  # type: ignore[arg-type]
     supervisor.terminate_all()
+
+
+class _FakeProcess:
+    """Minimal Popen stand-in: a pid to signal and a liveness answer."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def poll(self) -> None:
+        return None
+
+
+def test_supervisor_uses_process_group_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = _FakeProcess(pid=101)
+    second = _FakeProcess(pid=102)
+    signalled: list[tuple[int, int]] = []
+    calls: list[tuple[object, float]] = []
+    supervisor = local_teacher.ProcessSupervisor()
+    supervisor.add("first", first)  # type: ignore[arg-type]
+    supervisor.add("second", second)  # type: ignore[arg-type]
+
+    def terminate(process: object, grace_seconds: float) -> None:
+        calls.append((process, grace_seconds))
+
+    monkeypatch.setattr(local_teacher, "_terminate_process_group", terminate)
+    monkeypatch.setattr("os.killpg", lambda pid, sig: signalled.append((pid, sig)))
+
+    supervisor.terminate_all(grace_seconds=0.25)
+
+    # Every child is signalled before any of them is waited on, so one wedged
+    # child cannot hold back a sibling's SIGTERM.
+    assert signalled == [(102, signal.SIGTERM), (101, signal.SIGTERM)]
+    assert [process for process, _ in calls] == [second, first]
+    # One shared deadline: the later child gets what is left of it, never a
+    # fresh full grace period.
+    budgets = [grace for _, grace in calls]
+    assert budgets[0] <= 0.25
+    assert budgets[1] <= budgets[0]
+
+    # A second sweep has nothing left to do.
+    supervisor.terminate_all(grace_seconds=0.25)
+    assert len(calls) == 2
+
+
+def test_supervisor_teardown_is_bounded_by_one_shared_grace_period() -> None:
+    """Wedged children must be torn down together, not one after another.
+
+    Terminating sequentially costs grace_seconds per child, so a launcher with
+    a few unresponsive children takes a multiple of the grace period to exit --
+    long enough for a caller or CI job to kill it first and leave behind the
+    very orphans this reaping exists to prevent.
+    """
+    grace = 0.6
+    wedged = [
+        subprocess.Popen(
+            ["/bin/sh", "-c", "trap '' TERM; sleep 30"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _ in range(3)
+    ]
+    supervisor = local_teacher.ProcessSupervisor()
+    for index, process in enumerate(wedged):
+        supervisor.add(f"wedged-{index}", process)
+    time.sleep(0.2)
+
+    started = time.monotonic()
+    supervisor.terminate_all(grace_seconds=grace)
+    elapsed = time.monotonic() - started
+
+    for process in wedged:
+        assert process.poll() is not None, "every wedged child must be reaped"
+    # One grace period plus the SIGKILL settle, not one per child.
+    assert elapsed < grace * len(wedged), (
+        f"teardown took {elapsed:.2f}s for {len(wedged)} children "
+        f"with a {grace}s grace period; it is scaling per child"
+    )
 
 
 def test_real_backend_shell_allows_path_python_only_in_ci(tmp_path: Path) -> None:

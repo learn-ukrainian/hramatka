@@ -186,7 +186,11 @@ Use `--model <provider/model>` to select a model that has passed the separate qu
 gate. The launcher passes that value to the baker and deliberately does not maintain a second
 model allowlist. `--api-port` and `--https-port` override the loopback ports when necessary.
 
-Press Ctrl-C to interrupt any startup phase and stop every owned process group. The temporary
+Press Ctrl-C to interrupt any startup phase and stop every owned process group. The launcher waits
+up to three seconds for each group to exit, then escalates from `SIGTERM` to `SIGKILL` and waits
+up to one further second. A terminated descendant's PID can remain visible briefly while the
+operating system reaps it, so downstream checks must poll rather than assume an immediate PID
+lookup failure. The temporary
 database, CSRF material, certificate, key, and logs are mode-private and are removed on normal
 exit, child failure, or a termination signal. A new invocation always creates a new database
 and one-use invite.
