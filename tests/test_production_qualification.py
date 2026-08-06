@@ -28,7 +28,7 @@ from hramatka.qualification.receipts import (
 from hramatka.qualification.receipts import (
     main as receipt_main,
 )
-from hramatka.qualification.transcribe import transcribe
+from hramatka.qualification.transcribe import _assert_registry_literals, transcribe
 
 
 def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs(tmp_path) -> None:
@@ -294,9 +294,10 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
     assert "prompt hash is stale" in capsys.readouterr().err
 
 
-def test_transcription_prints_the_exact_registry_block_without_editing_it(
-    tmp_path,
+def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
+    tmp_path, monkeypatch
 ) -> None:
+    """#354: an empty registry can be populated before it has a matching digest."""
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
     run = harness.run(deterministic_runtime_anchors())
@@ -306,11 +307,15 @@ def test_transcription_prints_the_exact_registry_block_without_editing_it(
     source_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
+    assert qualified_models.PRODUCTION_QUALIFICATION_RECEIPTS == ()
+    monkeypatch.setattr(qualified_models, "PROMPT_SHA256", "0" * 64)
     block = transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
 
     assert registry.read_bytes() == before
-    assert block.startswith(
-        "PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (\n"
+    assert block.startswith('PROMPT_SHA256: Final = "')
+    assert (
+        "\n\nPRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (\n"
+        in block
     )
     assert block.count("    QualificationReceipt(\n") == 2
     assert block.count("passed_anchors=frozenset({") == 2
@@ -327,6 +332,7 @@ def test_transcription_prints_the_exact_registry_block_without_editing_it(
             key=lambda aggregate: (aggregate.logical_model_id, aggregate.route.route_id),
         )
     )
+    assert emitted["PROMPT_SHA256"] == expected_receipts[0].prompt_sha256
     assert emitted["PRODUCTION_QUALIFICATION_RECEIPTS"] == expected_receipts
     field_order = (
         "logical_model_id",
@@ -407,29 +413,50 @@ def test_transcription_refuses_missing_failed_or_stale_aggregate_input(tmp_path)
         transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
 
 
-def test_transcription_authority_guard_refuses_live_selector_literal_drift(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("literal_name", "drifted_value"),
+    (
+        ("QUALIFIED_MODEL_REGISTRY_VERSION", "retired-registry"),
+        ("PROMPT_PACK_VERSION", "retired-prompt-pack"),
+        ("TEMPLATE_VERSION", "retired-template"),
+        ("TEMPLATE_SHA256", "0" * 64),
+        ("DENSITY_CONTRACT_VERSION", "retired-density"),
+        ("DENSITY_CONTRACT_DIGEST", "0" * 64),
+        ("TYPE_KIT_IDENTITY", "retired-kit"),
+    ),
+)
+def test_transcription_keeps_each_live_selector_literal_fail_closed(
+    tmp_path, monkeypatch, literal_name, drifted_value
 ) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
-    harness.run(deterministic_runtime_anchors())
-    source_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    monkeypatch.setattr(qualified_models, "TYPE_KIT_IDENTITY", "retired-kit")
+    run = harness.run(deterministic_runtime_anchors())
+    aggregates = harness.aggregates(run)
+    monkeypatch.setattr(qualified_models, literal_name, drifted_value)
 
     with pytest.raises(QualificationError, match="literals do not match"):
-        transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
+        _assert_registry_literals(aggregates)
 
 
-def test_transcription_refuses_aggregate_selector_literal_drift(tmp_path, monkeypatch) -> None:
+def test_transcription_refuses_routes_with_different_aggregate_prompt_digests(tmp_path) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
     harness.run(deterministic_runtime_anchors())
     source_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    monkeypatch.setattr(qualified_models, "PROMPT_SHA256", "0" * 64)
+    receipt_dir = runtime_root / "receipts"
+    for path in receipt_dir.glob("*.json"):
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        if receipt["expected_route"]["route_id"] == "gemini-flash-ais":
+            receipt["prompt_sha256"] = "0" * 64
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+    prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
+    prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
+    for row in prompt_hashes["prompt_hashes"]:
+        if row["route_id"] == "gemini-flash-ais":
+            row["sha256"] = "0" * 64
+    prompt_hashes_path.write_text(json.dumps(prompt_hashes), encoding="utf-8")
 
-    with pytest.raises(QualificationError, match="Aggregate receipt literals"):
+    with pytest.raises(QualificationError, match="Route aggregates have different prompt_sha256"):
         transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)

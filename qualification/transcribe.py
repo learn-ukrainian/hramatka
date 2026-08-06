@@ -45,7 +45,16 @@ def format_registry_block(aggregates: Iterable[RouteAggregate]) -> str:
     )
     if not receipts:
         raise QualificationError("A complete matrix must contain at least one route aggregate.")
-    lines = ["PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ("]
+    prompt_sha256s = {receipt.prompt_sha256 for receipt in receipts}
+    if len(prompt_sha256s) != 1:
+        raise QualificationError(
+            "Route aggregates have different prompt_sha256 values; refusing transcription."
+        )
+    lines = [
+        f"PROMPT_SHA256: Final = {_literal(prompt_sha256s.pop())}",
+        "",
+        "PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (",
+    ]
     for receipt in receipts:
         lines.extend(_format_receipt(receipt))
     lines.append(")")
@@ -87,13 +96,12 @@ def _assert_registry_literals(aggregates: Iterable[RouteAggregate]) -> None:
 
     ``assert_live_v3_authorities`` establishes that the template, density, and
     kit literals still name their live v3 authorities.  This second check binds
-    the matrix-derived aggregate prompt hash and every receipt-shape identity
-    field to the exact literals that the selector will use after transcription.
+    every remaining receipt-shape identity field to the exact literals that
+    the selector will use after transcription.
     """
     expected = {
         "registry_version": qualified_models.QUALIFIED_MODEL_REGISTRY_VERSION,
         "prompt_pack_version": qualified_models.PROMPT_PACK_VERSION,
-        "prompt_sha256": qualified_models.PROMPT_SHA256,
         "template_version": qualified_models.TEMPLATE_VERSION,
         "template_sha256": qualified_models.TEMPLATE_SHA256,
         "density_contract_version": qualified_models.DENSITY_CONTRACT_VERSION,
@@ -101,6 +109,10 @@ def _assert_registry_literals(aggregates: Iterable[RouteAggregate]) -> None:
         "type_kit_identity": qualified_models.TYPE_KIT_IDENTITY,
         "serializer_temperature": serializer_temperature(),
     }
+    # #354: prompt_sha256 is derived from this complete run's per-cell prompt
+    # hashes and is emitted above with the receipts.  Checking it against the
+    # standing literal here makes the first transcription circular and
+    # impossible; route disagreement remains an explicit refusal instead.
     for aggregate in aggregates:
         receipt = aggregate.as_model_receipt()
         if any(getattr(receipt, name) != value for name, value in expected.items()):
