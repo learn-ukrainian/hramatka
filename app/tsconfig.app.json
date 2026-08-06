@@ -28,5 +28,6 @@
     /* No cross-repo paths. Resolution uses node_modules from vendored tarball + ambient types. */
     "baseUrl": "."
   },
-  "include": ["src", "dev"]
+  "include": ["src", "dev"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/i18n-chrome-guard.ts"]
 }

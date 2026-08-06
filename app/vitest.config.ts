@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import fs from 'fs';
 
+const __dirname = import.meta.dirname;
+
 function resolveActivityKit(): string {
   const envDir = process.env.ACTIVITY_KIT_DIR;
   if (envDir && fs.existsSync(envDir)) return path.resolve(envDir);
