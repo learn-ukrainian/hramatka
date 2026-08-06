@@ -299,6 +299,7 @@ def create_app(
     model_registry = model_registry or default_model_registry(
         required_provenance_by_route={
             "gemini-flash-subscription": settings.subscription_qualification_provenance_tier,
+            "gemini-pro-subscription": settings.subscription_qualification_provenance_tier,
         }
     )
     store = JobStore(settings.database_path)

@@ -38,24 +38,25 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     anchors = deterministic_runtime_anchors()
     run = harness.run(anchors)
 
-    assert len(run.cells) == 6
+    assert len(run.cells) == 9
     assert {cell.receipt.anchor_id for cell in run.cells} == {
         "b1-narrative",
         "b1-dialogue",
         "b1-morphology",
     }
     assert {cell.receipt.expected_route.route_id for cell in run.cells} == {
-        "gemini-flash-ais",
+        "gemini-pro-subscription",
+        "gemma-openrouter",
         "gemini-flash-subscription",
     }
     forced_cell = next(
         cell
         for cell in run.cells
         if cell.receipt.anchor_id == "b1-morphology"
-        and cell.receipt.expected_route.route_id == "gemini-flash-ais"
+        and cell.receipt.expected_route.route_id == "gemini-flash-subscription"
     )
     assert any(trace.mode == "repair" for trace in forced_cell.receipt.repair_trace)
-    assert len(run.receipt_paths) == 6
+    assert len(run.receipt_paths) == 9
     assert all(path.is_file() for path in run.receipt_paths)
     assert all(
         all(anchor.text not in path.read_text(encoding="utf-8") for anchor in anchors.values())
@@ -99,7 +100,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         )
 
     aggregates = harness.aggregates(run)
-    assert len(aggregates) == 2
+    assert len(aggregates) == 3
     assert all(
         aggregate.passed_anchors == frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
         for aggregate in aggregates
@@ -267,6 +268,9 @@ def test_provider_must_pass_its_actual_v3_serialization_to_qualify(tmp_path) -> 
         def for_bake(self):
             return self
 
+        def receipt_provenance(self):
+            return self._inner.receipt_provenance()
+
         def __call__(self, prompt: str) -> str:
             self._inner(prompt)
             if "IMMUTABLE TYPE-KITS" in prompt:
@@ -301,8 +305,8 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
 
     assert receipt_main(["aggregate", "--receipt-dir", str(runtime_root / "receipts")]) == 0
     output = capsys.readouterr().out
-    assert "Qualification receipts aggregated: 2 routes" in output
-    assert "gemini-3.6-flash gemini-flash-ais anchors=3/3" in output
+    assert "Qualification receipts aggregated: 3 routes" in output
+    assert "gemini-3.6-flash gemini-flash-subscription anchors=3/3" in output
 
     prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
     prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
@@ -337,8 +341,8 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
         "\n\nPRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (\n"
         in block
     )
-    assert block.count("    QualificationReceipt(\n") == 2
-    assert block.count("passed_anchors=frozenset({") == 2
+    assert block.count("    QualificationReceipt(\n") == 3
+    assert block.count("passed_anchors=frozenset({") == 3
     assert 'prompt_pack_version="PromptPackInput.v3"' in block
     assert 'template_version="gemma-phase-pack.v3.2"' in block
     assert 'density_contract_version="TeacherReadyDensity.v3"' in block
@@ -468,13 +472,13 @@ def test_transcription_refuses_routes_with_different_aggregate_prompt_digests(tm
     receipt_dir = runtime_root / "receipts"
     for path in receipt_dir.glob("*.json"):
         receipt = json.loads(path.read_text(encoding="utf-8"))
-        if receipt["expected_route"]["route_id"] == "gemini-flash-ais":
+        if receipt["expected_route"]["route_id"] == "gemini-flash-subscription":
             receipt["prompt_sha256"] = "0" * 64
             path.write_text(json.dumps(receipt), encoding="utf-8")
     prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
     prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
     for row in prompt_hashes["prompt_hashes"]:
-        if row["route_id"] == "gemini-flash-ais":
+        if row["route_id"] == "gemini-flash-subscription":
             row["sha256"] = "0" * 64
     prompt_hashes_path.write_text(json.dumps(prompt_hashes), encoding="utf-8")
 

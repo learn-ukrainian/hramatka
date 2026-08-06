@@ -949,14 +949,14 @@ def test_api_config_gating(monkeypatch):
 
     with pytest.raises(RuntimeError) as exc:
         config._parse_bake_providers("google-ais,openrouter,deepinfra")
-    assert "supports only google-ais, openrouter" in str(exc.value)
+    assert "supports only antigravity, openrouter" in str(exc.value)
 
     monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key")
     allowed = config._parse_bake_providers(None)
     assert "deepinfra" in allowed
 
-    parsed = config._parse_bake_providers("google-ais,deepinfra")
-    assert parsed == ("google-ais", "deepinfra")
+    parsed = config._parse_bake_providers("antigravity,deepinfra")
+    assert parsed == ("antigravity", "deepinfra")
 
 
 # --- Quick wins tests: JSON mode, temperature, fallback, and overrides -------

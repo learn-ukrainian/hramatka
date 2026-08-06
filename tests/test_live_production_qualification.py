@@ -79,11 +79,11 @@ def _diagnostic_request(tmp_path: Path) -> LiveDiagnosticRequest:
                 source_commit=_HEAD,
                 manifest_sha256=qualification.expected_manifest_sha256,
                 anchor_id="b1-narrative",
-                route_id="gemini-flash-ais",
+                route_id="gemini-flash-subscription",
             ),
         ),
         anchor_id="b1-narrative",
-        route_id="gemini-flash-ais",
+        route_id="gemini-flash-subscription",
     )
 
 
@@ -143,16 +143,32 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_two_routes_and_spend_acknowledgement_rebinds_to_6_cells() -> None:
+def test_matrix_is_derived_from_three_logical_models_and_rebinds_to_9_cells() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 2
+    assert len(_matrix()) == 3
+    assert len(_matrix()) * 3 == 9
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
-        "gemini-flash-ais",
         "gemini-flash-subscription",
+        "gemini-pro-subscription",
+        "gemma-openrouter",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x2"
+        ":B1-45M-3x3"
     )
+
+
+def test_preflight_refuses_a_stale_matrix_count(tmp_path, v2_delivery_flags, monkeypatch) -> None:
+    import hramatka.qualification.live as live_module
+
+    configured = live_module._configured_matrix()
+    monkeypatch.setattr(live_module, "_matrix", lambda: configured[:-1])
+
+    with pytest.raises(LiveQualificationError, match="does not match current logical-model routes"):
+        preflight_live_qualification(
+            _request(tmp_path),
+            repository_state=_clean_repository_state,
+            credential_present=_credential_present,
+        )
 
 
 def test_cli_refuses_anchor_pack_inside_repository_before_loading(
@@ -264,7 +280,7 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
 
     def credential_present(**route: str) -> bool:
         credential_routes.append(route["route_id"])
-        return route["route_id"] == "gemini-flash-ais"
+        return route["route_id"] == "gemini-flash-subscription"
 
     def fake_port_factory(logical_model_id: str, route: RouteBinding):
         constructed.append((logical_model_id, route.route_id))
@@ -278,13 +294,13 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
         pinned_port_factory=fake_port_factory,
     )
 
-    assert constructed == [("gemini-3.6-flash", "gemini-flash-ais")]
-    assert credential_routes == ["gemini-flash-ais"]
+    assert constructed == [("gemini-3.6-flash", "gemini-flash-subscription")]
+    assert credential_routes == ["gemini-flash-subscription"]
     assert run.cell.receipt.outcome == "passed"
     parsed = DensityDiagnosticReceipt.from_dict(
         json.loads(run.receipt_path.read_text(encoding="utf-8"))
     )
-    assert parsed.cell_receipt.expected_route.route_id == "gemini-flash-ais"
+    assert parsed.cell_receipt.expected_route.route_id == "gemini-flash-subscription"
     assert parsed.density_trace[0]["stage"] == "initial"
     assert set(parsed.density_trace[0]["phase_density"]) == {"1", "2", "3"}
     assert parsed.density_trace[-1]["repair_invocations"] == len(parsed.repair_invocation_trace)
@@ -468,7 +484,7 @@ def test_live_rejects_a_failed_cell_from_the_shared_harness(
         "run_with_provider_factory",
         lambda _self, _anchors, **_kwargs: _complete_fake_run(request, failed=True),
     )
-    with pytest.raises(LiveQualificationError, match="b1-narrative/gemini-flash-ais"):
+    with pytest.raises(LiveQualificationError, match="b1-narrative/gemini-flash-subscription"):
         execute_live_qualification(
             request,
             bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
@@ -524,7 +540,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
 
     anchors = deterministic_runtime_anchors()
     anchor = anchors["b1-narrative"]
-    route = RouteBinding("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash")
+    route = RouteBinding("gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high")
     bundle = fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data")
     harness = ProductionQualificationHarness(tmp_path / "receipts", source_commit=_HEAD)
     (tmp_path / "short").mkdir()
@@ -587,9 +603,9 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
 
 def test_pinned_route_refuses_port_without_receipt_provenance() -> None:
     route = RouteBinding(
-        route_id="gemini-flash-ais",
-        host="google-ais",
-        model_id="google-ais/gemini-3.6-flash",
+        route_id="gemini-flash-subscription",
+        host="antigravity-cli",
+        model_id="gemini-3.6-flash-high",
     )
     provider = _PinnedRouteProvider(route, lambda _prompt: '{"activities": []}')  # type: ignore[arg-type]
 
@@ -617,16 +633,17 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 6
-    assert len(constructed) == 6
+    assert len(run.cells) == 9
+    assert len(constructed) == 9
     assert set(constructed) == {
-        ("gemini-3.6-flash", "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
         (
             "gemini-3.6-flash",
             "gemini-flash-subscription",
             "antigravity-cli",
             "gemini-3.6-flash-high",
         ),
+        ("gemini-3.1-pro", "gemini-pro-subscription", "antigravity-cli", "gemini-3.1-pro-high"),
+        ("gemma-4-31b", "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
     }
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []
@@ -645,7 +662,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     route_cells = tuple(
         cell.receipt
         for cell in run.cells
-        if cell.receipt.expected_route.route_id == "gemini-flash-ais"
+        if cell.receipt.expected_route.route_id == "gemini-flash-subscription"
     )
     # The locked shadow-tier ruling keeps ``semantic_gate=not_run`` advisory;
     # only the current v3 aggregate may create this candidate receipt.

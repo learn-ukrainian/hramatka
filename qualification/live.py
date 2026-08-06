@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from hramatka.api.qualified_models import QUALIFICATION_ANCHORS
 from hramatka.engine import data
 from hramatka.engine.providers import (
     make_qualification_pinned_generator,
@@ -37,7 +38,6 @@ from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import QualificationError, RepairTraceEntry, RouteBinding
 
 _ACK_PREFIX = "HRAMATKA-QUALIFICATION-SPEND"
-_MATRIX_LABEL = "B1-45M-3x2"
 _DIAGNOSTIC_LABEL = "B1-45M-density-diagnostic"
 _LIVE_BAKE_HARD_TIMEOUT_SECONDS = 1800
 _LIVE_READINESS_TIMEOUT_SECONDS = 1830
@@ -71,7 +71,10 @@ class LiveDiagnosticRequest:
 
 def spend_acknowledgement(*, source_commit: str, manifest_sha256: str) -> str:
     """Return the exact acknowledgement an operator must pass to execute."""
-    return f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:{_MATRIX_LABEL}"
+    return (
+        f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:"
+        f"B1-45M-{len(QUALIFICATION_ANCHORS)}x{len(_configured_matrix())}"
+    )
 
 
 def diagnostic_spend_acknowledgement(
@@ -126,14 +129,28 @@ def _paths_overlap(left: Path, right: Path) -> bool:
     return True
 
 
-def _matrix() -> tuple[tuple[str, RouteBinding], ...]:
-    """Return the fixed qualification matrix; callers cannot choose a subset."""
+def _configured_matrix() -> tuple[tuple[str, RouteBinding], ...]:
+    """Derive the configured route matrix from the teacher routing allowlist."""
     from hramatka.api.qualified_models import LOGICAL_MODELS
 
     return tuple(
         (model.id, RouteBinding(route.id, route.host, route.model_id))
         for model in LOGICAL_MODELS
         for route in model.provider_routes
+    )
+
+
+def _matrix() -> tuple[tuple[str, RouteBinding], ...]:
+    """Return the fixed qualification matrix; callers cannot choose a subset."""
+    return _configured_matrix()
+
+
+def _matrix_cells(matrix: tuple[tuple[str, RouteBinding], ...]) -> frozenset[tuple[str, str, str]]:
+    """Return the complete model × route × anchor execution contract."""
+    return frozenset(
+        (logical_model_id, route.route_id, anchor_id)
+        for logical_model_id, route in matrix
+        for anchor_id in QUALIFICATION_ANCHORS
     )
 
 
@@ -215,8 +232,17 @@ def preflight_live_qualification(
 ) -> QualificationManifest:
     """Reject every deterministic defect before any matrix provider is constructed."""
     matrix = _matrix()
-    if len(matrix) != 2 or len({route.route_id for _, route in matrix}) != 2:
-        raise LiveQualificationError("Qualification matrix is not exactly two unique routes.")
+    configured_matrix = _configured_matrix()
+    expected_cells = _matrix_cells(configured_matrix)
+    route_keys = {(logical_model_id, route.route_id) for logical_model_id, route in matrix}
+    if (
+        len(matrix) != len(configured_matrix)
+        or len(route_keys) != len(matrix)
+        or _matrix_cells(matrix) != expected_cells
+    ):
+        raise LiveQualificationError(
+            "Qualification matrix does not match current logical-model routes."
+        )
     return _preflight_live_cells(
         request,
         matrix=matrix,

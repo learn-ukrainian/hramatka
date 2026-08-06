@@ -85,10 +85,27 @@ LOGICAL_MODELS: Final = (
         label="Gemini 3.6 Flash",
         description_uk="Швидке складання уроку.",
         provider_routes=(
-            QualifiedProviderRoute("gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"),
             QualifiedProviderRoute(
                 "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
             ),
+        ),
+    ),
+    LogicalModelSpec(
+        id="gemini-3.1-pro",
+        label="Gemini 3.1 Pro",
+        description_uk="Ретельне складання уроку.",
+        provider_routes=(
+            QualifiedProviderRoute(
+                "gemini-pro-subscription", "antigravity-cli", "gemini-3.1-pro-high"
+            ),
+        ),
+    ),
+    LogicalModelSpec(
+        id="gemma-4-31b",
+        label="Gemma 4 31B",
+        description_uk="Складання уроку відкритою моделлю.",
+        provider_routes=(
+            QualifiedProviderRoute("gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
         ),
     ),
 )

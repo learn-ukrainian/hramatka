@@ -850,7 +850,7 @@ def aggregate_receipts(
     engine_sha256: str,
     flag_sha256: str,
 ) -> tuple[RouteAggregate, ...]:
-    """Strictly aggregate all 12 configured cells or fail closed.
+    """Strictly aggregate every configured route × anchor cell or fail closed.
 
     The caller supplies current runtime identity values.  Every cell must bind
     them exactly; missing, stale, duplicate, route-mismatched, or failed cells

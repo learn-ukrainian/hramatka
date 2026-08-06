@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 _DEFAULT_BAKE_WORKERS = 4
 _MAX_BAKE_WORKERS = 8
 _DEFAULT_MAX_PROVIDER_CONCURRENCY = 8
-_DEFAULT_BAKE_PROVIDERS = ("google-ais", "openrouter")
+_DEFAULT_BAKE_PROVIDERS = ("antigravity", "openrouter")
 _EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
 _DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
@@ -28,12 +28,16 @@ def _clamp_bake_workers(value: int) -> int:
 
 def _get_default_bake_providers() -> tuple[str, ...]:
     if "DEEPINFRA_API_KEY" in os.environ:
-        return ("google-ais", "openrouter", "deepinfra")
+        return (*_DEFAULT_BAKE_PROVIDERS, "deepinfra")
     return _DEFAULT_BAKE_PROVIDERS
 
 
 def _parse_bake_providers(value: str | None) -> tuple[str, ...]:
-    allowed = (*_get_default_bake_providers(), _EXPLICIT_SUBSCRIPTION_PROVIDER)
+    allowed = tuple(
+        dict.fromkeys(
+            (*_get_default_bake_providers(), _EXPLICIT_SUBSCRIPTION_PROVIDER, "google-ais")
+        )
+    )
     if value is None:
         return allowed
     providers = tuple(part.strip().lower() for part in value.split(",") if part.strip())

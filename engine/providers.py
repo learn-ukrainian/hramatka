@@ -1472,6 +1472,13 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         AIS_API_KEY_ENV,
         None,
     ),
+    "gemini-pro-subscription": (
+        "gemini-3.1-pro",
+        SUBSCRIPTION_HOST,
+        "gemini-3.1-pro-high",
+        None,
+        None,
+    ),
     "gemma-ais": (
         "gemma-4-31b",
         "google-ais",
@@ -1521,7 +1528,7 @@ def qualification_route_credential_present(
     if host == SUBSCRIPTION_HOST:
         return SubscriptionGeneratorPort(
             executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
-            model=os.environ.get(SUBSCRIPTION_MODEL_ENV, DEFAULT_SUBSCRIPTION_MODEL),
+            model=model_id,
         ).is_configured()
     if key_env and os.environ.get(key_env):
         return True
@@ -1576,7 +1583,8 @@ def validate_qualification_route_runtime(
         # Probing it here too made pure route validation depend on the host
         # filesystem, which broke every offline test that validates a route
         # without intending to reach a provider.
-        if os.environ.get(SUBSCRIPTION_MODEL_ENV, DEFAULT_SUBSCRIPTION_MODEL) != model_id:
+        configured_model = os.environ.get(SUBSCRIPTION_MODEL_ENV)
+        if configured_model is not None and configured_model != model_id:
             raise ValueError("Qualification route has a noncanonical subscription model.")
     else:  # _require_qualification_route keeps this defensive branch unreachable.
         raise ValueError("Qualification route has an unknown provider host.")
@@ -1808,8 +1816,10 @@ def make_bake_generator(
     if is_gemma:
         allowed = _get_bake_providers()
         names = tuple(provider_names or allowed)
-        unknown = sorted(set(names) - set(allowed))
-        if not names or unknown:
+        inert = {SUBSCRIPTION_PROVIDER}
+        unknown = sorted(set(names) - set(allowed) - inert)
+        selected = tuple(name for name in names if name in allowed)
+        if not selected or unknown:
             raise ValueError(f"Bake providers must be one or more of {', '.join(allowed)}.")
 
         if active_model == "google-ais/gemma-4-26b-a4b-it":
@@ -1857,7 +1867,7 @@ def make_bake_generator(
         }
         if deepinfra is not None:
             routes["deepinfra"] = _with_failover(deepinfra, ais)
-        return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(names)})
+        return RoundRobinGeneratorSelector({name: routes[name] for name in dict.fromkeys(selected)})
     elif active_model == "google-ais/gemini-3.6-flash":
         names = tuple(provider_names or ("google-ais",))
         allowed = {"google-ais", SUBSCRIPTION_PROVIDER}
@@ -1899,99 +1909,136 @@ def make_logical_model_generator(
     """Build one job-scoped generator without consulting or mutating model env.
 
     ``logical_model_id`` is the durable teacher choice. Provider names and wire
-    model IDs stay behind this boundary; a Gemma job may use either qualified
-    route, while qualified Gemini routes construct only their selected port.
+    model IDs stay behind this boundary.  Qualification routes are exact: a
+    shipped logical model neither constructs nor requires credentials for an
+    unqualified sibling route.
     """
-    if logical_model_id == "gemma-4-31b":
-        ais, openrouter, _ = _gemma_routes()
-        routes: dict[str, AISGeneratorPort] = {
-            "google-ais": _with_failover(ais, openrouter),
-            "openrouter": _with_failover(openrouter, ais),
-        }
-        requested = tuple(provider_names or routes)
-        selected = tuple(name for name in dict.fromkeys(requested) if name in routes)
-        if not selected:
-            raise ValueError("Gemma 4 31B requires a qualified AIS or OpenRouter route.")
-        _require_exact_qualified_routes(
-            qualified_routes,
-            {
-                "gemma-ais": (getattr(ais._transport, "host", ""), ais._model),
-                "gemma-openrouter": (
-                    getattr(openrouter._transport, "host", ""),
-                    openrouter._model,
-                ),
-            },
-            configured_hosts=set(selected),
-        )
-        if qualified_routes is not None and (
-            not ais.is_configured() or not openrouter.is_configured()
-        ):
-            raise ValueError("A qualified provider route has no configured credential source.")
-        return RoundRobinGeneratorSelector({name: routes[name] for name in selected})
-
-    if logical_model_id == "gemini-3.6-flash":
-        model_id = "google-ais/gemini-3.6-flash"
-        ais_route_id = "gemini-flash-ais"
-        subscription_route_id = "gemini-flash-subscription"
-    elif logical_model_id == "gemini-3.1-pro":
-        if os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
-            raise ValueError("Gemini 3.1 Pro routing requires HRAMATKA_PAID_MODEL_OK=1.")
-        model_id = "google-ais/gemini-3.1-pro-preview"
-        ais_route_id = "gemini-pro-ais"
-        subscription_route_id = None
-    else:
+    route_catalog: dict[str, dict[str, tuple[str, str, str]]] = {
+        "gemini-3.6-flash": {
+            "google-ais": (
+                "gemini-flash-ais",
+                "google-ais",
+                "google-ais/gemini-3.6-flash",
+            ),
+            SUBSCRIPTION_PROVIDER: (
+                "gemini-flash-subscription",
+                SUBSCRIPTION_HOST,
+                DEFAULT_SUBSCRIPTION_MODEL,
+            ),
+        },
+        "gemini-3.1-pro": {
+            "google-ais": (
+                "gemini-pro-ais",
+                "google-ais",
+                "google-ais/gemini-3.1-pro-preview",
+            ),
+            SUBSCRIPTION_PROVIDER: (
+                "gemini-pro-subscription",
+                SUBSCRIPTION_HOST,
+                "gemini-3.1-pro-high",
+            ),
+        },
+        "gemma-4-31b": {
+            "google-ais": ("gemma-ais", "google-ais", GEMMA_MODEL),
+            "openrouter": (
+                "gemma-openrouter",
+                "openrouter",
+                DEFAULT_GEMMA_FALLBACK_MODEL,
+            ),
+        },
+    }
+    available = route_catalog.get(logical_model_id)
+    if available is None:
         raise ValueError(f"Unknown qualified logical model ID: {logical_model_id!r}")
-    requested = tuple(provider_names or ("google-ais",))
-    allowed = {"google-ais"}
-    if subscription_route_id is not None:
-        allowed.add(SUBSCRIPTION_PROVIDER)
-    inert = {"openrouter", "deepinfra"}
-    unknown = sorted(set(requested) - allowed - inert)
-    selected = tuple(name for name in requested if name in allowed)
-    if not selected:
-        raise ValueError("A qualified provider route is not enabled for this deployment.")
+
+    if provider_names is None:
+        if qualified_routes is None:
+            requested = (
+                tuple(available)
+                if logical_model_id == "gemma-4-31b"
+                else ("google-ais",)
+            )
+        else:
+            qualified_route_ids = {
+                getattr(route, "id", getattr(route, "route_id", None)) for route in qualified_routes
+            }
+            requested = tuple(
+                provider for provider, (route_id, _host, _model) in available.items()
+                if route_id in qualified_route_ids
+            )
+    else:
+        requested = tuple(dict.fromkeys(provider_names))
+    known_providers = {"google-ais", "openrouter", "deepinfra", SUBSCRIPTION_PROVIDER}
+    unknown = sorted(set(requested) - known_providers)
     if unknown:
         raise ValueError(
-            f"Qualified Gemini routes must be one or more of {', '.join(sorted(allowed))}."
+            f"Qualified provider routes must be one or more of {', '.join(sorted(available))}."
         )
+    selected = tuple(provider for provider in requested if provider in available)
+    if not selected:
+        raise ValueError("A qualified provider route is not enabled for this deployment.")
+
     routes: dict[str, Callable[[str], str]] = {}
     actual_routes: dict[str, tuple[str, str]] = {}
     configured_hosts: set[str] = set()
-    if "google-ais" in selected:
-        ais = _gemini_ais_route(model_id)
-        routes["google-ais"] = ais
-        actual_routes[ais_route_id] = (getattr(ais._transport, "host", ""), ais._model)
-        configured_hosts.add("google-ais")
-    if SUBSCRIPTION_PROVIDER in selected:
-        assert subscription_route_id is not None
-        subscription = SubscriptionGeneratorPort(
-            executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),
-            model=DEFAULT_SUBSCRIPTION_MODEL,
-            timeout_s=GEMMA_TIMEOUT_S,
-        )
-        routes[SUBSCRIPTION_PROVIDER] = subscription
-        actual_routes[subscription_route_id] = (subscription.host, subscription.model)
-        configured_hosts.add(subscription.host)
-    selected_route_ids = set(actual_routes)
-    _require_exact_qualified_routes(
-        (
-            tuple(
-                route
-                for route in qualified_routes
-                if getattr(route, "id", getattr(route, "route_id", None)) in selected_route_ids
+    for provider in selected:
+        route_id, host, wire_model = available[provider]
+        if route_id == "gemini-pro-ais" and os.environ.get("HRAMATKA_PAID_MODEL_OK") != "1":
+            raise ValueError("Gemini 3.1 Pro AIS routing requires HRAMATKA_PAID_MODEL_OK=1.")
+        if host == SUBSCRIPTION_HOST:
+            port: AISGeneratorPort | SubscriptionGeneratorPort = SubscriptionGeneratorPort(
+                executable=os.environ.get(
+                    SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE
+                ),
+                model=os.environ.get(SUBSCRIPTION_MODEL_ENV, wire_model),
+                timeout_s=GEMMA_TIMEOUT_S,
             )
-            if qualified_routes is not None
-            else None
-        ),
+        elif route_id == "gemma-openrouter":
+            port = AISGeneratorPort(
+                api_key_env=GEMMA_FALLBACK_API_KEY_ENV,
+                api_key_file_env=GEMMA_FALLBACK_API_KEY_FILE_ENV,
+                model=os.environ.get(GEMMA_FALLBACK_MODEL_ENV, DEFAULT_GEMMA_FALLBACK_MODEL),
+                timeout_s=GEMMA_TIMEOUT_S,
+                transport=HttpChatTransport(
+                    base_url=os.environ.get(
+                        GEMMA_FALLBACK_BASE_URL_ENV, DEFAULT_GEMMA_FALLBACK_BASE_URL
+                    ),
+                    host="openrouter",
+                    strip_model_prefix=False,
+                ),
+            )
+        elif route_id == "gemma-ais":
+            port = AISGeneratorPort(
+                api_key_env=AIS_API_KEY_ENV,
+                model=GEMMA_MODEL,
+                timeout_s=GEMMA_TIMEOUT_S,
+                transport=HttpChatTransport(
+                    base_url=os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL),
+                    host="google-ais",
+                ),
+            )
+        else:
+            port = _gemini_ais_route(wire_model)
+        routes[provider] = port
+        actual_routes[route_id] = (
+            (
+                port.host
+                if isinstance(port, SubscriptionGeneratorPort)
+                else getattr(port._transport, "host", "")
+            ),
+            port.model if isinstance(port, SubscriptionGeneratorPort) else port._model,
+        )
+        configured_hosts.add(host)
+
+    _require_exact_qualified_routes(
+        qualified_routes,
         actual_routes,
         configured_hosts=configured_hosts,
     )
     if qualified_routes is not None:
-        if "google-ais" in selected:
-            if not ais.is_configured():
+        for port in routes.values():
+            if not port.is_configured():
                 raise ValueError("A qualified provider route has no configured credential source.")
-        if SUBSCRIPTION_PROVIDER in selected and not subscription.is_configured():
-            raise ValueError("A qualified subscription route has no configured client executable.")
     return RoundRobinGeneratorSelector(routes)
 
 
