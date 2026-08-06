@@ -82,14 +82,14 @@ payloads containing teacher data in terminal captures or support logs.
 ## Bake capacity and provider routing
 
 Set `HRAMATKA_BAKE_WORKERS=4`, `HRAMATKA_MAX_PROVIDER_CONCURRENCY=8`, and
-`HRAMATKA_BAKE_PROVIDERS=google-ais,openrouter` in the root-owned environment file
+`HRAMATKA_BAKE_PROVIDERS=antigravity,openrouter` in the root-owned environment file
 unless measured provider limits justify a reviewed change. The worker setting is
-clamped to 1–8. The process picks an initial provider round-robin per durable bake:
-Google-AIS sends `gemma-4-31b-it`; OpenRouter sends `google/gemma-4-31b-it`.
-Each route retries the other provider only for retry-exhausted 5xx/timeout or 429;
-authentication and other 4xx errors never spend paid fallback tokens. This shadow-bake
-routing does not change the teacher qualification matrix: Gemini 3.6 Flash has
-qualified AIS and subscription routes, with no paid Vertex fallback.
+clamped to 1–8. Current logical-model bindings use Antigravity subscriptions for
+Gemini Flash and Pro, and OpenRouter for Gemma. Google-AIS remains a separate
+qualification route; do not configure a paid Vertex fallback. Set
+`HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND=1` only after acknowledging that an
+API-provider bake key may be billed. Without it, standard API-provider bake calls
+are refused before transport; subscription-client routes are unaffected.
 
 Before pilot deployment, perform the separately driver-coordinated live check with
 four simultaneous teacher bakes. Record only concurrency counts, sanitized timing,

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from hramatka.engine import generate as G
-from hramatka.engine.transport import AISGeneratorPort
+from hramatka.engine.transport import METERED_PROVIDER_SPEND_ACK_ENV, AISGeneratorPort
 
 
 def _pb(anchor, level, types, grounding, *, counts=None, anchor_snapshot=None):
@@ -211,6 +211,23 @@ def test_generate_coalesces_count_aware_prompt_and_parses_multiple_candidates_of
 
 
 # --- AISGeneratorPort (the private transport) ------------------------------
+def test_ais_port_blocks_transport_without_metered_spend_acknowledgement(monkeypatch):
+    calls = {"n": 0}
+
+    def transport(prompt, *, api_key, model, timeout_s):
+        del prompt, api_key, model, timeout_s
+        calls["n"] += 1
+        return '{"activities": []}'
+
+    monkeypatch.delenv(METERED_PROVIDER_SPEND_ACK_ENV)
+    port = AISGeneratorPort(api_key="test-key", transport=transport)
+
+    with pytest.raises(G.GeneratorUnavailable, match="ACCEPT_METERED_PROVIDER_SPEND=1"):
+        port("prompt")
+
+    assert calls["n"] == 0
+
+
 def test_ais_port_wraps_transport_systemexit():
     # A fail-closed transport guard must degrade to GeneratorUnavailable, never
     # crash the worker. Key supplied directly so no env is needed.

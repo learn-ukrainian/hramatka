@@ -46,12 +46,16 @@ change, provisioning, or disclosure of any secret.
    release, with `HRAMATKA_DATA_MANIFEST=$HRAMATKA_DATA_DIR/data-manifest.json`.
    Set `HRAMATKA_BAKE_WORKERS=4` (clamped 1–8),
    `HRAMATKA_MAX_PROVIDER_CONCURRENCY=8`, and
-   `HRAMATKA_BAKE_PROVIDERS=google-ais,openrouter`. Also configure
+   `HRAMATKA_BAKE_PROVIDERS=antigravity,openrouter`. Also configure
    `HRAMATKA_GEMMA_FALLBACK_BASE_URL`, `HRAMATKA_GEMMA_FALLBACK_MODEL`, and one
    host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
-   `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Both routes are active round-robin
-   primaries; the other route is outage-only failover. The qualified Gemini 3.6
-   Flash teacher routes are AIS and subscription; do not configure a paid Vertex fallback.
+   `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Current logical-model bindings use
+   Antigravity subscriptions for Gemini Flash and Pro, and OpenRouter for Gemma.
+   Google-AIS remains a separate qualification route; do not configure a paid
+   Vertex fallback.
+   Set `HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND=1` only after acknowledging that
+   an API-provider key may be billed; standard API-provider bake generation is
+   refused until then. The subscription-client route does not use this acknowledgement.
    Never print a key or its file.
 5. For review attestation, first verify that `/etc/hramatka/api.env` contains
    the assigned `HRAMATKA_REVIEW_ATTESTATION_*` names from

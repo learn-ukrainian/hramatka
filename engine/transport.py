@@ -23,6 +23,7 @@ from typing import Protocol
 GEMMA_MODEL = "google-ais/gemma-4-31b-it"
 GEMMA_TIMEOUT_S = 900
 AIS_API_KEY_ENV = "HRAMATKA_AIS_API_KEY"
+METERED_PROVIDER_SPEND_ACK_ENV = "HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND"
 
 generator_model_id = contextvars.ContextVar("generator_model_id", default=None)
 activity_model_registry = contextvars.ContextVar("activity_model_registry", default=None)
@@ -139,6 +140,11 @@ class AISGeneratorPort:
         }
 
     def __call__(self, prompt: str) -> str:
+        if os.environ.get(METERED_PROVIDER_SPEND_ACK_ENV) != "1":
+            raise GeneratorUnavailable(
+                "Provider generation requires "
+                f"{METERED_PROVIDER_SPEND_ACK_ENV}=1 because the key may be billed."
+            )
         key = self._resolve_key()
         try:
             res = self._transport(

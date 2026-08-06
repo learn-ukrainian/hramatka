@@ -18,7 +18,12 @@ import pytest
 
 from hramatka.api.qualified_models import LOGICAL_MODELS
 from hramatka.engine import providers
-from hramatka.engine.transport import GEMMA_MODEL, AISGeneratorPort, GeneratorUnavailable
+from hramatka.engine.transport import (
+    GEMMA_MODEL,
+    METERED_PROVIDER_SPEND_ACK_ENV,
+    AISGeneratorPort,
+    GeneratorUnavailable,
+)
 from hramatka.qualification.receipts import ProviderProvenance, RouteBinding
 
 OK_BODY = {"choices": [{"message": {"content": '{"activities": []}'}}]}
@@ -119,6 +124,17 @@ def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_js
         "requested_model": "gemini-3.6-flash-high",
         "raw_output_sha256": ("b587bd808c10e72c66e63fbc32b4f95a3a3780c2e544fdf7ac422257ab437886",),
     }
+
+
+def test_subscription_generator_does_not_require_metered_provider_acknowledgement(monkeypatch):
+    monkeypatch.delenv(METERED_PROVIDER_SPEND_ACK_ENV)
+
+    def runner(*_args, **_kwargs):
+        return _subscription_completed('{"activities": []}')
+
+    port = _subscription_port(runner)
+
+    assert port("PROMPT") == '{"activities": []}'
 
 
 def test_subscription_generator_rejects_conversational_wrong_argument_reply():
