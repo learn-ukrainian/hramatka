@@ -516,6 +516,31 @@ def test_runtime_is_private_and_each_run_gets_fresh_state(tmp_path: Path) -> Non
     assert first["HRAMATKA_BAKE_PROVIDERS"] == "google-ais"
 
 
+def test_static_local_launcher_uses_one_persistent_database_and_bookmark_url(
+    tmp_path: Path,
+) -> None:
+    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT, https_port=9443)
+    home = tmp_path / "home"
+    home.mkdir()
+    environment = _data_environment(tmp_path)
+    environment.update({"HOME": str(home), "HRAMATKA_LOCAL_STATIC_TEACHER": "1"})
+
+    first = local_teacher._runtime_environment(
+        config, _runtime_paths(tmp_path / "one"), environment
+    )
+    second = local_teacher._runtime_environment(
+        config, _runtime_paths(tmp_path / "two"), environment
+    )
+
+    expected_database = home / ".local" / "state" / "hramatka" / "local-teacher.sqlite3"
+    assert first["HRAMATKA_DB_PATH"] == second["HRAMATKA_DB_PATH"] == str(expected_database)
+    assert first["HRAMATKA_LOCAL_LAUNCHER"] == "1"
+    assert first["HRAMATKA_SERVER_BIND_HOST"] == "127.0.0.1"
+    assert local_teacher._local_static_teacher_url(config) == (
+        "https://127.0.0.1:9443/api/session/local-teacher"
+    )
+
+
 def test_slot_repair_has_an_explicit_local_opt_out(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()

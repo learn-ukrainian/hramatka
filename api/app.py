@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -483,7 +483,7 @@ def create_app(
     app.include_router(agent_monitor_router, dependencies=[Depends(require_session)])
 
     def session_payload(session: AuthenticatedSession) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "teacher": {
                 "id": session.record.teacher_id,
                 "display_name": session.record.teacher_display_name,
@@ -491,6 +491,17 @@ def create_app(
             "expires_at": session.record.expires_at,
             "csrf_token": csrf_token(settings.csrf_hmac_key, session.raw_secret),
         }
+        if settings.local_static_teacher_enabled and session.record.invite_id is None:
+            payload["local_auth_disabled"] = True
+        return payload
+
+    def set_session_cookie(response: Response, raw_secret: bytes, expires_at: str) -> None:
+        response.headers.append(
+            "Set-Cookie",
+            f"{_SESSION_COOKIE}={_encode_opaque(raw_secret)}; Path=/; "
+            f"Max-Age={_session_cookie_max_age(expires_at)}; "
+            "HttpOnly; Secure; SameSite=Lax",
+        )
 
     def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
         job = store.get(teacher_id, lesson_id)
@@ -542,13 +553,23 @@ def create_app(
             ) from error
         session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
         response = JSONResponse(content=session_payload(session))
-        response.headers.append(
-            "Set-Cookie",
-            f"{_SESSION_COOKIE}={_encode_opaque(redeemed.raw_secret)}; Path=/; "
-            f"Max-Age={_session_cookie_max_age(redeemed.session.expires_at)}; "
-            "HttpOnly; Secure; SameSite=Lax",
-        )
+        set_session_cookie(response, redeemed.raw_secret, redeemed.session.expires_at)
         return response
+
+    if settings.local_static_teacher_enabled:
+
+        @app.get("/api/session/local-teacher")
+        def establish_local_static_teacher_session() -> Response:
+            """Establish a local-only teacher session, then enter the SPA."""
+            try:
+                established = store.create_local_static_session()
+            except SessionUnavailable as error:
+                raise PilotError(
+                    401, "session_required", "Потрібна чинна сесія вчителя."
+                ) from error
+            response = RedirectResponse(url="/teacher/", status_code=status.HTTP_303_SEE_OTHER)
+            set_session_cookie(response, established.raw_secret, established.session.expires_at)
+            return response
 
     @app.get("/api/session")
     def get_session(session: AuthenticatedSession = Depends(require_session)) -> dict[str, object]:

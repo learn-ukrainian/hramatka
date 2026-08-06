@@ -59,7 +59,10 @@ bits, even when a permissive decoder could map them to the same bytes.
 
 ## Cookie session
 
-A redeemed invite creates a fresh 32-byte random session secret. SQLite stores only
+A redeemed invite creates a fresh 32-byte random session secret. The explicitly
+opted-in loopback local launcher may create the same ordinary session without an
+invite exchange; that route is not registered unless its local-only guard is
+complete. SQLite stores only
 `SHA-256("hramatka-session\0" || secret)`. The raw secret exists only in the browser
 cookie and transient request memory. Sessions have a fixed absolute time seven days
 after redemption and a 24-hour idle deadline renewed by successful authenticated use.

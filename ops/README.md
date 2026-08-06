@@ -170,6 +170,18 @@ short-lived self-signed certificate; the launcher does not modify the system tru
 Both loopback ports are reserved before the build begins and handed directly to the child
 servers, so another process cannot claim either port during startup.
 
+For an operator-only local convenience link, opt in explicitly:
+
+```bash
+HRAMATKA_LOCAL_STATIC_TEACHER=1 ./hramatka/ops/local-teacher.sh
+```
+
+This mode prints a bookmarkable local URL, creates or reuses one local teacher account,
+and shows a persistent unauthenticated-mode warning in the app. It persists only that
+local account's SQLite file under `~/.local/state/hramatka/`; the launcher supplies the
+non-production marker and loopback binding proof itself. The route is not registered
+without all three conditions and is not part of the deployed pilot path.
+
 Prerequisites:
 
 - the repository `.venv` and its exact `.venv/bin/python` interpreter;
@@ -190,7 +202,6 @@ Press Ctrl-C to interrupt any startup phase and stop every owned process group. 
 up to three seconds for each group to exit, then escalates from `SIGTERM` to `SIGKILL` and waits
 up to one further second. A terminated descendant's PID can remain visible briefly while the
 operating system reaps it, so downstream checks must poll rather than assume an immediate PID
-lookup failure. The temporary
-database, CSRF material, certificate, key, and logs are mode-private and are removed on normal
-exit, child failure, or a termination signal. A new invocation always creates a new database
-and one-use invite.
+lookup failure. The temporary CSRF material, certificate, key, and logs are mode-private and are
+removed on normal exit, child failure, or a termination signal. Without the explicit static-link
+opt-in, the temporary database is also removed and a new invocation creates one one-use invite.

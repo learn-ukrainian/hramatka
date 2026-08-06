@@ -33,6 +33,10 @@ from .validation import validate_lesson
 
 _OPAQUE_TOKEN_BYTES = 32
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+_LOCAL_STATIC_TEACHER_ID = str(
+    uuid.uuid5(uuid.NAMESPACE_URL, "https://hramatka.local/static-teacher/v1")
+)
+_LOCAL_STATIC_TEACHER_NAME = "Локальний викладач"
 _SESSION_ABSOLUTE_HOURS = 24 * 7
 _SESSION_IDLE_HOURS = 24
 _FAILURE_CODES = frozenset(
@@ -177,7 +181,7 @@ class SessionRecord:
     id: str
     teacher_id: str
     teacher_display_name: str
-    invite_id: str
+    invite_id: str | None
     created_at: str
     expires_at: str
     revoked_at: str | None
@@ -519,6 +523,62 @@ class JobStore:
                 (teacher_id,),
             ).fetchone()
         return self._teacher_record(row) if row is not None else None
+
+    def create_local_static_session(self) -> RedeemedSession:
+        """Create a normal session for the one stable local-only teacher.
+
+        This deliberately has no invite row: the caller is already guarded by
+        the loopback-only application factory route.  The browser credential is
+        still a fresh opaque value and is stored only as a digest, exactly like
+        an invite-redeemed session.
+        """
+        timestamp = now_iso()
+        raw_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)
+        session = SessionRecord(
+            id=str(uuid.uuid4()),
+            teacher_id=_LOCAL_STATIC_TEACHER_ID,
+            teacher_display_name=_LOCAL_STATIC_TEACHER_NAME,
+            invite_id=None,
+            created_at=timestamp,
+            expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
+            revoked_at=None,
+        )
+        with self._write_transaction() as connection:
+            teacher_row = connection.execute(
+                """
+                SELECT deactivated_at FROM pilot_teachers
+                WHERE id = ?
+                """,
+                (_LOCAL_STATIC_TEACHER_ID,),
+            ).fetchone()
+            if teacher_row is None:
+                connection.execute(
+                    """
+                    INSERT INTO pilot_teachers (id, display_name, created_at, deactivated_at)
+                    VALUES (?, ?, ?, NULL)
+                    """,
+                    (_LOCAL_STATIC_TEACHER_ID, _LOCAL_STATIC_TEACHER_NAME, timestamp),
+                )
+            elif teacher_row["deactivated_at"] is not None:
+                raise SessionUnavailable("The local teacher account is deactivated.")
+            connection.execute(
+                """
+                INSERT INTO pilot_sessions (
+                    id, teacher_id, invite_id, secret_hash, redeem_nonce_hash,
+                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at
+                ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    session.id,
+                    session.teacher_id,
+                    session_secret_digest(raw_secret),
+                    session.created_at,
+                    session.expires_at,
+                    _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                    timestamp,
+                ),
+            )
+        return RedeemedSession(session=session, raw_secret=raw_secret)
 
     def create_invite(
         self, teacher_id: str, *, expires_in_hours: int = 72

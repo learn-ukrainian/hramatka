@@ -7,9 +7,12 @@ operator lifecycle requirements are frozen in
 aggregate rules are frozen in
 [`persistence-contract.md`](persistence-contract.md).
 
-The browser uses only the `__Host-hramatka_session` cookie issued through a one-use
-invite exchange. There is no browser bearer-token path, no CORS, no public/admin HTTP
-route for lifecycle operations, and no alternate auth path for frozen `/api/*` routes.
+The browser uses only the `__Host-hramatka_session` cookie, normally issued through a
+one-use invite exchange. There is no browser bearer-token path, no CORS, and no
+public/admin HTTP route for lifecycle operations. The sole exception is the local
+launcher-only `/api/session/local-teacher` route: it is not registered unless the
+explicit opt-in, launcher marker, and unambiguous loopback binding all hold. It is
+intentionally absent from the shipped OpenAPI contract and production deployment.
 Every browser mutation requires the configured exact `Origin` and the current
 session-derived CSRF token.
 

@@ -7,6 +7,7 @@ throwaway CSRF HMAC key instead of quietly falling back to an in-repository valu
 from __future__ import annotations
 
 import base64
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +91,16 @@ def _validate_origin(origin: str) -> str:
     return origin.rstrip("/")
 
 
+def _is_loopback_host(value: str | None) -> bool:
+    """Accept only an unambiguous IP loopback binding."""
+    if not value:
+        return False
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
 def _validate_google_ais_base_url(value: str) -> str:
     """Accept only the locked Google OpenAI-compatible HTTPS endpoint."""
     parsed = urlsplit(value)
@@ -120,6 +131,9 @@ class Settings:
     max_provider_concurrency: int = _DEFAULT_MAX_PROVIDER_CONCURRENCY
     bake_providers: tuple[str, ...] = _DEFAULT_BAKE_PROVIDERS
     mock_mode: bool = False
+    local_static_teacher: bool = False
+    local_launcher_marker: bool = False
+    server_bind_host: str | None = None
     subscription_qualification_provenance_tier: str = "api_observed"
     # The review attestor is deliberately off by default.  Its configuration is
     # separate from the teacher-pilot surface because it accepts a GitHub
@@ -222,6 +236,17 @@ class Settings:
                     self.database_path.with_name("review-attestations.sqlite3"),
                 )
 
+    @property
+    def local_static_teacher_enabled(self) -> bool:
+        """Return true only for the explicitly marked loopback launcher path."""
+        origin_host = urlsplit(self.pilot_origin).hostname
+        return (
+            self.local_static_teacher
+            and self.local_launcher_marker
+            and _is_loopback_host(self.server_bind_host)
+            and _is_loopback_host(origin_host)
+        )
+
     @classmethod
     def from_env(cls) -> Settings:
         origin = os.environ.get("HRAMATKA_PILOT_ORIGIN")
@@ -252,6 +277,9 @@ class Settings:
             # never ready for the deployed pilot and the production service does
             # not select it as its default baker.
             mock_mode=os.environ.get("HRAMATKA_MOCK_MODE", "0") == "1",
+            local_static_teacher=_parse_zero_or_one_flag("HRAMATKA_LOCAL_STATIC_TEACHER"),
+            local_launcher_marker=_parse_zero_or_one_flag("HRAMATKA_LOCAL_LAUNCHER"),
+            server_bind_host=os.environ.get("HRAMATKA_SERVER_BIND_HOST"),
             subscription_qualification_provenance_tier=_parse_provenance_tier(
                 "HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER"
             ),

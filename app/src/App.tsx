@@ -55,6 +55,7 @@ interface Session {
   teacher: { id: string; display_name: string };
   expires_at: string;
   csrf_token: string;
+  local_auth_disabled?: boolean;
 }
 
 interface ErrorEnvelope {
@@ -343,7 +344,7 @@ export default function TeacherApp() {
     const res = await apiFetch('/api/session');
     if (res.ok) {
       const data = await res.json();
-      const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
+      const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token, local_auth_disabled: data.local_auth_disabled === true };
       setSession(s);
       setCsrf(data.csrf_token);
       setSessionReady(true);
@@ -1293,6 +1294,13 @@ export default function TeacherApp() {
           </div>
         </div>
       </header>
+
+      {session?.local_auth_disabled === true && (
+        <div className="banner honest local-auth-disabled-banner" role="alert" data-testid="local-auth-disabled-banner">
+          <span className="ic">!</span>
+          <span>Локальний режим: автентифікацію вимкнено. Не відкривайте застосунок у мережі.</span>
+        </div>
+      )}
 
       {helpOpen && (
         <div

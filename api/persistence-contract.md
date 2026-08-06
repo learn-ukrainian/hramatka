@@ -55,7 +55,7 @@ and `redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now`.
 |---|---|
 | `id TEXT PRIMARY KEY` | UUID shown to operators; never used as browser credential |
 | `teacher_id TEXT NOT NULL` | FK to `pilot_teachers(id)` |
-| `invite_id TEXT NOT NULL UNIQUE` | FK; enforces one session per invite |
+| `invite_id TEXT NULL UNIQUE` | FK when present; enforces one session per invite, while the guarded loopback-only local launcher creates no invite row |
 | `secret_hash BLOB NOT NULL UNIQUE` | Domain-separated SHA-256 digest only |
 | `redeem_nonce_hash BLOB NULL` | Domain-separated browser retry-proof digest; no raw nonce |
 | `created_at`, `expires_at TEXT NOT NULL` | Seven-day absolute session window |

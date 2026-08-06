@@ -895,6 +895,9 @@ components:
           type: string
           pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
           description: Keep in memory only; never put in a URL or persistent browser storage.
+        local_auth_disabled:
+          type: boolean
+          description: Present and true only for the explicitly enabled loopback local launcher; the UI must show its persistent local-auth warning.
     AnchorInput:
       type: object
       additionalProperties: false
