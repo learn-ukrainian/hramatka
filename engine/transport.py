@@ -3,8 +3,9 @@
 Replaces the slice-1 prototype's opencode-bridge import and its dev-home key
 file. The locked route is kept — `google-ais/gemma-4-31b-it`, TOOLLESS — but:
 
-  - the AIS secret is read from the `HRAMATKA_AIS_API_KEY` env var (Scaleway
-    Secret Manager in production), never a hardcoded path;
+  - the AIS secret is read from the `HRAMATKA_AIS_API_KEY` env var or the
+    root-readable file named by `HRAMATKA_AIS_API_KEY_FILE`, never a hardcoded
+    path;
   - the concrete provider HTTP call is a pluggable `transport` seam. The default
     is an explicit stub — the real client lands with the mock→real swap (a
     separate step) — so nothing here performs network I/O by default.
@@ -23,6 +24,7 @@ from typing import Protocol
 GEMMA_MODEL = "google-ais/gemma-4-31b-it"
 GEMMA_TIMEOUT_S = 900
 AIS_API_KEY_ENV = "HRAMATKA_AIS_API_KEY"
+AIS_API_KEY_FILE_ENV = "HRAMATKA_AIS_API_KEY_FILE"
 METERED_PROVIDER_SPEND_ACK_ENV = "HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND"
 
 generator_model_id = contextvars.ContextVar("generator_model_id", default=None)
@@ -97,8 +99,11 @@ class AISGeneratorPort:
         self._transport: Transport = transport or _unwired_transport
         self._raw_output_sha256: list[str] = []
 
-    def _resolve_key(self) -> str:
+    def resolve_key(self) -> str:
+        """Resolve the configured AIS key without exposing its source."""
         key = self._api_key if self._api_key is not None else os.environ.get(self._api_key_env)
+        if key:
+            key = key.strip()
         if not key and self._api_key_file_env:
             key_file = os.environ.get(self._api_key_file_env)
             if key_file:
@@ -145,7 +150,7 @@ class AISGeneratorPort:
                 "Provider generation requires "
                 f"{METERED_PROVIDER_SPEND_ACK_ENV}=1 because the key may be billed."
             )
-        key = self._resolve_key()
+        key = self.resolve_key()
         try:
             res = self._transport(
                 prompt, api_key=key, model=self._model, timeout_s=self._timeout_s

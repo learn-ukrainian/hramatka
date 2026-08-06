@@ -91,6 +91,11 @@ qualification route; do not configure a paid Vertex fallback. Set
 API-provider bake key may be billed. Without it, standard API-provider bake calls
 are refused before transport; subscription-client routes are unaffected.
 
+For Google-AIS on a host, prefer `HRAMATKA_AIS_API_KEY_FILE` pointing to the
+root-readable secret file rather than copying the key into the environment file.
+`HRAMATKA_AIS_API_KEY` remains supported for compatibility and takes precedence
+when both sources are set.
+
 Before pilot deployment, perform the separately driver-coordinated live check with
 four simultaneous teacher bakes. Record only concurrency counts, sanitized timing,
 provider host names, terminal job states, and `/api/readyz`—never prompts, provider

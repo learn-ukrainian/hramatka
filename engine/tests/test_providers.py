@@ -12,6 +12,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ import pytest
 from hramatka.api.qualified_models import LOGICAL_MODELS
 from hramatka.engine import providers
 from hramatka.engine.transport import (
+    AIS_API_KEY_FILE_ENV,
     GEMMA_MODEL,
     METERED_PROVIDER_SPEND_ACK_ENV,
     AISGeneratorPort,
@@ -267,6 +269,104 @@ def _failover(
         primary_calls,
         fallback_calls,
     )
+
+
+# --- AIS secret-file credentials -------------------------------------------
+def test_ais_port_uses_file_credential_and_calls_mock_transport(monkeypatch, tmp_path):
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text("file-only-ais-key\n", encoding="utf-8")
+    monkeypatch.delenv("HRAMATKA_AIS_API_KEY", raising=False)
+    monkeypatch.setenv(AIS_API_KEY_FILE_ENV, str(key_file))
+    seen: dict[str, str | int] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers["authorization"]
+        seen["calls"] = int(seen.get("calls", 0)) + 1
+        return httpx.Response(200, json=OK_BODY)
+
+    ais, _, _ = providers._gemma_routes()
+    ais._transport = _transport(handler)
+
+    assert ais.is_configured()
+    assert ais("prompt") == '{"activities": []}'
+    assert seen == {"authorization": "Bearer file-only-ais-key", "calls": 1}
+
+
+def test_ais_direct_credential_takes_precedence_over_file(monkeypatch, tmp_path):
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text("file-ais-key\n", encoding="utf-8")
+    monkeypatch.setenv("HRAMATKA_AIS_API_KEY", "direct-ais-key")
+    monkeypatch.setenv(AIS_API_KEY_FILE_ENV, str(key_file))
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers["authorization"]
+        return httpx.Response(200, json=OK_BODY)
+
+    ais, _, _ = providers._gemma_routes()
+    ais._transport = _transport(handler)
+
+    assert ais._api_key_file_env == AIS_API_KEY_FILE_ENV
+    assert ais("prompt") == '{"activities": []}'
+    assert seen["authorization"] == "Bearer direct-ais-key"
+
+
+def test_ais_whitespace_direct_credential_defers_to_file(monkeypatch, tmp_path):
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text("file-ais-key\n", encoding="utf-8")
+    monkeypatch.setenv("HRAMATKA_AIS_API_KEY", " \t\n")
+    monkeypatch.setenv(AIS_API_KEY_FILE_ENV, str(key_file))
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers["authorization"]
+        return httpx.Response(200, json=OK_BODY)
+
+    ais, _, _ = providers._gemma_routes()
+    ais._transport = _transport(handler)
+
+    assert ais("prompt") == '{"activities": []}'
+    assert seen["authorization"] == "Bearer file-ais-key"
+
+
+@pytest.mark.parametrize("unreadable", (False, True), ids=("missing", "unreadable"))
+def test_ais_unreadable_or_missing_key_file_raises_typed_value_free_error(
+    monkeypatch, tmp_path, unreadable
+):
+    missing_file = tmp_path / "missing-google-ais.key"
+    if unreadable:
+        missing_file.write_text("unreadable-ais-key", encoding="utf-8")
+
+        def unreadable_read_text(self, *args, **kwargs):
+            raise PermissionError("test unreadable file")
+
+        monkeypatch.setattr(Path, "read_text", unreadable_read_text)
+    monkeypatch.delenv("HRAMATKA_AIS_API_KEY", raising=False)
+    monkeypatch.setenv(AIS_API_KEY_FILE_ENV, str(missing_file))
+    ais, _, _ = providers._gemma_routes()
+
+    with pytest.raises(GeneratorUnavailable) as exc:
+        ais("prompt")
+
+    assert ais._api_key_file_env == AIS_API_KEY_FILE_ENV
+    assert str(exc.value) == f"{AIS_API_KEY_FILE_ENV} could not be read"
+    assert "missing-google-ais.key" not in str(exc.value)
+    assert "file-ais-key" not in str(exc.value)
+    assert "unreadable-ais-key" not in str(exc.value)
+    assert "Traceback" not in str(exc.value)
+
+
+def test_ais_without_either_credential_remains_not_configured(monkeypatch):
+    monkeypatch.delenv("HRAMATKA_AIS_API_KEY", raising=False)
+    monkeypatch.delenv(AIS_API_KEY_FILE_ENV, raising=False)
+    ais, _, _ = providers._gemma_routes()
+
+    with pytest.raises(GeneratorUnavailable) as exc:
+        ais("prompt")
+
+    assert ais._api_key_file_env == AIS_API_KEY_FILE_ENV
+    assert "is not set" in str(exc.value)
+    assert "requires the key" in str(exc.value)
 
 
 # --- request shape ---------------------------------------------------------
@@ -732,14 +832,14 @@ def test_make_generator_deepseek_reads_env(monkeypatch, name, model):
     assert gen._model == model
     assert gen._transport.base_url == "https://deep.example/v9"
     # the port resolves the deepseek-specific key env
-    assert gen._resolve_key() == "ds-key"
+    assert gen.resolve_key() == "ds-key"
 
 
 def test_make_generator_deepseek_missing_key_names_its_env(monkeypatch):
     monkeypatch.delenv("HRAMATKA_DEEPSEEK_API_KEY", raising=False)
     gen = providers.make_generator("deepseek")
     with pytest.raises(GeneratorUnavailable) as exc:
-        gen._resolve_key()
+        gen.resolve_key()
     assert "HRAMATKA_DEEPSEEK_API_KEY" in str(exc.value)
 
 

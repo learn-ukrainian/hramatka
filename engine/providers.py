@@ -34,6 +34,7 @@ from urllib.parse import quote, urlsplit
 from .serializer_policy import serializer_temperature
 from .transport import (
     AIS_API_KEY_ENV,
+    AIS_API_KEY_FILE_ENV,
     GEMMA_MODEL,
     GEMMA_TIMEOUT_S,
     AISGeneratorPort,
@@ -1392,6 +1393,7 @@ def _gemma_routes() -> tuple[AISGeneratorPort, AISGeneratorPort, AISGeneratorPor
     openrouter_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, DEFAULT_GEMMA_FALLBACK_MODEL)
     ais = AISGeneratorPort(
         api_key_env=AIS_API_KEY_ENV,
+        api_key_file_env=AIS_API_KEY_FILE_ENV,
         model=GEMMA_MODEL,
         timeout_s=GEMMA_TIMEOUT_S,
         transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
@@ -1444,6 +1446,7 @@ def _gemini_ais_route(model_id: str) -> AISGeneratorPort:
     ais_base = os.environ.get(GEMMA_AIS_BASE_URL_ENV, DEFAULT_GEMMA_AIS_BASE_URL)
     return AISGeneratorPort(
         api_key_env=AIS_API_KEY_ENV,
+        api_key_file_env=AIS_API_KEY_FILE_ENV,
         model=model_id,
         timeout_s=GEMMA_TIMEOUT_S,
         transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
@@ -1456,7 +1459,7 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         "google-ais",
         "google-ais/gemini-3.6-flash",
         AIS_API_KEY_ENV,
-        None,
+        AIS_API_KEY_FILE_ENV,
     ),
     "gemini-flash-subscription": (
         "gemini-3.6-flash",
@@ -1470,7 +1473,7 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         "google-ais",
         "google-ais/gemini-3.1-pro-preview",
         AIS_API_KEY_ENV,
-        None,
+        AIS_API_KEY_FILE_ENV,
     ),
     "gemini-pro-subscription": (
         "gemini-3.1-pro",
@@ -1484,7 +1487,7 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         "google-ais",
         GEMMA_MODEL,
         AIS_API_KEY_ENV,
-        None,
+        AIS_API_KEY_FILE_ENV,
     ),
     "gemma-openrouter": (
         "gemma-4-31b",
@@ -1625,6 +1628,7 @@ def make_qualification_pinned_generator(
     elif route_id == "gemma-ais":
         port = AISGeneratorPort(
             api_key_env=AIS_API_KEY_ENV,
+            api_key_file_env=AIS_API_KEY_FILE_ENV,
             model=GEMMA_MODEL,
             timeout_s=GEMMA_TIMEOUT_S,
             transport=HttpChatTransport(
@@ -1651,6 +1655,7 @@ def make_qualification_pinned_generator(
     else:
         port = AISGeneratorPort(
             api_key_env=AIS_API_KEY_ENV,
+            api_key_file_env=AIS_API_KEY_FILE_ENV,
             model=model_id,
             timeout_s=GEMMA_TIMEOUT_S,
             transport=HttpChatTransport(
@@ -1763,6 +1768,7 @@ def _build_generator_port(model_id: str) -> AISGeneratorPort:
         fallback_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, "google/gemma-4-26b-a4b-it")
         ais = AISGeneratorPort(
             api_key_env=AIS_API_KEY_ENV,
+            api_key_file_env=AIS_API_KEY_FILE_ENV,
             model="google-ais/gemma-4-26b-a4b-it",
             timeout_s=GEMMA_TIMEOUT_S,
             transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
@@ -1830,6 +1836,7 @@ def make_bake_generator(
             fallback_model = os.environ.get(GEMMA_FALLBACK_MODEL_ENV, "google/gemma-4-26b-a4b-it")
             ais = AISGeneratorPort(
                 api_key_env=AIS_API_KEY_ENV,
+                api_key_file_env=AIS_API_KEY_FILE_ENV,
                 model="google-ais/gemma-4-26b-a4b-it",
                 timeout_s=GEMMA_TIMEOUT_S,
                 transport=HttpChatTransport(base_url=ais_base, host="google-ais"),
@@ -2010,6 +2017,7 @@ def make_logical_model_generator(
         elif route_id == "gemma-ais":
             port = AISGeneratorPort(
                 api_key_env=AIS_API_KEY_ENV,
+                api_key_file_env=AIS_API_KEY_FILE_ENV,
                 model=GEMMA_MODEL,
                 timeout_s=GEMMA_TIMEOUT_S,
                 transport=HttpChatTransport(

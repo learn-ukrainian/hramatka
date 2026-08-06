@@ -568,6 +568,35 @@ def test_openrouter_is_enabled_only_when_credential_is_configured(tmp_path: Path
     assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "google-ais,openrouter"
 
 
+def test_google_ais_is_enabled_when_only_its_key_file_is_configured(tmp_path: Path) -> None:
+    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
+    root = tmp_path / "runtime"
+    root.mkdir()
+    environment = _data_environment(tmp_path)
+    environment.pop("HRAMATKA_AIS_API_KEY")
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text("file-only-ais-key", encoding="utf-8")
+    environment["HRAMATKA_AIS_API_KEY_FILE"] = str(key_file)
+
+    resolved = local_teacher._runtime_environment(config, _runtime_paths(root), environment)
+
+    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "google-ais"
+
+
+def test_google_ais_empty_key_file_is_not_configured(tmp_path: Path) -> None:
+    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
+    root = tmp_path / "runtime"
+    root.mkdir()
+    environment = _data_environment(tmp_path)
+    environment.pop("HRAMATKA_AIS_API_KEY")
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text(" \n", encoding="utf-8")
+    environment["HRAMATKA_AIS_API_KEY_FILE"] = str(key_file)
+
+    with pytest.raises(local_teacher.LauncherError, match="Google AI Studio is not configured"):
+        local_teacher._runtime_environment(config, _runtime_paths(root), environment)
+
+
 def test_explicit_unconfigured_provider_fails_instead_of_falling_back(tmp_path: Path) -> None:
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     root = tmp_path / "runtime"

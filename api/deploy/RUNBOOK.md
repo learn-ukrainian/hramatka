@@ -47,6 +47,10 @@ change, provisioning, or disclosure of any secret.
    Set `HRAMATKA_BAKE_WORKERS=4` (clamped 1–8),
    `HRAMATKA_MAX_PROVIDER_CONCURRENCY=8`, and
    `HRAMATKA_BAKE_PROVIDERS=antigravity,openrouter`. Also configure
+   `HRAMATKA_AIS_API_KEY_FILE` to the Google-AIS root-readable secret file
+   (preferred for host deployment), or the compatibility variable
+   `HRAMATKA_AIS_API_KEY`; the direct value takes precedence when both are set.
+   Configure
    `HRAMATKA_GEMMA_FALLBACK_BASE_URL`, `HRAMATKA_GEMMA_FALLBACK_MODEL`, and one
    host-secret-store key source: `HRAMATKA_GEMMA_FALLBACK_API_KEY` or
    `HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE`. Current logical-model bindings use
@@ -68,7 +72,8 @@ change, provisioning, or disclosure of any secret.
    variable `HRAMATKA_REVIEW_ATTESTOR_URL`; do not put that URL in a workflow,
    source file, Caddy variable, or shell history. The trusted repository ID,
    workflow ref, and workflow-content digest are allow-list inputs, not hints.
-   Review calls use the host's existing `HRAMATKA_AIS_API_KEY`; GitHub Actions
+   Review calls use the host's existing Google-AIS credential from
+   `HRAMATKA_AIS_API_KEY` or `HRAMATKA_AIS_API_KEY_FILE`; GitHub Actions
    receives no Google credential. The default reviewer is
    `google-ais/gemini-3.6-flash`. It never falls back automatically to Pro or
    another paid model. The signing-key path is the exception: do not assign it

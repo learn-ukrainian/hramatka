@@ -31,6 +31,15 @@ def test_preflight_verifies_vendor_and_data_digests():
     paths.preflight()
 
 
+def test_preflight_accepts_google_ais_key_file(monkeypatch, tmp_path):
+    key_file = tmp_path / "google-ais.key"
+    key_file.write_text("file-only-ais-key", encoding="utf-8")
+    monkeypatch.delenv("HRAMATKA_AIS_API_KEY", raising=False)
+    monkeypatch.setenv("HRAMATKA_AIS_API_KEY_FILE", str(key_file))
+
+    paths.preflight(require_generator=True)
+
+
 # ---------------------------------------------------------------------------
 # parse_tag — raw VESUM tag string -> structured dict
 # ---------------------------------------------------------------------------

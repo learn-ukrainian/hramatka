@@ -24,6 +24,12 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from hramatka.engine.transport import (
+    AIS_API_KEY_FILE_ENV,
+    AISGeneratorPort,
+    GeneratorUnavailable,
+)
+
 from .config import Settings, _validate_google_ais_base_url
 
 _GITHUB_ISSUER = "https://token.actions.githubusercontent.com"
@@ -1546,9 +1552,10 @@ class ReviewAttestor:
         return {"verdict": verdict, "findings": normalized}
 
     def _call_provider(self, user_input: str) -> str:
-        key = os.environ.get("HRAMATKA_AIS_API_KEY")
-        if not key:
-            raise ReviewAttestationError("provider_not_configured", status_code=503)
+        try:
+            key = AISGeneratorPort(api_key_file_env=AIS_API_KEY_FILE_ENV).resolve_key()
+        except GeneratorUnavailable as exc:
+            raise ReviewAttestationError("provider_not_configured", status_code=503) from exc
         base_url = _validate_google_ais_base_url(self.settings.review_attestation_ais_base_url)
         response = self.client.post(
             f"{base_url}/chat/completions",
