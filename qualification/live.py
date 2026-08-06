@@ -22,7 +22,7 @@ from hramatka.engine.providers import (
     telemetry_ctx,
     validate_qualification_route_runtime,
 )
-from hramatka.engine.transport import GEMMA_TIMEOUT_S
+from hramatka.engine.transport import GEMMA_TIMEOUT_S, GeneratorPort
 
 from .harness import (
     _PHASE_RE,
@@ -274,7 +274,7 @@ def preflight_live_diagnostic(
 class _PinnedRouteProvider:
     """One exact provider route plus content-free generation/repair provenance."""
 
-    def __init__(self, route: RouteBinding, port: Callable[[str], str]) -> None:
+    def __init__(self, route: RouteBinding, port: GeneratorPort) -> None:
         self._route = route
         self._port = port
         self.prompt_digests: list[str] = []
@@ -286,14 +286,9 @@ class _PinnedRouteProvider:
     def receipt_provenance(self) -> dict[str, object]:
         """Expose only the port's content-free qualification evidence."""
         provenance = getattr(self._port, "receipt_provenance", None)
-        if callable(provenance):
-            return provenance()
-        return {
-            "tier": "api_observed",
-            "client_version": None,
-            "requested_model": None,
-            "raw_output_sha256": (),
-        }
+        if not callable(provenance):
+            raise LiveQualificationError("Pinned qualification port lacks receipt provenance.")
+        return provenance()
 
     def __call__(self, prompt: str) -> str:
         phase_match = _PHASE_RE.search(prompt)
@@ -348,10 +343,10 @@ class _PinnedRouteProvider:
         return result
 
 
-PinnedPortFactory = Callable[[str, RouteBinding], Callable[[str], str]]
+PinnedPortFactory = Callable[[str, RouteBinding], GeneratorPort]
 
 
-def _real_pinned_port(logical_model_id: str, route: RouteBinding) -> Callable[[str], str]:
+def _real_pinned_port(logical_model_id: str, route: RouteBinding) -> GeneratorPort:
     return make_qualification_pinned_generator(
         route_id=route.route_id,
         logical_model_id=logical_model_id,

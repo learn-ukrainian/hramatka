@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextvars
 import os
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
@@ -52,6 +53,14 @@ class Transport(Protocol):
     ) -> str: ...
 
 
+class GeneratorPort(Protocol):
+    """Qualification generator-port contract with content-free provenance."""
+
+    def __call__(self, prompt: str) -> str: ...
+
+    def receipt_provenance(self) -> dict[str, object]: ...
+
+
 def _unwired_transport(prompt: str, *, api_key: str, model: str, timeout_s: int) -> str:
     """Default transport: the real google-ais client is not wired here."""
     del prompt, api_key, model, timeout_s
@@ -85,6 +94,7 @@ class AISGeneratorPort:
         self._model = model
         self._timeout_s = timeout_s
         self._transport: Transport = transport or _unwired_transport
+        self._raw_output_sha256: list[str] = []
 
     def _resolve_key(self) -> str:
         key = self._api_key if self._api_key is not None else os.environ.get(self._api_key_env)
@@ -117,6 +127,17 @@ class AISGeneratorPort:
             or (self._api_key_file_env and os.environ.get(self._api_key_file_env))
         )
 
+    def receipt_provenance(self) -> dict[str, object]:
+        """Return content-free evidence observed at the API boundary."""
+        if not self._raw_output_sha256:
+            raise GeneratorUnavailable("AIS provenance is incomplete")
+        return {
+            "tier": "api_observed",
+            "client_version": None,
+            "requested_model": self._model,
+            "raw_output_sha256": tuple(self._raw_output_sha256),
+        }
+
     def __call__(self, prompt: str) -> str:
         key = self._resolve_key()
         try:
@@ -124,6 +145,7 @@ class AISGeneratorPort:
                 prompt, api_key=key, model=self._model, timeout_s=self._timeout_s
             )
             generator_model_id.set(self._model)
+            self._raw_output_sha256.append(sha256(res.encode("utf-8")).hexdigest())
             return res
         except SystemExit as exc:  # a fail-closed transport guard must not crash the worker
             raise GeneratorUnavailable(

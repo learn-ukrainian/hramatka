@@ -23,6 +23,7 @@ from hramatka.qualification import (
 )
 from hramatka.qualification.harness import _DeterministicRouteProvider
 from hramatka.qualification.receipts import (
+    ProviderProvenance,
     SlotTelemetry,
 )
 from hramatka.qualification.receipts import (
@@ -202,6 +203,25 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     )
     with pytest.raises(QualificationError, match="floor status"):
         harness.aggregate_cells(forged_floor)
+
+
+def test_aggregate_refuses_api_observed_provenance_for_subscription_cell(tmp_path) -> None:
+    harness = ProductionQualificationHarness(tmp_path / "qualification")
+    run = harness.run(deterministic_runtime_anchors())
+    forged = tuple(
+        replace(
+            receipt,
+            provider_provenance=ProviderProvenance(
+                "api_observed", requested_model=receipt.expected_route.model_id
+            ),
+        )
+        if receipt.expected_route.host == "antigravity-cli"
+        else receipt
+        for receipt in run.receipts
+    )
+
+    with pytest.raises(QualificationError, match="Subscription receipt"):
+        harness.aggregate_cells(forged)
 
 
 def test_manifest_and_receipt_schema_are_content_free_and_fail_closed() -> None:

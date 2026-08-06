@@ -153,10 +153,14 @@ class ProviderProvenance:
         ):
             raise QualificationError("Provider provenance raw-output hashes are invalid.")
         if tier == "api_observed":
-            if row["client_version"] is not None or row["requested_model"] is not None or hashes:
+            if row["client_version"] is not None:
                 raise QualificationError(
-                    "API-observed provenance must not claim CLI-only evidence."
+                    "API-observed provenance must not claim a CLI client version."
                 )
+            if row["requested_model"] is not None and (
+                not isinstance(row["requested_model"], str) or not row["requested_model"]
+            ):
+                raise QualificationError("API-observed provenance has an invalid requested model.")
         elif (
             not isinstance(row["client_version"], str)
             or not row["client_version"]

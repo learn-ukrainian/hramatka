@@ -19,7 +19,7 @@ import pytest
 from hramatka.api.qualified_models import LOGICAL_MODELS
 from hramatka.engine import providers
 from hramatka.engine.transport import GEMMA_MODEL, AISGeneratorPort, GeneratorUnavailable
-from hramatka.qualification.receipts import RouteBinding
+from hramatka.qualification.receipts import ProviderProvenance, RouteBinding
 
 OK_BODY = {"choices": [{"message": {"content": '{"activities": []}'}}]}
 VERTEX_BASE_URL = (
@@ -737,6 +737,27 @@ def test_port_over_http_transport_passes_prompt_through():
     handler, _ = _seq([200])
     port = AISGeneratorPort(api_key="k", transport=_transport(handler))
     assert port("prompt") == '{"activities": []}'
+
+
+def test_ais_generator_reports_api_observed_provenance_from_its_own_call():
+    handler, _ = _seq([200])
+    port = AISGeneratorPort(
+        api_key="k",
+        model="google-ais/gemma-4-31b-it",
+        transport=_transport(handler),
+    )
+
+    assert port("prompt") == '{"activities": []}'
+    provenance = port.receipt_provenance()
+    assert provenance == {
+        "tier": "api_observed",
+        "client_version": None,
+        "requested_model": "google-ais/gemma-4-31b-it",
+        "raw_output_sha256": (
+            "35bf4703564648295baf3d35c7d9dc8536f06a20368e2dc60cbb3ef1924c63f9",
+        ),
+    }
+    assert ProviderProvenance.from_dict(provenance).requested_model == "google-ais/gemma-4-31b-it"
 
 
 def test_calls_done_never_regresses_under_concurrent_updates():

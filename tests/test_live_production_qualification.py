@@ -30,6 +30,7 @@ from hramatka.qualification.live import (
     LiveQualificationError,
     LiveQualificationRequest,
     _matrix,
+    _PinnedRouteProvider,
     _repository_state,
     diagnostic_spend_acknowledgement,
     execute_live_diagnostic,
@@ -297,12 +298,24 @@ def test_failed_live_diagnostic_preserves_raw_parse_artifact_outside_receipts(
     request = _diagnostic_request(tmp_path)
     raw_response = "PRIVATE RAW MODEL RESPONSE"
 
+    class InvalidRawPort:
+        def __call__(self, _prompt: str) -> str:
+            return raw_response
+
+        def receipt_provenance(self) -> dict[str, object]:
+            return {
+                "tier": "api_observed",
+                "client_version": None,
+                "requested_model": None,
+                "raw_output_sha256": (),
+            }
+
     run = execute_live_diagnostic(
         request,
         bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
         repository_state=_clean_repository_state,
         credential_present=_credential_present,
-        pinned_port_factory=lambda _logical_model_id, _route: lambda _prompt: raw_response,
+        pinned_port_factory=lambda _logical_model_id, _route: InvalidRawPort(),
     )
 
     assert run.cell.receipt.outcome == "failed"
@@ -570,6 +583,18 @@ def test_pinned_factory_never_builds_failover_or_round_robin_ports(monkeypatch) 
             assert port._transport.retry_json_mode_on_400 is True
         else:
             assert port._transport.retry_json_mode_on_400 is False
+
+
+def test_pinned_route_refuses_port_without_receipt_provenance() -> None:
+    route = RouteBinding(
+        route_id="gemini-flash-ais",
+        host="google-ais",
+        model_id="google-ais/gemini-3.6-flash",
+    )
+    provider = _PinnedRouteProvider(route, lambda _prompt: '{"activities": []}')  # type: ignore[arg-type]
+
+    with pytest.raises(LiveQualificationError, match="lacks receipt provenance"):
+        provider.receipt_provenance()
 
 
 def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate(
