@@ -23,6 +23,7 @@ from .receipts import (
     QualificationError,
     RouteAggregate,
     _load_prompt_hashes,
+    _load_qualification_target_model_ids,
     _load_receipts,
     aggregate_receipts,
     assert_live_v3_authorities,
@@ -145,6 +146,7 @@ def transcribe(*, receipt_dir: Path, source_commit: str) -> str:
         prompt_hashes=_load_prompt_hashes(receipt_dir),
         engine_sha256=_current_engine_digest(),
         flag_sha256=_flag_digest(),
+        logical_model_ids=_load_qualification_target_model_ids(receipt_dir),
     )
     _assert_registry_literals(aggregates)
     return format_registry_block(aggregates)

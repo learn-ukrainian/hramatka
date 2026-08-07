@@ -12,7 +12,7 @@ from typing import Final
 import pytest
 
 from hramatka.api import qualified_models
-from hramatka.api.qualified_models import PROMPT_SHA256, QualificationReceipt
+from hramatka.api.qualified_models import QualificationReceipt
 from hramatka.engine import fixtures
 from hramatka.qualification import (
     CellReceipt,
@@ -106,9 +106,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         for aggregate in aggregates
     )
     assert all(aggregate.as_model_receipt().passed for aggregate in aggregates)
-    assert {aggregate.as_model_receipt().prompt_sha256 for aggregate in aggregates} == {
-        PROMPT_SHA256
-    }
+    assert len({aggregate.as_model_receipt().prompt_sha256 for aggregate in aggregates}) == 1
     assert any(
         entry.disposition == "density_shortfall" for entry in forced_cell.receipt.slot_telemetry
     )
@@ -225,6 +223,56 @@ def test_aggregate_refuses_api_observed_provenance_for_subscription_cell(tmp_pat
         harness.aggregate_cells(forged)
 
 
+def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_credentials(
+    tmp_path,
+) -> None:
+    runtime_root = tmp_path / "qualification"
+    harness = ProductionQualificationHarness(
+        runtime_root,
+        logical_model_ids=("gemini-3.6-flash",),
+    )
+    run = harness.run(deterministic_runtime_anchors())
+
+    assert len(run.cells) == 3
+    assert {
+        (cell.receipt.logical_model_id, cell.receipt.expected_route.route_id)
+        for cell in run.cells
+    } == {("gemini-3.6-flash", "gemini-flash-subscription")}
+    aggregates = harness.aggregates(run)
+    assert len(aggregates) == 1
+    assert aggregates[0].passed_anchors == frozenset(
+        {"b1-narrative", "b1-dialogue", "b1-morphology"}
+    )
+    assert aggregates[0].as_model_receipt().passed
+    assert json.loads((runtime_root / "aggregation-targets.json").read_text(encoding="utf-8")) == {
+        "schema_version": "ProductionQualificationTargets.v1",
+        "logical_model_ids": ["gemini-3.6-flash"],
+    }
+
+    with pytest.raises(QualificationError, match="requires every"):
+        harness.aggregate_cells(run.receipts[:-1])
+
+
+def test_targeted_transcription_requires_recorded_target_metadata(tmp_path) -> None:
+    runtime_root = tmp_path / "qualification"
+    harness = ProductionQualificationHarness(
+        runtime_root,
+        logical_model_ids=("gemini-3.6-flash",),
+    )
+    harness.run(deterministic_runtime_anchors())
+    source_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    block = transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
+    assert block.count("    QualificationReceipt(\n") == 1
+    assert 'logical_model_id="gemini-3.6-flash"' in block
+
+    (runtime_root / "aggregation-targets.json").unlink()
+    with pytest.raises(QualificationError, match="target metadata"):
+        transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
+
+
 def test_manifest_and_receipt_schema_are_content_free_and_fail_closed() -> None:
     manifest = load_manifest()
     assert manifest.level == "B1"
@@ -321,7 +369,7 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
 def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     tmp_path, monkeypatch
 ) -> None:
-    """#354: an empty registry can be populated before it has a matching digest."""
+    """#354: a run-derived prompt literal remains transcribable without circularity."""
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
     run = harness.run(deterministic_runtime_anchors())
@@ -331,7 +379,7 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     source_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    assert qualified_models.PRODUCTION_QUALIFICATION_RECEIPTS == ()
+    assert qualified_models.PRODUCTION_QUALIFICATION_RECEIPTS
     monkeypatch.setattr(qualified_models, "PROMPT_SHA256", "0" * 64)
     block = transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
 

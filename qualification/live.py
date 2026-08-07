@@ -35,7 +35,13 @@ from .harness import (
     _sha,
 )
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
-from .receipts import QualificationError, RepairTraceEntry, RouteBinding
+from .receipts import (
+    QualificationError,
+    RepairTraceEntry,
+    RouteBinding,
+    qualification_matrix,
+    qualification_target_model_ids,
+)
 
 _ACK_PREFIX = "HRAMATKA-QUALIFICATION-SPEND"
 _DIAGNOSTIC_LABEL = "B1-45M-density-diagnostic"
@@ -58,6 +64,7 @@ class LiveQualificationRequest:
     execute_real_provider: bool
     spend_acknowledgement: str | None
     repository_root: Path
+    logical_model_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -69,11 +76,23 @@ class LiveDiagnosticRequest:
     route_id: str
 
 
-def spend_acknowledgement(*, source_commit: str, manifest_sha256: str) -> str:
+def spend_acknowledgement(
+    *,
+    source_commit: str,
+    manifest_sha256: str,
+    logical_model_ids: tuple[str, ...] | None = None,
+) -> str:
     """Return the exact acknowledgement an operator must pass to execute."""
+    matrix = _matrix(logical_model_ids)
+    label = f"B1-45M-{len(QUALIFICATION_ANCHORS)}x{len(matrix)}"
+    if logical_model_ids is not None:
+        routes = ",".join(
+            f"{logical_model_id}/{route.route_id}" for logical_model_id, route in matrix
+        )
+        label = f"{label}:{routes}"
     return (
         f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:"
-        f"B1-45M-{len(QUALIFICATION_ANCHORS)}x{len(_configured_matrix())}"
+        f"{label}"
     )
 
 
@@ -131,18 +150,14 @@ def _paths_overlap(left: Path, right: Path) -> bool:
 
 def _configured_matrix() -> tuple[tuple[str, RouteBinding], ...]:
     """Derive the configured route matrix from the teacher routing allowlist."""
-    from hramatka.api.qualified_models import LOGICAL_MODELS
-
-    return tuple(
-        (model.id, RouteBinding(route.id, route.host, route.model_id))
-        for model in LOGICAL_MODELS
-        for route in model.provider_routes
-    )
+    return qualification_matrix()
 
 
-def _matrix() -> tuple[tuple[str, RouteBinding], ...]:
-    """Return the fixed qualification matrix; callers cannot choose a subset."""
-    return _configured_matrix()
+def _matrix(
+    logical_model_ids: tuple[str, ...] | None = None,
+) -> tuple[tuple[str, RouteBinding], ...]:
+    """Return whole configured routes for the selected logical models."""
+    return qualification_matrix(logical_model_ids)
 
 
 def _matrix_cells(matrix: tuple[tuple[str, RouteBinding], ...]) -> frozenset[tuple[str, str, str]]:
@@ -231,14 +246,17 @@ def preflight_live_qualification(
     runtime_route_valid: Callable[..., None] = validate_qualification_route_runtime,
 ) -> QualificationManifest:
     """Reject every deterministic defect before any matrix provider is constructed."""
-    matrix = _matrix()
-    configured_matrix = _configured_matrix()
-    expected_cells = _matrix_cells(configured_matrix)
+    try:
+        target_ids = qualification_target_model_ids(request.logical_model_ids)
+        matrix = _matrix(target_ids)
+        expected_matrix = qualification_matrix(target_ids)
+    except QualificationError as error:
+        raise LiveQualificationError("Qualification target is invalid.") from error
     route_keys = {(logical_model_id, route.route_id) for logical_model_id, route in matrix}
     if (
-        len(matrix) != len(configured_matrix)
+        not matrix
         or len(route_keys) != len(matrix)
-        or _matrix_cells(matrix) != expected_cells
+        or matrix != expected_matrix
     ):
         raise LiveQualificationError(
             "Qualification matrix does not match current logical-model routes."
@@ -247,7 +265,9 @@ def preflight_live_qualification(
         request,
         matrix=matrix,
         acknowledgement=lambda source_commit, manifest_sha256: spend_acknowledgement(
-            source_commit=source_commit, manifest_sha256=manifest_sha256
+            source_commit=source_commit,
+            manifest_sha256=manifest_sha256,
+            logical_model_ids=target_ids if request.logical_model_ids is not None else None,
         ),
         manifest=manifest,
         repository_state=repository_state,
@@ -270,9 +290,13 @@ def preflight_live_diagnostic(
         raise LiveQualificationError(
             "Diagnostic anchor is not in the immutable qualification pack."
         )
+    try:
+        matrix = _matrix(qualification.logical_model_ids)
+    except QualificationError as error:
+        raise LiveQualificationError("Qualification target is invalid.") from error
     matches = [
         (logical_model_id, route)
-        for logical_model_id, route in _matrix()
+        for logical_model_id, route in matrix
         if route.route_id == request.route_id
     ]
     if len(matches) != 1:
@@ -381,13 +405,17 @@ def _real_pinned_port(logical_model_id: str, route: RouteBinding) -> GeneratorPo
     )
 
 
-def _validate_complete_live_run(run: object, request: LiveQualificationRequest) -> None:
-    """Require the full path matrix before the CLI can report real-run success."""
+def _validate_complete_live_run(
+    run: object,
+    request: LiveQualificationRequest,
+    matrix: tuple[tuple[str, RouteBinding], ...],
+) -> None:
+    """Require every selected model route and immutable anchor before success."""
     cells = getattr(run, "cells", ())
     expected = {
         (anchor_id, route.route_id)
         for anchor_id in request.anchors
-        for _logical_model_id, route in _matrix()
+        for _logical_model_id, route in matrix
     }
     observed: list[tuple[str, str]] = []
     invalid: set[tuple[str, str]] = set()
@@ -437,7 +465,7 @@ def execute_live_qualification(
     runner_stop_timeout_seconds: float = _LIVE_RUNNER_STOP_TIMEOUT_SECONDS,
     runner_stop_waiter: Callable[[object, float], bool] | None = None,
 ):
-    """Run the preflighted 6-cell matrix through the ordinary production API path."""
+    """Run a complete selected-model matrix through the ordinary production API path."""
     active_manifest = preflight_live_qualification(
         request,
         manifest=manifest,
@@ -452,10 +480,13 @@ def execute_live_qualification(
         raise LiveQualificationError(
             "Live runner stop wait must cover one provider timeout plus its safety margin."
         )
+    target_ids = qualification_target_model_ids(request.logical_model_ids)
+    matrix = _matrix(target_ids)
     harness = ProductionQualificationHarness(
         request.receipt_root,
         manifest=active_manifest,
         source_commit=request.expected_source_commit,
+        logical_model_ids=target_ids,
     )
 
     def provider_factory(
@@ -478,14 +509,14 @@ def execute_live_qualification(
         raise LiveQualificationError(
             "Qualification runner remained active; scratch was preserved."
         ) from error
-    _validate_complete_live_run(run, request)
+    _validate_complete_live_run(run, request, matrix)
     try:
         aggregates = harness.aggregates(run)
         # This is intentionally validation only.  Constructing the candidate
         # receipts proves each route has a complete current v3 aggregate, but
         # slice 7 alone may transcribe those receipts into the production
         # registry or expose v3 generation to teachers.
-        if len(aggregates) != len(_matrix()):
+        if len(aggregates) != len(matrix):
             raise QualificationError("Live qualification did not produce every route aggregate.")
         for aggregate in aggregates:
             aggregate.as_model_receipt()
@@ -529,6 +560,7 @@ def execute_live_diagnostic(
         qualification.receipt_root,
         manifest=active_manifest,
         source_commit=qualification.expected_source_commit,
+        logical_model_ids=qualification.logical_model_ids,
     )
     provider = _PinnedRouteProvider(route, pinned_port_factory(logical_model_id, route))
     try:
@@ -598,6 +630,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--execute-real-provider", action="store_true")
     parser.add_argument("--acknowledge-provider-spend")
+    parser.add_argument(
+        "--logical-model-id",
+        action="append",
+        help="qualify every configured route for this logical model; repeat to target more models",
+    )
     parser.add_argument("--diagnostic-anchor-id")
     parser.add_argument("--diagnostic-route-id")
     return parser
@@ -619,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
             execute_real_provider=args.execute_real_provider,
             spend_acknowledgement=args.acknowledge_provider_spend,
             repository_root=repository_root,
+            logical_model_ids=(tuple(args.logical_model_id) if args.logical_model_id else None),
         )
         diagnostic_requested = bool(args.diagnostic_anchor_id or args.diagnostic_route_id)
         if diagnostic_requested and not (args.diagnostic_anchor_id and args.diagnostic_route_id):

@@ -2,9 +2,9 @@
 
 Logical model identities are the only values accepted from the teacher UI.
 Provider routes remain private and must each have a current qualification
-receipt before their logical model is exposed.  Historical bake-off evidence
-is intentionally not loaded here: production starts with no qualified choices
-until the production-path qualification run lands receipts for this contract.
+receipt before their logical model is exposed. Historical bake-off evidence is
+intentionally not loaded here: production exposes only routes with a
+transcribed production-path receipt for this contract.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3"
 # This is the canonical three-anchor aggregate of the currently pinned v3
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
-PROMPT_SHA256: Final = "c74660fbd12bd19cb766d190306f9467c5654f11ad402cfcc1a7b5e84c413b43"
+PROMPT_SHA256: Final = "40ed4e4d4f90e64afa549a3e6ae215e9491e3237e0ea6a9461a5c1a9bcdab729"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.2"
 TEMPLATE_SHA256: Final = "071351bc6d609610f019205094985e46dc1d2a9347c733def06996a448aaf238"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
@@ -110,10 +110,30 @@ LOGICAL_MODELS: Final = (
     ),
 )
 
-# The prior TeacherReadyDensity.v2 transcription is intentionally absent: until
-# a full current v3 aggregate is transcribed, the teacher UI must remain
-# fail-closed.
-PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
+# The prior TeacherReadyDensity.v2 transcription remains intentionally absent.
+# This current v3 Flash aggregate has all immutable anchors and its sole
+# configured route; other models remain fail-closed until their own complete
+# current aggregates are transcribed.
+PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
+    QualificationReceipt(
+        logical_model_id="gemini-3.6-flash",
+        provider_route="gemini-flash-subscription",
+        provider_host="antigravity-cli",
+        provider_model_id="gemini-3.6-flash-high",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3",
+        prompt_sha256="40ed4e4d4f90e64afa549a3e6ae215e9491e3237e0ea6a9461a5c1a9bcdab729",
+        template_version="gemma-phase-pack.v3.2",
+        template_sha256="071351bc6d609610f019205094985e46dc1d2a9347c733def06996a448aaf238",
+        density_contract_version="TeacherReadyDensity.v3",
+        density_contract_digest="1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf",
+        type_kit_identity="TeacherReadyDensity.v3.unit-plan-kit.v2",
+        serializer_temperature=0.0,
+        provenance_tier="cli_self_reported",
+        passed_anchors=frozenset({"b1-dialogue", "b1-morphology", "b1-narrative"}),
+        passed=True,
+    ),
+)
 
 
 class QualificationCandidateRegistry:

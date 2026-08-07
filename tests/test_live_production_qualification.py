@@ -87,6 +87,20 @@ def _diagnostic_request(tmp_path: Path) -> LiveDiagnosticRequest:
     )
 
 
+def _flash_request(tmp_path: Path) -> LiveQualificationRequest:
+    target = ("gemini-3.6-flash",)
+    request = _request(tmp_path)
+    return replace(
+        request,
+        logical_model_ids=target,
+        spend_acknowledgement=spend_acknowledgement(
+            source_commit=_HEAD,
+            manifest_sha256=request.expected_manifest_sha256,
+            logical_model_ids=target,
+        ),
+    )
+
+
 def _complete_fake_run(request: LiveQualificationRequest, *, failed: bool = False):
     cells = []
     for anchor_id in request.anchors:
@@ -157,11 +171,38 @@ def test_matrix_is_derived_from_three_logical_models_and_rebinds_to_9_cells() ->
     )
 
 
+def test_flash_target_requires_its_complete_three_anchor_route_matrix(tmp_path) -> None:
+    manifest = load_manifest()
+    target = ("gemini-3.6-flash",)
+    matrix = _matrix(target)
+
+    assert matrix == (
+        (
+            "gemini-3.6-flash",
+            RouteBinding(
+                "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
+            ),
+        ),
+    )
+    assert len(matrix) * 3 == 3
+    assert spend_acknowledgement(
+        source_commit=_HEAD,
+        manifest_sha256=manifest.sha256,
+        logical_model_ids=target,
+    ).endswith(":B1-45M-3x1:gemini-3.6-flash/gemini-flash-subscription")
+
+    preflight_live_qualification(
+        _flash_request(tmp_path),
+        repository_state=_clean_repository_state,
+        credential_present=_credential_present,
+    )
+
+
 def test_preflight_refuses_a_stale_matrix_count(tmp_path, v2_delivery_flags, monkeypatch) -> None:
     import hramatka.qualification.live as live_module
 
     configured = live_module._configured_matrix()
-    monkeypatch.setattr(live_module, "_matrix", lambda: configured[:-1])
+    monkeypatch.setattr(live_module, "_matrix", lambda _ids=None: configured[:-1])
 
     with pytest.raises(LiveQualificationError, match="does not match current logical-model routes"):
         preflight_live_qualification(
@@ -350,6 +391,21 @@ def test_live_density_diagnostic_rejects_an_unconfigured_route_before_provider(
 ) -> None:
     request = replace(_diagnostic_request(tmp_path), route_id="wrong-route")
     with pytest.raises(LiveQualificationError, match="unique configured"):
+        preflight_live_diagnostic(
+            request,
+            repository_state=_clean_repository_state,
+            credential_present=_credential_present,
+        )
+
+
+def test_live_density_diagnostic_normalizes_an_invalid_logical_model_target(tmp_path) -> None:
+    request = _diagnostic_request(tmp_path)
+    request = replace(
+        request,
+        qualification=replace(request.qualification, logical_model_ids=("wrong-model",)),
+    )
+
+    with pytest.raises(LiveQualificationError, match="Qualification target is invalid"):
         preflight_live_diagnostic(
             request,
             repository_state=_clean_repository_state,
@@ -675,6 +731,39 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         .as_model_receipt()
         .passed
     )
+
+
+def test_live_mode_can_qualify_the_complete_flash_target_without_other_credentials(
+    tmp_path, v2_delivery_flags
+) -> None:
+    request = _flash_request(tmp_path)
+    constructed: list[tuple[str, str, str, str]] = []
+
+    def fake_port_factory(logical_model_id, route):
+        constructed.append((logical_model_id, route.route_id, route.host, route.model_id))
+        return _DeterministicRouteProvider(route, force_initial_shortfall=False)
+
+    run = execute_live_qualification(
+        request,
+        bundle=fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data"),
+        repository_state=_clean_repository_state,
+        credential_present=_credential_present,
+        pinned_port_factory=fake_port_factory,
+    )
+
+    assert len(run.cells) == 3
+    assert set(constructed) == {
+        (
+            "gemini-3.6-flash",
+            "gemini-flash-subscription",
+            "antigravity-cli",
+            "gemini-3.6-flash-high",
+        )
+    }
+    assert json.loads((request.receipt_root / "aggregation-targets.json").read_text()) == {
+        "schema_version": "ProductionQualificationTargets.v1",
+        "logical_model_ids": ["gemini-3.6-flash"],
+    }
 
 
 def test_live_wait_false_preserves_scratch_and_prevents_receipt_completion(

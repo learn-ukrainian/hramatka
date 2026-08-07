@@ -38,6 +38,7 @@ from hramatka.engine.teacher_ready_density_v3 import (
 CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v5"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
 AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v2"
+AGGREGATION_TARGETS_SCHEMA_VERSION = "ProductionQualificationTargets.v1"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COMMIT_RE = re.compile(r"^[a-f0-9]{40,64}$")
 _OUTCOMES = frozenset({"passed", "failed"})
@@ -126,6 +127,49 @@ class RouteBinding:
 
     def as_dict(self) -> dict[str, str]:
         return {"route_id": self.route_id, "host": self.host, "model_id": self.model_id}
+
+
+def qualification_matrix(
+    logical_model_ids: tuple[str, ...] | None = None,
+) -> tuple[tuple[str, RouteBinding], ...]:
+    """Return whole configured routes for an explicit logical-model target set.
+
+    A target is deliberately a set of *logical models*, never individual
+    routes.  Selecting a model therefore continues to require every route it
+    ships, while allowing an independently complete three-anchor matrix to
+    qualify one model without waiting for unrelated models' credentials.
+    ``None`` retains the full catalog matrix used by the legacy command.
+    """
+    model_ids = tuple(model.id for model in LOGICAL_MODELS)
+    if logical_model_ids is None:
+        selected = frozenset(model_ids)
+    else:
+        requested = tuple(logical_model_ids)
+        if not requested:
+            raise QualificationError("Qualification target must name at least one logical model.")
+        if len(requested) != len(set(requested)):
+            raise QualificationError("Qualification target contains a duplicate logical model.")
+        unknown = sorted(set(requested) - set(model_ids))
+        if unknown:
+            raise QualificationError("Qualification target contains an unknown logical model.")
+        selected = frozenset(requested)
+    return tuple(
+        (model.id, RouteBinding(route.id, route.host, route.model_id))
+        for model in LOGICAL_MODELS
+        if model.id in selected
+        for route in model.provider_routes
+    )
+
+
+def qualification_target_model_ids(
+    logical_model_ids: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Return target identities in the catalog's stable order after validation."""
+    ordered: list[str] = []
+    for model_id, _route in qualification_matrix(logical_model_ids):
+        if model_id not in ordered:
+            ordered.append(model_id)
+    return tuple(ordered)
 
 
 @dataclass(frozen=True)
@@ -849,12 +893,15 @@ def aggregate_receipts(
     prompt_hashes: Mapping[tuple[str, str, str], str],
     engine_sha256: str,
     flag_sha256: str,
+    logical_model_ids: tuple[str, ...] | None = None,
 ) -> tuple[RouteAggregate, ...]:
-    """Strictly aggregate every configured route × anchor cell or fail closed.
+    """Strictly aggregate every targeted configured route × anchor cell.
 
     The caller supplies current runtime identity values.  Every cell must bind
     them exactly; missing, stale, duplicate, route-mismatched, or failed cells
-    are rejected before any selector receipt can exist.
+    are rejected before any selector receipt can exist.  A narrowed target is
+    permitted only at a logical-model boundary: each selected model must still
+    provide every one of its configured routes and all immutable anchors.
     """
     assert_live_v3_authorities()
     # Re-parse in-memory dataclasses too.  Callers and tests can use
@@ -866,11 +913,8 @@ def aggregate_receipts(
         else CellReceipt.from_dict(receipt)
         for receipt in receipts
     )
-    expected_routes = {
-        (model.id, route.id): RouteBinding(route.id, route.host, route.model_id)
-        for model in LOGICAL_MODELS
-        for route in model.provider_routes
-    }
+    matrix = qualification_matrix(logical_model_ids)
+    expected_routes = {(model_id, route.route_id): route for model_id, route in matrix}
     expected_cells = {
         (model_id, route_id, anchor_id)
         for model_id, route_id in expected_routes
@@ -1028,6 +1072,27 @@ def _load_prompt_hashes(receipt_dir: Path) -> dict[tuple[str, str, str], str]:
     return prompt_hashes
 
 
+def _load_qualification_target_model_ids(receipt_dir: Path) -> tuple[str, ...]:
+    """Load the explicit model-level target recorded beside a matrix run."""
+    path = receipt_dir.parent / "aggregation-targets.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise QualificationError("Qualification target metadata is unavailable.") from error
+    if not isinstance(value, dict) or set(value) != {"logical_model_ids", "schema_version"}:
+        raise QualificationError("Qualification target metadata has an invalid schema.")
+    if value["schema_version"] != AGGREGATION_TARGETS_SCHEMA_VERSION:
+        raise QualificationError("Qualification target metadata has an unsupported schema version.")
+    rows = value["logical_model_ids"]
+    if not isinstance(rows, list) or not all(isinstance(item, str) and item for item in rows):
+        raise QualificationError("Qualification target metadata has invalid logical model IDs.")
+    requested = tuple(rows)
+    canonical = qualification_target_model_ids(requested)
+    if requested != canonical:
+        raise QualificationError("Qualification target metadata is not in canonical model order.")
+    return canonical
+
+
 def main(argv: list[str] | None = None) -> int:
     """Aggregate persisted receipts against the current checkout's contract."""
     parser = _parser()
@@ -1049,6 +1114,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt_hashes=_load_prompt_hashes(args.receipt_dir),
             engine_sha256=_current_engine_digest(),
             flag_sha256=_flag_digest(),
+            logical_model_ids=_load_qualification_target_model_ids(args.receipt_dir),
         )
     except (OSError, QualificationError, ValueError) as error:
         parser.exit(1, f"Qualification receipt aggregation refused: {error}\n")

@@ -32,7 +32,6 @@ from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker
 from hramatka.api.config import Settings
 from hramatka.api.qualified_models import (
     DENSITY_CONTRACT_VERSION,
-    LOGICAL_MODELS,
     QualificationCandidateRegistry,
 )
 from hramatka.engine import ENGINE_VERSION, data, fixtures, flags
@@ -63,6 +62,7 @@ from hramatka.engine.unit_builders_v3 import BUILDERS
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
     AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION,
+    AGGREGATION_TARGETS_SCHEMA_VERSION,
     CellReceipt,
     DensityDiagnosticReceipt,
     DensitySummary,
@@ -72,6 +72,8 @@ from .receipts import (
     RouteBinding,
     SlotTelemetry,
     aggregate_receipts,
+    qualification_matrix,
+    qualification_target_model_ids,
     registry_digest,
 )
 
@@ -855,10 +857,13 @@ class ProductionQualificationHarness:
         *,
         manifest: QualificationManifest | None = None,
         source_commit: str | None = None,
+        logical_model_ids: tuple[str, ...] | None = None,
     ) -> None:
         self._root = runtime_root
         self._manifest = manifest or load_manifest()
         self._source_commit = source_commit or _source_commit()
+        self._logical_model_ids = qualification_target_model_ids(logical_model_ids)
+        self._matrix = qualification_matrix(self._logical_model_ids)
         self._last_anchor_hashes: dict[str, str] | None = None
         self._last_prompt_hashes: dict[tuple[str, str, str], str] | None = None
 
@@ -1002,76 +1007,72 @@ class ProductionQualificationHarness:
         data.set_active_bundle(bundle)
         try:
             for runtime_anchor in runtime_anchors:
-                for model in LOGICAL_MODELS:
-                    for configured_route in model.provider_routes:
-                        route = RouteBinding(
-                            configured_route.id, configured_route.host, configured_route.model_id
-                        )
-                        provider = provider_factory(runtime_anchor, model.id, route)
-                        if temporary_cells:
-                            raw_cell_root = Path(
-                                tempfile.mkdtemp(
-                                    dir=scratch_root,
-                                    prefix=f"{runtime_anchor.id}-{route.route_id}-",
-                                )
+                for logical_model_id, route in self._matrix:
+                    provider = provider_factory(runtime_anchor, logical_model_id, route)
+                    if temporary_cells:
+                        raw_cell_root = Path(
+                            tempfile.mkdtemp(
+                                dir=scratch_root,
+                                prefix=f"{runtime_anchor.id}-{route.route_id}-",
                             )
-                            try:
-                                cell = self._run_cell(
-                                    runtime_anchor,
-                                    model.id,
-                                    route,
-                                    bundle,
-                                    provider=provider,
-                                    cell_root=Path(raw_cell_root),
-                                    bake_hard_timeout_seconds=bake_hard_timeout_seconds,
-                                    readiness_timeout_seconds=readiness_timeout_seconds,
-                                    runner_stop_timeout_seconds=runner_stop_timeout_seconds,
-                                    runner_stop_waiter=runner_stop_waiter,
-                                    allow_failed_diagnostic=True,
-                                    engine_out_dir=_raw_parse_failure_out_dir(
-                                        scratch_root, raw_cell_root
-                                    ),
-                                )
-                            except QualificationRunnerStillActiveError:
-                                # This directory can contain durable job/cache data.
-                                # Preserve it until the process has actually exited.
-                                raise
-                            except Exception:
-                                try:
-                                    shutil.rmtree(raw_cell_root)
-                                except OSError:
-                                    # Preserve the original qualification failure.
-                                    pass
-                                raise
-                            else:
-                                try:
-                                    shutil.rmtree(raw_cell_root)
-                                except OSError as error:
-                                    raise QualificationError(
-                                        "Qualification scratch cleanup failed."
-                                    ) from error
-                        else:
+                        )
+                        try:
                             cell = self._run_cell(
                                 runtime_anchor,
-                                model.id,
+                                logical_model_id,
                                 route,
                                 bundle,
                                 provider=provider,
-                                cell_root=scratch_root / f"{runtime_anchor.id}-{route.route_id}",
+                                cell_root=Path(raw_cell_root),
                                 bake_hard_timeout_seconds=bake_hard_timeout_seconds,
                                 readiness_timeout_seconds=readiness_timeout_seconds,
                                 runner_stop_timeout_seconds=runner_stop_timeout_seconds,
                                 runner_stop_waiter=runner_stop_waiter,
                                 allow_failed_diagnostic=True,
+                                engine_out_dir=_raw_parse_failure_out_dir(
+                                    scratch_root, raw_cell_root
+                                ),
                             )
-                        cells.append(cell)
-                        receipt_paths.append(self._persist_cell_receipt(cell.receipt))
-                        self._last_prompt_hashes[(model.id, route.route_id, runtime_anchor.id)] = (
-                            cell.receipt.prompt_sha256
+                        except QualificationRunnerStillActiveError:
+                            # This directory can contain durable job/cache data.
+                            # Preserve it until the process has actually exited.
+                            raise
+                        except Exception:
+                            try:
+                                shutil.rmtree(raw_cell_root)
+                            except OSError:
+                                # Preserve the original qualification failure.
+                                pass
+                            raise
+                        else:
+                            try:
+                                shutil.rmtree(raw_cell_root)
+                            except OSError as error:
+                                raise QualificationError(
+                                    "Qualification scratch cleanup failed."
+                                ) from error
+                    else:
+                        cell = self._run_cell(
+                            runtime_anchor,
+                            logical_model_id,
+                            route,
+                            bundle,
+                            provider=provider,
+                            cell_root=scratch_root / f"{runtime_anchor.id}-{route.route_id}",
+                            bake_hard_timeout_seconds=bake_hard_timeout_seconds,
+                            readiness_timeout_seconds=readiness_timeout_seconds,
+                            runner_stop_timeout_seconds=runner_stop_timeout_seconds,
+                            runner_stop_waiter=runner_stop_waiter,
+                            allow_failed_diagnostic=True,
                         )
+                    cells.append(cell)
+                    receipt_paths.append(self._persist_cell_receipt(cell.receipt))
+                    prompt_key = (logical_model_id, route.route_id, runtime_anchor.id)
+                    self._last_prompt_hashes[prompt_key] = cell.receipt.prompt_sha256
         finally:
             data.set_active_bundle(previous_bundle)
         self._persist_aggregation_prompt_hashes()
+        self._persist_aggregation_targets()
         return QualificationRun(tuple(cells), tuple(receipt_paths))
 
     def aggregates(self, run: QualificationRun):
@@ -1089,6 +1090,7 @@ class ProductionQualificationHarness:
             prompt_hashes=self._last_prompt_hashes,
             engine_sha256=_current_engine_digest(),
             flag_sha256=_flag_digest(),
+            logical_model_ids=self._logical_model_ids,
         )
 
     def _persist_cell_receipt(self, receipt: CellReceipt) -> Path:
@@ -1121,6 +1123,22 @@ class ProductionQualificationHarness:
                 {
                     "schema_version": AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION,
                     "prompt_hashes": rows,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def _persist_aggregation_targets(self) -> Path:
+        path = self._root / "aggregation-targets.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": AGGREGATION_TARGETS_SCHEMA_VERSION,
+                    "logical_model_ids": list(self._logical_model_ids),
                 },
                 ensure_ascii=False,
                 sort_keys=True,

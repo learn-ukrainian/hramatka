@@ -6,10 +6,10 @@ This runbook defines the fail-closed evidence required before a logical teacher
 model can be enabled. It is intentionally separate from deployment, provider
 provisioning, and semantic language adjudication.
 
-The shipped selector starts with `PRODUCTION_QUALIFICATION_RECEIPTS = ()`.
-The deterministic harness in this repository proves the production path and
-receipt aggregation only; it does not qualify a real provider and does not
-spend provider credits.
+The shipped selector remains fail-closed until a complete, current receipt is
+transcribed for a logical model. The deterministic harness in this repository
+proves the production path and receipt aggregation only; it does not qualify a
+real provider and does not spend provider credits.
 
 ## Immutable input contract
 
@@ -41,7 +41,7 @@ Run the proof locally with:
 .venv/bin/python -m pytest -q tests/test_production_qualification.py tests/test_qualified_model_selector.py
 ```
 
-The harness executes these nine exact cells:
+Without an explicit target, the harness executes these nine exact cells:
 
 | Logical model | Route ID |
 | --- | --- |
@@ -70,26 +70,31 @@ current source commit, manifest hash, runtime anchor hashes, canonical
 per-cell prompt hashes, and engine/flag digests.
 
 Aggregation fails closed for a missing, stale, duplicate, mismatched, or failed
-cell. Each configured route requires all three anchors; a logical model is
-eligible only when every one of its configured routes has exactly one current
-three-anchor aggregate. The selector independently rejects duplicate route
-aggregates.
+cell. Each selected logical model requires all three anchors for every one of
+its configured routes; a logical model is eligible only when every one of its
+configured routes has exactly one current three-anchor aggregate. An explicit
+target can omit unrelated logical models, never an individual route of a
+selected model. The selector independently rejects duplicate route aggregates.
 
 The deterministic path result marks `semantic_gate: not_run`. It does not make
 claims about Ukrainian language quality, answer keys, or instructional
-semantics. A separate deterministic analyzer/adjudication gate must produce
-`semantic_gate: passed` for every real cell before a route aggregate may become
-a `QualificationReceipt` and be considered for the production registry.
+semantics. Under the current shadow-tier policy, `not_run` remains admissible
+for a route aggregate; a future semantic cutover must explicitly change the
+receipt gate rather than silently treating this evidence as language review.
 
 ## Real-provider runs
 
 The real mode is an operator-only command and is never invoked by pytest or by
-the teacher API. It runs the exact fixed 3-anchor × 3-route matrix, not a
-selected subset. Before it constructs a provider it requires a clean worktree,
-the current source commit, the immutable manifest digest, all three external
-anchor hashes, both production-path feature flags, every route's credential
-source, separate scratch and receipt directories outside the repository, and a
-spend acknowledgement bound to the current commit and manifest digest.
+the teacher API. By default it runs the full 3-anchor × 3-route matrix. Passing
+one or more `--logical-model-id` values instead selects complete logical-model
+matrices: every configured route of each selected model and every immutable
+anchor remain mandatory. This is how Flash can be qualified without treating an
+unconfigured Gemma credential as evidence about Flash. Before it constructs a
+provider it requires a clean worktree, the current source commit, the immutable
+manifest digest, all three external anchor hashes, both production-path feature
+flags, each selected route's credential source, separate scratch and receipt
+directories outside the repository, and a spend acknowledgement bound to the
+current commit, manifest, and selected routes.
 
 ### One-cell density diagnostic
 
@@ -116,10 +121,17 @@ response, or gate-detail text. A failed diagnostic persists its last count-only
 snapshot honestly; it never appears as a successful matrix receipt.
 
 First obtain the exact acknowledgement string without running the command's
-provider mode:
+provider mode. The full default matrix uses:
 
 ```text
 HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x3
+```
+
+An explicit Flash target includes its route identity, so a one-model
+acknowledgement cannot authorize Pro or Gemma:
+
+```text
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x1:gemini-3.6-flash/gemini-flash-subscription
 ```
 
 The operator then supplies that exact value together with
@@ -176,9 +188,62 @@ Real cells use the production 1,800-second bake hard timeout and keep the
 authenticated API lifecycle open for 1,830 seconds, rather than the no-cost
 test harness's 600-second/20-second bounds. A cell that has not reached a
 terminal durable state by that deadline is refused; a terminal failed job is
-also refused. The command exits nonzero unless all nine cells are present,
-passed, and remain `semantic_gate: not_run`; it reports only anchor/route IDs,
+also refused. The command exits nonzero unless every selected cell is present,
+passed, and remains `semantic_gate: not_run`; it reports only anchor/route IDs,
 never lesson or provider content.
+
+### Re-run the first Flash qualification
+
+Run this only from a clean candidate commit, with the manifest-matching anchor
+pack and all receipts/scratch outside the checkout. It uses the subscription
+route currently shipped for Flash; it never loads or prints an API key.
+
+```bash
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+MANIFEST_SHA256="$(.venv/bin/python -c 'from hramatka.qualification.manifest import load_manifest; print(load_manifest().sha256)')"
+export HRAMATKA_SLOT_REPAIR=1
+export HRAMATKA_PROMPT_PACK=1
+export SOURCE_COMMIT MANIFEST_SHA256
+ACK="$(.venv/bin/python - <<'PY'
+import os
+from hramatka.qualification.live import spend_acknowledgement
+
+print(
+    spend_acknowledgement(
+        source_commit=os.environ["SOURCE_COMMIT"],
+        manifest_sha256=os.environ["MANIFEST_SHA256"],
+        logical_model_ids=("gemini-3.6-flash",),
+    )
+)
+PY
+)"
+
+.venv/bin/python -m hramatka.qualification.live \
+  --anchors-json /operator-local/hramatka-qual/anchors.json \
+  --receipt-root /operator-local/hramatka-qual/v3-flash-receipts \
+  --scratch-root /operator-local/hramatka-qual/v3-flash-scratch \
+  --source-commit "$SOURCE_COMMIT" \
+  --manifest-sha256 "$MANIFEST_SHA256" \
+  --logical-model-id gemini-3.6-flash \
+  --execute-real-provider \
+  --acknowledge-provider-spend "$ACK"
+
+.venv/bin/python -m hramatka.qualification.receipts aggregate \
+  --receipt-dir /operator-local/hramatka-qual/v3-flash-receipts/receipts \
+  --source-commit "$SOURCE_COMMIT"
+
+.venv/bin/python -m hramatka.qualification.transcribe \
+  --receipt-dir /operator-local/hramatka-qual/v3-flash-receipts/receipts \
+  --source-commit "$SOURCE_COMMIT"
+```
+
+The final command only prints the reviewable registry block. Review it, paste
+it into `hramatka/api/qualified_models.py`, and re-run the registry/picker
+tests. A subscription-backed receipt remains explicitly
+`cli_self_reported`; the production process must set
+`HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER=cli_self_reported` before
+the Flash model can be exposed. That configuration does not upgrade the
+receipt to API-observed evidence.
 
 After each TestClient lifecycle stops its runner, live qualification waits up
 to one provider timeout plus a 30-second margin before deleting that cell's
