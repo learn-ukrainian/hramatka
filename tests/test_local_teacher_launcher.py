@@ -554,6 +554,23 @@ def test_slot_repair_has_an_explicit_local_opt_out(tmp_path: Path) -> None:
     assert resolved["HRAMATKA_SLOT_REPAIR"] == "0"
 
 
+def test_skip_build_requires_an_existing_frontend_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    repo_python = tmp_path / "python"
+    proxy_script = tmp_path / "proxy.mjs"
+    monkeypatch.setattr(
+        local_teacher,
+        "_require_layout",
+        lambda _config: (repo_python, app_dir, proxy_script),
+    )
+
+    with pytest.raises(local_teacher.LauncherError, match="frontend build is missing"):
+        local_teacher.run(local_teacher.LaunchConfig(repo_root=tmp_path, build_frontend=False))
+
+
 def test_openrouter_is_enabled_only_when_credential_is_configured(tmp_path: Path) -> None:
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     root = tmp_path / "runtime"

@@ -205,3 +205,35 @@ operating system reaps it, so downstream checks must poll rather than assume an 
 lookup failure. The temporary CSRF material, certificate, key, and logs are mode-private and are
 removed on normal exit, child failure, or a termination signal. Without the explicit static-link
 opt-in, the temporary database is also removed and a new invocation creates one one-use invite.
+
+### Development runner (`./services.sh`)
+
+For daemon-style lifecycle management, use the repository runner from the repository root:
+
+```bash
+./services.sh start     # start the teacher app in the background, print the one-use invite URL
+./services.sh status    # report whether the teacher is running
+./services.sh stop      # stop it cleanly (no orphans, no stale runtime state)
+./services.sh restart   # stop then start
+./services.sh build     # frontend build using the existing dependency tree
+./services.sh clean     # stop, then remove dist/log/pid state
+./services.sh help      # full usage
+```
+
+The runner daemonizes `local-teacher.sh --skip-build`, waits for the app to become ready, and
+prints the same one-use invite URL (or the bookmarkable local-teacher URL with
+`HRAMATKA_LOCAL_STATIC_TEACHER=1`). Same prerequisites as the foreground launcher above.
+
+Hard rules (same as the foreground launcher, plus runner-specific ones):
+
+- Loopback only (`127.0.0.1`); refuses to run from a production-looking checkout
+  (`/opt/hramatka*`) or with a non-loopback `HRAMATKA_PILOT_ORIGIN`.
+- Never runs `npm install` or `npm ci` (2026-08-04 npm worm mitigation). The frontend build
+  uses the existing `hramatka/app/node_modules` tree; when that tree and `dist` are both missing
+  the runner prints exactly what to restore instead of installing.
+- Restart leaves no orphaned processes and no stale runtime state: a stale
+  `hramatka/app/.real-e2e` directory is removed before every start.
+- Missing prerequisites (repository `.venv`, credentials, data release, unbuilt frontend) fail
+  with a specific message naming the missing item and the fix, never a stack trace or a hang.
+- Loopback ports default to 8443 (https) / 8788 (api); override with
+  `HRAMATKA_DEV_HTTPS_PORT` / `HRAMATKA_DEV_API_PORT`.

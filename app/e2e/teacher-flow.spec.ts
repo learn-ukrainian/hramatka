@@ -85,6 +85,12 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs
     await page.waitForURL(/\/teacher\/?$/);
+    // The invite token is scrubbed from the URL synchronously, before the
+    // redeem POST resolves (contract: never let the token linger, even for a
+    // failed exchange) — so waitForURL alone races the session cookie. Wait
+    // for the paste UI, which only renders once the session is established,
+    // before hitting session-gated endpoints directly via fetch.
+    await expect(page.getByPlaceholder(/Вставте український текст/)).toBeVisible({ timeout: 10000 });
 
     const modelContract = await page.evaluate(async () => {
       const response = await fetch('/api/lesson-models');
