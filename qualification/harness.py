@@ -654,8 +654,11 @@ def _v3_live_record_from_kit(
             "type": activity_type,
             "instruction": "Виправте помилку.",
             "items": [
-                f"Речення {index + 1} містить одну мовну помилку."
-                for index in range(len(forms))
+                (
+                    f"Речення {index + 1} містить помилкову форму "
+                    f"{_v3_fixture_distractors(expected_keys[index])[0]}."
+                )
+                for index in range(len(expected_keys))
             ],
         }
         answer_key = {"items": expected_keys}

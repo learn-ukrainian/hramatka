@@ -192,7 +192,10 @@ def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
     if activity_type == "error-correction":
         return [
             {
-                "source": f"SYNTHETIC-ERROR-SOURCE {index}: речення з помилкою.",
+                "source": (
+                    f"SYNTHETIC-ERROR-SOURCE {index}: "
+                    "речення містить помилкову форму SYNTHETIC-DISTRACTOR."
+                ),
                 "correction": f"SYNTHETIC-ERROR-CORRECTION {index}",
             }
             for index in range(1, count + 1)
@@ -527,6 +530,10 @@ def validate_elicitation_shape(
         for index, item in enumerate(payload.get("items", ())):
             if isinstance(item, Mapping):
                 _check(item.get("sentence"), f"fill-in items[{index}].sentence")
+    elif activity_type == "error-correction":
+        for index, item in enumerate(payload.get("items", ())):
+            if isinstance(item, str):
+                _check(item, f"error-correction items[{index}]")
 
 
 # Closed-class parts of speech.  Words belonging to these classes have no
@@ -705,6 +712,57 @@ def validate_distractor_adjacency(
             ):
                 raise PromptPackV3Error(f"fill-in items[{index}] answer key mismatch")
             _validate_options(answer, item.get("options"), 0, f"fill-in items[{index}]")
+    elif activity_type == "error-correction":
+        key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        items = payload.get("items", ())
+        if (
+            not isinstance(items, Sequence)
+            or isinstance(items, (bytes, bytearray, str))
+            or not isinstance(key_items, Sequence)
+            or isinstance(key_items, (bytes, bytearray, str))
+            or len(items) != len(key_items)
+        ):
+            raise PromptPackV3Error("error-correction payload/answer_key count mismatch")
+        for index, (item, answer) in enumerate(zip(items, key_items, strict=True)):
+            if not isinstance(item, str) or not item.strip():
+                raise PromptPackV3Error(f"error-correction items[{index}] is empty or not a string")
+            if not isinstance(answer, str) or not answer.strip():
+                raise PromptPackV3Error(
+                    f"error-correction answer_key items[{index}] is empty or not a string"
+                )
+            words = re.findall(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", item)
+            for j in range(len(words) - 1):
+                if words[j].lower() == words[j + 1].lower():
+                    raise PromptPackV3Error(
+                        f"error-correction items[{index}] contains repeated token "
+                        f"corruption: {words[j]!r}"
+                    )
+            answer_lemmas = _lemma_set(answer, db_path)
+            if not answer_lemmas:
+                raise PromptPackV3Error(
+                    f"error-correction items[{index}] answer form {answer!r} is not in VESUM"
+                )
+            allowed_pos = _uninflectable_allowed_pos(answer, db_path)
+            found_adjacent = False
+            for w in words:
+                if w.lower() == answer.lower():
+                    continue
+                w_lemmas = _lemma_set(w, db_path)
+                if not w_lemmas:
+                    continue
+                if allowed_pos is not None:
+                    w_pos = _pos_set(w, db_path)
+                    if bool(w_pos & allowed_pos):
+                        found_adjacent = True
+                        break
+                elif bool(answer_lemmas & w_lemmas):
+                    found_adjacent = True
+                    break
+            if not found_adjacent:
+                raise PromptPackV3Error(
+                    f"error-correction items[{index}] sentence does not contain an "
+                    f"adjacent wrong form of answer {answer!r}"
+                )
 
 
 def validate_exemplar_contamination(

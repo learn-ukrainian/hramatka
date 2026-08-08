@@ -572,3 +572,91 @@ def test_distractor_adjacency_rejects_identical_uninflectable_distractor() -> No
 
     with pytest.raises(PromptPackV3Error, match="equals answer"):
         validate_distractor_adjacency(activity, kit)
+
+
+def test_error_correction_valid_adjacent_error_passes() -> None:
+    """Valid adjacent-error item (same lemma inflectable wrong form) passes."""
+    context = _context("error-correction")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "error-correction",
+            "instruction": "Виправте помилку в реченні.",
+            "items": [
+                "У бібліотеці є багато цікаві книжки для читання."
+            ],
+        },
+        "answer_key": {"items": ["книжок"]},
+    }
+    validate_distractor_adjacency(activity, kit)
+
+
+def test_error_correction_token_duplication_fails() -> None:
+    """Token-duplication corruptions fail explicitly."""
+    context = _context("error-correction")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "error-correction",
+            "instruction": "Виправте помилку в реченні.",
+            "items": [
+                "думку думку вчених, читання є важливим."
+            ],
+        },
+        "answer_key": {"items": ["На"]},
+    }
+    with pytest.raises(PromptPackV3Error, match="repeated token corruption"):
+        validate_distractor_adjacency(activity, kit)
+
+
+def test_error_correction_correct_form_present_verbatim_fails() -> None:
+    """Error-correction item containing the correct form verbatim fails."""
+    context = _context("error-correction")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "error-correction",
+            "instruction": "Виправте помилку в реченні.",
+            "items": [
+                "На думку вчених, читання є важливим."
+            ],
+        },
+        "answer_key": {"items": ["На"]},
+    }
+    with pytest.raises(PromptPackV3Error, match="contains answer form"):
+        validate_verbatim_answer_ban(activity, kit)
+
+
+def test_error_correction_wrong_class_adjacent_form_fails() -> None:
+    """Uninflectable target with a wrong-class word fails."""
+    context = _context("error-correction")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "error-correction",
+            "instruction": "Виправте помилку в реченні.",
+            "items": [
+                "Нате думку вчених, читання є важливим."
+            ],
+        },
+        "answer_key": {"items": ["на"]},
+    }
+    with pytest.raises(PromptPackV3Error, match="does not contain an adjacent wrong form"):
+        validate_distractor_adjacency(activity, kit)
+
+
+def test_error_correction_uninflectable_target_with_same_class_wrong_word_passes() -> None:
+    """Uninflectable target with a same-class wrong word passes."""
+    context = _context("error-correction")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "error-correction",
+            "instruction": "Виправте помилку в реченні.",
+            "items": [
+                "Про думку вчених, читання є важливим."
+            ],
+        },
+        "answer_key": {"items": ["на"]},
+    }
+    validate_distractor_adjacency(activity, kit)

@@ -20,10 +20,7 @@ for the slot's type and its payload.type must equal that type; answer_key must
 be the matching schema-valid object. Bind every graded answer to the certified
 units in order, using their allowed_forms and expected key/rule. The learner-facing
 prose must elicit the target form; it must never contain, name, or quote the
-correct answer verbatim. Distractors in quiz/cloze/fill-in options must be real
-Ukrainian forms from the same lemma or paradigm as the certified form, differing
-in exactly one morphological feature; never use invented strings or unrelated
-fillers as distractors.
+correct answer verbatim. Distractors in quiz/cloze/fill-in options and wrong forms in error-correction sentences must be real Ukrainian forms from the same lemma or paradigm as the certified form (or same POS class for uninflectables), differing in exactly one morphological feature; never use invented strings, unrelated fillers, or repeated-token corruptions.
 
 The full-density requested-type exemplars below are filled synthetic response
 slots. Their slot IDs, unit IDs, and learner content are synthetic and must

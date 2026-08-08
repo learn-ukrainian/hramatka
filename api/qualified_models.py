@@ -28,7 +28,7 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.1"
 # fails closed until the orchestrator transcribes a new matrix.
 PROMPT_SHA256: Final = ""
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.3"
-TEMPLATE_SHA256: Final = "e5f63c338a79fe1e37bf45b50219d5687a084c3c24d958ba7a791f012ea6a516"
+TEMPLATE_SHA256: Final = "d148da6b5735aaa76542e4eed64f0d541c80e15806c1d4cec933c2aa0eb3767b"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v2"
