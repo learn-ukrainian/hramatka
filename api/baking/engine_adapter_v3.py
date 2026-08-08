@@ -32,6 +32,7 @@ from hramatka.engine.lesson_capacity_v3 import (
     preflight_lesson,
 )
 from hramatka.engine.prompt_pack_v3 import (
+    _contains_form,
     build_phase_context,
     render_phase_prompt,
     validate_distractor_adjacency,
@@ -453,11 +454,22 @@ def _bind_learner_payload_to_certified_units(
 
     if activity_type == "short-writing":
         prompt = payload.get("prompt")
+        guidance = answer_key.get("guidance")
         prompt_fragments = tuple(fragment for unit_forms in forms for fragment in unit_forms)
-        if not isinstance(prompt, str) or any(
-            fragment not in prompt for fragment in prompt_fragments
-        ):
-            raise ValueError("v3 short-writing prompt is detached from certified constraints.")
+        if not isinstance(prompt, str) or not isinstance(guidance, str):
+            raise ValueError(
+                "v3 short-writing payload/answer_key is detached from certified constraints."
+            )
+        for fragment in prompt_fragments:
+            if not _contains_form(guidance, fragment):
+                raise ValueError(
+                    f"v3 short-writing answer_key.guidance is missing certified form {fragment!r}."
+                )
+            if _contains_form(prompt, fragment):
+                raise ValueError(
+                    f"v3 short-writing payload.prompt contains certified form {fragment!r} "
+                    "verbatim."
+                )
         return
 
     raise ValueError("v3 activity payload has no certified-unit binding rule.")

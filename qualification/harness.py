@@ -680,9 +680,15 @@ def _v3_live_record_from_kit(
         ]
         payload = {
             "type": activity_type,
-            "prompt": " ".join(prompt_fragments) + " Напишіть короткий текст.",
+            "prompt": "Напишіть короткий текст про ваш розклад дня.",
         }
-        answer_key = {"guidance": "x"}
+        answer_key = {
+            "guidance": (
+                "Текст має бути "
+                + " ".join(prompt_fragments)
+                + " та містити відповідні описи."
+            )
+        }
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")
     return {

@@ -660,3 +660,91 @@ def test_error_correction_uninflectable_target_with_same_class_wrong_word_passes
         "answer_key": {"items": ["на"]},
     }
     validate_distractor_adjacency(activity, kit)
+
+
+def test_short_writing_elicitation_prompt_and_guidance_naming_passes() -> None:
+    """Elicitation prompt + guidance naming target form passes validation."""
+    from hramatka.api.baking.engine_adapter_v3 import _activity_gate
+
+    context = _context("short-writing")
+    kit = context["type_kits"][0]
+    target_forms = [
+        fragment
+        for unit in kit["certified_units"]
+        for fragment in unit["allowed_forms"]
+    ]
+    activity = {
+        "payload": {
+            "type": "short-writing",
+            "prompt": "Напишіть короткий текст про ваш щоденний розклад дня.",
+        },
+        "answer_key": {
+            "guidance": (
+                "Текст має бути коротким і обов'язково містити цільові вимоги: "
+                + ", ".join(target_forms)
+                + "."
+            ),
+        },
+    }
+    _activity_gate(activity, kit)
+    validate_verbatim_answer_ban(activity, kit)
+    validate_elicitation_shape(activity, kit)
+    validate_exemplar_contamination(activity, kit)
+
+
+def test_short_writing_prompt_containing_certified_form_fails() -> None:
+    """Prompt containing a certified target form verbatim fails validation."""
+    from hramatka.api.baking.engine_adapter_v3 import _activity_gate
+
+    context = _context("short-writing")
+    kit = context["type_kits"][0]
+    target_form = kit["certified_units"][0]["allowed_forms"][0]
+    activity = {
+        "payload": {
+            "type": "short-writing",
+            "prompt": f"Напишіть короткий текст, використовуючи форму {target_form}.",
+        },
+        "answer_key": {
+            "guidance": f"Текст має містити форму {target_form}.",
+        },
+    }
+    with pytest.raises(ValueError, match="contains certified form .* verbatim"):
+        _activity_gate(activity, kit)
+
+
+def test_short_writing_guidance_missing_form_fails() -> None:
+    """Guidance missing a certified target form fails validation."""
+    from hramatka.api.baking.engine_adapter_v3 import _activity_gate
+
+    context = _context("short-writing")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "short-writing",
+            "prompt": "Напишіть короткий текст про ваш щоденний розклад дня.",
+        },
+        "answer_key": {
+            "guidance": "Текст має бути коротким і описовим.",
+        },
+    }
+    with pytest.raises(ValueError, match="missing certified form"):
+        _activity_gate(activity, kit)
+
+
+def test_short_writing_concatenation_prompt_fails() -> None:
+    """Short-writing prompt that is a raw concatenation of forms fails contamination."""
+    context = _context("short-writing")
+    kit = context["type_kits"][0]
+    primary_forms = [unit["allowed_forms"][0] for unit in kit["certified_units"]]
+    activity = {
+        "payload": {
+            "type": "short-writing",
+            "prompt": " ".join(primary_forms),
+        },
+        "answer_key": {
+            "guidance": f"Текст має містити {' '.join(primary_forms)}.",
+        },
+    }
+    with pytest.raises(PromptPackV3Error, match="concatenation of raw certified forms"):
+        validate_exemplar_contamination(activity, kit)
+

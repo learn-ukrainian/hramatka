@@ -41,6 +41,8 @@ EXEMPLAR_ONLY_STRINGS = frozenset({
     "SYNTHETIC-ERROR-CORRECTION",
     "SYNTHETIC-OPEN-QUESTION",
     "SYNTHETIC-WRITING-PROMPT",
+    "SYNTHETIC-WRITING-GUIDANCE",
+    "SYNTHETIC-WRITING-TARGET",
     "SYNTHETIC-MARK-TEXT",
     "SYNTHETIC-DISTRACTOR",
     "Синтетична вказівка.",
@@ -206,7 +208,17 @@ def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
             for index in range(1, count + 1)
         ]
     if activity_type == "short-writing":
-        return [{"prompt": "SYNTHETIC-WRITING-PROMPT: напишіть речення."}]
+        return [
+            {
+                "prompt": (
+                    "SYNTHETIC-WRITING-PROMPT: опишіть ситуацію, не називаючи цільову форму."
+                ),
+                "guidance": (
+                    "SYNTHETIC-WRITING-GUIDANCE: текст має обов'язково містити цільову "
+                    "форму SYNTHETIC-WRITING-TARGET."
+                ),
+            }
+        ]
     if activity_type == "mark-the-words":
         return [
             {
@@ -294,12 +306,13 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             "answer_key": {"guidance": "Синтетична вказівка."},
         }
     if activity_type == "short-writing":
+        item = items[0]
         return {
             "payload": {
                 "type": "short-writing",
-                "prompt": items[0]["prompt"],
+                "prompt": item["prompt"],
             },
-            "answer_key": {"guidance": "Синтетична вказівка."},
+            "answer_key": {"guidance": item["guidance"]},
         }
     if activity_type == "mark-the-words":
         mark_item = items[0]
@@ -481,6 +494,19 @@ def validate_verbatim_answer_ban(
             (text, forms) for text, forms in item_checks if isinstance(text, str)
         )
         _add_field(instruction, all_answers)
+    elif activity_type == "short-writing":
+        instruction = payload.get("instruction", "")
+        prompt = payload.get("prompt")
+        target_forms: list[str] = []
+        for unit in kit.get("certified_units", ()):
+            if isinstance(unit, Mapping):
+                allowed = unit.get("allowed_forms")
+                if isinstance(allowed, list):
+                    target_forms.extend(f for f in allowed if isinstance(f, str))
+        if isinstance(prompt, str):
+            checks.append((prompt, target_forms))
+            all_answers.extend(target_forms)
+        _add_field(instruction, all_answers)
 
     if not any(forms for _, forms in checks):
         return
@@ -534,6 +560,8 @@ def validate_elicitation_shape(
         for index, item in enumerate(payload.get("items", ())):
             if isinstance(item, str):
                 _check(item, f"error-correction items[{index}]")
+    elif activity_type == "short-writing":
+        _check(payload.get("prompt"), "short-writing prompt")
 
 
 # Closed-class parts of speech.  Words belonging to these classes have no
