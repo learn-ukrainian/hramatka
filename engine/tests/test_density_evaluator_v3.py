@@ -106,8 +106,8 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
                         "instruction": "Оберіть правильний варіант.",
                         "items": [
                             {
-                                "question": f"Вкажіть правильну форму: {form}",
-                                "options": [form, "Інший варіант."],
+                                "question": form,
+                                "options": [form, "альтернатива"],
                                 "correct": 0,
                             }
                             for form in forms

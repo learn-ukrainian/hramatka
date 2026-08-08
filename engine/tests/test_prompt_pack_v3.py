@@ -18,6 +18,7 @@ from hramatka.engine.prompt_pack_v3 import (
     full_density_exemplars,
     render_phase_prompt,
     six_item_negative_exemplar,
+    validate_exemplar_contamination,
     validate_response,
 )
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
@@ -254,3 +255,139 @@ def test_true_false_parentheticals_are_banned_from_all_learner_facing_fields(
 
     with pytest.raises(PromptPackV3Error, match=r"\(True\) or \(False\)"):
         _validate(payload, context)
+
+
+def _primary_forms(kit: dict) -> tuple[str, ...]:
+    return tuple(
+        unit["allowed_forms"][0]
+        for unit in kit.get("certified_units", [])
+        if isinstance(unit, dict)
+        and isinstance(unit.get("allowed_forms"), list)
+        and unit["allowed_forms"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("activity_type", "exemplar_activity"),
+    [
+        (
+            "quiz",
+            lambda kit: {
+                "payload": {
+                    "type": "quiz",
+                    "instruction": "Оберіть правильний варіант.",
+                    "items": [
+                        {
+                            "question": f"Вкажіть правильну форму: {form}",
+                            "options": [form, "альтернатива"],
+                            "correct": 0,
+                        }
+                        for form in _primary_forms(kit)
+                    ],
+                },
+                "answer_key": {
+                    "items": [
+                        {"index": index, "correct": 0}
+                        for index in range(len(_primary_forms(kit)))
+                    ]
+                },
+            },
+        ),
+        (
+            "quiz",
+            lambda kit: {
+                "payload": {
+                    "type": "quiz",
+                    "instruction": "Оберіть правильний варіант.",
+                    "items": [
+                        {
+                            "question": form,
+                            "options": [form, "Інший варіант."],
+                            "correct": 0,
+                        }
+                        for form in _primary_forms(kit)
+                    ],
+                },
+                "answer_key": {
+                    "items": [
+                        {"index": index, "correct": 0}
+                        for index in range(len(_primary_forms(kit)))
+                    ]
+                },
+            },
+        ),
+        (
+            "text-questions",
+            lambda kit: {
+                "payload": {
+                    "type": "text-questions",
+                    "instruction": "Дайте відповідь.",
+                    "items": list(_primary_forms(kit)),
+                },
+                "answer_key": {"guidance": "x"},
+            },
+        ),
+        (
+            "error-correction",
+            lambda kit: {
+                "payload": {
+                    "type": "error-correction",
+                    "instruction": "Виправте помилку.",
+                    "items": list(_primary_forms(kit)),
+                },
+                "answer_key": {"items": list(_primary_forms(kit))},
+            },
+        ),
+        (
+            "short-writing",
+            lambda kit: {
+                "payload": {
+                    "type": "short-writing",
+                    "prompt": " ".join(_primary_forms(kit)),
+                },
+                "answer_key": {"guidance": "x"},
+            },
+        ),
+    ],
+    ids=[
+        "quiz_question_template",
+        "quiz_exemplar_distractor",
+        "text_questions_raw_forms",
+        "error_correction_raw_forms",
+        "short_writing_concatenated_forms",
+    ],
+)
+def test_exemplar_contamination_gate_rejects_synthetic_shapes(
+    activity_type: str,
+    exemplar_activity: object,
+) -> None:
+    context = _context(activity_type)
+    kit = context["type_kits"][0]
+    activity = exemplar_activity(kit)
+
+    with pytest.raises(PromptPackV3Error):
+        validate_exemplar_contamination(activity, kit)
+
+
+@pytest.mark.parametrize(
+    ("activity_type", "contaminated_field", "contaminated_value"),
+    [
+        ("cloze", "text", "Синтетичний текст."),
+        ("fill-in", "instruction", "Синтетичний контекст:"),
+        ("true-false", "instruction", "Синтетична вказівка."),
+        ("match-up", "instruction", "Ліва частина"),
+        ("text-questions", "instruction", "Виправлення"),
+        ("short-writing", "prompt", "Синтетичний приклад 1"),
+    ],
+)
+def test_exemplar_contamination_gate_rejects_literal_exemplar_fragments(
+    activity_type: str,
+    contaminated_field: str,
+    contaminated_value: str,
+) -> None:
+    context = _context(activity_type)
+    kit = context["type_kits"][0]
+    activity: dict = {"payload": {"type": activity_type, contaminated_field: contaminated_value}}
+
+    with pytest.raises(PromptPackV3Error, match="synthetic exemplar fragment"):
+        validate_exemplar_contamination(activity, kit)

@@ -31,10 +31,18 @@ from hramatka.engine.lesson_capacity_v3 import (
     LessonSlot,
     preflight_lesson,
 )
-from hramatka.engine.prompt_pack_v3 import build_phase_context, render_phase_prompt
+from hramatka.engine.prompt_pack_v3 import (
+    build_phase_context,
+    render_phase_prompt,
+    validate_exemplar_contamination,
+)
 from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 from hramatka.engine.teacher_ready_density_v3 import phase_shape_for
-from hramatka.engine.transport import GEMMA_MODEL, GenerationUnparseable, GeneratorUnavailable
+from hramatka.engine.transport import (
+    GenerationUnparseable,
+    GeneratorUnavailable,
+    generator_model_id,
+)
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
 from .artifacts import bake_artifact_dir
@@ -296,11 +304,10 @@ def _bind_learner_payload_to_certified_units(
                 or item["options"][:1] != [form]
             ):
                 raise ValueError("v3 quiz payload is detached from certified units.")
-            # The serializer has two certified quiz renderings: its legacy
-            # bare form and the explicit v3.2 learner instruction.  Substring
-            # matching would let unrelated question prose masquerade as a
-            # bound learner surface.
-            if item.get("question") not in {form, f"Вкажіть правильну форму: {form}"}:
+            # Only the bare certified form is an acceptable quiz question.
+            # The "Вкажіть правильну форму: ..." template is the synthetic
+            # exemplar shape and is rejected by the exemplar-contamination gate.
+            if item.get("question") != form:
                 raise ValueError("v3 quiz question is detached from certified units.")
         _bound_list(
             answer_key.get("items"),
@@ -368,11 +375,19 @@ def _bind_learner_payload_to_certified_units(
         )
         return
     if activity_type == "error-correction":
-        _bound_list(payload.get("items"), primary, label="items")
+        items = payload.get("items")
+        if not isinstance(items, list) or len(items) != len(primary):
+            raise ValueError("v3 error-correction payload count is detached from certified units.")
+        if not all(isinstance(item, str) and item.strip() for item in items):
+            raise ValueError("v3 error-correction items must be non-empty strings.")
         _bound_list(answer_key.get("items"), expected_keys, label="answer key")
         return
     if activity_type == "text-questions":
-        _bound_list(payload.get("items"), primary, label="items")
+        items = payload.get("items")
+        if not isinstance(items, list) or len(items) != len(primary):
+            raise ValueError("v3 text-questions payload count is detached from certified units.")
+        if not all(isinstance(item, str) and item.strip() for item in items):
+            raise ValueError("v3 text-questions items must be non-empty strings.")
         return
     if activity_type == "short-writing":
         prompt = payload.get("prompt")
@@ -447,6 +462,33 @@ class EngineLessonBaker:
             self._resolved_bundle = data.active_bundle()
         return self._resolved_bundle
 
+    @staticmethod
+    def _generator_model_id(generator: object) -> str | None:
+        """Return the actual model identity used for the last provider call.
+
+        Generators set ``generator_model_id`` during the call.  Static
+        attributes are a fallback for test callables that wrap a plain port.
+        """
+        model = generator_model_id.get(None)
+        if isinstance(model, str) and model:
+            return model
+        model = getattr(generator, "model", None) or getattr(generator, "_model", None)
+        if isinstance(model, str) and model:
+            return model
+        return None
+
+    @staticmethod
+    def _inject_model_provenance(payload: object, model_id: str | None) -> None:
+        """Attach the generator identity to each response slot for the gate layer."""
+        if model_id is None or not isinstance(payload, Mapping):
+            return
+        slots = payload.get("slots")
+        if not isinstance(slots, list):
+            return
+        for record in slots:
+            if isinstance(record, Mapping):
+                record["_generator_model_id"] = model_id
+
     def _call_generator(
         self,
         prompt: str,
@@ -454,7 +496,7 @@ class EngineLessonBaker:
         raw_attempt_counter: list[int],
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
-    ) -> tuple[object, str, int]:
+    ) -> tuple[object, str, int, str | None]:
         generator = (
             self._generator.for_bake() if hasattr(self._generator, "for_bake") else self._generator
         )
@@ -462,10 +504,13 @@ class EngineLessonBaker:
         try:
             raw_attempt_counter[0] += 1
             attempt = raw_attempt_counter[0]
+            generator_model_id.set(None)
             raw = generator(prompt)
+            model_id = self._generator_model_id(generator)
             parsed = _parse_payload(raw)
+            self._inject_model_provenance(parsed, model_id)
             assert isinstance(raw, str)  # enforced by _parse_payload
-            return parsed, raw, attempt
+            return parsed, raw, attempt, model_id
         except GeneratorUnavailable as error:
             raise ProviderUnavailable(str(error), retry_exhausted=error.retry_exhausted) from error
         except GenerationUnparseable as error:
@@ -570,7 +615,7 @@ class EngineLessonBaker:
                 context.update_progress_db(phase=phase, step="generation")
                 # The evaluator independently recreates and hashes this same context.
                 phase_context = build_phase_context(preflight.allocation, phase=phase)
-                initial_payload, initial_raw, initial_attempt = self._call_generator(
+                initial_payload, initial_raw, initial_attempt, _ = self._call_generator(
                     render_phase_prompt(phase_context),
                     raw_attempt_counter=raw_attempt_counter,
                     raw_out_root=raw_out_root,
@@ -580,7 +625,7 @@ class EngineLessonBaker:
                     preflight.allocation,
                     phase=phase,
                     payload=initial_payload,
-                    deterministic_gates=(_activity_gate,),
+                    deterministic_gates=(_activity_gate, validate_exemplar_contamination),
                     raw_contract_validator=_raw_activity_contract,
                     repair_renderer=lambda request: self._render_repair(
                         request,
@@ -716,7 +761,7 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
-        payload, _raw, _attempt = self._call_generator(
+        payload, _raw, _attempt, _model_id = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="repair",
@@ -737,7 +782,7 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
-        payload, _raw, _attempt = self._call_generator(
+        payload, _raw, _attempt, _model_id = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
                 mode="replacement",
@@ -758,7 +803,10 @@ class EngineLessonBaker:
         answer_key = activity["answer_key"]
         assert isinstance(payload, Mapping) and isinstance(answer_key, Mapping)
         activity_type = evaluation.activity_type
-        model = getattr(evaluation, "generator", None) or GEMMA_MODEL
+        # Truthful provenance only.  A missing generator identity is stamped as
+        # "unknown" rather than the old silent GEMMA default that made every
+        # block falsely claim google-ais/gemma-4-31b-it.
+        model = getattr(evaluation, "generator", None) or "unknown"
         envelope = {
             "id": f"activity-{activity_type}-{index + 1}",
             "type": activity_type,

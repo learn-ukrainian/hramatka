@@ -114,6 +114,7 @@ class BlockEvaluation:
     receipt: BlockDensityReceipt | None
     activity: Mapping[str, Any] | None = None
     errors: tuple[SlotError, ...] = ()
+    generator: str | None = None
 
     def __post_init__(self) -> None:
         if not self.slot_id.strip() or self.phase < 1 or self.observed_units < 0:
@@ -538,6 +539,8 @@ def _evaluate_payload(
                 units=observed_units[slot_id],
                 floor_met=True,
             )
+            generator = serialized.get(slot_id, {}).get("_generator_model_id")
+            generator = generator if isinstance(generator, str) and generator else None
             blocks.append(
                 BlockEvaluation(
                     slot_id=slot_id,
@@ -548,6 +551,7 @@ def _evaluate_payload(
                     receipt=receipt,
                     activity=activities[slot_id],
                     errors=errors,
+                    generator=generator,
                 )
             )
         elif slot_id in shortfalls:

@@ -39,6 +39,7 @@ from .transport import (
     GEMMA_TIMEOUT_S,
     AISGeneratorPort,
     GeneratorUnavailable,
+    generator_model_id,
 )
 
 log = logging.getLogger(__name__)
@@ -868,6 +869,7 @@ class SubscriptionGeneratorPort:
         raw = completed.stdout
         if not _subscription_completion_text(raw):
             raise GeneratorUnavailable("subscription client did not emit a serializer completion")
+        generator_model_id.set(self.model)
         self._raw_output_sha256.append(hashlib.sha256(raw.encode("utf-8")).hexdigest())
         ctx = telemetry_ctx.get()
         if ctx is not None:

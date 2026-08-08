@@ -25,6 +25,21 @@ TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v2"
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
 _TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.2.md"
 
+# Literal strings that appear only in the full-density synthetic exemplar.  Their
+# presence in a model response means the serializer copied the exemplar instead
+# of generating teacher-ready content from the certified substrate.
+EXEMPLAR_ONLY_STRINGS = frozenset({
+    "Інший варіант.",
+    "Синтетичний приклад",
+    "Синтетичний текст.",
+    "Синтетичний контекст:",
+    "Синтетична вказівка.",
+    "Ліва частина",
+    "Права частина",
+    "Виправлення",
+})
+_EXEMPLAR_QUIZ_QUESTION_TEMPLATE = "Вкажіть правильну форму: {}"
+
 
 class PromptPackV3Error(ValueError):
     """A deterministic v3.2 pack serialization or validation failure."""
@@ -226,6 +241,65 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
     raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
 
 
+def _primary_forms(type_kit: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        unit["allowed_forms"][0]
+        for unit in type_kit.get("certified_units", ())
+        if isinstance(unit, Mapping)
+        and isinstance(unit.get("allowed_forms"), list)
+        and unit["allowed_forms"]
+    )
+
+
+def validate_exemplar_contamination(
+    activity: Mapping[str, Any], type_kit: Mapping[str, Any]
+) -> None:
+    """Reject learner-facing output that copies the synthetic exemplar.
+
+    The full-density exemplar is a shape guide, not source material.  A response
+    that recycles its literal strings or exact question template is degenerate
+    and must fail closed instead of reaching a teacher.
+    """
+    activity_type = type_kit.get("type")
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+
+    if activity_type == "quiz":
+        primary = _primary_forms(type_kit)
+        items = payload.get("items")
+        if isinstance(items, list):
+            for item, form in zip(items, primary, strict=False):
+                if (
+                    isinstance(item, Mapping)
+                    and item.get("question") == _EXEMPLAR_QUIZ_QUESTION_TEMPLATE.format(form)
+                ):
+                    raise PromptPackV3Error(
+                        "quiz item uses the synthetic exemplar question template"
+                    )
+    elif activity_type in {"text-questions", "error-correction"}:
+        primary = _primary_forms(type_kit)
+        items = payload.get("items")
+        if isinstance(items, list) and items == list(primary):
+            raise PromptPackV3Error(
+                f"{activity_type} items are raw certified forms instead of composed content"
+            )
+    elif activity_type == "short-writing":
+        primary = _primary_forms(type_kit)
+        prompt = payload.get("prompt")
+        if isinstance(prompt, str) and prompt == " ".join(primary):
+            raise PromptPackV3Error(
+                "short-writing prompt is a concatenation of raw certified forms"
+            )
+
+    for text in _learner_facing_strings(activity):
+        for fragment in EXEMPLAR_ONLY_STRINGS:
+            if fragment in text:
+                raise PromptPackV3Error(
+                    f"learner-facing text contains synthetic exemplar fragment: {fragment!r}"
+                )
+
+
 def six_item_negative_exemplar() -> dict[str, Any]:
     """The one intentionally-invalid six-unit example required by the contract."""
     return {
@@ -315,12 +389,21 @@ def _validate_response_shape(
     return slots
 
 
+_VALID_SLOT_FIELDS = frozenset({"slot_id", "type", "activity", "serialized_units"})
+# Optional provenance field injected by the production adapter after the provider
+# call.  It is not part of the model contract and is stripped before the block
+# reaches the teacher, but it must survive the shape gate so the adapter can
+# stamp truthful block provenance.
+_SLOT_PROVENANCE_FIELD = "_generator_model_id"
+
+
 def _validate_slot_identity(
     record: object, type_kit: Mapping[str, Any], index: int
 ) -> Mapping[str, Any]:
     if not isinstance(record, Mapping):
         raise PromptPackV3Error(f"slots[{index}] must be an object.")
-    if set(record) != {"slot_id", "type", "activity", "serialized_units"}:
+    fields = set(record)
+    if fields != _VALID_SLOT_FIELDS and fields != _VALID_SLOT_FIELDS | {_SLOT_PROVENANCE_FIELD}:
         raise PromptPackV3Error(f"slots[{index}] leaks or omits v3.2 serialization fields.")
     if (
         record.get("slot_id") != type_kit.get("slot_id")

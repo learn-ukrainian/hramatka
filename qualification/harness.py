@@ -522,7 +522,7 @@ def _v3_live_record_from_kit(
             "instruction": "x",
             "items": [
                 {
-                    "question": f"Вкажіть правильну форму: {form}",
+                    "question": form,
                     "options": [form, "x"],
                     "correct": 0,
                 }
@@ -577,10 +577,18 @@ def _v3_live_record_from_kit(
             "pairs": [{"left_index": index, "right_index": index} for index in range(len(forms))]
         }
     elif activity_type == "error-correction":
-        payload = {"type": activity_type, "instruction": "x", "items": forms}
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "items": [f"Речення з {form}." for form in forms],
+        }
         answer_key = {"items": expected_keys}
     elif activity_type == "text-questions":
-        payload = {"type": activity_type, "instruction": "x", "items": forms}
+        payload = {
+            "type": activity_type,
+            "instruction": "x",
+            "items": [f"Що означає {form}?" for form in forms],
+        }
         answer_key = {"guidance": "x"}
     elif activity_type == "short-writing":
         prompt_fragments = [
@@ -588,7 +596,10 @@ def _v3_live_record_from_kit(
             for unit in certified_units
             for fragment in unit["allowed_forms"]
         ]
-        payload = {"type": activity_type, "prompt": " ".join(prompt_fragments)}
+        payload = {
+            "type": activity_type,
+            "prompt": " ".join(prompt_fragments) + " Напишіть короткий текст.",
+        }
         answer_key = {"guidance": "x"}
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")
