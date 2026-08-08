@@ -1,4 +1,4 @@
-"""Deterministic contracts for the pre-cutover gemma-phase-pack.v3.2."""
+"""Deterministic contracts for the v3.3 binding-contract redesign (#375)."""
 
 from __future__ import annotations
 
@@ -18,8 +18,11 @@ from hramatka.engine.prompt_pack_v3 import (
     full_density_exemplars,
     render_phase_prompt,
     six_item_negative_exemplar,
+    validate_distractor_adjacency,
+    validate_elicitation_shape,
     validate_exemplar_contamination,
     validate_response,
+    validate_verbatim_answer_ban,
 )
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
 from hramatka.engine.unit_builders_v3 import BUILDERS
@@ -84,11 +87,11 @@ def _validate(payload: dict, context: dict, **overrides: object) -> list[dict]:
     )
 
 
-def test_v32_context_uses_the_new_template_and_type_kit_identity() -> None:
+def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
-    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.2"
+    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.1"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.3"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -120,9 +123,8 @@ def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_item
     negative = six_item_negative_exemplar()
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
-    assert "…, ніж …" in prompt
-    assert "зі вікон" in prompt
-    assert "(True)" in prompt and "(False)" in prompt
+    assert "SYNTHETIC-QUIZ-STEM" in prompt
+    assert "v3.3" in prompt
 
 
 def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None:
@@ -219,7 +221,7 @@ def test_failed_exact_count_in_any_slot_never_reaches_raw_contract_validation() 
     assert calls == []
 
 
-def test_v32_validation_requires_bound_always_on_and_raw_contract_gates() -> None:
+def test_v33_validation_requires_bound_always_on_and_raw_contract_gates() -> None:
     context = _context()
     payload = _payload(context)
 
@@ -268,116 +270,14 @@ def _primary_forms(kit: dict) -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize(
-    ("activity_type", "exemplar_activity"),
-    [
-        (
-            "quiz",
-            lambda kit: {
-                "payload": {
-                    "type": "quiz",
-                    "instruction": "Оберіть правильний варіант.",
-                    "items": [
-                        {
-                            "question": f"Вкажіть правильну форму: {form}",
-                            "options": [form, "альтернатива"],
-                            "correct": 0,
-                        }
-                        for form in _primary_forms(kit)
-                    ],
-                },
-                "answer_key": {
-                    "items": [
-                        {"index": index, "correct": 0}
-                        for index in range(len(_primary_forms(kit)))
-                    ]
-                },
-            },
-        ),
-        (
-            "quiz",
-            lambda kit: {
-                "payload": {
-                    "type": "quiz",
-                    "instruction": "Оберіть правильний варіант.",
-                    "items": [
-                        {
-                            "question": form,
-                            "options": [form, "Інший варіант."],
-                            "correct": 0,
-                        }
-                        for form in _primary_forms(kit)
-                    ],
-                },
-                "answer_key": {
-                    "items": [
-                        {"index": index, "correct": 0}
-                        for index in range(len(_primary_forms(kit)))
-                    ]
-                },
-            },
-        ),
-        (
-            "text-questions",
-            lambda kit: {
-                "payload": {
-                    "type": "text-questions",
-                    "instruction": "Дайте відповідь.",
-                    "items": list(_primary_forms(kit)),
-                },
-                "answer_key": {"guidance": "x"},
-            },
-        ),
-        (
-            "error-correction",
-            lambda kit: {
-                "payload": {
-                    "type": "error-correction",
-                    "instruction": "Виправте помилку.",
-                    "items": list(_primary_forms(kit)),
-                },
-                "answer_key": {"items": list(_primary_forms(kit))},
-            },
-        ),
-        (
-            "short-writing",
-            lambda kit: {
-                "payload": {
-                    "type": "short-writing",
-                    "prompt": " ".join(_primary_forms(kit)),
-                },
-                "answer_key": {"guidance": "x"},
-            },
-        ),
-    ],
-    ids=[
-        "quiz_question_template",
-        "quiz_exemplar_distractor",
-        "text_questions_raw_forms",
-        "error_correction_raw_forms",
-        "short_writing_concatenated_forms",
-    ],
-)
-def test_exemplar_contamination_gate_rejects_synthetic_shapes(
-    activity_type: str,
-    exemplar_activity: object,
-) -> None:
-    context = _context(activity_type)
-    kit = context["type_kits"][0]
-    activity = exemplar_activity(kit)
-
-    with pytest.raises(PromptPackV3Error):
-        validate_exemplar_contamination(activity, kit)
-
-
-@pytest.mark.parametrize(
     ("activity_type", "contaminated_field", "contaminated_value"),
     [
-        ("cloze", "text", "Синтетичний текст."),
-        ("fill-in", "instruction", "Синтетичний контекст:"),
+        ("cloze", "text", "SYNTHETIC-CLOZE-TEXT"),
+        ("fill-in", "instruction", "SYNTHETIC-FILLIN-STEM"),
         ("true-false", "instruction", "Синтетична вказівка."),
-        ("match-up", "instruction", "Ліва частина"),
-        ("text-questions", "instruction", "Виправлення"),
-        ("short-writing", "prompt", "Синтетичний приклад 1"),
+        ("match-up", "instruction", "SYNTHETIC-MATCH-LEFT"),
+        ("text-questions", "instruction", "SYNTHETIC-OPEN-QUESTION"),
+        ("short-writing", "prompt", "SYNTHETIC-WRITING-PROMPT"),
     ],
 )
 def test_exemplar_contamination_gate_rejects_literal_exemplar_fragments(
@@ -391,3 +291,216 @@ def test_exemplar_contamination_gate_rejects_literal_exemplar_fragments(
 
     with pytest.raises(PromptPackV3Error, match="synthetic exemplar fragment"):
         validate_exemplar_contamination(activity, kit)
+
+
+def test_exemplar_contamination_rejects_raw_certified_forms_in_text_questions() -> None:
+    context = _context("text-questions")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": list(_primary_forms(kit)),
+        },
+        "answer_key": {"guidance": "x"},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="raw certified forms"):
+        validate_exemplar_contamination(activity, kit)
+
+
+def test_verbatim_answer_ban_rejects_answer_in_question() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    form = _primary_forms(kit)[0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": f"Яке слово тут потрібно: {form}?",
+                    "options": [form, "інший"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="contains answer form"):
+        validate_verbatim_answer_ban(activity, kit)
+
+
+def test_verbatim_answer_ban_rejects_bare_form_question() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    form = _primary_forms(kit)[0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": form,
+                    "options": [form, "інший"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="bare answer form or template"):
+        validate_verbatim_answer_ban(activity, kit)
+
+
+def test_verbatim_answer_ban_accepts_composed_question() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    form = _primary_forms(kit)[0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Яка форма слова потрібна в цьому реченні?",
+                    "options": [form, "інший"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    validate_verbatim_answer_ban(activity, kit)
+
+
+def test_elicitation_shape_rejects_bare_form() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    form = _primary_forms(kit)[0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": form,
+                    "options": [form, "інший"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="must be a composed sentence"):
+        validate_elicitation_shape(activity, kit)
+
+
+def test_elicitation_shape_accepts_composed_item() -> None:
+    context = _context("cloze")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуск.",
+            "text": "У місті сьогодні холодно, тому ми йдемо у кавʼярню.",
+            "blanks": [
+                {"id": 1, "answer": "кавʼярню", "options": ["кавʼярню", "кавʼярня"]}
+            ],
+        },
+        "answer_key": {"blanks": [{"id": 1, "answer": "кавʼярню"}]},
+    }
+
+    validate_elicitation_shape(activity, kit)
+
+
+def test_distractor_adjacency_rejects_non_vesum_distractor() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Яка форма іменника потрібна тут?",
+                    "options": ["книжки", "вигаданеСлово123"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="not in VESUM"):
+        validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_rejects_unrelated_lemma_distractor() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Яка форма іменника потрібна тут?",
+                    "options": ["книжки", "телевізор"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="does not share a lemma"):
+        validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_accepts_same_lemma_form() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    # Use a noun form pair known to exist in the offline fixture VESUM.
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Яка форма іменника потрібна тут?",
+                    "options": ["книжки", "книжок"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    # Both forms share the lemma "книга".
+    validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_requires_answer_at_declared_index() -> None:
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Яка форма іменника потрібна тут?",
+                    "options": ["книжок", "книжки"],
+                    "correct": 1,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 1}]},
+    }
+
+    validate_distractor_adjacency(activity, kit)

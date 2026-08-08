@@ -394,6 +394,7 @@ def _v3_qualification_probe(
                         disposition=block.receipt.disposition,
                         units=block.receipt.units,
                         floor_met=block.receipt.floor_met,
+                        contract_version=block.receipt.contract_version,
                         repair_rounds=min(attempt_index, 2),
                         # The evaluator appends conditional replacement
                         # attempts only after initial + both same-plan repair
@@ -414,6 +415,7 @@ def _v3_qualification_probe(
                     disposition="dropped",
                     units=block.receipt.units,
                     floor_met=block.receipt.floor_met,
+                    contract_version=block.receipt.contract_version,
                     repair_rounds=2,
                     replacement_used=False,
                     unassigned_errors_count=0,
@@ -511,7 +513,12 @@ def _v3_record_from_kit(kit: Mapping[str, Any], *, units: int | None = None) -> 
 def _v3_live_record_from_kit(
     kit: Mapping[str, Any], *, unit_limit: int | None = None
 ) -> dict[str, Any]:
-    """Return a schema-valid deterministic v3 serializer response for HTTP tests."""
+    """Return a schema-valid deterministic v3.3 serializer response for HTTP tests.
+
+    Learner-facing prose is composed and never quotes the certified answer.
+    Closed-item distractors reuse the certified form so the same-lemma VESUM
+    adjacency gate passes deterministically with the limited fixture vocabulary.
+    """
     activity_type = kit["type"]
     certified_units = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
     forms = [unit["allowed_forms"][0] for unit in certified_units]
@@ -519,24 +526,24 @@ def _v3_live_record_from_kit(
     if activity_type == "quiz":
         payload = {
             "type": activity_type,
-            "instruction": "x",
+            "instruction": "Оберіть правильний варіант.",
             "items": [
                 {
-                    "question": form,
-                    "options": [form, "x"],
+                    "question": f"Яке слово підходить до контексту {index + 1}?",
+                    "options": [form, form],
                     "correct": 0,
                 }
-                for form in forms
+                for index, form in enumerate(forms)
             ],
         }
         answer_key = {"items": [{"index": index, "correct": 0} for index in range(len(forms))]}
     elif activity_type == "cloze":
         payload = {
             "type": activity_type,
-            "instruction": "x",
-            "text": "x",
+            "instruction": "Заповніть пропуск.",
+            "text": "Це текст із кількома пропусками, які треба заповнити.",
             "blanks": [
-                {"id": index, "answer": form, "options": [form, "x"]}
+                {"id": index, "answer": form, "options": [form, form]}
                 for index, form in enumerate(forms, start=1)
             ],
         }
@@ -546,28 +553,37 @@ def _v3_live_record_from_kit(
     elif activity_type == "fill-in":
         payload = {
             "type": activity_type,
-            "instruction": "x",
+            "instruction": "Вставте слово.",
             "items": [
                 {
-                    "sentence": unit["rendering_surface"],
+                    "sentence": f"Речення {index + 1} потребує правильного слова.",
                     "answer": form,
-                    "options": [form, "x"],
+                    "options": [form, form],
                 }
-                for unit, form in zip(certified_units, forms, strict=True)
+                for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True))
             ],
         }
         answer_key = {"items": forms}
     elif activity_type == "true-false":
+        correct_values = [expected == "true" for expected in expected_keys]
         payload = {
             "type": activity_type,
-            "instruction": "x",
-            "items": [{"statement": form, "correct": True} for form in forms],
+            "instruction": "Визначте правильність.",
+            "items": [
+                {"statement": form, "correct": correct}
+                for form, correct in zip(forms, correct_values, strict=True)
+            ],
         }
-        answer_key = {"items": [{"index": index, "correct": True} for index in range(len(forms))]}
+        answer_key = {
+            "items": [
+                {"index": index, "correct": correct}
+                for index, correct in enumerate(correct_values)
+            ]
+        }
     elif activity_type == "match-up":
         payload = {
             "type": activity_type,
-            "instruction": "x",
+            "instruction": "Знайдіть пару.",
             "pairs": [
                 {"left": unit["allowed_forms"][0], "right": unit["allowed_forms"][1]}
                 for unit in certified_units
@@ -579,15 +595,21 @@ def _v3_live_record_from_kit(
     elif activity_type == "error-correction":
         payload = {
             "type": activity_type,
-            "instruction": "x",
-            "items": [f"Речення з {form}." for form in forms],
+            "instruction": "Виправте помилку.",
+            "items": [
+                f"Речення {index + 1} містить одну мовну помилку."
+                for index in range(len(forms))
+            ],
         }
         answer_key = {"items": expected_keys}
     elif activity_type == "text-questions":
         payload = {
             "type": activity_type,
-            "instruction": "x",
-            "items": [f"Що означає {form}?" for form in forms],
+            "instruction": "Дайте відповідь.",
+            "items": [
+                f"Яке питання стосується контексту {index + 1}?"
+                for index in range(len(forms))
+            ],
         }
         answer_key = {"guidance": "x"}
     elif activity_type == "short-writing":
@@ -1559,6 +1581,7 @@ class ProductionQualificationHarness:
             disposition="dropped",
             units=0,
             floor_met=False,
+            contract_version="TeacherReadyDensity.v3",
             repair_rounds=0,
             replacement_used=False,
             unassigned_errors_count=1,

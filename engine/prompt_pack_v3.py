@@ -1,4 +1,4 @@
-"""Live v3.2 serializer pack for ``TeacherReadyDensity.v3``.
+"""Live v3.3 serializer pack for ``TeacherReadyDensity.v3``.
 
 This module consumes only the exact-cover allocation made before generation.
 It is the protocol boundary between immutable unit plans and the live raw
@@ -14,35 +14,42 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from . import paths
 from .lesson_capacity_v3 import LessonAllocation
+from .linguistics import verify_words
 from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
-PROMPT_PACK_VERSION = "PromptPackInput.v3"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.2"
+PROMPT_PACK_VERSION = "PromptPackInput.v3.1"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.3"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v2"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.2.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.3.md"
 
 # Literal strings that appear only in the full-density synthetic exemplar.  Their
 # presence in a model response means the serializer copied the exemplar instead
 # of generating teacher-ready content from the certified substrate.
 EXEMPLAR_ONLY_STRINGS = frozenset({
-    "Інший варіант.",
-    "Синтетичний приклад",
-    "Синтетичний текст.",
-    "Синтетичний контекст:",
+    "SYNTHETIC-QUIZ-STEM",
+    "SYNTHETIC-CLOZE-TEXT",
+    "SYNTHETIC-FILLIN-STEM",
+    "SYNTHETIC-TRUEFALSE-STEM",
+    "SYNTHETIC-MATCH-LEFT",
+    "SYNTHETIC-MATCH-RIGHT",
+    "SYNTHETIC-ERROR-SOURCE",
+    "SYNTHETIC-ERROR-CORRECTION",
+    "SYNTHETIC-OPEN-QUESTION",
+    "SYNTHETIC-WRITING-PROMPT",
+    "SYNTHETIC-MARK-TEXT",
+    "SYNTHETIC-DISTRACTOR",
     "Синтетична вказівка.",
-    "Ліва частина",
-    "Права частина",
-    "Виправлення",
 })
 _EXEMPLAR_QUIZ_QUESTION_TEMPLATE = "Вкажіть правильну форму: {}"
 
 
 class PromptPackV3Error(ValueError):
-    """A deterministic v3.2 pack serialization or validation failure."""
+    """A deterministic v3.3 pack serialization or validation failure."""
 
 
 DeterministicGate = Callable[[Mapping[str, Any], Mapping[str, Any]], None]
@@ -54,7 +61,7 @@ def _canonical(value: object) -> str:
 
 
 def template_digest() -> str:
-    """Return the stable digest of the literal v3.2 instruction template."""
+    """Return the stable digest of the literal v3.3 instruction template."""
     return hashlib.sha256(_template_source().encode("utf-8")).hexdigest()
 
 
@@ -80,9 +87,9 @@ def _type_kit(slot: object) -> dict[str, Any]:
 
 
 def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str, Any]:
-    """Build the only v3.2 model input from a completed exact-cover allocation."""
+    """Build the only v3.3 model input from a completed exact-cover allocation."""
     if not isinstance(allocation, LessonAllocation):
-        raise TypeError("Prompt pack v3.2 requires a completed LessonAllocation.")
+        raise TypeError("Prompt pack v3.3 requires a completed LessonAllocation.")
     slots = [slot for slot in allocation.slots if slot.phase == phase]
     if not slots:
         raise PromptPackV3Error(f"Allocation has no scheduled slots for phase {phase}.")
@@ -130,22 +137,92 @@ def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[
     return exemplars
 
 
+def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
+    """Return ``count`` distinct composed items for the requested activity type.
+
+    The content is domain-neutral Ukrainian (weather, city, timetable, simple
+    actions) and deliberately uses synthetic markers that the contamination gate
+    can detect.  Each item is a self-contained shape guide; real model output
+    must replace every learner-facing string with composed prose that elicits
+    the certified form without quoting it.
+    """
+    if activity_type == "quiz":
+        return [
+            {
+                "question": f"SYNTHETIC-QUIZ-STEM {index}: якою буде форма?",
+                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
+                "correct": 0,
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "cloze":
+        return [
+            {
+                "id": index,
+                "answer": f"форм{index}",
+                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "fill-in":
+        return [
+            {
+                "sentence": f"SYNTHETIC-FILLIN-STEM {index}: речення потребує слова.",
+                "answer": f"форм{index}",
+                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "true-false":
+        return [
+            {
+                "statement": f"SYNTHETIC-TRUEFALSE-STEM {index}: твердження.",
+                "correct": index % 2 == 1,
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "match-up":
+        return [
+            {
+                "left": f"SYNTHETIC-MATCH-LEFT {index}",
+                "right": f"SYNTHETIC-MATCH-RIGHT {index}",
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "error-correction":
+        return [
+            {
+                "source": f"SYNTHETIC-ERROR-SOURCE {index}: речення з помилкою.",
+                "correction": f"SYNTHETIC-ERROR-CORRECTION {index}",
+            }
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "text-questions":
+        return [
+            {"question": f"SYNTHETIC-OPEN-QUESTION {index}: питання?"}
+            for index in range(1, count + 1)
+        ]
+    if activity_type == "short-writing":
+        return [{"prompt": "SYNTHETIC-WRITING-PROMPT: напишіть речення."}]
+    if activity_type == "mark-the-words":
+        return [
+            {
+                "text": "SYNTHETIC-MARK-TEXT: позначте правильні слова.",
+                "target_words": [f"форм{index}" for index in range(1, count + 1)],
+            }
+        ]
+    raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
+
+
 def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any]:
     """Return a concrete, non-copyable full-density activity shape for one requested type."""
-    forms = [f"Синтетичний приклад {index}" for index in range(1, count + 1)]
+    items = _synthetic_items(activity_type, count)
     if activity_type == "quiz":
         return {
             "payload": {
                 "type": "quiz",
                 "instruction": "Оберіть правильний варіант.",
-                "items": [
-                    {
-                        "question": f"Вкажіть правильну форму: {form}",
-                        "options": [form, "Інший варіант."],
-                        "correct": 0,
-                    }
-                    for form in forms
-                ],
+                "items": items,
             },
             "answer_key": {"items": [{"index": index, "correct": 0} for index in range(count)]},
         }
@@ -154,16 +231,11 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             "payload": {
                 "type": "cloze",
                 "instruction": "Заповніть пропуски.",
-                "text": "Синтетичний текст.",
-                "blanks": [
-                    {"id": index, "answer": form, "options": [form, "Інший варіант."]}
-                    for index, form in enumerate(forms, start=1)
-                ],
+                "text": "SYNTHETIC-CLOZE-TEXT: текст із пропусками.",
+                "blanks": items,
             },
             "answer_key": {
-                "blanks": [
-                    {"id": index, "answer": form} for index, form in enumerate(forms, start=1)
-                ]
+                "blanks": [{"id": item["id"], "answer": item["answer"]} for item in items]
             },
         }
     if activity_type == "fill-in":
@@ -171,35 +243,30 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             "payload": {
                 "type": "fill-in",
                 "instruction": "Вставте слово.",
-                "items": [
-                    {
-                        "sentence": f"Синтетичний контекст: {form}.",
-                        "answer": form,
-                        "options": [form, "Інший варіант."],
-                    }
-                    for form in forms
-                ],
+                "items": items,
             },
-            "answer_key": {"items": forms},
+            "answer_key": {"items": [item["answer"] for item in items]},
         }
     if activity_type == "true-false":
         return {
             "payload": {
                 "type": "true-false",
                 "instruction": "Визначте правильність твердження.",
-                "items": [{"statement": form, "correct": True} for form in forms],
+                "items": items,
             },
-            "answer_key": {"items": [{"index": index, "correct": True} for index in range(count)]},
+            "answer_key": {
+                "items": [
+                    {"index": index, "correct": items[index]["correct"]}
+                    for index in range(count)
+                ]
+            },
         }
     if activity_type == "match-up":
         return {
             "payload": {
                 "type": "match-up",
                 "instruction": "Знайдіть пару.",
-                "pairs": [
-                    {"left": f"Ліва частина {index}", "right": f"Права частина {index}"}
-                    for index in range(1, count + 1)
-                ],
+                "pairs": items,
             },
             "answer_key": {
                 "pairs": [{"left_index": index, "right_index": index} for index in range(count)]
@@ -210,33 +277,37 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             "payload": {
                 "type": "error-correction",
                 "instruction": "Виправте помилку.",
-                "items": forms,
+                "items": [item["source"] for item in items],
             },
-            "answer_key": {"items": [f"Виправлення {index}" for index in range(1, count + 1)]},
+            "answer_key": {"items": [item["correction"] for item in items]},
         }
     if activity_type == "text-questions":
         return {
             "payload": {
                 "type": "text-questions",
                 "instruction": "Дайте відповідь.",
-                "items": forms,
+                "items": [item["question"] for item in items],
             },
             "answer_key": {"guidance": "Синтетична вказівка."},
         }
     if activity_type == "short-writing":
         return {
-            "payload": {"type": "short-writing", "prompt": " ".join(forms)},
+            "payload": {
+                "type": "short-writing",
+                "prompt": items[0]["prompt"],
+            },
             "answer_key": {"guidance": "Синтетична вказівка."},
         }
     if activity_type == "mark-the-words":
+        mark_item = items[0]
         return {
             "payload": {
                 "type": "mark-the-words",
                 "instruction": "Позначте слова.",
-                "text": " ".join(forms),
-                "target_words": forms,
+                "text": mark_item["text"],
+                "target_words": mark_item["target_words"],
             },
-            "answer_key": {"target_words": forms},
+            "answer_key": {"target_words": mark_item["target_words"]},
         }
     raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
 
@@ -251,33 +322,322 @@ def _primary_forms(type_kit: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
+def _certified_answer_forms(type_kit: Mapping[str, Any]) -> set[str]:
+    """Return every certified answer form from the immutable kit."""
+    forms: set[str] = set()
+    for unit in type_kit.get("certified_units", ()):
+        if not isinstance(unit, Mapping):
+            continue
+        allowed = unit.get("allowed_forms")
+        if isinstance(allowed, list) and allowed:
+            forms.add(allowed[0])
+    return forms
+
+
+def _is_trivial_template(text: str, forms: set[str]) -> bool:
+    """True when ``text`` is the exemplar template or a bare answer form."""
+    if text in forms:
+        return True
+    for form in forms:
+        if text == _EXEMPLAR_QUIZ_QUESTION_TEMPLATE.format(form):
+            return True
+    return False
+
+
+def _word_boundary_pattern(form: str) -> re.Pattern[str]:
+    """Return a pattern that matches ``form`` as whole words/phrase.
+
+    Multi-word forms are matched by ordered whole-word tokens; single-word
+    forms by one whole-word token.  Ukrainian letters and apostrophes count
+    as word characters.
+    """
+    word = r"[А-ЯҐЄІЇа-яґєіїʼ'’]+"
+    words = re.findall(word, form)
+    if not words:
+        return re.compile(re.escape(form))
+    parts = [rf"{re.escape(w)}" for w in words]
+    sep = r"[^А-ЯҐЄІЇа-яґєіїʼ'’]*"
+    body = sep.join(parts)
+    return re.compile(
+        rf"(?<![А-ЯҐЄІЇа-яґєіїʼ'’]){body}(?![А-ЯҐЄІЇа-яґєіїʼ'’])",
+        re.IGNORECASE,
+    )
+
+
+def _contains_form(text: str, form: str) -> bool:
+    return bool(_word_boundary_pattern(form).search(text))
+
+
+def validate_verbatim_answer_ban(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> None:
+    """Reject learner-facing prose that contains, names, or quotes a correct answer.
+
+    The certified substrate supplies the correct form; the model must elicit it
+    through composed Ukrainian prose.  Any verbatim occurrence of a correct
+    answer in a prose field is a leak.  Displayed option lists and match-up
+    pairs are not prose fields, so they are excluded from this check.
+    """
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    activity_type = payload.get("type")
+    answer_key = activity.get("answer_key")
+    certified_forms = _certified_answer_forms(kit)
+
+    prose_fields: list[str] = []
+    answer_forms: list[str] = []
+
+    if activity_type == "quiz":
+        instruction = payload.get("instruction", "")
+        if isinstance(instruction, str):
+            prose_fields.append(instruction)
+        key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        for index, item in enumerate(payload.get("items", ())):
+            if not isinstance(item, Mapping):
+                continue
+            question = item.get("question")
+            if isinstance(question, str):
+                prose_fields.append(question)
+            options = item.get("options", ())
+            correct = item.get("correct")
+            key_correct = correct
+            if isinstance(key_items, Sequence) and index < len(key_items):
+                key_item = key_items[index]
+                if isinstance(key_item, Mapping) and isinstance(key_item.get("correct"), int):
+                    key_correct = key_item["correct"]
+            if (
+                isinstance(options, Sequence)
+                and not isinstance(options, (bytes, bytearray, str))
+                and isinstance(key_correct, int)
+                and 0 <= key_correct < len(options)
+            ):
+                answer = options[key_correct]
+                if isinstance(answer, str):
+                    answer_forms.append(answer)
+                if certified_forms:
+                    certified_match = [f for f in certified_forms if f in options]
+                    if certified_match:
+                        answer_forms.append(certified_match[0])
+    elif activity_type == "cloze":
+        instruction = payload.get("instruction", "")
+        if isinstance(instruction, str):
+            prose_fields.append(instruction)
+        text = payload.get("text")
+        if isinstance(text, str):
+            prose_fields.append(text)
+        for blank in payload.get("blanks", ()):
+            if isinstance(blank, Mapping):
+                answer = blank.get("answer")
+                if isinstance(answer, str):
+                    answer_forms.append(answer)
+    elif activity_type == "fill-in":
+        instruction = payload.get("instruction", "")
+        if isinstance(instruction, str):
+            prose_fields.append(instruction)
+        for item in payload.get("items", ()):
+            if isinstance(item, Mapping):
+                sentence = item.get("sentence")
+                if isinstance(sentence, str):
+                    prose_fields.append(sentence)
+                answer = item.get("answer")
+                if isinstance(answer, str):
+                    answer_forms.append(answer)
+    elif activity_type == "error-correction":
+        instruction = payload.get("instruction", "")
+        if isinstance(instruction, str):
+            prose_fields.append(instruction)
+        corrections = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        for index, item in enumerate(payload.get("items", ())):
+            if isinstance(item, str):
+                prose_fields.append(item)
+                if isinstance(corrections, Sequence) and index < len(corrections):
+                    correction = corrections[index]
+                    if isinstance(correction, str):
+                        answer_forms.append(correction)
+
+    if not answer_forms:
+        return
+
+    for text in prose_fields:
+        if _is_trivial_template(text, certified_forms):
+            raise PromptPackV3Error(
+                f"learner-facing text is a bare answer form or template: {text!r}"
+            )
+        for form in answer_forms:
+            if _contains_form(text, form):
+                raise PromptPackV3Error(
+                    f"learner-facing text contains answer form {form!r}: {text!r}"
+                )
+
+
+def _token_count(text: str) -> int:
+    return len(text.split())
+
+
+def validate_elicitation_shape(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> None:
+    """Require quiz/cloze/fill-in prompts to be composed sentences, not bare forms."""
+    certified_forms = _certified_answer_forms(kit)
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    activity_type = payload.get("type")
+
+    def _check(text: str | None, label: str) -> None:
+        if not isinstance(text, str) or not text.strip():
+            raise PromptPackV3Error(f"{label} is empty or missing")
+        if _token_count(text) < 2:
+            raise PromptPackV3Error(f"{label} must be a composed sentence: {text!r}")
+        if text in certified_forms or _is_trivial_template(text, certified_forms):
+            raise PromptPackV3Error(f"{label} is a bare answer form or template: {text!r}")
+
+    if activity_type == "quiz":
+        for index, item in enumerate(payload.get("items", ())):
+            if isinstance(item, Mapping):
+                _check(item.get("question"), f"quiz items[{index}].question")
+    elif activity_type == "cloze":
+        text = payload.get("text")
+        _check(text, "cloze text")
+    elif activity_type == "fill-in":
+        for index, item in enumerate(payload.get("items", ())):
+            if isinstance(item, Mapping):
+                _check(item.get("sentence"), f"fill-in items[{index}].sentence")
+
+
+def _lemma_set(form: str, db_path: Path) -> set[str]:
+    """Return the lowercased lemma set for ``form`` according to VESUM.
+
+    Checks the exact spelling, lowercase, and first-letter-uppercase variants
+    so capitalized sentence-initial forms resolve to their lemma.
+    """
+    variants = {form, form.lower()}
+    if form:
+        variants.add(form[:1].upper() + form[1:])
+    results = verify_words(sorted(variants), db_path=db_path)
+    lemmas: set[str] = set()
+    for variant in variants:
+        for match in results.get(variant, []):
+            lemma = match.get("lemma")
+            if isinstance(lemma, str):
+                lemmas.add(lemma.lower())
+    return lemmas
+
+
+def validate_distractor_adjacency(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> None:
+    """Require every distractor to be a real VESUM form sharing a lemma with the answer.
+
+    The answer form must sit at the index declared by the answer key.  Every
+    other option must be present in VESUM and share at least one lowercased
+    lemma with the certified answer form for that item.
+    """
+    db_path = paths.vesum_db()
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    activity_type = payload.get("type")
+    answer_key = activity.get("answer_key")
+
+    def _validate_options(
+        answer: str, options: Sequence[Any], correct_index: int, label: str
+    ) -> None:
+        if not isinstance(options, Sequence) or isinstance(options, (bytes, bytearray, str)):
+            raise PromptPackV3Error(f"{label} options must be a list")
+        if correct_index < 0 or correct_index >= len(options):
+            raise PromptPackV3Error(f"{label} correct index {correct_index} is out of range")
+        if options[correct_index] != answer:
+            raise PromptPackV3Error(
+                f"{label} answer form is not at the declared correct index"
+            )
+        answer_lemmas = _lemma_set(answer, db_path)
+        if not answer_lemmas:
+            raise PromptPackV3Error(f"{label} answer form {answer!r} is not in VESUM")
+        for option_index, option in enumerate(options):
+            if not isinstance(option, str):
+                raise PromptPackV3Error(f"{label} option must be a string")
+            if option_index == correct_index:
+                continue
+            option_lemmas = _lemma_set(option, db_path)
+            if not option_lemmas:
+                raise PromptPackV3Error(f"{label} distractor {option!r} is not in VESUM")
+            if not (answer_lemmas & option_lemmas):
+                raise PromptPackV3Error(
+                    f"{label} distractor {option!r} does not share a lemma with answer {answer!r}"
+                )
+
+    if activity_type == "quiz":
+        key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        for index, item in enumerate(payload.get("items", ())):
+            if not isinstance(item, Mapping):
+                continue
+            options = item.get("options")
+            correct = item.get("correct")
+            if (
+                not isinstance(options, Sequence)
+                or isinstance(options, (bytes, bytearray, str))
+                or not isinstance(correct, int)
+                or correct < 0
+                or correct >= len(options)
+            ):
+                raise PromptPackV3Error(f"quiz items[{index}] lacks valid options or correct index")
+            answer = options[correct]
+            if not isinstance(answer, str):
+                raise PromptPackV3Error(f"quiz items[{index}] answer is not a string")
+            declared_correct = correct
+            if isinstance(key_items, Sequence) and index < len(key_items):
+                key_item = key_items[index]
+                if isinstance(key_item, Mapping) and isinstance(key_item.get("correct"), int):
+                    declared_correct = key_item["correct"]
+            _validate_options(answer, options, declared_correct, f"quiz items[{index}]")
+    elif activity_type == "cloze":
+        key_blanks = answer_key.get("blanks", []) if isinstance(answer_key, Mapping) else []
+        for index, blank in enumerate(payload.get("blanks", ())):
+            if not isinstance(blank, Mapping):
+                continue
+            answer = blank.get("answer")
+            if not isinstance(answer, str):
+                raise PromptPackV3Error(f"cloze blanks[{index}] lacks answer")
+            # Cloze answer_key index is the blank id; assume ordered identity.
+            _validate_options(answer, blank.get("options"), 0, f"cloze blanks[{index}]")
+            if isinstance(key_blanks, Sequence) and index < len(key_blanks):
+                key_blank = key_blanks[index]
+                if isinstance(key_blank, Mapping) and key_blank.get("answer") != answer:
+                    raise PromptPackV3Error(f"cloze blanks[{index}] answer key mismatch")
+    elif activity_type == "fill-in":
+        key_forms = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        for index, item in enumerate(payload.get("items", ())):
+            if not isinstance(item, Mapping):
+                continue
+            answer = item.get("answer")
+            if not isinstance(answer, str):
+                raise PromptPackV3Error(f"fill-in items[{index}] lacks answer")
+            if (
+                isinstance(key_forms, Sequence)
+                and index < len(key_forms)
+                and key_forms[index] != answer
+            ):
+                raise PromptPackV3Error(f"fill-in items[{index}] answer key mismatch")
+            _validate_options(answer, item.get("options"), 0, f"fill-in items[{index}]")
+
+
 def validate_exemplar_contamination(
     activity: Mapping[str, Any], type_kit: Mapping[str, Any]
 ) -> None:
     """Reject learner-facing output that copies the synthetic exemplar.
 
     The full-density exemplar is a shape guide, not source material.  A response
-    that recycles its literal strings or exact question template is degenerate
-    and must fail closed instead of reaching a teacher.
+    that recycles its literal strings, raw certified forms, or exact concatenation
+    is degenerate and must fail closed instead of reaching a teacher.
     """
     activity_type = type_kit.get("type")
     payload = activity.get("payload")
     if not isinstance(payload, Mapping):
         return
 
-    if activity_type == "quiz":
-        primary = _primary_forms(type_kit)
-        items = payload.get("items")
-        if isinstance(items, list):
-            for item, form in zip(items, primary, strict=False):
-                if (
-                    isinstance(item, Mapping)
-                    and item.get("question") == _EXEMPLAR_QUIZ_QUESTION_TEMPLATE.format(form)
-                ):
-                    raise PromptPackV3Error(
-                        "quiz item uses the synthetic exemplar question template"
-                    )
-    elif activity_type in {"text-questions", "error-correction"}:
+    if activity_type in {"text-questions", "error-correction"}:
         primary = _primary_forms(type_kit)
         items = payload.get("items")
         if isinstance(items, list) and items == list(primary):
@@ -309,20 +669,20 @@ def six_item_negative_exemplar() -> dict[str, Any]:
 
 
 def _template_source() -> str:
-    """Load the distinct v3.2 template asset that qualification will pin later."""
+    """Load the distinct v3.3 template asset that qualification will pin later."""
     return _TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
 def render_phase_prompt(context: Mapping[str, Any]) -> str:
-    """Render a self-contained v3.2 serialization request for one phase."""
+    """Render a self-contained v3.3 serialization request for one phase."""
     _validate_context_integrity(context)
     type_kits = context.get("type_kits")
     if not isinstance(type_kits, list) or not type_kits:
-        raise PromptPackV3Error("A v3.2 prompt needs non-empty type-kits.")
+        raise PromptPackV3Error("A v3.3 prompt needs non-empty type-kits.")
     if context.get("pack_version") != PROMPT_PACK_VERSION:
-        raise PromptPackV3Error("Prompt pack input version is not PromptPackInput.v3.")
+        raise PromptPackV3Error("Prompt pack input version is not PromptPackInput.v3.1.")
     if context.get("template_version") != TEMPLATE_VERSION:
-        raise PromptPackV3Error("Prompt context does not select gemma-phase-pack.v3.2.")
+        raise PromptPackV3Error("Prompt context does not select gemma-phase-pack.v3.3.")
     if context.get("type_kit_identity") != TYPE_KIT_IDENTITY:
         raise PromptPackV3Error("Prompt context has an unknown type-kit identity.")
     exemplars = full_density_exemplars(type_kits)
@@ -350,9 +710,9 @@ def _validate_context_integrity(context: Mapping[str, Any]) -> None:
     }
     actual_digest = hashlib.sha256(_canonical(unsigned_context).encode("utf-8")).hexdigest()
     if not isinstance(expected_digest, str) or expected_digest != actual_digest:
-        raise PromptPackV3Error("v3.2 immutable context changed after allocation.")
+        raise PromptPackV3Error("v3.3 immutable context changed after allocation.")
     if context.get("template_sha256") != template_digest():
-        raise PromptPackV3Error("v3.2 template digest does not match the pinned template asset.")
+        raise PromptPackV3Error("v3.3 template digest does not match the pinned template asset.")
 
 
 def _learner_facing_strings(value: object) -> list[str]:
@@ -379,13 +739,13 @@ def _validate_response_shape(
     payload: object, context: Mapping[str, Any]
 ) -> list[Mapping[str, Any]]:
     if not isinstance(payload, Mapping) or set(payload) != {"slots"}:
-        raise PromptPackV3Error("v3.2 response must contain exactly one slots array.")
+        raise PromptPackV3Error("v3.3 response must contain exactly one slots array.")
     slots = payload.get("slots")
     type_kits = context.get("type_kits")
     if not isinstance(slots, list) or not isinstance(type_kits, list):
-        raise PromptPackV3Error("v3.2 response and context require slots/type-kits arrays.")
+        raise PromptPackV3Error("v3.3 response and context require slots/type-kits arrays.")
     if len(slots) != len(type_kits):
-        raise PromptPackV3Error("v3.2 response slot count differs from the scheduled allocation.")
+        raise PromptPackV3Error("v3.3 response slot count differs from the scheduled allocation.")
     return slots
 
 
@@ -404,7 +764,7 @@ def _validate_slot_identity(
         raise PromptPackV3Error(f"slots[{index}] must be an object.")
     fields = set(record)
     if fields != _VALID_SLOT_FIELDS and fields != _VALID_SLOT_FIELDS | {_SLOT_PROVENANCE_FIELD}:
-        raise PromptPackV3Error(f"slots[{index}] leaks or omits v3.2 serialization fields.")
+        raise PromptPackV3Error(f"slots[{index}] leaks or omits v3.3 serialization fields.")
     if (
         record.get("slot_id") != type_kit.get("slot_id")
         or record.get("type") != type_kit.get("type")
@@ -435,10 +795,10 @@ def validate_slot_deterministic_gates(
 ) -> None:
     """Run the always-on gates for one already shape-valid response record."""
     if not deterministic_gates:
-        raise PromptPackV3Error("v3.2 validation requires the always-on deterministic gate runner.")
+        raise PromptPackV3Error("v3.3 validation requires the always-on deterministic gate runner.")
     activity = record.get("activity")
     if not isinstance(activity, Mapping):  # guarded by ``validate_slot_shape``
-        raise PromptPackV3Error("v3.2 slot activity must be an object.")
+        raise PromptPackV3Error("v3.3 slot activity must be an object.")
     validate_learner_facing_fields(activity, type_kit)
     for gate in deterministic_gates:
         gate(activity, type_kit)
@@ -456,10 +816,10 @@ def validate_slot_raw_contract(
 ) -> dict[str, Any]:
     """Apply the final raw contract only after a slot passed prior stages."""
     if raw_contract_validator is None:
-        raise PromptPackV3Error("v3.2 validation requires the raw-contract validator.")
+        raise PromptPackV3Error("v3.3 validation requires the raw-contract validator.")
     activity = record.get("activity")
     if not isinstance(activity, Mapping):  # guarded by ``validate_slot_shape``
-        raise PromptPackV3Error("v3.2 slot activity must be an object.")
+        raise PromptPackV3Error("v3.3 slot activity must be an object.")
     raw_contract_validator(activity)
     return dict(activity)
 
@@ -474,7 +834,7 @@ def _validate_exact_serialization(record: Mapping[str, Any], type_kit: Mapping[s
         or not isinstance(expected_ids, list)
         or not isinstance(expected_count, int)
     ):
-        raise PromptPackV3Error("v3.2 serialization context is malformed.")
+        raise PromptPackV3Error("v3.3 serialization context is malformed.")
     if len(actual) != expected_count:
         raise PromptPackV3Error(
             "serialization failure: exact scheduled unit count is required before raw validation."
@@ -505,9 +865,9 @@ def validate_response(
     any existing VESUM or production gate implementation.
     """
     if not deterministic_gates:
-        raise PromptPackV3Error("v3.2 validation requires the always-on deterministic gate runner.")
+        raise PromptPackV3Error("v3.3 validation requires the always-on deterministic gate runner.")
     if raw_contract_validator is None:
-        raise PromptPackV3Error("v3.2 validation requires the raw-contract validator.")
+        raise PromptPackV3Error("v3.3 validation requires the raw-contract validator.")
     _validate_context_integrity(context)
     records = _validate_response_shape(payload, context)
     type_kits = context["type_kits"]

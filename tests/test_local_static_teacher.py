@@ -108,7 +108,7 @@ def test_deployed_configuration_defaults_to_api_observed_and_has_no_local_door(
     assert not settings.local_static_teacher_enabled
 
 
-def test_marked_local_launcher_exposes_operational_flash_route(
+def test_marked_local_launcher_shows_empty_picker_after_v33_contract_redesign(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -122,15 +122,13 @@ def test_marked_local_launcher_exposes_operational_flash_route(
 
     with TestClient(app, base_url=_LOOPBACK_ORIGIN) as client:
         assert client.get(_STATIC_PATH, follow_redirects=False).status_code == 303
-        models = client.get("/api/lesson-models").json()["models"]
+        payload = client.get("/api/lesson-models").json()
 
-    assert models == [
-        {
-            "id": "gemini-3.6-flash",
-            "label": "Gemini 3.6 Flash",
-            "description": "Швидке складання уроку.",
-        }
-    ]
+    assert payload["models"] == []
+    assert payload["unavailable_message"] == (
+        "Моделі тимчасово недоступні: кваліфікація для поточних "
+        "правил уроку ще не завершена."
+    )
 
 
 def test_static_link_reuses_one_teacher_across_app_restarts(tmp_path) -> None:

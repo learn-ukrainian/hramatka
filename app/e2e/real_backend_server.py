@@ -48,10 +48,16 @@ def _assert_expected_interpreter() -> None:
 
 
 def _qualified_test_registry() -> Any:
-    """Return one explicit synthetic receipt; production defaults stay empty."""
+    """Return one explicit synthetic receipt; production defaults stay empty.
+
+    ``HRAMATKA_E2E_EMPTY_REGISTRY=1`` opts into the empty-picker state so the
+    real-backend suite can assert the fail-closed contract without resurrecting
+    a production receipt.
+    """
     from hramatka.api.qualified_models import (
         DENSITY_CONTRACT_DIGEST,
         DENSITY_CONTRACT_VERSION,
+        PROMPT_PACK_VERSION,
         PROMPT_SHA256,
         QUALIFICATION_ANCHORS,
         QUALIFIED_MODEL_REGISTRY_VERSION,
@@ -63,8 +69,10 @@ def _qualified_test_registry() -> Any:
         QualifiedModelRegistry,
         QualifiedProviderRoute,
     )
-    from hramatka.engine.prompt_pack import PROMPT_PACK_VERSION
     from hramatka.engine.serializer_policy import DEFAULT_SERIALIZER_TEMPERATURE
+
+    if os.environ.get("HRAMATKA_E2E_EMPTY_REGISTRY") == "1":
+        return QualifiedModelRegistry(receipts=())
 
     test_provider_route = QualifiedProviderRoute(
         "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"

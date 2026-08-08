@@ -13,6 +13,8 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   await page.getByPlaceholder(/Вставте український текст/).fill(
     'Учні читають український текст і обговорюють вправи на уроці.'
   );
+  // Production receipts are intentionally empty after #375; this flow relies
+  // on the real-backend harness's qualified test-registry injection seam.
   const modelPicker = page.getByLabel('Модель для уроку');
   await expect(modelPicker).toHaveValue('gemini-3.6-flash');
   await modelPicker.selectOption('gemini-3.6-flash');

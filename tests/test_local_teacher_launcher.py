@@ -30,8 +30,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def _discover_test_python() -> Path:
     for command in ("python", "python3"):
         candidate = shutil.which(command)
+        # Do not resolve symlinks: in a venv the executable is a symlink to the
+        # base interpreter, and resolving it drops the venv site-packages path
+        # that the launched CLI commands need.
         if candidate and os.access(candidate, os.X_OK):
-            return Path(candidate).resolve()
+            return Path(candidate)
     raise RuntimeError("tests require an explicit Python interpreter on PATH")
 
 

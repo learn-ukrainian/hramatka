@@ -278,6 +278,7 @@ def _content_free_qualification_slot_trace(value: object) -> dict[str, Any] | No
     boundary only ensures the generic progress blob cannot carry extra data.
     """
     expected = {
+        "contract_version",
         "disposition",
         "floor_met",
         "phase",
@@ -301,6 +302,8 @@ def _content_free_qualification_slot_trace(value: object) -> dict[str, Any] | No
         or type(value["units"]) is not int
         or value["units"] < 0
         or type(value["floor_met"]) is not bool
+        or not isinstance(value["contract_version"], str)
+        or not value["contract_version"]
         or type(value["repair_rounds"]) is not int
         or value["repair_rounds"] not in {0, 1, 2}
         or type(value["replacement_used"]) is not bool

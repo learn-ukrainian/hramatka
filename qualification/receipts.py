@@ -35,7 +35,7 @@ from hramatka.engine.teacher_ready_density_v3 import (
     density_floor_fingerprint,
 )
 
-CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v5"
+CELL_RECEIPT_SCHEMA_VERSION = "ProductionQualificationCellReceipt.v6"
 DIAGNOSTIC_RECEIPT_SCHEMA_VERSION = "ProductionQualificationDensityDiagnostic.v2"
 AGGREGATION_PROMPT_HASHES_SCHEMA_VERSION = "ProductionQualificationPromptHashes.v2"
 AGGREGATION_TARGETS_SCHEMA_VERSION = "ProductionQualificationTargets.v1"
@@ -368,9 +368,10 @@ class SlotTelemetry:
     disposition: str
     units: int
     floor_met: bool
-    repair_rounds: int
-    replacement_used: bool
-    unassigned_errors_count: int
+    contract_version: str = TEACHER_READY_DENSITY_VERSION
+    repair_rounds: int = 0
+    replacement_used: bool = False
+    unassigned_errors_count: int = 0
 
     @classmethod
     def from_dict(cls, value: object) -> SlotTelemetry:
@@ -383,6 +384,7 @@ class SlotTelemetry:
                 "disposition",
                 "units",
                 "floor_met",
+                "contract_version",
                 "repair_rounds",
                 "replacement_used",
                 "unassigned_errors_count",
@@ -403,6 +405,8 @@ class SlotTelemetry:
             or type(row["units"]) is not int
             or row["units"] < 0
             or type(row["floor_met"]) is not bool
+            or not isinstance(row["contract_version"], str)
+            or not row["contract_version"]
             or type(row["repair_rounds"]) is not int
             or row["repair_rounds"] < 0
             or row["repair_rounds"] > 2
@@ -425,6 +429,7 @@ class SlotTelemetry:
             disposition=row["disposition"],
             units=row["units"],
             floor_met=row["floor_met"],
+            contract_version=row["contract_version"],
             repair_rounds=row["repair_rounds"],
             replacement_used=row["replacement_used"],
             unassigned_errors_count=row["unassigned_errors_count"],
@@ -438,6 +443,7 @@ class SlotTelemetry:
             "disposition": self.disposition,
             "units": self.units,
             "floor_met": self.floor_met,
+            "contract_version": self.contract_version,
             "repair_rounds": self.repair_rounds,
             "replacement_used": self.replacement_used,
             "unassigned_errors_count": self.unassigned_errors_count,

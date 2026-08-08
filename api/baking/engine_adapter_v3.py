@@ -34,7 +34,10 @@ from hramatka.engine.lesson_capacity_v3 import (
 from hramatka.engine.prompt_pack_v3 import (
     build_phase_context,
     render_phase_prompt,
+    validate_distractor_adjacency,
+    validate_elicitation_shape,
     validate_exemplar_contamination,
+    validate_verbatim_answer_ban,
 )
 from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 from hramatka.engine.teacher_ready_density_v3 import phase_shape_for
@@ -275,15 +278,19 @@ def _certified_rendering_surfaces(kit: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(surfaces)
 
 
+def _expected_truth_value(expected: str) -> bool:
+    """Map a certified expected key/rule string to a true-false boolean."""
+    return expected == "true"
+
+
 def _bind_learner_payload_to_certified_units(
     activity: Mapping[str, Any], kit: Mapping[str, Any]
 ) -> None:
-    """Require the public learner exercise to carry every certified unit.
+    """Require the graded answer_key to bind exactly to the certified substrate.
 
-    Exact ``serialized_units`` equality alone is metadata proof.  This gate
-    binds its content-free unit plan to the payload and answer key that a
-    teacher actually receives, so a model cannot hide a dense substrate beside
-    an unrelated schema-valid activity.
+    Learner-facing prose is no longer the binding surface; the answer_key is.
+    This gate verifies that every certified unit is represented by a graded
+    answer and that closed items carry the certified form among their options.
     """
     payload = activity["payload"]
     answer_key = activity["answer_key"]
@@ -292,75 +299,119 @@ def _bind_learner_payload_to_certified_units(
     forms = _certified_forms(kit)
     primary = tuple(item[0] for item in forms)
     expected_keys = _expected_keys(kit)
+
     if activity_type == "quiz":
         items = payload.get("items")
-        if not isinstance(items, list) or len(items) != len(primary):
-            raise ValueError("v3 quiz payload count is detached from certified units.")
-        for item, form in zip(items, primary, strict=True):
-            if (
-                not isinstance(item, Mapping)
-                or not isinstance(item.get("options"), list)
-                or item.get("correct") != 0
-                or item["options"][:1] != [form]
-            ):
+        key_items = answer_key.get("items")
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_items, list)
+            or len(items) != len(primary)
+            or len(key_items) != len(primary)
+        ):
+            raise ValueError("v3 quiz payload/answer_key count is detached from certified units.")
+        for index, (item, form) in enumerate(zip(items, primary, strict=True)):
+            if not isinstance(item, Mapping) or not isinstance(item.get("options"), list):
                 raise ValueError("v3 quiz payload is detached from certified units.")
-            # Only the bare certified form is an acceptable quiz question.
-            # The "Вкажіть правильну форму: ..." template is the synthetic
-            # exemplar shape and is rejected by the exemplar-contamination gate.
-            if item.get("question") != form:
-                raise ValueError("v3 quiz question is detached from certified units.")
-        _bound_list(
-            answer_key.get("items"),
-            tuple({"index": index, "correct": 0} for index in range(len(primary))),
-            label="answer key",
-        )
+            key_entry = key_items[index]
+            if not isinstance(key_entry, Mapping):
+                raise ValueError("v3 quiz answer key entry is malformed.")
+            declared_correct = key_entry.get("correct")
+            if (
+                not isinstance(declared_correct, int)
+                or not (0 <= declared_correct < len(item["options"]))
+            ):
+                raise ValueError("v3 quiz answer key correct index is invalid.")
+            if item["options"][declared_correct] != form:
+                raise ValueError("v3 quiz answer_key does not point to the certified form.")
+            if item.get("correct") != declared_correct:
+                raise ValueError("v3 quiz payload correct index disagrees with answer_key.")
         return
+
     if activity_type == "cloze":
         blanks = payload.get("blanks")
-        if not isinstance(blanks, list) or len(blanks) != len(primary):
-            raise ValueError("v3 cloze payload count is detached from certified units.")
-        expected = tuple(
-            {"id": index, "answer": form} for index, form in enumerate(primary, start=1)
-        )
+        key_blanks = answer_key.get("blanks")
+        if (
+            not isinstance(blanks, list)
+            or not isinstance(key_blanks, list)
+            or len(blanks) != len(primary)
+            or len(key_blanks) != len(primary)
+        ):
+            raise ValueError("v3 cloze payload/answer_key count is detached from certified units.")
         for index, (blank, form) in enumerate(zip(blanks, primary, strict=True), start=1):
-            if (
-                not isinstance(blank, Mapping)
-                or blank.get("id") != index
-                or blank.get("answer") != form
-                or not isinstance(blank.get("options"), list)
-                or blank["options"][:1] != [form]
-            ):
+            if not isinstance(blank, Mapping) or not isinstance(blank.get("options"), list):
                 raise ValueError("v3 cloze payload is detached from certified units.")
-        _bound_list(answer_key.get("blanks"), expected, label="answer key")
+            if blank.get("id") != index:
+                raise ValueError("v3 cloze blank id is detached from certified units.")
+            key_blank = key_blanks[index - 1]
+            if not isinstance(key_blank, Mapping) or key_blank.get("id") != index:
+                raise ValueError("v3 cloze answer_key blank id is malformed.")
+            if key_blank.get("answer") != form:
+                raise ValueError("v3 cloze answer_key does not bind the certified form.")
+            if form not in blank["options"]:
+                raise ValueError("v3 cloze options do not contain the certified form.")
         return
+
     if activity_type == "fill-in":
         items = payload.get("items")
-        if not isinstance(items, list) or len(items) != len(primary):
-            raise ValueError("v3 fill-in payload count is detached from certified units.")
-        surfaces = _certified_rendering_surfaces(kit)
-        for item, form, surface in zip(items, primary, surfaces, strict=True):
-            if (
-                not isinstance(item, Mapping)
-                or item.get("answer") != form
-                or not isinstance(item.get("options"), list)
-                or item["options"][:1] != [form]
-                or item.get("sentence") != surface
-            ):
+        key_forms = answer_key.get("items")
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_forms, list)
+            or len(items) != len(primary)
+            or len(key_forms) != len(primary)
+        ):
+            raise ValueError(
+                "v3 fill-in payload/answer_key count is detached from certified units."
+            )
+        for item, form, key_form in zip(items, primary, key_forms, strict=True):
+            if not isinstance(item, Mapping) or not isinstance(item.get("options"), list):
                 raise ValueError("v3 fill-in payload is detached from certified units.")
-        _bound_list(answer_key.get("items"), primary, label="answer key")
+            if key_form != form:
+                raise ValueError("v3 fill-in answer_key does not bind the certified form.")
+            if form not in item["options"]:
+                raise ValueError("v3 fill-in options do not contain the certified form.")
         return
+
     if activity_type == "true-false":
         items = payload.get("items")
-        if not isinstance(items, list) or len(items) != len(primary):
-            raise ValueError("v3 true-false payload count is detached from certified units.")
-        for item, form in zip(items, primary, strict=True):
-            if not isinstance(item, Mapping) or item.get("statement") != form:
+        key_items = answer_key.get("items")
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_items, list)
+            or len(items) != len(primary)
+            or len(key_items) != len(primary)
+        ):
+            raise ValueError(
+                "v3 true-false payload/answer_key count is detached from certified units."
+            )
+        for index, (item, expected) in enumerate(zip(items, expected_keys, strict=True)):
+            if not isinstance(item, Mapping) or not isinstance(item.get("correct"), bool):
                 raise ValueError("v3 true-false payload is detached from certified units.")
+            key_entry = key_items[index]
+            if not isinstance(key_entry, Mapping) or not isinstance(key_entry.get("correct"), bool):
+                raise ValueError("v3 true-false answer_key entry is malformed.")
+            expected_bool = _expected_truth_value(expected)
+            if key_entry["correct"] != expected_bool:
+                raise ValueError("v3 true-false answer_key does not bind the certified rule.")
+            if item["correct"] != expected_bool:
+                raise ValueError(
+                    "v3 true-false payload correct value disagrees with certified rule."
+                )
         return
+
     if activity_type == "match-up":
         pairs = payload.get("pairs")
-        if not isinstance(pairs, list) or len(pairs) != len(forms):
-            raise ValueError("v3 match-up payload count is detached from certified units.")
+        key_pairs = answer_key.get("pairs")
+        if (
+            not isinstance(pairs, list)
+            or not isinstance(key_pairs, list)
+            or len(pairs) != len(forms)
+            or len(key_pairs) != len(forms)
+        ):
+            raise ValueError(
+                "v3 match-up payload/answer_key count is detached from certified units."
+            )
         for pair, allowed in zip(pairs, forms, strict=True):
             if (
                 len(allowed) != 2
@@ -369,19 +420,29 @@ def _bind_learner_payload_to_certified_units(
             ):
                 raise ValueError("v3 match-up payload is detached from certified units.")
         _bound_list(
-            answer_key.get("pairs"),
+            key_pairs,
             tuple({"left_index": index, "right_index": index} for index in range(len(forms))),
             label="answer key",
         )
         return
+
     if activity_type == "error-correction":
         items = payload.get("items")
-        if not isinstance(items, list) or len(items) != len(primary):
-            raise ValueError("v3 error-correction payload count is detached from certified units.")
+        key_items = answer_key.get("items")
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_items, list)
+            or len(items) != len(primary)
+            or len(key_items) != len(primary)
+        ):
+            raise ValueError(
+                "v3 error-correction payload/answer_key count is detached from certified units."
+            )
         if not all(isinstance(item, str) and item.strip() for item in items):
             raise ValueError("v3 error-correction items must be non-empty strings.")
-        _bound_list(answer_key.get("items"), expected_keys, label="answer key")
+        _bound_list(key_items, expected_keys, label="answer key")
         return
+
     if activity_type == "text-questions":
         items = payload.get("items")
         if not isinstance(items, list) or len(items) != len(primary):
@@ -389,6 +450,7 @@ def _bind_learner_payload_to_certified_units(
         if not all(isinstance(item, str) and item.strip() for item in items):
             raise ValueError("v3 text-questions items must be non-empty strings.")
         return
+
     if activity_type == "short-writing":
         prompt = payload.get("prompt")
         prompt_fragments = tuple(fragment for unit_forms in forms for fragment in unit_forms)
@@ -397,6 +459,7 @@ def _bind_learner_payload_to_certified_units(
         ):
             raise ValueError("v3 short-writing prompt is detached from certified constraints.")
         return
+
     raise ValueError("v3 activity payload has no certified-unit binding rule.")
 
 
@@ -594,67 +657,74 @@ class EngineLessonBaker:
                         slots=slots,
                         builders=_slot_builders(slots),
                     )
+                    if preflight.allocation is None:
+                        context.record_event(
+                            {"event": "v3_preflight", "outcome": "insufficient_anchor_capacity"}
+                        )
+                        raise FloorUnmetError(
+                            "Bake failed: insufficient_anchor_capacity before generation.",
+                            blames_source=False,
+                        )
+                    blocks: list[dict[str, Any]] = []
+                    raw_attempt_counter = [0]
+                    raw_out_root = self._engine_out_dir
+                    raw_bake_id = job_id if isinstance(job_id, str) else None
+                    for phase in sorted({slot.phase for slot in preflight.allocation.slots}):
+                        context.update_progress_db(phase=phase, step="generation")
+                        # The evaluator independently recreates and hashes this same context.
+                        phase_context = build_phase_context(preflight.allocation, phase=phase)
+                        initial_payload, initial_raw, initial_attempt, _ = self._call_generator(
+                            render_phase_prompt(phase_context),
+                            raw_attempt_counter=raw_attempt_counter,
+                            raw_out_root=raw_out_root,
+                            raw_bake_id=raw_bake_id,
+                        )
+                        evaluated = evaluate_phase_with_repair(
+                            preflight.allocation,
+                            phase=phase,
+                            payload=initial_payload,
+                            deterministic_gates=(
+                                _activity_gate,
+                                validate_exemplar_contamination,
+                                validate_verbatim_answer_ban,
+                                validate_elicitation_shape,
+                                validate_distractor_adjacency,
+                            ),
+                            raw_contract_validator=_raw_activity_contract,
+                            repair_renderer=lambda request: self._render_repair(
+                                request,
+                                raw_attempt_counter=raw_attempt_counter,
+                                raw_out_root=raw_out_root,
+                                raw_bake_id=raw_bake_id,
+                            ),
+                            replacement_renderer=lambda request: self._render_replacement(
+                                request,
+                                raw_attempt_counter=raw_attempt_counter,
+                                raw_out_root=raw_out_root,
+                                raw_bake_id=raw_bake_id,
+                            ),
+                        )
+                        self._record_qualification_evaluation(phase, evaluated)
+                        if evaluated.disposition != "teacher_ready":
+                            if raw_out_root is not None:
+                                _persist_raw_parse_failure(
+                                    initial_raw,
+                                    bake_artifact_dir(raw_out_root, bake_id=raw_bake_id),
+                                    initial_attempt,
+                                )
+                            raise FloorUnmetError(
+                                "Bake failed: v3 serialization did not produce "
+                                "every certified slot.",
+                                blames_source=False,
+                            )
+                        blocks.extend(self._block(block, len(blocks)) for block in evaluated.blocks)
+                    context.update_progress_db(step="assembly")
+                    return {"blocks": blocks, "rejected": []}
             except (data.DataConfigError, data.DataDriftError) as error:
                 raise GenerationFailed(
                     "Bake failed: the lesson data bundle is unavailable or has drifted.",
                     generation_error_type=type(error).__name__,
                 ) from error
-            if preflight.allocation is None:
-                context.record_event(
-                    {"event": "v3_preflight", "outcome": "insufficient_anchor_capacity"}
-                )
-                raise FloorUnmetError(
-                    "Bake failed: insufficient_anchor_capacity before generation.",
-                    blames_source=False,
-                )
-            blocks: list[dict[str, Any]] = []
-            raw_attempt_counter = [0]
-            raw_out_root = self._engine_out_dir
-            raw_bake_id = job_id if isinstance(job_id, str) else None
-            for phase in sorted({slot.phase for slot in preflight.allocation.slots}):
-                context.update_progress_db(phase=phase, step="generation")
-                # The evaluator independently recreates and hashes this same context.
-                phase_context = build_phase_context(preflight.allocation, phase=phase)
-                initial_payload, initial_raw, initial_attempt, _ = self._call_generator(
-                    render_phase_prompt(phase_context),
-                    raw_attempt_counter=raw_attempt_counter,
-                    raw_out_root=raw_out_root,
-                    raw_bake_id=raw_bake_id,
-                )
-                evaluated = evaluate_phase_with_repair(
-                    preflight.allocation,
-                    phase=phase,
-                    payload=initial_payload,
-                    deterministic_gates=(_activity_gate, validate_exemplar_contamination),
-                    raw_contract_validator=_raw_activity_contract,
-                    repair_renderer=lambda request: self._render_repair(
-                        request,
-                        raw_attempt_counter=raw_attempt_counter,
-                        raw_out_root=raw_out_root,
-                        raw_bake_id=raw_bake_id,
-                    ),
-                    replacement_renderer=lambda request: self._render_replacement(
-                        request,
-                        raw_attempt_counter=raw_attempt_counter,
-                        raw_out_root=raw_out_root,
-                        raw_bake_id=raw_bake_id,
-                    ),
-                )
-                self._record_qualification_evaluation(phase, evaluated)
-                if evaluated.disposition != "teacher_ready":
-                    if raw_out_root is not None:
-                        _persist_raw_parse_failure(
-                            initial_raw,
-                            bake_artifact_dir(raw_out_root, bake_id=raw_bake_id),
-                            initial_attempt,
-                        )
-                    raise FloorUnmetError(
-                        "Bake failed: v3 serialization did not produce every certified slot.",
-                        blames_source=False,
-                    )
-                blocks.extend(self._block(block, len(blocks)) for block in evaluated.blocks)
-            context.update_progress_db(step="assembly")
-            return {"blocks": blocks, "rejected": []}
         finally:
             telemetry_ctx.reset(context_token)
 
@@ -693,6 +763,7 @@ class EngineLessonBaker:
                         "disposition": block.receipt.disposition,
                         "units": block.receipt.units,
                         "floor_met": block.receipt.floor_met,
+                        "contract_version": block.receipt.contract_version,
                         "repair_rounds": min(attempt_index, 2),
                         "replacement_used": attempt_index > 2,
                         "unassigned_errors_count": len(attempt.unassigned_errors),
@@ -709,6 +780,7 @@ class EngineLessonBaker:
                     "disposition": "dropped",
                     "units": block.receipt.units,
                     "floor_met": block.receipt.floor_met,
+                    "contract_version": block.receipt.contract_version,
                     "repair_rounds": 2,
                     "replacement_used": False,
                     "unassigned_errors_count": 0,

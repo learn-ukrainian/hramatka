@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from .teacher_ready_density_v3 import floor_for
+from .teacher_ready_density_v3 import TEACHER_READY_DENSITY_VERSION, floor_for
 from .unit_plan_v3 import UnitPlan
 
 ReceiptDisposition = Literal[
@@ -29,6 +29,7 @@ class BlockDensityReceipt:
     disposition: ReceiptDisposition
     units: int
     floor_met: bool
+    contract_version: str = TEACHER_READY_DENSITY_VERSION
 
     def __post_init__(self) -> None:
         if self.phase < 1 or self.units < 0:
@@ -66,4 +67,5 @@ class BlockDensityReceipt:
             "disposition": self.disposition,
             "units": self.units,
             "floor_met": self.floor_met,
+            "contract_version": self.contract_version,
         }

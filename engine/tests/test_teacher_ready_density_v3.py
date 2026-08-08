@@ -252,6 +252,7 @@ def test_receipt_has_only_the_locked_content_free_shape_and_consumes_floor_autho
         "disposition": "ready",
         "units": 8,
         "floor_met": True,
+        "contract_version": "TeacherReadyDensity.v3",
     }
     assert "форма" not in json.dumps(receipt.to_dict(), ensure_ascii=False)
 

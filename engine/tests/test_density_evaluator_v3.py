@@ -158,8 +158,22 @@ def test_ready_and_tray_are_graded_independently_and_emit_only_content_free_rece
         ("P1-A2", "tray"),
     ]
     assert [receipt.to_dict() for receipt in evaluated.receipts] == [
-        {"phase": 1, "type": "quiz", "disposition": "ready", "units": 8, "floor_met": True},
-        {"phase": 1, "type": "cloze", "disposition": "tray", "units": 8, "floor_met": True},
+        {
+            "phase": 1,
+            "type": "quiz",
+            "disposition": "ready",
+            "units": 8,
+            "floor_met": True,
+            "contract_version": "TeacherReadyDensity.v3",
+        },
+        {
+            "phase": 1,
+            "type": "cloze",
+            "disposition": "tray",
+            "units": 8,
+            "floor_met": True,
+            "contract_version": "TeacherReadyDensity.v3",
+        },
     ]
 
 
@@ -185,6 +199,7 @@ def test_six_unit_output_is_hidden_density_shortfall_with_no_tray_credit() -> No
         "disposition": "density_shortfall",
         "units": 6,
         "floor_met": False,
+        "contract_version": "TeacherReadyDensity.v3",
     }
     assert [block.slot_id for block in evaluated.accepted] == ["P1-A1"]
     assert all(error.slot_id == "P1-A2" for error in shortfall.errors)
@@ -455,7 +470,8 @@ def test_two_repairs_share_the_original_plan_and_context_then_use_exact_replacem
     ]
     assert evaluated.disposition == "teacher_ready"
     assert all(
-        set(receipt.to_dict()) == {"phase", "type", "disposition", "units", "floor_met"}
+        set(receipt.to_dict())
+        == {"phase", "type", "disposition", "units", "floor_met", "contract_version"}
         for receipt in evaluated.receipts
     )
 
@@ -541,6 +557,7 @@ def test_repair_exhaustion_without_a_certified_replacement_drops_only_its_slot()
         "disposition": "dropped",
         "units": 8,
         "floor_met": True,
+        "contract_version": "TeacherReadyDensity.v3",
     }
     assert all(error.slot_id == "P1-A1" for error in evaluated.errors)
 
