@@ -57,6 +57,32 @@ All 43-character token fields use the canonical unpadded base64url encoding of e
 32 bytes. The server rejects encodings whose final character carries non-zero padding
 bits, even when a permissive decoder could map them to the same bytes.
 
+## Passkeys and recovery
+
+After the first successful invite exchange, the active **invite-created** session may
+register one or more WebAuthn passkeys. The server verifies the RP ID and exact
+HTTPS origin, requires user verification, and stores only the credential ID, public
+key, and signature counter. It never accepts a name, email address, or browser-supplied
+teacher identity as authority to bind a first passkey.
+
+`POST /api/passkeys/authentication` verifies an assertion and terminates in the same
+ordinary cookie-session minting seam as invite redemption. It therefore has the same
+seven-day absolute lifetime, idle renewal, HttpOnly `__Host-hramatka_session` cookie,
+CSRF HMAC, rotation, and next-request revocation behaviour. A later Google OIDC door
+must use this same seam.
+
+Every enrollment ceremony challenge is bound to the requesting session, stored only
+as a domain-separated digest, expires within one hour, and is atomically single-use.
+Assertion challenges are likewise short-lived and single-use; they have no session yet
+because their purpose is to establish one.
+
+Registration shows ten recovery codes once. SQLite contains only purpose-separated
+SHA-256 digests. A code establishes the same ordinary recovery session exactly once;
+regeneration from a freshly authenticated session supersedes all unused prior codes.
+If every passkey and recovery code is lost, the deliberate break-glass path is a new
+72-hour operator-created invite. There is no automated reset, mail transport, or
+email-address account field.
+
 ## Cookie session
 
 A redeemed invite creates a fresh 32-byte random session secret. The explicitly

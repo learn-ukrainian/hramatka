@@ -44,6 +44,10 @@ def test_loopback_static_link_establishes_session_and_marks_banner(tmp_path) -> 
         payload = session.json()
         assert payload["local_auth_disabled"] is True
         assert payload["teacher"]["display_name"] == "Локальний викладач"
+        with sqlite3.connect(app.state.settings.database_path) as connection:
+            assert connection.execute(
+                "SELECT auth_method FROM pilot_sessions"
+            ).fetchone() == ("local",)
 
 
 def test_non_loopback_binding_never_registers_static_link(tmp_path) -> None:

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import signal
 import socket
@@ -293,7 +294,16 @@ def _make_smoke_repo(tmp_path: Path, *, delayed_npm: bool = False) -> tuple[Path
     (app / "scripts" / "csp-guard.mjs").write_text("// smoke-test no-op\n", encoding="utf-8")
     venv_python = fake_repo / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
-    venv_python.symlink_to(TEST_PYTHON)
+    # Invoke the suite interpreter directly.  A symlink outside its virtual
+    # environment loses pyvenv.cfg discovery, so imports of project
+    # dependencies such as WebAuthn would fail before the smoke server starts.
+    venv_python.write_text(
+        "#!/bin/bash\n"
+        "set -eu\n"
+        f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    venv_python.chmod(0o755)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     npm = fake_bin / "npm"
@@ -1345,7 +1355,7 @@ def test_readiness_wait_cancels_promptly() -> None:
 
 def test_local_teacher_shell_smoke_serves_one_invite_and_releases_ports(tmp_path: Path) -> None:
     fake_repo, fake_bin = _make_smoke_repo(tmp_path)
-    assert (fake_repo / ".venv" / "bin" / "python").resolve() == TEST_PYTHON
+    assert os.access(fake_repo / ".venv" / "bin" / "python", os.X_OK)
     api_port, https_port = _free_ports()
     environment = _isolated_test_environment(
         HOME=str(tmp_path / "home"),
@@ -1403,7 +1413,7 @@ def test_local_teacher_termination_during_frontend_build_releases_reserved_ports
     tmp_path: Path,
 ) -> None:
     fake_repo, fake_bin = _make_smoke_repo(tmp_path, delayed_npm=True)
-    assert (fake_repo / ".venv" / "bin" / "python").resolve() == TEST_PYTHON
+    assert os.access(fake_repo / ".venv" / "bin" / "python", os.X_OK)
     api_port, https_port = _free_ports()
     started = tmp_path / "npm-started"
     npm_pid = tmp_path / "npm.pid"

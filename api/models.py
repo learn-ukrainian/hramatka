@@ -17,6 +17,21 @@ class InviteRedeem(FrozenModel):
     nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
 
 
+class WebAuthnCredential(FrozenModel):
+    """Opaque browser WebAuthn response; verification is done by the RP library."""
+
+    credential: dict[str, Any]
+
+
+class WebAuthnAssertion(FrozenModel):
+    challenge_id: UUID
+    credential: dict[str, Any]
+
+
+class RecoveryCodeRedeem(FrozenModel):
+    code: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class AnchorInput(FrozenModel):
     text: str = Field(min_length=1, max_length=100_000)
     source: Literal["teacher-paste", "teacher-url"]

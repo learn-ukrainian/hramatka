@@ -55,12 +55,13 @@ and `redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now`.
 |---|---|
 | `id TEXT PRIMARY KEY` | UUID shown to operators; never used as browser credential |
 | `teacher_id TEXT NOT NULL` | FK to `pilot_teachers(id)` |
-| `invite_id TEXT NULL UNIQUE` | FK when present; enforces one session per invite, while the guarded loopback-only local launcher creates no invite row |
+| `invite_id TEXT NULL UNIQUE` | Invite-created sessions retain the FK; guarded local sessions and passkey/recovery re-entry have none |
 | `secret_hash BLOB NOT NULL UNIQUE` | Domain-separated SHA-256 digest only |
 | `redeem_nonce_hash BLOB NULL` | Domain-separated browser retry-proof digest; no raw nonce |
 | `created_at`, `expires_at TEXT NOT NULL` | Seven-day absolute session window |
 | `idle_expires_at`, `last_seen_at TEXT NULL` | Additive v006 columns: migration immediately backfills both from the original session lifetime; new/reissued sessions set a 24-hour renewable idle window and last authenticated use |
 | `revoked_at TEXT NULL` | Browser logout/operator/teacher-deactivation revocation |
+| `auth_method TEXT NOT NULL` | `invite`, `local`, `passkey`, or `recovery`; audit only, never browser authority |
 
 Raw session and CSRF secrets are never stored. Session lookup hashes the presented
 cookie and joins the teacher row so absolute expiry, idle expiry, revocation, and
@@ -69,6 +70,15 @@ a fresh secret only when the presented invite and nonce digest match the same ro
 The same-nonce recovery is valid until absolute expiry even if the original idle
 deadline passed; it renews the idle window, capped at absolute expiry. A NULL idle
 deadline is malformed legacy state and must not reissue a credential.
+
+### `webauthn_credentials`, `webauthn_challenges`, and `recovery_codes`
+
+Credentials retain only a teacher FK, public credential ID, public COSE key, sign
+counter, and lifecycle timestamps. Enrollment and assertion challenges retain only a
+purpose-separated digest, ceremony kind, expiry, used marker, and (for enrollment)
+the requesting session binding. Recovery rows retain only a teacher FK, purpose-
+separated code digest, and used/superseded timestamps. No raw passkey response,
+challenge, recovery code, email address, or private key enters SQLite.
 
 ### `teacher_preferences`
 

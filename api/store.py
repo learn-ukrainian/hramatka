@@ -185,6 +185,7 @@ class SessionRecord:
     created_at: str
     expires_at: str
     revoked_at: str | None
+    auth_method: str = "invite"
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,21 @@ class RedeemedSession:
 
     session: SessionRecord
     raw_secret: bytes
+
+
+@dataclass(frozen=True)
+class WebAuthnChallenge:
+    id: str
+    raw_challenge: bytes
+
+
+@dataclass(frozen=True)
+class CredentialRecord:
+    id: str
+    teacher_id: str
+    credential_id: bytes
+    public_key: bytes
+    sign_count: int
 
 
 @dataclass(frozen=True)
@@ -349,6 +365,11 @@ def session_secret_digest(raw_secret: bytes) -> bytes:
 def redeem_nonce_digest(raw_nonce: bytes) -> bytes:
     """Return the only browser-entry nonce value permitted in SQLite."""
     return hashlib.sha256(b"hramatka-redeem-nonce\0" + raw_nonce).digest()
+
+
+def token_digest(domain: bytes, raw: bytes) -> bytes:
+    """Persist a purpose-separated, non-recoverable ceremony proof."""
+    return hashlib.sha256(domain + b"\0" + raw).digest()
 
 
 def canonical_json(value: Any) -> str:
@@ -542,6 +563,7 @@ class JobStore:
             created_at=timestamp,
             expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
             revoked_at=None,
+            auth_method="local",
         )
         with self._write_transaction() as connection:
             teacher_row = connection.execute(
@@ -565,8 +587,8 @@ class JobStore:
                 """
                 INSERT INTO pilot_sessions (
                     id, teacher_id, invite_id, secret_hash, redeem_nonce_hash,
-                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at
-                ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL)
+                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at, auth_method
+                ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL, 'local')
                 """,
                 (
                     session.id,
@@ -699,7 +721,7 @@ class JobStore:
             row = connection.execute(
                 """
                 SELECT s.id, s.teacher_id, t.display_name AS teacher_display_name,
-                       s.invite_id, s.created_at, s.expires_at, s.revoked_at
+                       s.invite_id, s.created_at, s.expires_at, s.revoked_at, s.auth_method
                 FROM pilot_sessions AS s
                 JOIN pilot_teachers AS t ON t.id = s.teacher_id
                 WHERE s.id = ?
@@ -739,6 +761,7 @@ class JobStore:
             created_at=timestamp,
             expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
             revoked_at=None,
+            auth_method="invite",
         )
         with self._write_transaction() as connection:
             invite_row = connection.execute(
@@ -801,6 +824,7 @@ class JobStore:
                         created_at=invite_row["session_created_at"],
                         expires_at=invite_row["session_expires_at"],
                         revoked_at=None,
+                        auth_method="invite",
                     ),
                     raw_secret=session_secret,
                 )
@@ -814,6 +838,7 @@ class JobStore:
                 created_at=session.created_at,
                 expires_at=session.expires_at,
                 revoked_at=None,
+                auth_method="invite",
             )
             consumed = connection.execute(
                 """
@@ -829,8 +854,8 @@ class JobStore:
                 """
                 INSERT INTO pilot_sessions (
                     id, teacher_id, invite_id, secret_hash, redeem_nonce_hash,
-                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    created_at, expires_at, idle_expires_at, last_seen_at, revoked_at, auth_method
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'invite')
                 """,
                 (
                     session.id,
@@ -856,7 +881,7 @@ class JobStore:
             row = connection.execute(
                 """
                 SELECT s.id, s.teacher_id, t.display_name AS teacher_display_name,
-                       s.invite_id, s.created_at, s.expires_at, s.revoked_at
+                       s.invite_id, s.created_at, s.expires_at, s.revoked_at, s.auth_method
                 FROM pilot_sessions AS s
                 JOIN pilot_teachers AS t ON t.id = s.teacher_id
                 WHERE s.secret_hash = ?
@@ -904,6 +929,212 @@ class JobStore:
                 (timestamp, session_secret_digest(raw), timestamp, timestamp),
             )
         return cursor.rowcount == 1
+
+    # -- WebAuthn and recovery-code lifecycle ------------------------------
+
+    def issue_webauthn_challenge(
+        self, *, kind: str, teacher_id: str | None = None, session_id: str | None = None
+    ) -> WebAuthnChallenge:
+        if kind not in {"enrollment", "assertion"}:
+            raise ValueError("Unsupported WebAuthn ceremony.")
+        raw = secrets.token_bytes(32)
+        record = WebAuthnChallenge(id=str(uuid.uuid4()), raw_challenge=raw)
+        with self._write_transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO webauthn_challenges
+                (id, teacher_id, session_id, kind, challenge_hash, expires_at, used_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    record.id,
+                    teacher_id,
+                    session_id,
+                    kind,
+                    token_digest(b"hramatka-webauthn-challenge", raw),
+                    _add_hours(now_iso(), 1),
+                ),
+            )
+        return record
+
+    def consume_webauthn_challenge(
+        self, *, challenge_id: str, raw_challenge: bytes, kind: str, session_id: str | None = None
+    ) -> str | bool | None:
+        """Atomically consume one unexpired ceremony and return its bound teacher."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT teacher_id FROM webauthn_challenges
+                WHERE id = ? AND kind = ? AND challenge_hash = ? AND expires_at > ?
+                  AND used_at IS NULL AND (session_id IS ?)
+                """,
+                (
+                    challenge_id,
+                    kind,
+                    token_digest(b"hramatka-webauthn-challenge", raw_challenge),
+                    timestamp,
+                    session_id,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = connection.execute(
+                "UPDATE webauthn_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                (timestamp, challenge_id),
+            )
+            if changed.rowcount != 1:
+                return None
+        return row["teacher_id"] if row["teacher_id"] is not None else True
+
+    def add_webauthn_credential(
+        self, *, teacher_id: str, credential_id: bytes, public_key: bytes, sign_count: int
+    ) -> None:
+        with self._write_transaction() as connection:
+            active = connection.execute(
+                "SELECT 1 FROM pilot_teachers WHERE id = ? AND deactivated_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if active is None:
+                raise SessionUnavailable("The teacher session is no longer active.")
+            connection.execute(
+                """
+                INSERT INTO webauthn_credentials
+                (id, teacher_id, credential_id, public_key, sign_count, created_at,
+                 last_used_at, revoked_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+                """,
+                (str(uuid.uuid4()), teacher_id, credential_id, public_key, sign_count, now_iso()),
+            )
+
+    def lookup_webauthn_credential(self, credential_id: bytes) -> CredentialRecord | None:
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT c.id, c.teacher_id, c.credential_id, c.public_key, c.sign_count
+                FROM webauthn_credentials AS c JOIN pilot_teachers AS t ON t.id = c.teacher_id
+                WHERE c.credential_id = ? AND c.revoked_at IS NULL AND t.deactivated_at IS NULL
+                """,
+                (credential_id,),
+            ).fetchone()
+        return None if row is None else CredentialRecord(**dict(row))
+
+    def record_webauthn_use(self, credential_id: bytes, sign_count: int) -> str | None:
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT c.teacher_id, t.display_name FROM webauthn_credentials AS c
+                JOIN pilot_teachers AS t ON t.id = c.teacher_id
+                WHERE c.credential_id = ? AND c.revoked_at IS NULL AND t.deactivated_at IS NULL
+                """,
+                (credential_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = connection.execute(
+                "UPDATE webauthn_credentials SET sign_count = ?, last_used_at = ? "
+                "WHERE credential_id = ? AND ((sign_count = 0 AND ? = 0) OR ? > sign_count)",
+                (sign_count, now_iso(), credential_id, sign_count, sign_count),
+            )
+            if changed.rowcount != 1:
+                return None
+        return row["teacher_id"]
+
+    def mint_reentry_session(self, teacher_id: str, *, auth_method: str) -> RedeemedSession:
+        """The shared, opaque session seam used by all non-invite entry doors."""
+        if auth_method not in {"passkey", "recovery"}:
+            raise ValueError("Unsupported re-entry method.")
+        timestamp = now_iso()
+        raw_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)
+        session = SessionRecord(
+            id=str(uuid.uuid4()),
+            teacher_id=teacher_id,
+            teacher_display_name="",
+            invite_id=None,
+            created_at=timestamp,
+            expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
+            revoked_at=None,
+            auth_method=auth_method,
+        )
+        with self._write_transaction() as connection:
+            teacher = connection.execute(
+                "SELECT display_name FROM pilot_teachers WHERE id = ? AND deactivated_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if teacher is None:
+                raise SessionUnavailable("The teacher session is no longer active.")
+            connection.execute(
+                """
+                INSERT INTO pilot_sessions
+                (id, teacher_id, invite_id, secret_hash, redeem_nonce_hash, created_at, expires_at,
+                 idle_expires_at, last_seen_at, revoked_at, auth_method)
+                VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    session.id,
+                    teacher_id,
+                    session_secret_digest(raw_secret),
+                    timestamp,
+                    session.expires_at,
+                    _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                    timestamp,
+                    auth_method,
+                ),
+            )
+        return RedeemedSession(
+            session=SessionRecord(
+                **{**session.__dict__, "teacher_display_name": teacher["display_name"]}
+            ),
+            raw_secret=raw_secret,
+        )
+
+    def regenerate_recovery_codes(self, teacher_id: str, *, count: int = 10) -> list[str]:
+        codes = [
+            base64.urlsafe_b64encode(secrets.token_bytes(12)).decode("ascii").rstrip("=").upper()
+            for _ in range(count)
+        ]
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            connection.execute(
+                "UPDATE recovery_codes SET superseded_at = ? WHERE teacher_id = ? "
+                "AND used_at IS NULL AND superseded_at IS NULL",
+                (timestamp, teacher_id),
+            )
+            connection.executemany(
+                "INSERT INTO recovery_codes "
+                "(id, teacher_id, code_hash, created_at, used_at, superseded_at) "
+                "VALUES (?, ?, ?, ?, NULL, NULL)",
+                [
+                    (
+                        str(uuid.uuid4()),
+                        teacher_id,
+                        token_digest(b"hramatka-recovery-code", code.encode()),
+                        timestamp,
+                    )
+                    for code in codes
+                ],
+            )
+        return codes
+
+    def redeem_recovery_code(self, code: str) -> str | None:
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.teacher_id FROM recovery_codes AS r
+                JOIN pilot_teachers AS t ON t.id = r.teacher_id
+                WHERE r.code_hash = ? AND r.used_at IS NULL
+                  AND r.superseded_at IS NULL AND t.deactivated_at IS NULL
+                """,
+                (token_digest(b"hramatka-recovery-code", code.encode()),),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = connection.execute(
+                "UPDATE recovery_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL",
+                (timestamp, token_digest(b"hramatka-recovery-code", code.encode())),
+            )
+            return row["teacher_id"] if changed.rowcount == 1 else None
 
     # -- Teacher preferences (P2-6) ----------------------------------------
 
@@ -1732,6 +1963,7 @@ class JobStore:
             created_at=row["created_at"],
             expires_at=row["expires_at"],
             revoked_at=row["revoked_at"],
+            auth_method=row["auth_method"] if "auth_method" in row.keys() else "invite",
         )
 
     @staticmethod
@@ -1741,10 +1973,7 @@ class JobStore:
             acknowledgements = json.loads(row["warning_acknowledgements_json"])
             progress = (
                 json.loads(row["progress_json"])
-                if (
-                    "progress_json" in row.keys()
-                    and row["progress_json"] is not None
-                )
+                if ("progress_json" in row.keys() and row["progress_json"] is not None)
                 else None
             )
         except (TypeError, json.JSONDecodeError) as error:

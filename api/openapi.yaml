@@ -8,8 +8,9 @@ info:
     url: https://github.com/learn-ukrainian/learn-ukrainian-infra-private
   description: |
     Frozen same-origin browser contract for the pasted-text-only Hramatka pilot.
-    The browser authenticates only with the HttpOnly pilot-session cookie; the
-    legacy shared bearer credential is deliberately absent from this contract.
+    Teacher API authorization uses the HttpOnly pilot-session cookie. Invite,
+    passkey, and recovery-code entry doors all mint that same cookie; the legacy
+    shared bearer credential is deliberately absent from this contract.
 servers:
   - url: /
     description: Same origin as the static teacher application
@@ -23,6 +24,95 @@ tags:
   - name: Probes
     description: Unauthenticated process-health and deployment-readiness probes.
 paths:
+  /api/passkeys/enrollment/options:
+    post:
+      tags: [Session]
+      operationId: beginPasskeyEnrollment
+      summary: Issue a session-bound, single-use WebAuthn registration ceremony
+      security: [{PilotSession: []}]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200': {description: WebAuthn publicKey options and opaque challenge ID}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+  /api/passkeys/authentication/options:
+    post:
+      tags: [Session]
+      operationId: beginPasskeyAuthentication
+      summary: Issue a single-use WebAuthn assertion ceremony
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+      responses:
+        '200': {description: WebAuthn publicKey options and opaque challenge ID}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+  /api/passkeys/enrollment/{challenge_id}:
+    post:
+      tags: [Session]
+      operationId: completePasskeyEnrollment
+      summary: Verify registration and return one-time recovery codes
+      security: [{PilotSession: []}]
+      parameters:
+        - name: challenge_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200': {description: Credential committed; recovery codes are shown once}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '410': {description: Challenge expired, replayed, or belongs to another session}
+  /api/passkeys/authentication:
+    post:
+      tags: [Session]
+      operationId: completePasskeyAuthentication
+      summary: Verify an assertion and mint the ordinary pilot session
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+      responses:
+        '200':
+          description: Ordinary session established
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+  /api/recovery-codes/redeem:
+    post:
+      tags: [Session]
+      operationId: redeemRecoveryCode
+      summary: Consume one recovery-code digest and mint the ordinary session
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+      responses:
+        '200':
+          description: Ordinary session established
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+  /api/recovery-codes/regenerate:
+    post:
+      tags: [Session]
+      operationId: regenerateRecoveryCodes
+      summary: Supersede unused recovery codes and show a new set once
+      security: [{PilotSession: []}]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200': {description: New recovery codes, never persisted as plaintext}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
   /api/session/redeem:
     post:
       tags: [Session]

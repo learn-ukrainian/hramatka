@@ -22,6 +22,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
 
 from hramatka.engine import data
 from hramatka.engine.providers import (
@@ -41,11 +42,15 @@ from .models import (
     DurationMutation,
     InviteRedeem,
     LessonCreate,
+    RecoveryCodeRedeem,
     RestoreRejectedMutation,
     RevisionMutation,
     TeacherPreferences,
     UrlImportRequest,
+    WebAuthnAssertion,
+    WebAuthnCredential,
 )
+from .passkeys import assertion_options, enrollment_options, verify_assertion, verify_registration
 from .qualified_models import (
     LogicalModelUnavailable,
     QualifiedModelRegistry,
@@ -205,6 +210,28 @@ def _decode_opaque(value: str | None) -> bytes | None:
     return raw
 
 
+def _webauthn_challenge(credential: dict[str, object]) -> bytes:
+    """Read only the ceremony challenge needed to match a persisted digest."""
+    try:
+        response = credential["response"]
+        assert isinstance(response, dict)
+        encoded = response["clientDataJSON"]
+        assert isinstance(encoded, str)
+        decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        challenge = json.loads(decoded)["challenge"]
+        assert isinstance(challenge, str)
+        return base64.urlsafe_b64decode(challenge + "=" * (-len(challenge) % 4))
+    except (
+        AssertionError,
+        KeyError,
+        TypeError,
+        ValueError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ) as error:
+        raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+
+
 def _status_payload(job: JobRecord) -> dict[str, object]:
     payload = {
         "id": job.id,
@@ -352,6 +379,7 @@ def create_app(
     app.state.baker = baker
     app.state.review_attestor = ReviewAttestor(settings)
     app.state.model_registry = model_registry
+
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:
         return JSONResponse(status_code=error.status_code, content=error.payload())
@@ -405,6 +433,8 @@ def create_app(
         response = await call_next(request)
         if (
             request.url.path.startswith("/api/session")
+            or request.url.path.startswith("/api/passkeys")
+            or request.url.path.startswith("/api/recovery-codes")
             or request.url.path.startswith("/api/lessons")
             or request.url.path.startswith("/api/anchor")
             or request.url.path.startswith("/api/lesson-models")
@@ -492,7 +522,7 @@ def create_app(
             "expires_at": session.record.expires_at,
             "csrf_token": csrf_token(settings.csrf_hmac_key, session.raw_secret),
         }
-        if settings.local_static_teacher_enabled and session.record.invite_id is None:
+        if settings.local_static_teacher_enabled and session.record.auth_method == "local":
             payload["local_auth_disabled"] = True
         return payload
 
@@ -503,6 +533,13 @@ def create_app(
             f"Max-Age={_session_cookie_max_age(expires_at)}; "
             "HttpOnly; Secure; SameSite=Lax",
         )
+
+    def session_response(redeemed) -> Response:
+        """Every entry door terminates in the one existing cookie session contract."""
+        session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
+        response = JSONResponse(content=session_payload(session))
+        set_session_cookie(response, redeemed.raw_secret, redeemed.session.expires_at)
+        return response
 
     def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
         job = store.get(teacher_id, lesson_id)
@@ -552,10 +589,140 @@ def create_app(
             raise PilotError(
                 410, "invite_unavailable", "Це запрошення більше недоступне."
             ) from error
-        session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
-        response = JSONResponse(content=session_payload(session))
-        set_session_cookie(response, redeemed.raw_secret, redeemed.session.expires_at)
-        return response
+        return session_response(redeemed)
+
+    @app.post("/api/passkeys/enrollment/options")
+    def passkey_enrollment_options(
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        # First binding is deliberately possible only from the invite-created
+        # session: no name, email, or client-supplied identity can bind a key.
+        if session.record.auth_method != "invite":
+            raise PilotError(
+                403, "passkey_enrollment_forbidden", "Потрібна первинна сесія за запрошенням."
+            )
+        challenge = store.issue_webauthn_challenge(
+            kind="enrollment", teacher_id=session.teacher_id, session_id=session.record.id
+        )
+        return {
+            "challenge_id": challenge.id,
+            "publicKey": enrollment_options(
+                origin=settings.pilot_origin,
+                teacher_id=session.teacher_id,
+                display_name=session.record.teacher_display_name,
+                challenge=challenge.raw_challenge,
+            ),
+        }
+
+    @app.post("/api/passkeys/enrollment/{challenge_id}")
+    def finish_passkey_enrollment(
+        challenge_id: UUID,
+        request_body: WebAuthnCredential,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        if session.record.auth_method != "invite":
+            raise PilotError(
+                403, "passkey_enrollment_forbidden", "Потрібна первинна сесія за запрошенням."
+            )
+        challenge = _webauthn_challenge(request_body.credential)
+        try:
+            verified = verify_registration(
+                credential=request_body.credential,
+                challenge=challenge,
+                origin=settings.pilot_origin,
+            )
+            if (
+                store.consume_webauthn_challenge(
+                    challenge_id=str(challenge_id),
+                    raw_challenge=challenge,
+                    kind="enrollment",
+                    session_id=session.record.id,
+                )
+                != session.teacher_id
+            ):
+                raise PilotError(
+                    410, "passkey_challenge_unavailable", "Перевірка ключа більше недоступна."
+                )
+            store.add_webauthn_credential(
+                teacher_id=session.teacher_id,
+                credential_id=verified.credential_id,
+                public_key=verified.credential_public_key,
+                sign_count=verified.sign_count,
+            )
+            recovery_codes = store.regenerate_recovery_codes(session.teacher_id)
+        except (InvalidRegistrationResponse, ValueError, TypeError) as error:
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+        return {"recovery_codes": recovery_codes}
+
+    @app.post("/api/passkeys/authentication/options")
+    def passkey_assertion_options(_: None = Depends(require_origin)) -> dict[str, object]:
+        challenge = store.issue_webauthn_challenge(kind="assertion")
+        return {
+            "challenge_id": challenge.id,
+            "publicKey": assertion_options(
+                origin=settings.pilot_origin, challenge=challenge.raw_challenge
+            ),
+        }
+
+    @app.post("/api/passkeys/authentication")
+    def finish_passkey_assertion(
+        request_body: WebAuthnAssertion,
+        _: None = Depends(require_json),
+        __: None = Depends(require_origin),
+    ) -> Response:
+        challenge = _webauthn_challenge(request_body.credential)
+        try:
+            credential_id = base64.urlsafe_b64decode(
+                str(request_body.credential["rawId"])
+                + "=" * (-len(str(request_body.credential["rawId"])) % 4)
+            )
+        except (KeyError, ValueError, binascii.Error) as error:
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+        credential = store.lookup_webauthn_credential(credential_id)
+        if credential is None:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
+        try:
+            verified = verify_assertion(
+                credential=request_body.credential,
+                challenge=challenge,
+                origin=settings.pilot_origin,
+                public_key=credential.public_key,
+                sign_count=credential.sign_count,
+            )
+        except (InvalidAuthenticationResponse, ValueError, TypeError) as error:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
+        if (
+            store.consume_webauthn_challenge(
+                challenge_id=str(request_body.challenge_id),
+                raw_challenge=challenge,
+                kind="assertion",
+            )
+            is not True
+        ):
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
+        teacher_id = store.record_webauthn_use(verified.credential_id, verified.new_sign_count)
+        if teacher_id is None:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
+        return session_response(store.mint_reentry_session(teacher_id, auth_method="passkey"))
+
+    @app.post("/api/recovery-codes/regenerate")
+    def regenerate_recovery_codes(
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        return {"recovery_codes": store.regenerate_recovery_codes(session.teacher_id)}
+
+    @app.post("/api/recovery-codes/redeem")
+    def redeem_recovery_code(
+        request_body: RecoveryCodeRedeem,
+        _: None = Depends(require_json),
+        __: None = Depends(require_origin),
+    ) -> Response:
+        teacher_id = store.redeem_recovery_code(request_body.code)
+        if teacher_id is None:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
+        return session_response(store.mint_reentry_session(teacher_id, auth_method="recovery"))
 
     if settings.local_static_teacher_enabled:
 

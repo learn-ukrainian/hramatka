@@ -12,6 +12,7 @@ from .v004_floor_failure_code import apply as apply_v004
 from .v005_generation_failure_codes import apply as apply_v005
 from .v006_durable_teacher_sessions import apply as apply_v006
 from .v007_local_static_sessions import apply as apply_v007
+from .v008_teacher_passkeys import apply as apply_v008
 
 
 class MigrationError(RuntimeError):
@@ -28,6 +29,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (5, "generation_failure_codes", apply_v005),
     (6, "durable_teacher_sessions", apply_v006),
     (7, "local_static_sessions", apply_v007),
+    (8, "teacher_passkeys", apply_v008),
 )
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

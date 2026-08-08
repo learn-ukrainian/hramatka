@@ -151,6 +151,17 @@ function isValidToken(t: string): boolean {
   return /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(t);
 }
 
+function base64urlBytes(value: string): Uint8Array {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+function bytesBase64url(value: ArrayBuffer): string {
+  const binary = String.fromCharCode(...new Uint8Array(value));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 const ENTRY_NONCE_STORAGE_KEY = 'hramatka:entry-nonce';
 
 function entryNonce(): string {
@@ -418,6 +429,109 @@ export default function TeacherApp() {
     redeemInFlightRef.current = promise;
     return promise;
   }, [resetSessionScopedState, navigate]);
+
+  const signInWithPasskey = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const begin = await apiFetch('/api/passkeys/authentication/options', { method: 'POST' });
+      if (!begin.ok) {
+        setError(errKey('passkey.authStartFailed'));
+        return;
+      }
+      const ceremony = await begin.json();
+      const request = ceremony.publicKey;
+      const publicKey: PublicKeyCredentialRequestOptions = {
+        ...request,
+        challenge: base64urlBytes(request.challenge),
+        allowCredentials: request.allowCredentials?.map((item: any) => ({ ...item, id: base64urlBytes(item.id) })),
+      };
+      const credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+      if (!credential) return;
+      const response = credential.response as AuthenticatorAssertionResponse;
+      const complete = await apiFetch('/api/passkeys/authentication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challenge_id: ceremony.challenge_id,
+          credential: {
+            id: credential.id,
+            rawId: bytesBase64url(credential.rawId),
+            type: credential.type,
+            response: {
+              clientDataJSON: bytesBase64url(response.clientDataJSON),
+              authenticatorData: bytesBase64url(response.authenticatorData),
+              signature: bytesBase64url(response.signature),
+              userHandle: response.userHandle ? bytesBase64url(response.userHandle) : null,
+            },
+          },
+        }),
+      });
+      if (!complete.ok) {
+        setError(errKey('passkey.notConfirmed'));
+        return;
+      }
+      const data = await complete.json();
+      setSession({ teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token });
+      setCsrf(data.csrf_token);
+      setSessionReady(true);
+      navigate({ view: 'paste' });
+      await loadTeacherDefaultDuration();
+      await loadQualifiedModels();
+    } catch {
+      setError(errKey('passkey.notConfirmed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const enrollPasskey = async () => {
+    if (!csrf) return;
+    try {
+      setLoading(true);
+      const begin = await apiFetch('/api/passkeys/enrollment/options', {
+        method: 'POST', headers: { 'X-CSRF-Token': csrf },
+      });
+      if (!begin.ok) {
+        setError(errKey('passkey.enrollUnavailable'));
+        return;
+      }
+      const ceremony = await begin.json();
+      const request = ceremony.publicKey;
+      const publicKey: PublicKeyCredentialCreationOptions = {
+        ...request,
+        challenge: base64urlBytes(request.challenge),
+        user: { ...request.user, id: base64urlBytes(request.user.id) },
+        excludeCredentials: request.excludeCredentials?.map((item: any) => ({
+          ...item, id: base64urlBytes(item.id),
+        })),
+      };
+      const credential = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
+      if (!credential) return;
+      const response = credential.response as AuthenticatorAttestationResponse;
+      const complete = await apiFetch(`/api/passkeys/enrollment/${ceremony.challenge_id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ credential: {
+          id: credential.id, rawId: bytesBase64url(credential.rawId), type: credential.type,
+          response: {
+            clientDataJSON: bytesBase64url(response.clientDataJSON),
+            attestationObject: bytesBase64url(response.attestationObject),
+          },
+        }}),
+      });
+      if (!complete.ok) {
+        setError(errKey('passkey.notConfirmed'));
+        return;
+      }
+      const { recovery_codes } = await complete.json();
+      window.alert(t('passkey.recoveryCodesAlert', { codes: recovery_codes.join('\n') }));
+    } catch {
+      setError(errKey('passkey.notConfirmed'));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadTeacherDefaultDuration = useCallback(async () => {
     // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
@@ -1288,6 +1402,11 @@ export default function TeacherApp() {
                   ?
                 </button>
                 <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
+                {'credentials' in navigator && (
+                  <button onClick={enrollPasskey} className="link" disabled={loading}>
+                    {t('passkey.add')}
+                  </button>
+                )}
                 <button onClick={logout} className="link" data-testid="logout-btn">{t('logout')}</button>
               </>
             )}
@@ -1298,7 +1417,7 @@ export default function TeacherApp() {
       {session?.local_auth_disabled === true && (
         <div className="banner honest local-auth-disabled-banner" role="alert" data-testid="local-auth-disabled-banner">
           <span className="ic">!</span>
-          <span>Локальний режим: автентифікацію вимкнено. Не відкривайте застосунок у мережі.</span>
+          <span>{t('localAuthDisabled.banner')}</span>
         </div>
       )}
 
@@ -1371,6 +1490,11 @@ export default function TeacherApp() {
           >
             {t('invite.testBtn')}
           </button>
+          {'credentials' in navigator && (
+            <button className="btn secondary" onClick={signInWithPasskey} disabled={loading}>
+              {t('passkey.signIn')}
+            </button>
+          )}
           <p className="small">{t('invite.small')}</p>
         </main>
       )}

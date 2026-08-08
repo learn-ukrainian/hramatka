@@ -114,6 +114,28 @@ const DICT = {
     uk: 'У реальному сценарії — відкрийте посилання з #invite=...',
     en: 'In a real scenario — open a link with #invite=...',
   },
+  'passkey.signIn': { uk: 'Увійти за ключем доступу', en: 'Sign in with a passkey' },
+  'passkey.add': { uk: 'Додати ключ доступу', en: 'Add a passkey' },
+  'passkey.authStartFailed': {
+    uk: 'Не вдалося почати вхід за ключем доступу.',
+    en: 'Could not start sign-in with a passkey.',
+  },
+  'passkey.enrollUnavailable': {
+    uk: 'Ключ доступу зараз не можна додати.',
+    en: 'A passkey cannot be added right now.',
+  },
+  'passkey.notConfirmed': {
+    uk: 'Ключ доступу не підтверджено.',
+    en: 'The passkey could not be confirmed.',
+  },
+  'passkey.recoveryCodesAlert': {
+    uk: 'Збережіть ці коди відновлення; їх буде показано лише раз:\n\n{codes}',
+    en: 'Save these recovery codes; they will be shown only once:\n\n{codes}',
+  },
+  'localAuthDisabled.banner': {
+    uk: 'Локальний режим: автентифікацію вимкнено. Не відкривайте застосунок у мережі.',
+    en: 'Local mode: authentication is disabled. Do not expose this app to a network.',
+  },
 
   // ---- loading ----
   loading: { uk: 'Завантаження…', en: 'Loading…' },
