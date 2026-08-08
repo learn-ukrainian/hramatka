@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -34,13 +35,14 @@ from hramatka.api.qualified_models import (
     DENSITY_CONTRACT_VERSION,
     QualificationCandidateRegistry,
 )
-from hramatka.engine import ENGINE_VERSION, data, fixtures, flags
+from hramatka.engine import ENGINE_VERSION, data, fixtures, flags, paths
 from hramatka.engine.density_evaluator_v3 import evaluate_phase_with_repair
 from hramatka.engine.lesson_capacity_v3 import (
     AllocatedSlot,
     ConditionalReplacement,
     LessonAllocation,
 )
+from hramatka.engine.linguistics import verify_lemma
 from hramatka.engine.prompt_pack_v3 import (
     PROMPT_PACK_VERSION as V3_PROMPT_PACK_VERSION,
 )
@@ -49,9 +51,13 @@ from hramatka.engine.prompt_pack_v3 import (
 )
 from hramatka.engine.prompt_pack_v3 import (
     TYPE_KIT_IDENTITY,
+    _vesum_matches,
     build_phase_context,
     render_phase_prompt,
     template_digest,
+)
+from hramatka.engine.prompt_pack_v3 import (
+    _uninflectable_allowed_pos as _vesum_uninflectable_allowed_pos,
 )
 from hramatka.engine.providers import telemetry_ctx
 from hramatka.engine.serializer_policy import serializer_temperature
@@ -510,14 +516,65 @@ def _v3_record_from_kit(kit: Mapping[str, Any], *, units: int | None = None) -> 
     }
 
 
+def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
+    """Return ``count`` fixture-VESUM distractors for ``answer``.
+
+    For inflectable answers, distractors are other forms of the same lemma.
+    For uninflectable answers -- closed-class POS or a one-form paradigm --
+    distractors are other fixture-VESUM words of the same POS class.  This
+    mirrors the production ``validate_distractor_adjacency`` ruling without
+    weakening it.
+    """
+    db_path = paths.vesum_db()
+    allowed_pos = _vesum_uninflectable_allowed_pos(answer, db_path)
+    if allowed_pos is not None:
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            placeholders = ",".join("?" * len(allowed_pos))
+            rows = conn.execute(
+                f"SELECT DISTINCT word_form FROM forms WHERE pos IN ({placeholders}) "
+                "ORDER BY word_form",
+                tuple(allowed_pos),
+            ).fetchall()
+        finally:
+            conn.close()
+        seen = {answer.lower()}
+        candidates: list[str] = []
+        for (word_form,) in rows:
+            key = word_form.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(word_form)
+        return candidates[:count]
+
+    lemmas = {
+        match["lemma"].lower()
+        for match in _vesum_matches(answer, db_path)
+        if isinstance(match.get("lemma"), str)
+    }
+    seen = {answer.lower()}
+    candidates = []
+    for lemma in lemmas:
+        for form in verify_lemma(lemma, db_path=db_path):
+            word_form = form["word_form"]
+            key = word_form.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(word_form)
+    return candidates[:count]
+
+
 def _v3_live_record_from_kit(
     kit: Mapping[str, Any], *, unit_limit: int | None = None
 ) -> dict[str, Any]:
     """Return a schema-valid deterministic v3.3 serializer response for HTTP tests.
 
     Learner-facing prose is composed and never quotes the certified answer.
-    Closed-item distractors reuse the certified form so the same-lemma VESUM
-    adjacency gate passes deterministically with the limited fixture vocabulary.
+    Closed-item distractors are real fixture-VESUM forms adjacent to the
+    certified answer, satisfying the same-lemma (inflectable) or same-POS
+    (uninflectable) adjacency gate deterministically.
     """
     activity_type = kit["type"]
     certified_units = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
@@ -530,7 +587,7 @@ def _v3_live_record_from_kit(
             "items": [
                 {
                     "question": f"Яке слово підходить до контексту {index + 1}?",
-                    "options": [form, form],
+                    "options": [form, _v3_fixture_distractors(form)[0]],
                     "correct": 0,
                 }
                 for index, form in enumerate(forms)
@@ -543,7 +600,7 @@ def _v3_live_record_from_kit(
             "instruction": "Заповніть пропуск.",
             "text": "Це текст із кількома пропусками, які треба заповнити.",
             "blanks": [
-                {"id": index, "answer": form, "options": [form, form]}
+                {"id": index, "answer": form, "options": [form, _v3_fixture_distractors(form)[0]]}
                 for index, form in enumerate(forms, start=1)
             ],
         }
@@ -558,7 +615,7 @@ def _v3_live_record_from_kit(
                 {
                     "sentence": f"Речення {index + 1} потребує правильного слова.",
                     "answer": form,
-                    "options": [form, form],
+                    "options": [form, _v3_fixture_distractors(form)[0]],
                 }
                 for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True))
             ],

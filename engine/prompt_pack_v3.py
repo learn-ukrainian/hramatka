@@ -16,7 +16,7 @@ from typing import Any
 
 from . import paths
 from .lesson_capacity_v3 import LessonAllocation
-from .linguistics import verify_words
+from .linguistics import verify_lemma, verify_words
 from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
@@ -377,6 +377,12 @@ def validate_verbatim_answer_ban(
     through composed Ukrainian prose.  Any verbatim occurrence of a correct
     answer in a prose field is a leak.  Displayed option lists and match-up
     pairs are not prose fields, so they are excluded from this check.
+
+    The ban is scoped per item: an item's own answer must not appear in its own
+    question or sentence, but a mention of another item's answer is allowed.
+    Shared prose (instruction, cloze text) is checked against every answer.
+    Cloze blanks are gaps by definition, so the cloze text keeps a whole-slot
+    ban for all blank answers.
     """
     payload = activity.get("payload")
     if not isinstance(payload, Mapping):
@@ -385,20 +391,22 @@ def validate_verbatim_answer_ban(
     answer_key = activity.get("answer_key")
     certified_forms = _certified_answer_forms(kit)
 
-    prose_fields: list[str] = []
-    answer_forms: list[str] = []
+    # Each entry is (prose_field, answer_forms_that_must_not_occur_in_it).
+    checks: list[tuple[str, list[str]]] = []
+    all_answers: list[str] = []
+
+    def _add_field(text: str, forms: list[str]) -> None:
+        if isinstance(text, str):
+            checks.append((text, forms))
 
     if activity_type == "quiz":
         instruction = payload.get("instruction", "")
-        if isinstance(instruction, str):
-            prose_fields.append(instruction)
+        item_checks: list[tuple[str, list[str]]] = []
         key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
         for index, item in enumerate(payload.get("items", ())):
             if not isinstance(item, Mapping):
                 continue
             question = item.get("question")
-            if isinstance(question, str):
-                prose_fields.append(question)
             options = item.get("options", ())
             correct = item.get("correct")
             key_correct = correct
@@ -406,6 +414,7 @@ def validate_verbatim_answer_ban(
                 key_item = key_items[index]
                 if isinstance(key_item, Mapping) and isinstance(key_item.get("correct"), int):
                     key_correct = key_item["correct"]
+            item_answers: list[str] = []
             if (
                 isinstance(options, Sequence)
                 and not isinstance(options, (bytes, bytearray, str))
@@ -414,57 +423,71 @@ def validate_verbatim_answer_ban(
             ):
                 answer = options[key_correct]
                 if isinstance(answer, str):
-                    answer_forms.append(answer)
+                    item_answers.append(answer)
+                    all_answers.append(answer)
                 if certified_forms:
                     certified_match = [f for f in certified_forms if f in options]
                     if certified_match:
-                        answer_forms.append(certified_match[0])
+                        item_answers.append(certified_match[0])
+                        all_answers.append(certified_match[0])
+            item_checks.append((question, item_answers))
+        checks.extend(
+            (text, forms) for text, forms in item_checks if isinstance(text, str)
+        )
+        _add_field(instruction, all_answers)
     elif activity_type == "cloze":
         instruction = payload.get("instruction", "")
-        if isinstance(instruction, str):
-            prose_fields.append(instruction)
         text = payload.get("text")
-        if isinstance(text, str):
-            prose_fields.append(text)
         for blank in payload.get("blanks", ()):
             if isinstance(blank, Mapping):
                 answer = blank.get("answer")
                 if isinstance(answer, str):
-                    answer_forms.append(answer)
+                    all_answers.append(answer)
+        _add_field(instruction, all_answers)
+        _add_field(text, all_answers)
     elif activity_type == "fill-in":
         instruction = payload.get("instruction", "")
-        if isinstance(instruction, str):
-            prose_fields.append(instruction)
+        item_checks: list[tuple[str, list[str]]] = []
         for item in payload.get("items", ()):
             if isinstance(item, Mapping):
                 sentence = item.get("sentence")
-                if isinstance(sentence, str):
-                    prose_fields.append(sentence)
                 answer = item.get("answer")
+                item_answers: list[str] = []
                 if isinstance(answer, str):
-                    answer_forms.append(answer)
+                    item_answers.append(answer)
+                    all_answers.append(answer)
+                item_checks.append((sentence, item_answers))
+        checks.extend(
+            (text, forms) for text, forms in item_checks if isinstance(text, str)
+        )
+        _add_field(instruction, all_answers)
     elif activity_type == "error-correction":
         instruction = payload.get("instruction", "")
-        if isinstance(instruction, str):
-            prose_fields.append(instruction)
+        item_checks: list[tuple[str, list[str]]] = []
         corrections = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
         for index, item in enumerate(payload.get("items", ())):
             if isinstance(item, str):
-                prose_fields.append(item)
+                item_answers: list[str] = []
                 if isinstance(corrections, Sequence) and index < len(corrections):
                     correction = corrections[index]
                     if isinstance(correction, str):
-                        answer_forms.append(correction)
+                        item_answers.append(correction)
+                        all_answers.append(correction)
+                item_checks.append((item, item_answers))
+        checks.extend(
+            (text, forms) for text, forms in item_checks if isinstance(text, str)
+        )
+        _add_field(instruction, all_answers)
 
-    if not answer_forms:
+    if not any(forms for _, forms in checks):
         return
 
-    for text in prose_fields:
+    for text, forms in checks:
         if _is_trivial_template(text, certified_forms):
             raise PromptPackV3Error(
                 f"learner-facing text is a bare answer form or template: {text!r}"
             )
-        for form in answer_forms:
+        for form in forms:
             if _contains_form(text, form):
                 raise PromptPackV3Error(
                     f"learner-facing text contains answer form {form!r}: {text!r}"
@@ -506,33 +529,82 @@ def validate_elicitation_shape(
                 _check(item.get("sentence"), f"fill-in items[{index}].sentence")
 
 
+# Closed-class parts of speech.  Words belonging to these classes have no
+# inflectional paradigm to share with a distractor, so adjacency is checked
+# by POS class instead of by lemma.
+_CLOSED_CLASS_POS = frozenset({"prep", "part", "conj"})
+
+
+def _vesum_matches(form: str, db_path: Path) -> list[dict]:
+    """Return every VESUM analysis for ``form`` across common capitalisations."""
+    variants = {form, form.lower()}
+    if form:
+        variants.add(form[:1].upper() + form[1:])
+    results = verify_words(sorted(variants), db_path=db_path)
+    matches: list[dict] = []
+    for variant in variants:
+        matches.extend(results.get(variant, []))
+    return matches
+
+
 def _lemma_set(form: str, db_path: Path) -> set[str]:
     """Return the lowercased lemma set for ``form`` according to VESUM.
 
     Checks the exact spelling, lowercase, and first-letter-uppercase variants
     so capitalized sentence-initial forms resolve to their lemma.
     """
-    variants = {form, form.lower()}
-    if form:
-        variants.add(form[:1].upper() + form[1:])
-    results = verify_words(sorted(variants), db_path=db_path)
-    lemmas: set[str] = set()
-    for variant in variants:
-        for match in results.get(variant, []):
-            lemma = match.get("lemma")
-            if isinstance(lemma, str):
-                lemmas.add(lemma.lower())
-    return lemmas
+    return {
+        match["lemma"].lower()
+        for match in _vesum_matches(form, db_path)
+        if isinstance(match.get("lemma"), str)
+    }
+
+
+def _pos_set(form: str, db_path: Path) -> set[str]:
+    """Return the set of VESUM POS tags for ``form``."""
+    return {pos for pos in (match.get("pos") for match in _vesum_matches(form, db_path)) if pos}
+
+
+def _is_single_form_lemma(lemma: str, db_path: Path) -> bool:
+    """True when ``lemma`` has exactly one distinct word form in VESUM."""
+    forms = verify_lemma(lemma, db_path=db_path)
+    if not forms:
+        return False
+    return len({form["word_form"] for form in forms}) == 1
+
+
+def _uninflectable_allowed_pos(answer: str, db_path: Path) -> set[str] | None:
+    """Return the allowed distractor POS set if ``answer`` is uninflectable.
+
+    An answer is uninflectable when any of its VESUM analyses is a closed-class
+    POS (preposition, particle, conjunction) or when one of its lemmas has a
+    one-form paradigm.  In the closed-class case the allowed POS set is narrowed
+    to those closed classes, so a preposition-target item does not accept an
+    interjection distractor just because the surface form is homonymous.
+    """
+    matches = _vesum_matches(answer, db_path)
+    answer_pos = {pos for pos in (match.get("pos") for match in matches) if pos}
+    closed_pos = answer_pos & _CLOSED_CLASS_POS
+    if closed_pos:
+        return closed_pos
+    lemmas = {match.get("lemma") for match in matches if isinstance(match.get("lemma"), str)}
+    if any(_is_single_form_lemma(lemma, db_path) for lemma in lemmas):
+        return answer_pos
+    return None
 
 
 def validate_distractor_adjacency(
     activity: Mapping[str, Any], kit: Mapping[str, Any]
 ) -> None:
-    """Require every distractor to be a real VESUM form sharing a lemma with the answer.
+    """Require every distractor to be a real VESUM form adjacent to the answer.
 
-    The answer form must sit at the index declared by the answer key.  Every
-    other option must be present in VESUM and share at least one lowercased
-    lemma with the certified answer form for that item.
+    For INFLECTABLE answer forms the distractor must share at least one
+    lowercased VESUM lemma with the certified answer form.  For UNINFLECTABLE
+    answers -- closed-class POS (prep/part/conj) or a one-form paradigm -- the
+    distractor must instead be a real VESUM word of the same POS class and
+    distinct from the answer.
+
+    The answer form must sit at the index declared by the answer key.
     """
     db_path = paths.vesum_db()
     payload = activity.get("payload")
@@ -555,6 +627,7 @@ def validate_distractor_adjacency(
         answer_lemmas = _lemma_set(answer, db_path)
         if not answer_lemmas:
             raise PromptPackV3Error(f"{label} answer form {answer!r} is not in VESUM")
+        allowed_pos = _uninflectable_allowed_pos(answer, db_path)
         for option_index, option in enumerate(options):
             if not isinstance(option, str):
                 raise PromptPackV3Error(f"{label} option must be a string")
@@ -563,7 +636,18 @@ def validate_distractor_adjacency(
             option_lemmas = _lemma_set(option, db_path)
             if not option_lemmas:
                 raise PromptPackV3Error(f"{label} distractor {option!r} is not in VESUM")
-            if not (answer_lemmas & option_lemmas):
+            if allowed_pos is not None:
+                option_pos = _pos_set(option, db_path)
+                if not (option_pos & allowed_pos):
+                    raise PromptPackV3Error(
+                        f"{label} distractor {option!r} is not of the same POS class "
+                        f"as answer {answer!r}"
+                    )
+                if option.lower() == answer.lower():
+                    raise PromptPackV3Error(
+                        f"{label} distractor {option!r} equals answer {answer!r}"
+                    )
+            elif not (answer_lemmas & option_lemmas):
                 raise PromptPackV3Error(
                     f"{label} distractor {option!r} does not share a lemma with answer {answer!r}"
                 )

@@ -1014,6 +1014,12 @@
   "pos": "prep"
  },
  {
+  "word_form": "нате",
+  "lemma": "нате",
+  "tags": "intj",
+  "pos": "intj"
+ },
+ {
   "word_form": "найскладніших",
   "lemma": "найскладніший",
   "tags": "adj:p:v_mis:comps",

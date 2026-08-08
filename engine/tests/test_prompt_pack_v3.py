@@ -504,3 +504,71 @@ def test_distractor_adjacency_requires_answer_at_declared_index() -> None:
     }
 
     validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_accepts_same_class_prep_distractor() -> None:
+    """Uninflectable preposition answer accepts another real preposition."""
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний прийменник.",
+            "items": [
+                {
+                    "question": "Який прийменник потрібен тут?",
+                    "options": ["на", "про"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_rejects_wrong_class_uninflectable_distractor() -> None:
+    """Uninflectable preposition answer rejects a real word of a different class."""
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний прийменник.",
+            "items": [
+                {
+                    "question": "Який прийменник потрібен тут?",
+                    "options": ["на", "нате"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="same POS class"):
+        validate_distractor_adjacency(activity, kit)
+
+
+def test_distractor_adjacency_rejects_identical_uninflectable_distractor() -> None:
+    """Uninflectable answer rejects a distractor equal to itself."""
+    context = _context("quiz")
+    kit = context["type_kits"][0]
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний прийменник.",
+            "items": [
+                {
+                    "question": "Який прийменник потрібен тут?",
+                    "options": ["на", "на"],
+                    "correct": 0,
+                }
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="equals answer"):
+        validate_distractor_adjacency(activity, kit)
