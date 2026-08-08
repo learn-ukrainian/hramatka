@@ -164,23 +164,48 @@ Run the complete teacher UI and real baker locally with one foreground command:
 ```
 
 The launcher builds the frontend, starts Uvicorn on `127.0.0.1:8788`, and serves the
-same-origin teacher application over temporary HTTPS on `127.0.0.1:8443`. It prints one fresh,
-unredeemed invite URL with a 72-hour first-entry expiry once and does not open a browser. The browser will warn about the
-short-lived self-signed certificate; the launcher does not modify the system trust store.
-Both loopback ports are reserved before the build begins and handed directly to the child
-servers, so another process cannot claim either port during startup.
+same-origin teacher application over HTTPS on `127.0.0.1:8443`. Both loopback ports are
+reserved before the build begins and handed directly to the child servers, so another process
+cannot claim either port during startup.
 
-For an operator-only local convenience link, opt in explicitly:
+### Trusted local TLS (one-time setup)
+
+The launcher first uses the valid local certificate pair at
+`$HOME/.local/state/hramatka/tls-cert.pem` and
+`$HOME/.local/state/hramatka/tls-key.pem`. Install the mkcert root once, then create or refresh
+that pair when needed:
 
 ```bash
-HRAMATKA_LOCAL_STATIC_TEACHER=1 ./hramatka/ops/local-teacher.sh
+mkcert -install
+state_dir="$HOME/.local/state/hramatka"
+mkdir -p "$state_dir"
+umask 077
+mkcert -cert-file "$state_dir/tls-cert.pem" -key-file "$state_dir/tls-key.pem" \
+  127.0.0.1 localhost
 ```
 
-This mode prints a bookmarkable local URL, creates or reuses one local teacher account,
-and shows a persistent unauthenticated-mode warning in the app. It persists only that
-local account's SQLite file under `~/.local/state/hramatka/`; the launcher supplies the
-non-production marker and loopback binding proof itself. The route is not registered
-without all three conditions and is not part of the deployed pilot path.
+With that pair and the one-time trust installation, browsers trust the local teacher URL without
+an interstitial. The launcher never changes the system trust store itself. If either file is
+missing or invalid, it falls back to a private temporary self-signed certificate and tells the
+operator that a browser warning is expected.
+
+### Default local teacher session
+
+The default command creates or reuses a bookmarkable, durable local teacher account and prints
+its loopback-only URL. It stores that account's SQLite file under
+`$HOME/.local/state/hramatka/`, sets the local-launcher marker and loopback binding proof, and
+shows the persistent unauthenticated-mode warning in the app. The local session route is not
+registered without all of those conditions and is not part of the deployed pilot path.
+
+The default launcher also permits the Flash receipt's explicit
+`cli_self_reported` provenance tier only in that marked local environment. The API configuration
+default remains `api_observed`, and deployed/pilot starts keep their invite door.
+
+To intentionally use the temporary database and one-use 72-hour invite flow instead:
+
+```bash
+HRAMATKA_LOCAL_STATIC_TEACHER=0 ./hramatka/ops/local-teacher.sh
+```
 
 Prerequisites:
 
@@ -188,23 +213,30 @@ Prerequisites:
 - Node.js, npm, and OpenSSL;
 - a verified data release selected by `HRAMATKA_DATA_DIR` plus
   `HRAMATKA_DATA_MANIFEST`, or available beneath `HRAMATKA_DATA_RELEASES_ROOT`;
-- `HRAMATKA_AIS_API_KEY`, or a local `~/.secret/google-ais.key` file.
+- an Antigravity subscription CLI. The wrapper first uses
+  `$HOME/.local/bin/agy`, then `agy` on `PATH`, and passes the selected executable only to the
+  backend process.
+- `HRAMATKA_GEMMA_FALLBACK_API_KEY`, or a local `~/.secret/openrouter.key` file, for the
+  local compatibility baker.
 
-OpenRouter is optional. If its environment credential or configured key file is absent, the
-launcher explicitly uses Google AI Studio only. If `HRAMATKA_BAKE_PROVIDERS` requests a route
-whose credential is absent, startup fails instead of silently changing routes.
+The launcher enables the subscription route with OpenRouter, so the qualified Gemini 3.6 Flash
+route can be constructed while the legacy Gemma base baker remains available. Google AI Studio is
+not included in this local default because its unqualified Flash route would correctly fail the
+exact-route gate. If a requested provider credential or the required subscription CLI is absent,
+startup fails instead of silently showing an empty model picker.
 
-Use `--model <provider/model>` to select a model that has passed the separate qualification
-gate. The launcher passes that value to the baker and deliberately does not maintain a second
-model allowlist. `--api-port` and `--https-port` override the loopback ports when necessary.
+The model picker exposes only models that pass the separate qualification gate. `--api-port` and
+`--https-port` override the loopback ports when necessary.
 
 Press Ctrl-C to interrupt any startup phase and stop every owned process group. The launcher waits
 up to three seconds for each group to exit, then escalates from `SIGTERM` to `SIGKILL` and waits
 up to one further second. A terminated descendant's PID can remain visible briefly while the
 operating system reaps it, so downstream checks must poll rather than assume an immediate PID
-lookup failure. The temporary CSRF material, certificate, key, and logs are mode-private and are
-removed on normal exit, child failure, or a termination signal. Without the explicit static-link
-opt-in, the temporary database is also removed and a new invocation creates one one-use invite.
+lookup failure. The temporary CSRF material, fallback certificate/key, and logs are mode-private
+and are removed on normal exit, child failure, or a termination signal. The trusted user-local
+certificate pair and durable local-teacher database are intentionally retained. With
+`HRAMATKA_LOCAL_STATIC_TEACHER=0`, the temporary database is also removed and a new invocation
+creates one one-use invite.
 
 ### Development runner (`./services.sh`)
 
@@ -221,8 +253,9 @@ For daemon-style lifecycle management, use the repository runner from the reposi
 ```
 
 The runner daemonizes `local-teacher.sh --skip-build`, waits for the app to become ready, and
-prints the same one-use invite URL (or the bookmarkable local-teacher URL with
-`HRAMATKA_LOCAL_STATIC_TEACHER=1`). Same prerequisites as the foreground launcher above.
+prints the same bookmarkable local-teacher URL by default. Set
+`HRAMATKA_LOCAL_STATIC_TEACHER=0` for a one-use invite instead. Same prerequisites as the
+foreground launcher above.
 
 Hard rules (same as the foreground launcher, plus runner-specific ones):
 

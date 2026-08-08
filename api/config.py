@@ -18,6 +18,7 @@ _MAX_BAKE_WORKERS = 8
 _DEFAULT_MAX_PROVIDER_CONCURRENCY = 8
 _DEFAULT_BAKE_PROVIDERS = ("antigravity", "openrouter")
 _EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
+_DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER = "api_observed"
 _DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
@@ -73,7 +74,11 @@ def _parse_zero_or_one_flag(name: str) -> bool:
     return value == "1"
 
 
-def _parse_provenance_tier(name: str, *, default: str = "api_observed") -> str:
+def _parse_provenance_tier(
+    name: str,
+    *,
+    default: str = _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER,
+) -> str:
     value = os.environ.get(name, default)
     if value not in {"api_observed", "cli_self_reported"}:
         raise RuntimeError(f"{name} must be api_observed or cli_self_reported.")
@@ -138,7 +143,9 @@ class Settings:
     local_static_teacher: bool = False
     local_launcher_marker: bool = False
     server_bind_host: str | None = None
-    subscription_qualification_provenance_tier: str = "api_observed"
+    subscription_qualification_provenance_tier: str = (
+        _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER
+    )
     # The review attestor is deliberately off by default.  Its configuration is
     # separate from the teacher-pilot surface because it accepts a GitHub
     # Actions credential, not a browser session.

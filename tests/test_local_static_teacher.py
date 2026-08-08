@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import sqlite3
+import sys
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
@@ -78,6 +81,56 @@ def test_absent_flag_keeps_invite_flow_and_static_link_absent(tmp_path) -> None:
         )
         assert redeemed.status_code == 200
         assert "local_auth_disabled" not in redeemed.json()
+
+
+def test_deployed_configuration_defaults_to_api_observed_and_has_no_local_door(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HRAMATKA_PILOT_ORIGIN", "https://pilot.example.test")
+    monkeypatch.setenv(
+        "HRAMATKA_CSRF_HMAC_KEY",
+        base64.urlsafe_b64encode(b"01234567890123456789012345678901").decode().rstrip("="),
+    )
+    monkeypatch.setenv("HRAMATKA_BAKE_PROVIDERS", "antigravity,openrouter")
+    monkeypatch.setenv("HRAMATKA_REVIEW_ATTESTATION_ENABLED", "0")
+    monkeypatch.setenv("HRAMATKA_REVIEW_ATTESTATION_PAID_REVIEW_ENABLED", "0")
+    for name in (
+        "HRAMATKA_LOCAL_STATIC_TEACHER",
+        "HRAMATKA_LOCAL_LAUNCHER",
+        "HRAMATKA_SERVER_BIND_HOST",
+        "HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.subscription_qualification_provenance_tier == "api_observed"
+    assert not settings.local_static_teacher_enabled
+
+
+def test_marked_local_launcher_exposes_operational_flash_route(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("HRAMATKA_SUBSCRIPTION_EXECUTABLE", sys.executable)
+    monkeypatch.delenv("HRAMATKA_GEN_MODEL", raising=False)
+    settings = replace(
+        _settings(tmp_path, static=True),
+        subscription_qualification_provenance_tier="cli_self_reported",
+    )
+    app = create_app(settings=settings)
+
+    with TestClient(app, base_url=_LOOPBACK_ORIGIN) as client:
+        assert client.get(_STATIC_PATH, follow_redirects=False).status_code == 303
+        models = client.get("/api/lesson-models").json()["models"]
+
+    assert models == [
+        {
+            "id": "gemini-3.6-flash",
+            "label": "Gemini 3.6 Flash",
+            "description": "Швидке складання уроку.",
+        }
+    ]
 
 
 def test_static_link_reuses_one_teacher_across_app_restarts(tmp_path) -> None:

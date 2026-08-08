@@ -79,6 +79,8 @@ def _data_environment(tmp_path: Path) -> dict[str, str]:
         "HOME": str(tmp_path / "home"),
         "PATH": os.environ.get("PATH", ""),
         "HRAMATKA_AIS_API_KEY": "test-ais-key",
+        "HRAMATKA_GEMMA_FALLBACK_API_KEY": "test-openrouter-key",
+        "HRAMATKA_SUBSCRIPTION_EXECUTABLE": sys.executable,
         "HRAMATKA_DATA_DIR": str(release),
         "HRAMATKA_DATA_MANIFEST": str(release / "data-manifest.json"),
     }
@@ -320,6 +322,9 @@ def _make_smoke_repo(tmp_path: Path, *, delayed_npm: bool = False) -> tuple[Path
     else:
         npm.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
     npm.chmod(0o755)
+    subscription_cli = fake_bin / "agy"
+    subscription_cli.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    subscription_cli.chmod(0o755)
     node_implementation = fake_bin / "fake-node.py"
     node_implementation.write_text(
         """from __future__ import annotations
@@ -471,10 +476,12 @@ def test_shell_wrapper_loads_operator_key_fallbacks_without_printing_them(
     fake_python = fake_repo / ".venv" / "bin" / "python"
     fake_python.parent.mkdir(parents=True)
     fake_python.write_text(
-        """#!/bin/bash
+        f"""#!/bin/bash
 set -eu
-[ "$HRAMATKA_AIS_API_KEY" = "fallback-ais" ]
+[ "$HRAMATKA_AIS_API_KEY_FILE" = "$HOME/.secret/google-{'ais'}.key" ]
 [ "$HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE" = "$HOME/.secret/openrouter.key" ]
+[ "$HRAMATKA_LOCAL_STATIC_TEACHER" = "1" ]
+[ "$HRAMATKA_SUBSCRIPTION_EXECUTABLE" = "$HOME/.local/bin/agy" ]
 printf 'configured\\n'
 """,
         encoding="utf-8",
@@ -483,6 +490,11 @@ printf 'configured\\n'
     home = tmp_path / "operator-home"
     secret_dir = home / ".secret"
     secret_dir.mkdir(parents=True)
+    subscription_dir = home / ".local" / "bin"
+    subscription_dir.mkdir(parents=True)
+    subscription_cli = subscription_dir / "agy"
+    subscription_cli.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    subscription_cli.chmod(0o700)
     (secret_dir / "google-ais.key").write_text("fallback-ais\n", encoding="utf-8")
     (secret_dir / "openrouter.key").write_text("fallback-openrouter\n", encoding="utf-8")
 
@@ -500,13 +512,16 @@ printf 'configured\\n'
     assert "fallback-openrouter" not in completed.stdout + completed.stderr
 
 
-def test_runtime_is_private_and_each_run_gets_fresh_state(tmp_path: Path) -> None:
+def test_invite_opt_out_keeps_runtime_private_and_each_run_gets_fresh_state(
+    tmp_path: Path,
+) -> None:
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     first_root = tmp_path / "first"
     second_root = tmp_path / "second"
     first_root.mkdir(mode=0o700)
     second_root.mkdir(mode=0o700)
     base_environment = _data_environment(tmp_path)
+    base_environment["HRAMATKA_LOCAL_STATIC_TEACHER"] = "0"
 
     first = local_teacher._runtime_environment(
         config, _runtime_paths(first_root), base_environment
@@ -523,17 +538,17 @@ def test_runtime_is_private_and_each_run_gets_fresh_state(tmp_path: Path) -> Non
     assert first["HRAMATKA_PROMPT_PACK"] == "1"
     assert first["HRAMATKA_SLOT_REPAIR"] == "1"
     assert first["HRAMATKA_GEN_JSON_MODE"] == "0"
-    assert first["HRAMATKA_BAKE_PROVIDERS"] == "google-ais"
+    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
 
 
-def test_static_local_launcher_uses_one_persistent_database_and_bookmark_url(
+def test_local_launcher_defaults_to_one_persistent_database_and_bookmark_url(
     tmp_path: Path,
 ) -> None:
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT, https_port=9443)
     home = tmp_path / "home"
     home.mkdir()
     environment = _data_environment(tmp_path)
-    environment.update({"HOME": str(home), "HRAMATKA_LOCAL_STATIC_TEACHER": "1"})
+    environment["HOME"] = str(home)
 
     first = local_teacher._runtime_environment(
         config, _runtime_paths(tmp_path / "one"), environment
@@ -544,8 +559,11 @@ def test_static_local_launcher_uses_one_persistent_database_and_bookmark_url(
 
     expected_database = home / ".local" / "state" / "hramatka" / "local-teacher.sqlite3"
     assert first["HRAMATKA_DB_PATH"] == second["HRAMATKA_DB_PATH"] == str(expected_database)
+    assert first["HRAMATKA_LOCAL_STATIC_TEACHER"] == "1"
     assert first["HRAMATKA_LOCAL_LAUNCHER"] == "1"
     assert first["HRAMATKA_SERVER_BIND_HOST"] == "127.0.0.1"
+    assert first["HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER"] == "cli_self_reported"
+    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
     assert local_teacher._local_static_teacher_url(config) == (
         "https://127.0.0.1:9443/api/session/local-teacher"
     )
@@ -581,18 +599,15 @@ def test_skip_build_requires_an_existing_frontend_build(
         local_teacher.run(local_teacher.LaunchConfig(repo_root=tmp_path, build_frontend=False))
 
 
-def test_openrouter_is_enabled_only_when_credential_is_configured(tmp_path: Path) -> None:
+def test_default_local_bakers_include_antigravity_and_openrouter(tmp_path: Path) -> None:
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     root = tmp_path / "runtime"
     root.mkdir()
     environment = _data_environment(tmp_path)
-    key_file = tmp_path / "openrouter.key"
-    key_file.write_text("test-openrouter-key", encoding="utf-8")
-    environment["HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE"] = str(key_file)
 
     resolved = local_teacher._runtime_environment(config, _runtime_paths(root), environment)
 
-    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "google-ais,openrouter"
+    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
 
 
 def test_google_ais_is_enabled_when_only_its_key_file_is_configured(tmp_path: Path) -> None:
@@ -600,6 +615,7 @@ def test_google_ais_is_enabled_when_only_its_key_file_is_configured(tmp_path: Pa
     root = tmp_path / "runtime"
     root.mkdir()
     environment = _data_environment(tmp_path)
+    environment["HRAMATKA_BAKE_PROVIDERS"] = "google-ais,antigravity"
     environment.pop("HRAMATKA_AIS_API_KEY")
     key_file = tmp_path / "google-ais.key"
     key_file.write_text("file-only-ais-key", encoding="utf-8")
@@ -607,7 +623,7 @@ def test_google_ais_is_enabled_when_only_its_key_file_is_configured(tmp_path: Pa
 
     resolved = local_teacher._runtime_environment(config, _runtime_paths(root), environment)
 
-    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "google-ais"
+    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "google-ais,antigravity"
 
 
 def test_google_ais_empty_key_file_is_not_configured(tmp_path: Path) -> None:
@@ -615,12 +631,24 @@ def test_google_ais_empty_key_file_is_not_configured(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
     environment = _data_environment(tmp_path)
+    environment["HRAMATKA_BAKE_PROVIDERS"] = "google-ais"
     environment.pop("HRAMATKA_AIS_API_KEY")
     key_file = tmp_path / "google-ais.key"
     key_file.write_text(" \n", encoding="utf-8")
     environment["HRAMATKA_AIS_API_KEY_FILE"] = str(key_file)
 
-    with pytest.raises(local_teacher.LauncherError, match="Google AI Studio is not configured"):
+    with pytest.raises(local_teacher.LauncherError, match="explicitly requests google-ais"):
+        local_teacher._runtime_environment(config, _runtime_paths(root), environment)
+
+
+def test_default_local_launch_requires_the_subscription_cli(tmp_path: Path) -> None:
+    config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
+    root = tmp_path / "runtime"
+    root.mkdir()
+    environment = _data_environment(tmp_path)
+    environment.pop("HRAMATKA_SUBSCRIPTION_EXECUTABLE")
+
+    with pytest.raises(local_teacher.LauncherError, match="Antigravity subscription CLI"):
         local_teacher._runtime_environment(config, _runtime_paths(root), environment)
 
 
@@ -629,6 +657,7 @@ def test_explicit_unconfigured_provider_fails_instead_of_falling_back(tmp_path: 
     root = tmp_path / "runtime"
     root.mkdir()
     environment = _data_environment(tmp_path)
+    environment.pop("HRAMATKA_GEMMA_FALLBACK_API_KEY")
     environment["HRAMATKA_BAKE_PROVIDERS"] = "google-ais,OpenRouter"
 
     with pytest.raises(local_teacher.LauncherError, match="explicitly requests openrouter"):
@@ -1353,7 +1382,63 @@ def test_readiness_wait_cancels_promptly() -> None:
     assert time.monotonic() - started < 0.2
 
 
-def test_local_teacher_shell_smoke_serves_one_invite_and_releases_ports(tmp_path: Path) -> None:
+def test_trusted_local_tls_pair_is_consumed_when_available(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source_paths = _runtime_paths(source_root)
+    tool_environment = {"PATH": os.environ.get("PATH", "")}
+    local_teacher._generate_certificate(
+        source_paths,
+        tool_environment,
+        local_teacher.StopState(),
+    )
+
+    home = tmp_path / "home"
+    state_directory = home / ".local" / "state" / "hramatka"
+    state_directory.mkdir(parents=True)
+    trusted_certificate = state_directory / "tls-cert.pem"
+    trusted_key = state_directory / "tls-key.pem"
+    shutil.copy2(source_paths.tls_cert, trusted_certificate)
+    shutil.copy2(source_paths.tls_key, trusted_key)
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    certificate, key = local_teacher._prepare_tls_pair(
+        _runtime_paths(runtime_root),
+        {"HOME": str(home)},
+        tool_environment,
+        local_teacher.StopState(),
+    )
+
+    assert (certificate, key) == (trusted_certificate, trusted_key)
+    assert not (_runtime_paths(runtime_root).tls_cert).exists()
+    assert not (_runtime_paths(runtime_root).tls_key).exists()
+
+
+def test_tls_falls_back_to_a_private_temporary_pair_when_trusted_pair_is_absent(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    paths = _runtime_paths(runtime_root)
+
+    certificate, key = local_teacher._prepare_tls_pair(
+        paths,
+        {"HOME": str(tmp_path / "home-without-tls")},
+        {"PATH": os.environ.get("PATH", "")},
+        local_teacher.StopState(),
+    )
+
+    assert (certificate, key) == (paths.tls_cert, paths.tls_key)
+    assert certificate.is_file()
+    assert key.is_file()
+    assert stat.S_IMODE(certificate.stat().st_mode) == 0o600
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
+
+
+def test_local_teacher_shell_smoke_serves_bookmarkable_session_and_releases_ports(
+    tmp_path: Path,
+) -> None:
     fake_repo, fake_bin = _make_smoke_repo(tmp_path)
     assert os.access(fake_repo / ".venv" / "bin" / "python", os.X_OK)
     api_port, https_port = _free_ports()
@@ -1382,9 +1467,11 @@ def test_local_teacher_shell_smoke_serves_one_invite_and_releases_ports(tmp_path
         stderr=subprocess.PIPE,
     )
     try:
-        output = _wait_for_output(process, "#invite=")
-        invites = [line for line in output.splitlines() if "#invite=" in line]
-        assert len(invites) == 1
+        output = _wait_for_output(process, "/api/session/local-teacher")
+        local_teacher_urls = [
+            line for line in output.splitlines() if "/api/session/local-teacher" in line
+        ]
+        assert len(local_teacher_urls) == 1
         context = ssl.create_default_context(
             cafile=str(next(Path(environment["TMPDIR"]).glob("hramatka-local-teacher-*/tls-cert.pem")))
         )
@@ -1396,6 +1483,13 @@ def test_local_teacher_shell_smoke_serves_one_invite_and_releases_ports(tmp_path
             f"https://127.0.0.1:{https_port}/api/readyz", context=context, timeout=5
         ) as response:
             assert response.status == 200
+        assert (
+            Path(environment["HOME"])
+            / ".local"
+            / "state"
+            / "hramatka"
+            / "local-teacher.sqlite3"
+        ).is_file()
         process.send_signal(signal.SIGINT)
         assert process.wait(timeout=10) == 130
     finally:
