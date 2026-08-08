@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import re
@@ -1434,6 +1435,243 @@ def test_tls_falls_back_to_a_private_temporary_pair_when_trusted_pair_is_absent(
     assert key.is_file()
     assert stat.S_IMODE(certificate.stat().st_mode) == 0o600
     assert stat.S_IMODE(key.stat().st_mode) == 0o600
+
+
+def _mint_ca_signed_pair(directory: Path) -> tuple[Path, Path, Path]:
+    ca_key = directory / "ca.key"
+    ca_cert = directory / "ca.crt"
+    leaf_key = directory / "leaf.key"
+    leaf_csr = directory / "leaf.csr"
+    leaf_cert = directory / "leaf.crt"
+    ca_config = directory / "ca.cnf"
+    leaf_config = directory / "leaf.cnf"
+
+    ca_config.write_text(
+        """[req]
+distinguished_name = req_dn
+x509_extensions = v3_ca
+[req_dn]
+[v3_ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+""",
+        encoding="utf-8",
+    )
+    leaf_config.write_text(
+        """[req]
+distinguished_name = req_dn
+req_extensions = v3_req
+[req_dn]
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+[alt_names]
+IP.1 = 127.0.0.1
+DNS.1 = localhost
+""",
+        encoding="utf-8",
+    )
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None, "openssl executable is required for test"
+
+    subprocess.run(
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(ca_key),
+            "-out",
+            str(ca_cert),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=TestCA",
+            "-config",
+            str(ca_config),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        [
+            openssl,
+            "req",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(leaf_key),
+            "-out",
+            str(leaf_csr),
+            "-subj",
+            "/CN=127.0.0.1",
+            "-config",
+            str(leaf_config),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        [
+            openssl,
+            "x509",
+            "-req",
+            "-in",
+            str(leaf_csr),
+            "-CA",
+            str(ca_cert),
+            "-CAkey",
+            str(ca_key),
+            "-CAcreateserial",
+            "-out",
+            str(leaf_cert),
+            "-days",
+            "1",
+            "-extfile",
+            str(leaf_config),
+            "-extensions",
+            "v3_req",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    leaf_cert.chmod(0o600)
+    leaf_key.chmod(0o600)
+    return ca_cert, leaf_cert, leaf_key
+
+
+def test_readiness_probe_succeeds_with_ca_signed_trusted_certificate(
+    tmp_path: Path,
+) -> None:
+    _, leaf_cert, leaf_key = _mint_ca_signed_pair(tmp_path)
+
+    class ReadyzHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/api/readyz":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
+    port = httpd.server_port
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(certfile=str(leaf_cert), keyfile=str(leaf_key))
+    httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
+
+    thread = threading.Thread(target=httpd.serve_forever)
+    thread.daemon = True
+    thread.start()
+
+    try:
+        supervisor = local_teacher.ProcessSupervisor()
+        stop_requested = local_teacher.StopState()
+        local_teacher._wait_for_ready(
+            f"https://127.0.0.1:{port}/api/readyz",
+            supervisor,
+            stop_requested,
+            certificate=leaf_cert,
+            timeout_seconds=5.0,
+        )
+    finally:
+        httpd.shutdown()
+        thread.join()
+
+
+def test_readiness_probe_fails_when_served_certificate_mismatches_expected(
+    tmp_path: Path,
+) -> None:
+    dir_a = tmp_path / "cert_a"
+    dir_b = tmp_path / "cert_b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    _, leaf_cert_a, _ = _mint_ca_signed_pair(dir_a)
+    _, leaf_cert_b, leaf_key_b = _mint_ca_signed_pair(dir_b)
+
+    class ReadyzHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/api/readyz":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
+    port = httpd.server_port
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(certfile=str(leaf_cert_b), keyfile=str(leaf_key_b))
+    httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
+
+    thread = threading.Thread(target=httpd.serve_forever)
+    thread.daemon = True
+    thread.start()
+
+    try:
+        supervisor = local_teacher.ProcessSupervisor()
+        stop_requested = local_teacher.StopState()
+        with pytest.raises(
+            local_teacher.LauncherError,
+            match="did not become ready in time",
+        ):
+            local_teacher._wait_for_ready(
+                f"https://127.0.0.1:{port}/api/readyz",
+                supervisor,
+                stop_requested,
+                certificate=leaf_cert_a,
+                timeout_seconds=0.3,
+            )
+    finally:
+        httpd.shutdown()
+        thread.join()
+
+
+def test_trusted_local_ca_signed_tls_pair_is_consumed_when_available(
+    tmp_path: Path,
+) -> None:
+    ca_dir = tmp_path / "ca_src"
+    ca_dir.mkdir()
+    _, leaf_cert, leaf_key = _mint_ca_signed_pair(ca_dir)
+
+    home = tmp_path / "home"
+    state_directory = home / ".local" / "state" / "hramatka"
+    state_directory.mkdir(parents=True)
+    trusted_certificate = state_directory / "tls-cert.pem"
+    trusted_key = state_directory / "tls-key.pem"
+    shutil.copy2(leaf_cert, trusted_certificate)
+    shutil.copy2(leaf_key, trusted_key)
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    tool_environment = {"PATH": os.environ.get("PATH", "")}
+    certificate, key = local_teacher._prepare_tls_pair(
+        _runtime_paths(runtime_root),
+        {"HOME": str(home)},
+        tool_environment,
+        local_teacher.StopState(),
+    )
+
+    assert (certificate, key) == (trusted_certificate, trusted_key)
+    assert not (_runtime_paths(runtime_root).tls_cert).exists()
+    assert not (_runtime_paths(runtime_root).tls_key).exists()
 
 
 def test_local_teacher_shell_smoke_serves_bookmarkable_session_and_releases_ports(
