@@ -23,6 +23,7 @@ from hramatka.api.qualified_models import (
     TYPE_KIT_IDENTITY,
     QualificationReceipt,
 )
+from hramatka.engine.density_evaluator_v3 import MAX_REPAIR_ROUNDS
 from hramatka.engine.prompt_pack_v3 import PROMPT_PACK_VERSION, template_digest
 from hramatka.engine.prompt_pack_v3 import (
     TEMPLATE_VERSION as LIVE_TEMPLATE_VERSION,
@@ -409,7 +410,7 @@ class SlotTelemetry:
             or not row["contract_version"]
             or type(row["repair_rounds"]) is not int
             or row["repair_rounds"] < 0
-            or row["repair_rounds"] > 2
+            or row["repair_rounds"] > MAX_REPAIR_ROUNDS
             or type(row["replacement_used"]) is not bool
             or type(row["unassigned_errors_count"]) is not int
             or row["unassigned_errors_count"] < 0

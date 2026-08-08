@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from hramatka.engine.density_evaluator_v3 import MAX_REPAIR_ROUNDS
+
 from .serializer_policy import serializer_temperature
 from .transport import (
     AIS_API_KEY_ENV,
@@ -305,7 +307,8 @@ def _content_free_qualification_slot_trace(value: object) -> dict[str, Any] | No
         or not isinstance(value["contract_version"], str)
         or not value["contract_version"]
         or type(value["repair_rounds"]) is not int
-        or value["repair_rounds"] not in {0, 1, 2}
+        or value["repair_rounds"] < 0
+        or value["repair_rounds"] > MAX_REPAIR_ROUNDS
         or type(value["replacement_used"]) is not bool
         or type(value["unassigned_errors_count"]) is not int
         or value["unassigned_errors_count"] < 0

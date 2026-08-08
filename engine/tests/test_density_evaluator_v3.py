@@ -357,7 +357,7 @@ def test_missing_scheduled_slot_exhausts_both_repairs_then_fails_closed() -> Non
         repair_renderer=repair,
     )
 
-    assert repair_calls == [(1, "P1-A2"), (2, "P1-A2")]
+    assert repair_calls == [(1, "P1-A2"), (2, "P1-A2"), (3, "P1-A2"), (4, "P1-A2")]
     assert [(block.slot_id, block.disposition) for block in evaluated.blocks] == [
         ("P1-A1", "ready"),
         ("P1-A2", "dropped"),
@@ -459,10 +459,15 @@ def test_two_repairs_share_the_original_plan_and_context_then_use_exact_replacem
         replacement_renderer=replacement,
     )
 
-    assert [call[0] for call in calls] == [1, 2]
-    assert calls[0][1] == calls[1][1]
-    assert calls[0][2] == calls[1][2]
-    assert [(call[3], call[4]) for call in calls] == [("quiz", 8), ("quiz", 8)]
+    assert [call[0] for call in calls] == [1, 2, 3, 4]
+    assert calls[0][1] == calls[1][1] == calls[2][1] == calls[3][1]
+    assert calls[0][2] == calls[1][2] == calls[2][2] == calls[3][2]
+    assert [(call[3], call[4]) for call in calls] == [
+        ("quiz", 8),
+        ("quiz", 8),
+        ("quiz", 8),
+        ("quiz", 8),
+    ]
     assert len(frozen_prompts) == 1
     assert replacement_calls == [("cloze", 8)]
     assert [(block.activity_type, block.disposition) for block in evaluated.blocks] == [
@@ -503,7 +508,7 @@ def test_repair_renderer_failure_keeps_the_second_round_and_replacement_path() -
         replacement_renderer=replacement,
     )
 
-    assert repair_calls == [1, 2]
+    assert repair_calls == [1, 2, 3, 4]
     assert replacement_calls == ["cloze"]
     assert evaluated.blocks[0].activity_type == "cloze"
     assert evaluated.blocks[0].disposition == "ready"
@@ -547,7 +552,7 @@ def test_repair_exhaustion_without_a_certified_replacement_drops_only_its_slot()
         repair_renderer=repair,
     )
 
-    assert calls == [1, 2]
+    assert calls == [1, 2, 3, 4]
     assert evaluated.disposition == "recoverable_draft"
     assert evaluated.blocks[0].disposition == "dropped"
     assert evaluated.blocks[0].receipt is not None

@@ -19,6 +19,7 @@ from jsonschema import Draft7Validator
 from hramatka.engine import data, vendoring
 from hramatka.engine.anchor_inventory_v3 import inventory_for_group, inventory_from_anchor
 from hramatka.engine.density_evaluator_v3 import (
+    MAX_REPAIR_ROUNDS,
     RepairableSerializationError,
     RepairRequest,
     ReplacementRequest,
@@ -776,8 +777,8 @@ class EngineLessonBaker:
                         "units": block.receipt.units,
                         "floor_met": block.receipt.floor_met,
                         "contract_version": block.receipt.contract_version,
-                        "repair_rounds": min(attempt_index, 2),
-                        "replacement_used": attempt_index > 2,
+                        "repair_rounds": min(attempt_index, MAX_REPAIR_ROUNDS),
+                        "replacement_used": attempt_index > MAX_REPAIR_ROUNDS,
                         "unassigned_errors_count": len(attempt.unassigned_errors),
                     }
                 )
@@ -793,7 +794,7 @@ class EngineLessonBaker:
                     "units": block.receipt.units,
                     "floor_met": block.receipt.floor_met,
                     "contract_version": block.receipt.contract_version,
-                    "repair_rounds": 2,
+                    "repair_rounds": MAX_REPAIR_ROUNDS,
                     "replacement_used": False,
                     "unassigned_errors_count": 0,
                 }

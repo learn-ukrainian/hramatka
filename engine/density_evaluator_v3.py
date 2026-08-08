@@ -27,6 +27,8 @@ from .prompt_pack_v3 import (
 from .teacher_ready_density_v3 import floor_for
 from .unit_plan_v3 import UnitPlan
 
+MAX_REPAIR_ROUNDS: int = 4
+
 BlockDisposition = Literal["ready", "tray", "density_shortfall", "failed", "dropped"]
 LessonDisposition = Literal["teacher_ready", "recoverable_draft"]
 RepairRenderer = Callable[["RepairRequest"], object]
@@ -227,10 +229,13 @@ class RepairRequest:
 
     def __post_init__(self) -> None:
         _validate_exact_plan(self.plan, self.slot_id, self.phase, self.activity_type)
-        if self.round not in {1, 2} or not isinstance(
+        if self.round not in range(1, MAX_REPAIR_ROUNDS + 1) or not isinstance(
             self.prompt_context.get("context_sha256"), str
         ):
-            raise ValueError("Repair requests need round 1/2 and a pinned v3.2 context digest.")
+            raise ValueError(
+                f"Repair requests need round 1..{MAX_REPAIR_ROUNDS} and "
+                "a pinned v3.2 context digest."
+            )
         object.__setattr__(self, "prior_errors", tuple(self.prior_errors))
 
 
@@ -329,8 +334,9 @@ def evaluate_phase_with_repair(
     repair_renderer: RepairRenderer,
     replacement_renderer: ReplacementRenderer | None = None,
     tray_slot_ids: Sequence[str] = (),
+    max_repair_rounds: int = MAX_REPAIR_ROUNDS,
 ) -> RepairEvaluation:
-    """Run at most two same-plan repairs, then use only certified replacements.
+    """Run at most max_repair_rounds same-plan repairs, then use only certified replacements.
 
     Both repair rounds are passed the same frozen prompt context object and the
     same original ``UnitPlan`` object for a slot.  The callback's output is
@@ -361,7 +367,7 @@ def evaluate_phase_with_repair(
         else:
             final[block.slot_id] = _dropped(block, block.slot_id, reason="not_repairable")
 
-    for repair_round in (1, 2):
+    for repair_round in range(1, max_repair_rounds + 1):
         if not pending:
             break
         repair_slots = tuple(slot_by_id[slot_id] for slot_id in pending)

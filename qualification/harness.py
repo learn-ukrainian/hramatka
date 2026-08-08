@@ -36,7 +36,7 @@ from hramatka.api.qualified_models import (
     QualificationCandidateRegistry,
 )
 from hramatka.engine import ENGINE_VERSION, data, fixtures, flags, paths
-from hramatka.engine.density_evaluator_v3 import evaluate_phase_with_repair
+from hramatka.engine.density_evaluator_v3 import MAX_REPAIR_ROUNDS, evaluate_phase_with_repair
 from hramatka.engine.lesson_capacity_v3 import (
     AllocatedSlot,
     ConditionalReplacement,
@@ -401,12 +401,12 @@ def _v3_qualification_probe(
                         units=block.receipt.units,
                         floor_met=block.receipt.floor_met,
                         contract_version=block.receipt.contract_version,
-                        repair_rounds=min(attempt_index, 2),
+                        repair_rounds=min(attempt_index, MAX_REPAIR_ROUNDS),
                         # The evaluator appends conditional replacement
-                        # attempts only after initial + both same-plan repair
+                        # attempts only after initial + all same-plan repair
                         # rounds.  Record the provenance directly instead of
                         # inferring it from a type change.
-                        replacement_used=attempt_index > 2,
+                        replacement_used=attempt_index > MAX_REPAIR_ROUNDS,
                         unassigned_errors_count=len(attempt.unassigned_errors),
                     )
                 )
@@ -422,7 +422,7 @@ def _v3_qualification_probe(
                     units=block.receipt.units,
                     floor_met=block.receipt.floor_met,
                     contract_version=block.receipt.contract_version,
-                    repair_rounds=2,
+                    repair_rounds=MAX_REPAIR_ROUNDS,
                     replacement_used=False,
                     unassigned_errors_count=0,
                 )
@@ -768,7 +768,11 @@ class _DeterministicRouteProvider:
                 if (
                     not isinstance(repair_metadata, dict)
                     or repair_metadata.get("mode") not in {"repair", "replacement"}
-                    or repair_metadata.get("repair_round") not in {None, 1, 2}
+                    or (
+                        repair_metadata.get("repair_round") is not None
+                        and repair_metadata.get("repair_round")
+                        not in range(1, MAX_REPAIR_ROUNDS + 1)
+                    )
                     or not isinstance(repair_metadata.get("slot_id"), str)
                 ):
                     raise AssertionError(
