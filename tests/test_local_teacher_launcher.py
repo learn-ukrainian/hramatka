@@ -120,16 +120,73 @@ def _wait_for_pid_exit(pid: int, timeout: float = 10) -> None:
     pytest.fail(f"process {pid} did not exit")
 
 
+def _frontend_vite_path(app_directory: Path) -> Path:
+    return app_directory / "node_modules" / ".bin" / "vite"
+
+
+def _frontend_deps_ready(app_directory: Path) -> bool:
+    vite = _frontend_vite_path(app_directory)
+    return vite.is_file() and os.access(vite, os.X_OK)
+
+
+def _ensure_app_frontend_deps() -> None:
+    """Provision hramatka/app node_modules when missing (git worktrees).
+
+    ``node_modules`` is gitignored, so linked worktrees do not inherit the
+    primary checkout's frontend install. Real-backend launcher tests call
+    ``npm run build`` (vite) via ``run-real-backend.sh``; without deps they
+    fail with ``sh: vite: command not found``. Provision once per process
+    rather than skip or weaken those tests.
+    """
+    app_directory = REPO_ROOT / "hramatka" / "app"
+    if _frontend_deps_ready(app_directory):
+        return
+    package_lock = app_directory / "package-lock.json"
+    if not package_lock.is_file():
+        pytest.fail(
+            "hramatka/app frontend deps missing and package-lock.json is absent; "
+            "cannot provision node_modules for real-backend launcher tests"
+        )
+    npm = shutil.which("npm")
+    if not npm:
+        pytest.fail(
+            "hramatka/app frontend deps missing and npm is not on PATH; "
+            "install Node.js/npm or run: (cd hramatka/app && npm ci --ignore-scripts)"
+        )
+    completed = subprocess.run(
+        [npm, "ci", "--ignore-scripts"],
+        cwd=app_directory,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not _frontend_deps_ready(app_directory):
+        pytest.fail(
+            "failed to provision hramatka/app node_modules for real-backend tests "
+            f"(vite missing after npm ci --ignore-scripts): "
+            f"returncode={completed.returncode} stdout={completed.stdout!r} "
+            f"stderr={completed.stderr!r}"
+        )
+
+
 def _start_real_backend_proxy(
     _tmp_path: Path,
     **environment_overrides: str,
 ) -> tuple[subprocess.Popen[bytes], int, int, int, int, Path]:
+    _ensure_app_frontend_deps()
     app_directory = REPO_ROOT / "hramatka" / "app"
     state_directory = app_directory / ".real-e2e"
     assert not state_directory.exists()
     https_port = 5174
     _assert_port_reusable(https_port)
-    environment = _isolated_test_environment(PATH=os.environ.get("PATH", ""))
+    # Force non-CI Python selection: ambient CI=true (agent harnesses, local
+    # shells) would make run-real-backend.sh pick PATH python instead of the
+    # repository .venv, losing installed packages (e.g. webauthn). Explicit
+    # overrides may still set CI for intentional CI-path tests.
+    environment = _isolated_test_environment(
+        PATH=os.environ.get("PATH", ""),
+        CI="",
+    )
     environment.update(environment_overrides)
     process = subprocess.Popen(
         [str(app_directory / "e2e" / "run-real-backend.sh")],
@@ -176,11 +233,13 @@ def _start_real_backend_proxy(
 
 
 def _start_hung_playwright_proxy() -> tuple[subprocess.Popen[bytes], int, Path]:
+    _ensure_app_frontend_deps()
     app_directory = REPO_ROOT / "hramatka" / "app"
     state_directory = app_directory / ".real-e2e"
     assert not state_directory.exists()
     environment = _isolated_test_environment(
         PATH=os.environ.get("PATH", ""),
+        CI="",
         HRAMATKA_E2E_TEST_HUNG_PROXY="1",
     )
     process = subprocess.Popen(
@@ -219,6 +278,12 @@ def _make_real_backend_shell_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     fake_bin = tmp_path / "fake-bin"
     e2e_directory.mkdir(parents=True)
     fake_bin.mkdir()
+    # run-real-backend.sh requires an executable local vite before npm run build
+    # (gitignored node_modules are absent in bare worktrees / fake repos).
+    vite_bin = app_directory / "node_modules" / ".bin" / "vite"
+    vite_bin.parent.mkdir(parents=True)
+    vite_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    vite_bin.chmod(0o755)
     shutil.copy2(
         REPO_ROOT / "hramatka" / "app" / "e2e" / "run-real-backend.sh",
         e2e_directory / "run-real-backend.sh",

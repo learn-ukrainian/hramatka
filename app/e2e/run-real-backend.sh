@@ -128,6 +128,14 @@ else
   exit 1
 fi
 
+# node_modules is gitignored; linked worktrees do not share the primary
+# checkout's install. Fail with an actionable message instead of
+# "sh: vite: command not found" from npm run build.
+if [ ! -x "$app_directory/node_modules/.bin/vite" ]; then
+  echo "missing hramatka/app/node_modules (vite not executable)" >&2
+  echo "run: (cd hramatka/app && npm ci --ignore-scripts)" >&2
+  exit 1
+fi
 npm run build
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -subj /CN=127.0.0.1 -addext subjectAltName=IP:127.0.0.1 \
