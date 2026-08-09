@@ -653,7 +653,13 @@ class _StateStore:
                     raise
 
     def consume_and_reserve(
-        self, *, jti: str, key: str, legacy_key: str, created_at: str
+        self,
+        *,
+        jti: str,
+        key: str,
+        legacy_key: str,
+        narrow_legacy_key: str | None = None,
+        created_at: str,
     ) -> tuple[dict[str, Any] | None, str]:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -670,6 +676,16 @@ class _StateStore:
                 if row is None and legacy_key != key:
                     row = self._result_row(connection, legacy_key)
                     source_key = legacy_key
+                if (
+                    row is None
+                    and narrow_legacy_key is not None
+                    and narrow_legacy_key != key
+                    and narrow_legacy_key != legacy_key
+                ):
+                    narrow_row = self._result_row(connection, narrow_legacy_key)
+                    if narrow_row is not None and narrow_row["state"] != "success":
+                        row = narrow_row
+                        source_key = narrow_legacy_key
                 for _ in range(_MAX_RECOVERY_CHAIN_HOPS):
                     recovery = connection.execute(
                         "SELECT id, new_semantic_key, disposition, new_spend_authorized, "
@@ -1052,6 +1068,23 @@ class ReviewAttestor:
                     {
                         "repository": self.settings.review_attestation_repository,
                         "pr_number": pr_number,
+                        "base_sha": base,
+                        "head_sha": head,
+                        "author_family": author_family,
+                        "model": self.settings.review_attestation_model,
+                        "prompt_version": self.settings.review_attestation_prompt_version,
+                        "prompt_digest": prompt_digest,
+                        "input_digest": input_digest,
+                    }
+                )
+            )
+            # The pre-v2 key omitted security-relevant fields; success rows under it
+            # are never replayed, but pending/failure rows must still fail closed.
+            narrow_legacy_key = _sha256(
+                _canonical_json(
+                    {
+                        "repository": self.settings.review_attestation_repository,
+                        "pr_number": pr_number,
                         "head_sha": head,
                         "model": self.settings.review_attestation_model,
                         "prompt_version": self.settings.review_attestation_prompt_version,
@@ -1065,7 +1098,11 @@ class ReviewAttestor:
             try:
                 reservation_at = _timestamp(self.clock())
                 cached, reservation_key = self.store.consume_and_reserve(
-                    jti=jti, key=key, legacy_key=legacy_key, created_at=reservation_at
+                    jti=jti,
+                    key=key,
+                    legacy_key=legacy_key,
+                    narrow_legacy_key=narrow_legacy_key,
+                    created_at=reservation_at,
                 )
                 if cached is not None:
                     semantic = self._cached_semantic(cached)
