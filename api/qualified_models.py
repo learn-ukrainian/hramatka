@@ -26,7 +26,7 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.2"
 # This is the canonical three-anchor aggregate of the currently pinned v3.3
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
-PROMPT_SHA256: Final = ""
+PROMPT_SHA256: Final = "a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc76fb4b2b1"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.6"
 TEMPLATE_SHA256: Final = "d55591b54961d2b789a42b413f6d3f5ad9404950ebf3492e5e0d02929eb5cd89"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
@@ -110,11 +110,29 @@ LOGICAL_MODELS: Final = (
     ),
 )
 
-# The prior TeacherReadyDensity.v2/v3.2 transcription has been intentionally
-# cleared.  The v3.3 binding-contract redesign changed the template and prompt
-# pack, so no route is currently qualified until a new matrix is run and
-# transcribed.  The UI therefore shows the empty-picker state.
-PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = ()
+# Transcribed from qualification matrix run12 (source commit
+# 014fd4333f2e281f63f6441237f2a3cad326dc3b) by
+# ``hramatka.qualification.transcribe``; the block below is its verbatim output.
+PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
+    QualificationReceipt(
+        logical_model_id="gemini-3.1-pro",
+        provider_route="gemini-pro-subscription",
+        provider_host="antigravity-cli",
+        provider_model_id="gemini-3.1-pro-high",
+        registry_version="QualifiedLogicalModels.v1",
+        prompt_pack_version="PromptPackInput.v3.2",
+        prompt_sha256="a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc76fb4b2b1",
+        template_version="gemma-phase-pack.v3.6",
+        template_sha256="d55591b54961d2b789a42b413f6d3f5ad9404950ebf3492e5e0d02929eb5cd89",
+        density_contract_version="TeacherReadyDensity.v3",
+        density_contract_digest="1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf",
+        type_kit_identity="TeacherReadyDensity.v3.unit-plan-kit.v3",
+        serializer_temperature=0.0,
+        provenance_tier="cli_self_reported",
+        passed_anchors=frozenset({"b1-dialogue", "b1-morphology", "b1-narrative"}),
+        passed=True,
+    ),
+)
 
 
 class QualificationCandidateRegistry:
