@@ -23,6 +23,7 @@ from hramatka.engine.density_evaluator_v3 import (
     RepairableSerializationError,
     RepairRequest,
     ReplacementRequest,
+    SlotError,
     evaluate_phase_with_repair,
 )
 from hramatka.engine.json_tolerance import extract_json, repair_split_envelope
@@ -603,23 +604,48 @@ class EngineLessonBaker:
 
     @staticmethod
     def _repair_prompt(
-        context: Mapping[str, Any], *, mode: str, slot_id: str, repair_round: int | None
+        context: Mapping[str, Any],
+        *,
+        mode: str,
+        slot_id: str,
+        repair_round: int | None,
+        prior_errors: tuple[SlotError, ...],
     ) -> str:
         """Annotate a one-slot callback without changing the v3.2 pack body."""
-        return "\n\n".join(
-            (
-                render_phase_prompt(context),
-                "=== V3 REPAIR REQUEST (metadata) ===\n```json\n"
+        prior_errors_section = ""
+        if prior_errors:
+            prior_errors_section = (
+                "=== V3 PRIOR REJECTION ERRORS (fix these) ===\n```json\n"
                 + json.dumps(
-                    {
-                        "mode": mode,
-                        "repair_round": repair_round,
-                        "slot_id": slot_id,
-                    },
+                    [
+                        {"message": error.cause, "slot_id": error.slot_id}
+                        for error in prior_errors
+                    ],
+                    ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                + "\n```",
+                + "\n```"
+            )
+        return "\n\n".join(
+            tuple(
+                item
+                for item in (
+                    render_phase_prompt(context),
+                    prior_errors_section,
+                    "=== V3 REPAIR REQUEST (metadata) ===\n```json\n"
+                    + json.dumps(
+                        {
+                            "mode": mode,
+                            "repair_round": repair_round,
+                            "slot_id": slot_id,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n```",
+                )
+                if item
             )
         )
 
@@ -863,6 +889,7 @@ class EngineLessonBaker:
                 mode="repair",
                 slot_id=request.slot_id,
                 repair_round=request.round,
+                prior_errors=request.prior_errors,
             ),
             raw_attempt_counter=raw_attempt_counter,
             raw_out_root=raw_out_root,
@@ -884,6 +911,7 @@ class EngineLessonBaker:
                 mode="replacement",
                 slot_id=request.slot_id,
                 repair_round=None,
+                prior_errors=(),
             ),
             raw_attempt_counter=raw_attempt_counter,
             raw_out_root=raw_out_root,
