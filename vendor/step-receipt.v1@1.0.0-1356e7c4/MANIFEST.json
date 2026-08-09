@@ -1,0 +1,18 @@
+{
+  "artifact": "step-receipt.v1",
+  "version": "1.0.0",
+  "kind": "json-schema",
+  "description": "Public StepReceipt v1 schema; drivers emit receipt records when a TrailSpec v1 trail step is driven.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "agents_extensions/shared/schemas/step-receipt.v1.schema.json",
+    "commit": "1356e7c404ce2e3779b4a6d625e28634793fe712"
+  },
+  "adapted": false,
+  "files": {
+    "step-receipt.v1.schema.json": {
+      "sha256": "f23b6c09c6420ad5b8984d0105fa6f351295e30ca351b93407b9dec41575a8df",
+      "size": 1615
+    }
+  }
+}

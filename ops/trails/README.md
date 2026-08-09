@@ -47,17 +47,38 @@ ping the frontier seat via the agent bridge. Do not proceed past a stop.
 
 ## Trail format
 
-Each trail: PRECONDITIONS (checkable commands) → numbered STEPS, each
-`do:` (exact command/template) + `verify:` (expected output) + `on-fail:`
-(stop | retry-once | escalate) → STOP GATES → DONE WHEN (deterministic predicate).
+Machine source of truth: `*.trail.yaml` (TrailSpec v1 — public schema #5860).
+Human companions remain the `trail-0N-*.md` files for drivers reading prose.
+
+Each trail YAML: `schema_version: trailspec.v1`, seats, stop_codes from the
+published STOP vocabulary, terminal_outcomes, and numbered steps with
+`do`-equivalent `command`, falsifiable `evidence_predicate` (required for every
+non-`summon` step), and `transitions`. Validate locally:
+
+```bash
+python -m hramatka.ops.trails.validate
+# or quote the public validator against the same files:
+#   .venv/bin/python scripts/orchestration/validate_trailspec.py --spec <path>
+```
+
+When a trail step is driven, emit a StepReceipt v1 record:
+
+```bash
+python -m hramatka.ops.trails.emit_step_receipt \
+  --trail hramatka/ops/trails/trail-01-qualification-matrix.trail.yaml \
+  --out .agent/tmp/trail-receipts/step.json \
+  --run-id <run> --step-id locate_pr --transition-taken found \
+  --task-family hramatka-trail-01
+```
+
 Only T2 creates or edits trails; drivers execute them exactly as written.
 
 ## Index
 
-| Trail | Goal | State |
-|---|---|---|
-| [trail-01](trail-01-qualification-matrix.md) | #258 qualification matrix: land the density fix, complete the 18-cell run, feed the #244 selector | active (codex dispatch in flight) |
-| [trail-02](trail-02-benchmark-v3.md) | Benchmark v3: land the report layer, run all seats + reference seats, blind cross-family judging, regenerate the report of record | active (agy dispatch in flight) |
-| [trail-03](trail-03-teacher-beta.md) | Teacher beta: local HTTPS proof → operator manual gate → deploy | blocked on trails 01–02 |
+| Trail | Machine spec | Prose | Goal | State |
+|---|---|---|---|---|
+| trail-01 | [`.trail.yaml`](trail-01-qualification-matrix.trail.yaml) | [md](trail-01-qualification-matrix.md) | #258 qualification matrix: land the density fix, complete the 18-cell run, feed the #244 selector | active (codex dispatch in flight) |
+| trail-02 | [`.trail.yaml`](trail-02-benchmark-v3.trail.yaml) | [md](trail-02-benchmark-v3.md) | Benchmark v3: land the report layer, run all seats + reference seats, blind cross-family judging, regenerate the report of record | active (agy dispatch in flight) |
+| trail-03 | [`.trail.yaml`](trail-03-teacher-beta.trail.yaml) | [md](trail-03-teacher-beta.md) | Teacher beta: local HTTPS proof → operator manual gate → deploy | blocked on trails 01–02 |
 
 Templates: [templates/dispatch-brief.md](templates/dispatch-brief.md)

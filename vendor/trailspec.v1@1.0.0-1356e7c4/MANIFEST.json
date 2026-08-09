@@ -1,0 +1,18 @@
+{
+  "artifact": "trailspec.v1",
+  "version": "1.0.0",
+  "kind": "json-schema",
+  "description": "Public TrailSpec v1 schema (learn-ukrainian.github.io #5860); private hramatka trails validate against this pin.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "agents_extensions/shared/schemas/trailspec.v1.schema.json",
+    "commit": "1356e7c404ce2e3779b4a6d625e28634793fe712"
+  },
+  "adapted": false,
+  "files": {
+    "trailspec.v1.schema.json": {
+      "sha256": "d0fe91acd94d7e25784e681f70b7a13210440093b62e61bc03465c488f24fdd8",
+      "size": 3921
+    }
+  }
+}

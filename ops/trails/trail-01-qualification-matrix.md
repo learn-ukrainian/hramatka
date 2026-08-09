@@ -11,7 +11,7 @@ v2 authorizes the integration fix and uses ONE fresh instrumented cell as the de
 measurement source.
 
 ## PRECONDITIONS
-- `jq -r .status /Users/krisztiankoos/projects/learn-ukrainian/batch_state/tasks/258-density-matrix-v2.json`
+- `jq -r .status "$PUBLIC_REPO_ROOT/batch_state/tasks/258-density-matrix-v2.json"`
   returns `done`. Any other settled status → escalate with the task log tail.
   Known infra bug: `no_deliverable` with reason `commit_count_unknown` can be a FALSE
   negative on private-repo worktrees — always check for an opened PR and unpushed

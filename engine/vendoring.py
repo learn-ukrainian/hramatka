@@ -30,8 +30,18 @@ PILOT_LU_ACTIVITY = "lu.activity.v1@1.0.0-ffd54054"
 # pins remain on disk as immutable provenance for recorded bake fingerprints.
 PILOT_LU_LESSON = "lu.lesson.v1@1.2.0-ffed19d"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
+TRAILSPEC_V1 = "trailspec.v1@1.0.0-1356e7c4"
+STEP_RECEIPT_V1 = "step-receipt.v1@1.0.0-1356e7c4"
 
-REGISTERED = (LU_ACTIVITY, LU_LESSON, PILOT_LU_ACTIVITY, PILOT_LU_LESSON, LINGUISTICS)
+REGISTERED = (
+    LU_ACTIVITY,
+    LU_LESSON,
+    PILOT_LU_ACTIVITY,
+    PILOT_LU_LESSON,
+    LINGUISTICS,
+    TRAILSPEC_V1,
+    STEP_RECEIPT_V1,
+)
 
 _module_cache: dict[str, tuple[str, ModuleType]] = {}
 

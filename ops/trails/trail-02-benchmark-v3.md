@@ -6,7 +6,7 @@ In-flight dispatch: `benchmark-v3-report` (agy, worktree
 `.worktrees/dispatch/agy/benchmark-v3-report`).
 
 ## PRECONDITIONS
-- `jq -r .status /Users/krisztiankoos/projects/learn-ukrainian/batch_state/tasks/benchmark-v3-report.json` returns `done`; otherwise escalate with the log tail. Known infra bug: `no_deliverable` with reason `commit_count_unknown` can be a FALSE negative on a private-repo dispatch — check for an opened PR and unpushed worktree commits before treating it as a failure.
+- `jq -r .status "$PUBLIC_REPO_ROOT/batch_state/tasks/benchmark-v3-report.json"` returns `done`; otherwise escalate with the log tail. Known infra bug: `no_deliverable` with reason `commit_count_unknown` can be a FALSE negative on a private-repo dispatch — check for an opened PR and unpushed worktree commits before treating it as a failure.
 
 ## STEPS
 1. **Locate PR + confirm RED-proofs** (pairing refusal, link-integrity failure, fidelity property, density fixture) are quoted in the PR body. Missing → back to author lane.
