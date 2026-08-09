@@ -14,7 +14,7 @@ function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as Response;
 }
 
-function installFetch(lessons: unknown[] = []) {
+function installFetch(lessons: unknown[] = [], modelId: string | null = 'pilot') {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith('/api/session')) return response(teacher);
@@ -25,7 +25,7 @@ function installFetch(lessons: unknown[] = []) {
     if (url.endsWith('/api/lessons/lesson-1')) {
       return response({
         lesson_id: 'lesson-1', revision: 1, accepted_at: '2026-07-27T10:00:00Z', accepted_revision: 1,
-        warning_acknowledgements: [], logical_model_id: 'pilot', methodology: 'ttt', grammar_focus: 'вищий ступінь прикметників',
+        warning_acknowledgements: [], logical_model_id: modelId, methodology: 'ttt', grammar_focus: 'вищий ступінь прикметників',
         lesson: {
           schema: 'lu.lesson.v1', id: 'lesson-1', title: 'Порівнюємо квартири', level: 'B1', method: 'ttt',
           focus: 'вищий ступінь прикметників', anchor: { text: 'Квартира була світліша за іншу.', source: 'teacher-paste', chars: 35 },
@@ -139,5 +139,24 @@ describe('teacher lesson creation and list chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Друк' }));
     await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId('catalog-delete-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows which model baked the lesson on the lesson view (#401)', async () => {
+    installFetch();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+    renderApp();
+
+    const provenance = await screen.findByTestId('lesson-model', undefined, { timeout: 5000 });
+    expect(provenance).toHaveTextContent('Модель: pilot');
+  });
+
+  it('shows an honest «невідомо» fallback for lessons without a stored model (#401)', async () => {
+    installFetch([], null);
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+    renderApp();
+
+    const provenance = await screen.findByTestId('lesson-model', undefined, { timeout: 5000 });
+    expect(provenance).toHaveTextContent('Модель: невідомо');
+    expect(provenance).not.toHaveTextContent('pilot');
   });
 });

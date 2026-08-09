@@ -1743,6 +1743,11 @@ export default function TeacherApp() {
               <div className="lesson-header">
                 <button className="btn ghost" onClick={() => navigate({ view: 'catalog' })}>{t('lesson.back')}</button>
                 {lesson && <h2>{lesson.lesson.title}</h2>}
+                {lesson && (
+                  <span className="lesson-model" data-testid="lesson-model">
+                    {t('lesson.model', { model: lesson.logical_model_id ?? t('lesson.modelUnknown') })}
+                  </span>
+                )}
                 <div className="lesson-actions">
                   <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>{t('lesson.reviewMode')}</button>
                   {lesson && lesson.lesson.status === 'ready' && (

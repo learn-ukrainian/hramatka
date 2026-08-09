@@ -284,6 +284,7 @@ button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
 .lesson-view { padding-top: 16px; padding-bottom: 16px; }
 .lesson-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .lesson-header h2 { margin: 0 0 0 4px; font-size: 21px; font-family: Georgia, 'Times New Roman', serif; }
+.lesson-model { font-size: 12px; color: var(--ink-soft, #6b6b6b); }
 .lesson-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .lesson-actions button { font-size: 13px; padding: 7px 11px; }
 

@@ -205,6 +205,9 @@ const DICT = {
   'lesson.conduct': { uk: '▶ Провести заняття', en: '▶ Run the lesson' },
   'lesson.print': { uk: 'Друк', en: 'Print' }, // T_EXACT «🖨 Друк»
   'lesson.downloadJson': { uk: 'Завантажити JSON', en: 'Download JSON' },
+  // #401 lesson provenance: which logical model baked this lesson (id carries the version).
+  'lesson.model': { uk: 'Модель: {model}', en: 'Model: {model}' },
+  'lesson.modelUnknown': { uk: 'невідомо', en: 'unknown' },
 
   // Clipboard export (PR #120 folded into #114 i18n): teacher/student variants + copy-as-new action.
   // Lesson CONTENT text (anchor + activities) stays UA; only chrome labels/notices are translated here.
