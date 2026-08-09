@@ -17,7 +17,11 @@ from hramatka.engine.lesson_capacity_v3 import (
     ConditionalReplacement,
     LessonAllocation,
 )
-from hramatka.engine.prompt_pack_v3 import build_phase_context, render_phase_prompt
+from hramatka.engine.prompt_pack_v3 import (
+    build_phase_context,
+    render_phase_prompt,
+    validate_gap_construction,
+)
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
@@ -137,6 +141,8 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
     assert "serialized_units is an ordered reference list" in prompt
     assert "the slots array is an exact one-to-one cover" in prompt
     assert "activity is an object, never a type string or an ID" in prompt
+    assert "CLOZE_CONTEXT_VISIBLE_MAJORITY" in prompt
+    assert "FILL_IN_DISTINCT_CARRIER_SENTENCES" in prompt
     assert [(block.disposition, block.observed_units) for block in evaluated.blocks] == [
         ("ready", 8)
     ]
@@ -276,6 +282,85 @@ def test_non_serialization_failures_do_not_consume_repair_rounds() -> None:
     assert evaluated.disposition == "recoverable_draft"
     assert evaluated.blocks[0].disposition == "dropped"
     assert any(error.cause.startswith("not_repairable:") for error in evaluated.blocks[0].errors)
+
+
+def test_gate_dropped_cloze_names_the_gap_construction_rule_for_repair() -> None:
+    """A context-free rule name, rather than learner text, reaches bounded repair."""
+    allocation = _allocation("cloze")
+    payload = _payload(allocation)
+    payload["slots"][0]["activity"] = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуски.",
+            "text": "{1} {2} {3} {4} {5} кілька {6} {7} {8}.",
+            "blanks": [{"id": index} for index in range(1, 9)],
+        },
+        "answer_key": {"blanks": []},
+    }
+    repair_causes: list[tuple[str, ...]] = []
+
+    def repair(request: object) -> dict:
+        repair_causes.append(tuple(error.cause for error in request.prior_errors))
+        return deepcopy(payload["slots"][0])
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload=payload,
+        deterministic_gates=(validate_gap_construction,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+        max_repair_rounds=1,
+    )
+
+    assert repair_causes == [("gap_construction: cloze_context_visible_majority",)]
+    assert evaluated.blocks[0].disposition == "dropped"
+    assert [error.cause for error in evaluated.blocks[0].errors] == [
+        "gap_construction: cloze_context_visible_majority",
+        "repair_exhausted: no certified replacement serialized successfully",
+    ]
+
+
+def test_gap_construction_rejects_fill_in_items_from_one_carrier_sentence() -> None:
+    activity = {
+        "payload": {
+            "type": "fill-in",
+            "instruction": "Вставте слово.",
+            "items": [
+                {
+                    "sentence": "Це ___ для перевірки.",
+                    "answer": "слово",
+                    "options": [],
+                }
+                for _ in range(8)
+            ],
+        },
+        "answer_key": {"items": []},
+    }
+
+    with pytest.raises(ValueError, match="fill_in_distinct_carrier_sentences"):
+        validate_gap_construction(activity, {})
+
+
+def test_gap_construction_rejects_missing_gap_markers() -> None:
+    cloze = {
+        "payload": {
+            "type": "cloze",
+            "text": "Цей контекст не має позначеного пропуску.",
+            "blanks": [{"id": 1}],
+        }
+    }
+    fill_in = {
+        "payload": {
+            "type": "fill-in",
+            "items": [{"sentence": "У реченні немає пропуску.", "answer": "слово"}],
+        }
+    }
+
+    with pytest.raises(ValueError, match="cloze_markers_match_blanks"):
+        validate_gap_construction(cloze, {})
+    with pytest.raises(ValueError, match="fill_in_single_gap_marker"):
+        validate_gap_construction(fill_in, {})
 
 
 def test_ready_tray_does_not_block_repair_for_another_slot() -> None:

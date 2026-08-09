@@ -653,7 +653,10 @@ def _v3_live_record_from_kit(
         payload = {
             "type": activity_type,
             "instruction": "Заповніть пропуск.",
-            "text": "Це текст із кількома пропусками, які треба заповнити.",
+            "text": (
+                "Це {1} текст із {2} видимим {3} контекстом, у якому {4} "
+                "більшість {5} слів {6} лишається {7} для {8} розуміння."
+            ),
             "blanks": blanks,
         }
         answer_key = {"blanks": key_blanks}
@@ -666,7 +669,7 @@ def _v3_live_record_from_kit(
             options.insert(pos, form)
             items.append(
                 {
-                    "sentence": f"Речення {index + 1} потребує правильного слова.",
+                    "sentence": f"Речення {index + 1} потребує правильного слова ___.",
                     "answer": form,
                     "options": options,
                 }

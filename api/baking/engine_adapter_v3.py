@@ -40,6 +40,7 @@ from hramatka.engine.prompt_pack_v3 import (
     validate_distractor_adjacency,
     validate_elicitation_shape,
     validate_exemplar_contamination,
+    validate_gap_construction,
     validate_verbatim_answer_ban,
 )
 from hramatka.engine.providers import TelemetryContext, telemetry_ctx
@@ -728,6 +729,7 @@ class EngineLessonBaker:
                                 validate_exemplar_contamination,
                                 validate_verbatim_answer_ban,
                                 validate_elicitation_shape,
+                                validate_gap_construction,
                                 validate_distractor_adjacency,
                             ),
                             raw_contract_validator=_raw_activity_contract,

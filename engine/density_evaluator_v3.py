@@ -18,6 +18,7 @@ from .prompt_pack_v3 import (
     DeterministicGate,
     PromptPackV3Error,
     RawContractValidator,
+    RepairableGapConstructionError,
     build_phase_context,
     validate_slot_deterministic_gates,
     validate_slot_raw_contract,
@@ -171,7 +172,11 @@ class BlockEvaluation:
         """
         return self.disposition == "density_shortfall" or any(
             error.cause.startswith(
-                ("serialization:", "response_shape: missing slot response")
+                (
+                    "serialization:",
+                    "gap_construction:",
+                    "response_shape: missing slot response",
+                )
             )
             for error in self.errors
         )
@@ -481,6 +486,8 @@ def _evaluate_payload(
             gated[slot_id] = record
         except RepairableSerializationError as exc:
             errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "serialization", exc))
+        except RepairableGapConstructionError as exc:
+            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "gap_construction", exc))
         except Exception as exc:
             errors_by_slot.setdefault(slot_id, []).append(
                 _error(slot_id, "deterministic_gate", exc)

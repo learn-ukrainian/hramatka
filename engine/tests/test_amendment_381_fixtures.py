@@ -79,7 +79,7 @@ def _kit(activity_type: str = "quiz", target_form: str = "На") -> dict:
 def test_version_bump_identifiers() -> None:
     """Verify version string bumps for the #381 amendment contract."""
     assert PROMPT_PACK_VERSION == "PromptPackInput.v3.2"
-    assert TEMPLATE_VERSION == "gemma-phase-pack.v3.5"
+    assert TEMPLATE_VERSION == "gemma-phase-pack.v3.6"
     assert TYPE_KIT_IDENTITY == "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 

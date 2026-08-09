@@ -87,7 +87,7 @@ def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
     assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.2"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.5"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.6"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -120,7 +120,7 @@ def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_item
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.5" in prompt
+    assert "v3.6" in prompt
 
 
 def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None:
@@ -769,10 +769,10 @@ def test_duplicate_options_or_duplicate_answers_fail_closed() -> None:
         validate_distractor_adjacency(absent_answer_activity, kit)
 
 
-def test_pack_v35_no_options_zero_mandate_and_enforces_varied_placement() -> None:
-    """Pack v3.5 contains no options[0] mandate and enforces varied answer placement."""
+def test_pack_v36_no_options_zero_mandate_and_enforces_varied_placement() -> None:
+    """Pack v3.6 contains no options[0] mandate and enforces varied answer placement."""
     from pathlib import Path
-    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.5.md"
+    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.6.md"
     content = template_path.read_text(encoding="utf-8")
     assert "first option (`options[0]`)" not in content
     assert "options[0]" not in content
@@ -839,4 +839,3 @@ def test_bare_gap_marker_check_rejects_longer_underscore_runs_and_bracketed() ->
     }
     with pytest.raises(PromptPackV3Error, match="missing gap marker '___'"):
         validate_verbatim_answer_ban(longer_run_stem_activity, kit)
-

@@ -25,12 +25,12 @@ from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3.2"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.5"
-TEMPLATE_SHA256: Final[str] = "aefda8bdc40efae050a12576f9ccee900dd6806857093e10d199f1ce88570ab1"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.6"
+TEMPLATE_SHA256: Final[str] = "d55591b54961d2b789a42b413f6d3f5ad9404950ebf3492e5e0d02929eb5cd89"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.5.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.6.md"
 
 # Literal strings that appear only in the full-density synthetic exemplar.  Their
 # presence in a model response means the serializer copied the exemplar instead
@@ -61,8 +61,15 @@ class PromptPackV3Error(ValueError):
     """A deterministic v3.3 pack serialization or validation failure."""
 
 
+class RepairableGapConstructionError(PromptPackV3Error):
+    """A content-free gap-shape failure that can be re-rendered from the fixed kit."""
+
+
 DeterministicGate = Callable[[Mapping[str, Any], Mapping[str, Any]], None]
 RawContractValidator = Callable[[Mapping[str, Any]], None]
+
+_CLOZE_MARKER_RE = re.compile(r"\{[1-9]\d*\}")
+_UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+")
 
 
 def _canonical(value: object) -> str:
@@ -582,6 +589,53 @@ def validate_elicitation_shape(activity: Mapping[str, Any], kit: Mapping[str, An
                 _check(item, f"error-correction items[{index}]")
     elif activity_type == "short-writing":
         _check(payload.get("prompt"), "short-writing prompt")
+
+
+def validate_gap_construction(activity: Mapping[str, Any], _kit: Mapping[str, Any]) -> None:
+    """Reject degenerate cloze and fill-in shapes using content-free rule names.
+
+    These checks apply only to the learner-facing gap layout.  They deliberately
+    do not inspect, retain, or expose anchor content or answer forms in their
+    failures, so the bounded repair prompt can name the violated construction
+    rule without leaking protected lesson material.
+    """
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    activity_type = payload.get("type")
+    if activity_type == "cloze":
+        text = payload.get("text")
+        blanks = payload.get("blanks")
+        if not isinstance(text, str) or not isinstance(blanks, list):
+            return
+        marker_count = len(_CLOZE_MARKER_RE.findall(text))
+        if marker_count != len(blanks):
+            raise RepairableGapConstructionError("cloze_markers_match_blanks")
+        visible_words = len(_UKRAINIAN_WORD_RE.findall(_CLOZE_MARKER_RE.sub("", text)))
+        if marker_count and visible_words <= marker_count:
+            raise RepairableGapConstructionError("cloze_context_visible_majority")
+        return
+    if activity_type != "fill-in":
+        return
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return
+    if any(
+        not isinstance(item, Mapping)
+        or not isinstance(item.get("sentence"), str)
+        or item["sentence"].count("___") != 1
+        for item in items
+    ):
+        raise RepairableGapConstructionError("fill_in_single_gap_marker")
+    carrier_sentences = {
+        " ".join(item["sentence"].replace("___", item["answer"]).split()).casefold()
+        for item in items
+        if isinstance(item, Mapping)
+        and isinstance(item.get("sentence"), str)
+        and isinstance(item.get("answer"), str)
+    }
+    if len(items) >= 2 and len(carrier_sentences) < 2:
+        raise RepairableGapConstructionError("fill_in_distinct_carrier_sentences")
 
 
 # Closed-class parts of speech.  Words belonging to these classes have no
