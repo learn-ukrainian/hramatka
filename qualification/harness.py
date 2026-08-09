@@ -609,52 +609,72 @@ def _v3_live_record_from_kit(
     forms = [unit["allowed_forms"][0] for unit in certified_units]
     expected_keys = [unit["expected_key_or_rule"]["value"] for unit in certified_units]
     if activity_type == "quiz":
-        payload = {
-            "type": activity_type,
-            "instruction": "Оберіть правильний варіант.",
-            "items": [
+        items = []
+        key_items = []
+        for index, form in enumerate(forms):
+            distractors = _v3_fixture_distractors(form, count=2)
+            pos = index % 3
+            options = list(distractors)
+            options.insert(pos, form)
+            items.append(
                 {
                     "question": (
                         f"Яке слово «___» підходить до контексту {index + 1}?"
                         if is_closed_class_form(form)
                         else f"Яке слово підходить до контексту {index + 1}?"
                     ),
-                    "options": [form, *_v3_fixture_distractors(form, count=2)],
-                    "correct": 0,
+                    "options": options,
+                    "correct": pos,
                 }
-                for index, form in enumerate(forms)
-            ],
+            )
+            key_items.append({"index": index, "correct": pos})
+        payload = {
+            "type": activity_type,
+            "instruction": "Оберіть правильний варіант.",
+            "items": items,
         }
-        answer_key = {"items": [{"index": index, "correct": 0} for index in range(len(forms))]}
+        answer_key = {"items": key_items}
     elif activity_type == "cloze":
+        blanks = []
+        key_blanks = []
+        for index, form in enumerate(forms, start=1):
+            distractors = _v3_fixture_distractors(form, count=2)
+            pos = (index - 1) % 3
+            options = list(distractors)
+            options.insert(pos, form)
+            blanks.append(
+                {
+                    "id": index,
+                    "answer": form,
+                    "options": options,
+                }
+            )
+            key_blanks.append({"id": index, "answer": form})
         payload = {
             "type": activity_type,
             "instruction": "Заповніть пропуск.",
             "text": "Це текст із кількома пропусками, які треба заповнити.",
-            "blanks": [
-                {
-                    "id": index,
-                    "answer": form,
-                    "options": [form, *_v3_fixture_distractors(form, count=2)],
-                }
-                for index, form in enumerate(forms, start=1)
-            ],
+            "blanks": blanks,
         }
-        answer_key = {
-            "blanks": [{"id": index, "answer": form} for index, form in enumerate(forms, start=1)]
-        }
+        answer_key = {"blanks": key_blanks}
     elif activity_type == "fill-in":
-        payload = {
-            "type": activity_type,
-            "instruction": "Вставте слово.",
-            "items": [
+        items = []
+        for index, (_unit, form) in enumerate(zip(certified_units, forms, strict=True)):
+            distractors = _v3_fixture_distractors(form, count=2)
+            pos = index % 3
+            options = list(distractors)
+            options.insert(pos, form)
+            items.append(
                 {
                     "sentence": f"Речення {index + 1} потребує правильного слова.",
                     "answer": form,
-                    "options": [form, *_v3_fixture_distractors(form, count=2)],
+                    "options": options,
                 }
-                for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True))
-            ],
+            )
+        payload = {
+            "type": activity_type,
+            "instruction": "Вставте слово.",
+            "items": items,
         }
         answer_key = {"items": forms}
     elif activity_type == "true-false":

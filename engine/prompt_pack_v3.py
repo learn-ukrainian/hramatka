@@ -25,11 +25,12 @@ from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3.2"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.4"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.5"
+TEMPLATE_SHA256: Final[str] = "aefda8bdc40efae050a12576f9ccee900dd6806857093e10d199f1ce88570ab1"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.4.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.5.md"
 
 # Literal strings that appear only in the full-density synthetic exemplar.  Their
 # presence in a model response means the serializer copied the exemplar instead
@@ -66,6 +67,13 @@ RawContractValidator = Callable[[Mapping[str, Any]], None]
 
 def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _has_bare_gap_marker(text: str) -> bool:
+    """Return True if text contains a bare '___' gap marker (exactly 3 underscores, unbracketed)."""
+    if not isinstance(text, str):
+        return False
+    return bool(re.search(r"(?<![_\(\[\{])___(?![_\)\]\}])", text))
 
 
 def template_digest() -> str:
@@ -460,7 +468,7 @@ def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, 
             # an explicit gap marker '___' rather than verbatim stem prose.
             for form in item_answers:
                 if is_closed_class_form(form, db_path):
-                    if not isinstance(question, str) or "___" not in question:
+                    if not _has_bare_gap_marker(question):
                         raise PromptPackV3Error(
                             f"closed-class quiz stem missing gap marker '___': {question!r}"
                         )
@@ -670,17 +678,23 @@ def _degree_rank(tags_str: str) -> int | None:
     return None
 
 
-def _strip_naj(word: str) -> str:
+def _strip_degree(word: str) -> set[str]:
     w = word.lower()
+    bases = {w}
     if w.startswith("най"):
-        return w[3:]
-    return w
+        w = w[3:]
+        bases.add(w)
+    if w.endswith("іший"):
+        bases.add(w[:-4] + "ий")
+    elif w.endswith("ший"):
+        bases.add(w[:-3] + "ий")
+    return bases
 
 
 def _is_degree_adjacent(
     answer: str, option: str, db_path: Path, kit: Mapping[str, Any] | None = None
 ) -> bool:
-    """Return True if option and answer form a valid degree-adjacent pair (rank diff == 1)."""
+    """Return True if option and answer form a valid degree-adjacent pair."""
     ans_matches = _vesum_matches(answer, db_path)
     opt_matches = _vesum_matches(option, db_path)
     if not ans_matches or not opt_matches:
@@ -691,8 +705,8 @@ def _is_degree_adjacent(
     ans_degrees.discard(None)
     opt_degrees.discard(None)
 
-    has_rank_diff_1 = any(abs(d1 - d2) == 1 for d1 in ans_degrees for d2 in opt_degrees)
-    if not has_rank_diff_1:
+    has_degree_diff = any(d1 != d2 for d1 in ans_degrees for d2 in opt_degrees)
+    if not has_degree_diff:
         return False
 
     ans_frames = {
@@ -717,8 +731,8 @@ def _is_degree_adjacent(
     ans_lemmas = {m.get("lemma", "").lower() for m in ans_matches if m.get("lemma")}
     opt_lemmas = {m.get("lemma", "").lower() for m in opt_matches if m.get("lemma")}
 
-    ans_bases = ans_lemmas | {_strip_naj(lem) for lem in ans_lemmas}
-    opt_bases = opt_lemmas | {_strip_naj(lem) for lem in opt_lemmas}
+    ans_bases = set().union(*[_strip_degree(lem) for lem in ans_lemmas])
+    opt_bases = set().union(*[_strip_degree(lem) for lem in opt_lemmas])
 
     if ans_bases & opt_bases:
         return True
@@ -886,6 +900,12 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             raise PromptPackV3Error(f"{label} options must be a list")
         if len(options) < 3:
             raise PromptPackV3Error(f"{label} options count must be at least 3")
+        if len(options) != len(set(options)):
+            raise PromptPackV3Error(f"{label} options contain duplicate entries")
+        if answer not in options:
+            raise PromptPackV3Error(f"{label} answer {answer!r} is not in options")
+        if options.count(answer) > 1:
+            raise PromptPackV3Error(f"{label} options contain duplicate answer {answer!r}")
         if correct_index < 0 or correct_index >= len(options):
             raise PromptPackV3Error(f"{label} correct index {correct_index} is out of range")
         if options[correct_index] != answer:
@@ -899,6 +919,10 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 raise PromptPackV3Error(f"{label} option must be a string")
             if option_index == correct_index:
                 continue
+            if option.lower() == answer.lower():
+                raise PromptPackV3Error(
+                    f"{label} distractor {option!r} equals answer {answer!r}"
+                )
             option_lemmas = _lemma_set(option, db_path)
             if not option_lemmas:
                 raise PromptPackV3Error(f"{label} distractor {option!r} is not in VESUM")
@@ -908,10 +932,6 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                     raise PromptPackV3Error(
                         f"{label} distractor {option!r} is not of the same POS class "
                         f"as answer {answer!r}"
-                    )
-                if option.lower() == answer.lower():
-                    raise PromptPackV3Error(
-                        f"{label} distractor {option!r} equals answer {answer!r}"
                     )
             elif not (answer_lemmas & option_lemmas):
                 if _is_degree_adjacent(answer, option, db_path, kit):
@@ -924,6 +944,7 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
 
     if activity_type == "quiz":
         key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        correct_indices: list[int] = []
         for index, item in enumerate(payload.get("items", ())):
             if not isinstance(item, Mapping):
                 continue
@@ -948,29 +969,54 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             _validate_options(
                 answer, options, declared_correct, f"quiz items[{index}]", item.get("question", "")
             )
+            correct_indices.append(declared_correct)
+        if len(correct_indices) >= 3 and len(set(correct_indices)) == 1:
+            raise PromptPackV3Error(
+                "quiz activity options must vary answer placement across items "
+                f"(all {len(correct_indices)} items placed answer at index {correct_indices[0]})"
+            )
     elif activity_type == "cloze":
         key_blanks = answer_key.get("blanks", []) if isinstance(answer_key, Mapping) else []
         text = payload.get("text", "")
+        correct_indices = []
         for index, blank in enumerate(payload.get("blanks", ())):
             if not isinstance(blank, Mapping):
                 continue
             answer = blank.get("answer")
             if not isinstance(answer, str):
                 raise PromptPackV3Error(f"cloze blanks[{index}] lacks answer")
-            # Cloze answer_key index is the blank id; assume ordered identity.
+            options = blank.get("options")
+            if not isinstance(options, Sequence) or isinstance(options, (bytes, bytearray, str)):
+                raise PromptPackV3Error(f"cloze blanks[{index}] options must be a list")
+            if answer not in options:
+                raise PromptPackV3Error(
+                    f"cloze blanks[{index}] answer {answer!r} is not in options"
+                )
+            if options.count(answer) > 1:
+                raise PromptPackV3Error(
+                    f"cloze blanks[{index}] options contain duplicate answer {answer!r}"
+                )
+            correct_idx = options.index(answer)
             _validate_options(
                 answer,
-                blank.get("options"),
-                0,
+                options,
+                correct_idx,
                 f"cloze blanks[{index}]",
                 text if isinstance(text, str) else "",
             )
+            correct_indices.append(correct_idx)
             if isinstance(key_blanks, Sequence) and index < len(key_blanks):
                 key_blank = key_blanks[index]
                 if isinstance(key_blank, Mapping) and key_blank.get("answer") != answer:
                     raise PromptPackV3Error(f"cloze blanks[{index}] answer key mismatch")
+        if len(correct_indices) >= 3 and len(set(correct_indices)) == 1:
+            raise PromptPackV3Error(
+                "cloze activity options must vary answer placement across items "
+                f"(all {len(correct_indices)} blanks placed answer at index {correct_indices[0]})"
+            )
     elif activity_type == "fill-in":
         key_forms = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
+        correct_indices = []
         for index, item in enumerate(payload.get("items", ())):
             if not isinstance(item, Mapping):
                 continue
@@ -983,8 +1029,26 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 and key_forms[index] != answer
             ):
                 raise PromptPackV3Error(f"fill-in items[{index}] answer key mismatch")
+            options = item.get("options")
+            if not isinstance(options, Sequence) or isinstance(options, (bytes, bytearray, str)):
+                raise PromptPackV3Error(f"fill-in items[{index}] options must be a list")
+            if answer not in options:
+                raise PromptPackV3Error(
+                    f"fill-in items[{index}] answer {answer!r} is not in options"
+                )
+            if options.count(answer) > 1:
+                raise PromptPackV3Error(
+                    f"fill-in items[{index}] options contain duplicate answer {answer!r}"
+                )
+            correct_idx = options.index(answer)
             _validate_options(
-                answer, item.get("options"), 0, f"fill-in items[{index}]", item.get("sentence", "")
+                answer, options, correct_idx, f"fill-in items[{index}]", item.get("sentence", "")
+            )
+            correct_indices.append(correct_idx)
+        if len(correct_indices) >= 3 and len(set(correct_indices)) == 1:
+            raise PromptPackV3Error(
+                "fill-in activity options must vary answer placement across items "
+                f"(all {len(correct_indices)} items placed answer at index {correct_indices[0]})"
             )
     elif activity_type == "error-correction":
         key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []

@@ -27,8 +27,8 @@ PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.2"
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
 PROMPT_SHA256: Final = ""
-TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.4"
-TEMPLATE_SHA256: Final = "ff77504227e205b9e5c40b2a97d3d583bb365545478376dc0fc265c7dbc794f6"
+TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.5"
+TEMPLATE_SHA256: Final = "aefda8bdc40efae050a12576f9ccee900dd6806857093e10d199f1ce88570ab1"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"

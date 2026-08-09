@@ -87,7 +87,7 @@ def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
     assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.2"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.4"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.5"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -120,7 +120,7 @@ def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_item
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.4" in prompt
+    assert "v3.5" in prompt
 
 
 def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None:
@@ -556,7 +556,7 @@ def test_distractor_adjacency_rejects_identical_uninflectable_distractor() -> No
             "items": [
                 {
                     "question": "Який прийменник потрібен тут?",
-                    "options": ["на", "на", "під"],
+                    "options": ["на", "На", "під"],
                     "correct": 0,
                 }
             ],
@@ -730,3 +730,113 @@ def test_short_writing_concatenation_prompt_fails() -> None:
     }
     with pytest.raises(PromptPackV3Error, match="concatenation of raw certified forms"):
         validate_exemplar_contamination(activity, kit)
+
+
+def test_duplicate_options_or_duplicate_answers_fail_closed() -> None:
+    """Duplicate answer string or duplicate options in MCQ list fail closed."""
+    context = _context("cloze")
+    kit = context["type_kits"][0]
+    duplicate_answer_activity = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуски.",
+            "text": "У мене є ___.",
+            "blanks": [
+                {"id": 1, "answer": "книги", "options": ["книги", "книги", "книг"]},
+            ],
+        },
+        "answer_key": {
+            "blanks": [{"id": 1, "answer": "книги"}],
+        },
+    }
+    with pytest.raises(PromptPackV3Error, match="duplicate"):
+        validate_distractor_adjacency(duplicate_answer_activity, kit)
+
+    absent_answer_activity = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуски.",
+            "text": "У мене є ___.",
+            "blanks": [
+                {"id": 1, "answer": "книги", "options": ["зошит", "ручка", "олівець"]},
+            ],
+        },
+        "answer_key": {
+            "blanks": [{"id": 1, "answer": "книги"}],
+        },
+    }
+    with pytest.raises(PromptPackV3Error, match="is not in options"):
+        validate_distractor_adjacency(absent_answer_activity, kit)
+
+
+def test_pack_v35_no_options_zero_mandate_and_enforces_varied_placement() -> None:
+    """Pack v3.5 contains no options[0] mandate and enforces varied answer placement."""
+    from pathlib import Path
+    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.5.md"
+    content = template_path.read_text(encoding="utf-8")
+    assert "first option (`options[0]`)" not in content
+    assert "options[0]" not in content
+    assert "vary the placement" in content
+
+    context = _context("cloze")
+    kit = context["type_kits"][0]
+    fixed_placement_activity = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуски.",
+            "text": "У мене є ___, ___ та ___.",
+            "blanks": [
+                {"id": 1, "answer": "книги", "options": ["книги", "книга", "книг"]},
+                {"id": 2, "answer": "книга", "options": ["книга", "книги", "книг"]},
+                {"id": 3, "answer": "книг", "options": ["книг", "книга", "книги"]},
+            ],
+        },
+        "answer_key": {
+            "blanks": [
+                {"id": 1, "answer": "книги"},
+                {"id": 2, "answer": "книга"},
+                {"id": 3, "answer": "книг"},
+            ],
+        },
+    }
+    with pytest.raises(PromptPackV3Error, match="must vary answer placement"):
+        validate_distractor_adjacency(fixed_placement_activity, kit)
+
+
+def test_bare_gap_marker_check_rejects_longer_underscore_runs_and_bracketed() -> None:
+    """Quiz stem check accepts bare '___' but rejects '____' and bracketed gap markers."""
+    from hramatka.engine.prompt_pack_v3 import _has_bare_gap_marker
+
+    assert _has_bare_gap_marker("«___ думку»") is True
+    assert _has_bare_gap_marker("Я іду ___ додому.") is True
+    assert _has_bare_gap_marker("«____ думку»") is False
+    assert _has_bare_gap_marker("«[___] думку»") is False
+    assert _has_bare_gap_marker("«(___) думку»") is False
+
+    context = _context("quiz")
+    kit = deepcopy(context["type_kits"][0])
+    kit["certified_units"] = [
+        {
+            "unit_id": "u1",
+            "allowed_forms": ["в"],
+            "expected_key_or_rule": {"kind": "key", "value": "в"},
+        }
+    ]
+
+    longer_run_stem_activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Оберіть правильний варіант.",
+            "items": [
+                {
+                    "question": "Я іду ____ школу.",
+                    "options": ["в", "на", "під"],
+                    "correct": 0,
+                },
+            ],
+        },
+        "answer_key": {"items": [{"index": 0, "correct": 0}]},
+    }
+    with pytest.raises(PromptPackV3Error, match="missing gap marker '___'"):
+        validate_verbatim_answer_ban(longer_run_stem_activity, kit)
+
