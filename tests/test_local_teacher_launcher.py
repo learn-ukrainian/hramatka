@@ -97,6 +97,12 @@ def _free_ports() -> tuple[int, int]:
         return int(first.getsockname()[1]), int(second.getsockname()[1])
 
 
+def _free_port() -> int:
+    with socket.socket() as available:
+        available.bind(("127.0.0.1", 0))
+        return int(available.getsockname()[1])
+
+
 def _assert_port_reusable(port: int) -> None:
     with socket.socket() as available:
         available.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -169,6 +175,38 @@ def _ensure_app_frontend_deps() -> None:
         )
 
 
+def _on_github_actions_runner() -> bool:
+    """True when the ambient process is a real GitHub Actions job.
+
+    GITHUB_ACTIONS is set by the runner itself. Ambient CI=true alone is not
+    sufficient: agent harnesses and local shells often export CI=true while
+    still relying on the repository .venv.
+    """
+    return os.environ.get("GITHUB_ACTIONS", "").strip().lower() in {"1", "true"}
+
+
+def _real_backend_launcher_environment(**overrides: str) -> dict[str, str]:
+    """Env for helpers that invoke run-real-backend.sh against this checkout.
+
+    Selection contract (mirrors run-real-backend.sh):
+
+    - Outside real GitHub Actions: clear CI so the shell picks
+      ``$repo_root/.venv/bin/python``. Ambient CI=true from agent harnesses
+      must not steer the shell onto PATH python (missing private packages).
+    - On GitHub Actions (GITHUB_ACTIONS=true): leave ambient CI alone. Runners
+      install into the job interpreter and have no repository .venv where the
+      script expects it; forcing CI="" yields
+      ``repository Python is required outside CI``.
+
+    Explicit overrides still win (e.g. intentional CI-path unit tests).
+    """
+    environment = _isolated_test_environment(PATH=os.environ.get("PATH", ""))
+    if not _on_github_actions_runner():
+        environment["CI"] = ""
+    environment.update(overrides)
+    return environment
+
+
 def _start_real_backend_proxy(
     _tmp_path: Path,
     **environment_overrides: str,
@@ -177,17 +215,21 @@ def _start_real_backend_proxy(
     app_directory = REPO_ROOT / "hramatka" / "app"
     state_directory = app_directory / ".real-e2e"
     assert not state_directory.exists()
-    https_port = 5174
-    _assert_port_reusable(https_port)
-    # Force non-CI Python selection: ambient CI=true (agent harnesses, local
-    # shells) would make run-real-backend.sh pick PATH python instead of the
-    # repository .venv, losing installed packages (e.g. webauthn). Explicit
-    # overrides may still set CI for intentional CI-path tests.
-    environment = _isolated_test_environment(
-        PATH=os.environ.get("PATH", ""),
-        CI="",
+    # Port resolution stays independent of Python selection: never pin :5174
+    # (zombie-proof). CI vs repo-.venv selection is owned by
+    # _real_backend_launcher_environment.
+    environment = _real_backend_launcher_environment(**environment_overrides)
+    # Never pin :5174 — a leftover process on that port must not fail this suite.
+    # Callers may pass HRAMATKA_PROXY_PORT; otherwise take an ephemeral free port.
+    if "HRAMATKA_PROXY_PORT" in environment:
+        https_port = int(environment["HRAMATKA_PROXY_PORT"])
+    else:
+        https_port = _free_port()
+        environment["HRAMATKA_PROXY_PORT"] = str(https_port)
+    environment.setdefault(
+        "HRAMATKA_E2E_ORIGIN",
+        f"https://127.0.0.1:{https_port}",
     )
-    environment.update(environment_overrides)
     process = subprocess.Popen(
         [str(app_directory / "e2e" / "run-real-backend.sh")],
         cwd=app_directory,
@@ -237,9 +279,7 @@ def _start_hung_playwright_proxy() -> tuple[subprocess.Popen[bytes], int, Path]:
     app_directory = REPO_ROOT / "hramatka" / "app"
     state_directory = app_directory / ".real-e2e"
     assert not state_directory.exists()
-    environment = _isolated_test_environment(
-        PATH=os.environ.get("PATH", ""),
-        CI="",
+    environment = _real_backend_launcher_environment(
         HRAMATKA_E2E_TEST_HUNG_PROXY="1",
     )
     process = subprocess.Popen(
@@ -288,6 +328,11 @@ def _make_real_backend_shell_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
         REPO_ROOT / "hramatka" / "app" / "e2e" / "run-real-backend.sh",
         e2e_directory / "run-real-backend.sh",
     )
+    # Shell resolves the proxy port via this module before starting the proxy.
+    shutil.copy2(
+        REPO_ROOT / "hramatka" / "app" / "e2e" / "resolve-e2e-port.mjs",
+        e2e_directory / "resolve-e2e-port.mjs",
+    )
     fake_python = fake_bin / "python"
     # The launcher asks the selected interpreter for its own prefix, so the
     # stand-in has to answer like a Python rather than merely exist.
@@ -302,10 +347,21 @@ def _make_real_backend_shell_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     fake_npm.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_npm.chmod(0o755)
     fake_node = fake_bin / "node"
+    # run-real-backend.sh invokes node twice: once for resolve-e2e-port.mjs
+    # (print a port) and once for the HTTPS proxy (capture env). Dispatch so
+    # the early port-resolution call does not clobber the capture files.
     fake_node.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "$HRAMATKA_E2E_PYTHON" > "$E2E_PYTHON_CAPTURE"\n'
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  *resolve-e2e-port.mjs)\n"
+        "    printf '5174\\n'\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        'printf "%s\\n" "$HRAMATKA_E2E_PYTHON" > "$E2E_PYTHON_CAPTURE"\n'
         'printf "%s\\n" "$HRAMATKA_E2E_VENV_PREFIX" > "$E2E_PREFIX_CAPTURE"\n'
-        "printf '999999\\n' > .real-e2e/api.pid\nexit 23\n",
+        "printf '999999\\n' > .real-e2e/api.pid\n"
+        "exit 23\n",
         encoding="utf-8",
     )
     fake_node.chmod(0o755)
@@ -1136,6 +1192,29 @@ def test_supervisor_teardown_is_bounded_by_one_shared_grace_period() -> None:
     )
 
 
+def test_real_backend_launcher_env_clears_ambient_ci_outside_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local/agent shells: force repo-.venv path even when ambient CI=true."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("CI", "true")
+    environment = _real_backend_launcher_environment()
+    assert environment["CI"] == ""
+
+
+def test_real_backend_launcher_env_keeps_ci_on_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real GHA runners: keep ambient CI so PATH python is selected (no .venv)."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    environment = _real_backend_launcher_environment()
+    assert environment["CI"] == "true"
+    # Explicit override still wins when a helper needs a forced path.
+    forced = _real_backend_launcher_environment(CI="")
+    assert forced["CI"] == ""
+
+
 def test_real_backend_shell_allows_path_python_only_in_ci(tmp_path: Path) -> None:
     app_directory, fake_bin, fake_python = _make_real_backend_shell_repo(tmp_path)
     capture = tmp_path / "selected-python"
@@ -1257,8 +1336,95 @@ def test_playwright_shell_force_kills_term_unresponsive_proxy_within_grace() -> 
     assert process.wait(timeout=5) == 143
     assert time.monotonic() - started < 4.5
     _wait_for_pid_exit(proxy_pid)
-    _assert_port_reusable(5174)
     assert not state_directory.exists()
+
+
+def _run_e2e_port_resolver(env: dict[str, str]) -> int:
+    app_directory = REPO_ROOT / "hramatka" / "app"
+    node = shutil.which("node")
+    if not node:
+        pytest.fail("node is required to exercise e2e/resolve-e2e-port.mjs")
+    completed = subprocess.run(
+        [node, str(app_directory / "e2e" / "resolve-e2e-port.mjs")],
+        cwd=app_directory,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"resolve-e2e-port failed: stdout={completed.stdout!r} "
+        f"stderr={completed.stderr!r}"
+    )
+    port = int(completed.stdout.strip())
+    assert 1 <= port <= 65535
+    return port
+
+
+def test_e2e_port_resolver_defaults_to_5174_outside_ci() -> None:
+    """Local human path keeps the historical default when nothing is set."""
+    environment = _isolated_test_environment(PATH=os.environ.get("PATH", ""), CI="")
+    environment.pop("HRAMATKA_PROXY_PORT", None)
+    environment.pop("HRAMATKA_E2E_PORT", None)
+    environment.pop("HRAMATKA_E2E_HTTPS_PORT", None)
+    assert _run_e2e_port_resolver(environment) == 5174
+
+
+def test_e2e_port_resolver_honors_explicit_proxy_port() -> None:
+    environment = _isolated_test_environment(
+        PATH=os.environ.get("PATH", ""),
+        CI="true",
+        HRAMATKA_PROXY_PORT="54321",
+    )
+    assert _run_e2e_port_resolver(environment) == 54321
+
+
+def test_e2e_port_resolver_ci_skips_occupied_default_port() -> None:
+    """Regression: CI path must not require a free :5174 (zombie-proof).
+
+    Hold 5174 open, resolve under CI=true with no explicit port, and require a
+    different free loopback port. Mutation: hardcoding 5174 under CI fails here.
+
+    Resolution still happens in resolve-e2e-port.mjs (CLI / npm / workflow)
+    *before* Playwright loads its sync config — this guard pins that pre-load
+    point, not defineConfig(async).
+    """
+    holder = socket.socket()
+    try:
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            holder.bind(("127.0.0.1", 5174))
+        except OSError as error:
+            pytest.skip(f"cannot hold :5174 for the regression guard: {error}")
+        holder.listen(1)
+        environment = _isolated_test_environment(
+            PATH=os.environ.get("PATH", ""),
+            CI="true",
+        )
+        environment.pop("HRAMATKA_PROXY_PORT", None)
+        environment.pop("HRAMATKA_E2E_PORT", None)
+        environment.pop("HRAMATKA_E2E_HTTPS_PORT", None)
+        selected = _run_e2e_port_resolver(environment)
+        assert selected != 5174
+        _assert_port_reusable(selected)
+    finally:
+        holder.close()
+
+
+def test_playwright_real_backend_configs_are_sync_and_env_driven() -> None:
+    """Pinned Playwright 1.61.x rejects async factory configs; must be sync objects."""
+    app_directory = REPO_ROOT / "hramatka" / "app"
+    for name in (
+        "playwright.real-backend.config.ts",
+        "playwright.real-backend-empty.config.ts",
+    ):
+        source = (app_directory / name).read_text(encoding="utf-8")
+        # Call site only — comments may mention the forbidden async shape.
+        assert "export default defineConfig(async" not in source
+        assert "export default defineConfig({" in source
+        assert "resolvedE2ePortFromEnv" in source
+        # No bare port literals in baseURL / webServer.url (env-driven origin).
+        assert "5174" not in source
 
 
 def test_concurrent_playwright_shell_fails_without_disturbing_owner(

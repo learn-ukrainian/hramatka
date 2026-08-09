@@ -128,6 +128,21 @@ else
   exit 1
 fi
 
+# HTTPS proxy port: explicit env wins; CI without env takes an ephemeral free
+# port; local default stays 5174. npm scripts / CI resolve BEFORE Playwright
+# loads its sync config and pass HRAMATKA_PROXY_PORT; this shell re-resolves
+# (honoring that env) so bare `./e2e/run-real-backend.sh` under CI is also
+# zombie-proof. Never hardcode 5174 under CI.
+proxy_port=$(node "$script_directory/resolve-e2e-port.mjs")
+case "$proxy_port" in
+  ''|*[!0-9]*)
+    echo "failed to resolve e2e proxy port" >&2
+    exit 1
+    ;;
+esac
+export HRAMATKA_PROXY_PORT=$proxy_port
+export HRAMATKA_E2E_ORIGIN=https://127.0.0.1:$proxy_port
+
 # node_modules is gitignored; linked worktrees do not share the primary
 # checkout's install. Fail with an actionable message instead of
 # "sh: vite: command not found" from npm run build.
@@ -151,13 +166,13 @@ else
   PYTHONPATH=../.. \
   HRAMATKA_E2E_PYTHON="$e2e_python" \
   HRAMATKA_E2E_VENV_PREFIX="$expected_venv_prefix" \
-  HRAMATKA_E2E_ORIGIN=https://127.0.0.1:5174 \
+  HRAMATKA_E2E_ORIGIN="$HRAMATKA_E2E_ORIGIN" \
   HRAMATKA_E2E_DB_PATH="$state_directory/pilot.sqlite3" \
   HRAMATKA_E2E_INVITE_PATH="$state_directory/invite-token" \
   HRAMATKA_PROXY_FRONTEND_DIR="$PWD/dist" \
   HRAMATKA_PROXY_TLS_CERT="$state_directory/cert.pem" \
   HRAMATKA_PROXY_TLS_KEY="$state_directory/key.pem" \
-  HRAMATKA_PROXY_PORT=5174 \
+  HRAMATKA_PROXY_PORT="$HRAMATKA_PROXY_PORT" \
   node e2e/https-static-proxy.mjs &
 fi
 proxy_pid=$!

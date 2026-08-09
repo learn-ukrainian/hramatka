@@ -13,8 +13,8 @@
     "test": "vitest run && npm run build && node scripts/csp-guard.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:real": "playwright test -c playwright.real-backend.config.ts",
-    "test:e2e:real:empty": "playwright test -c playwright.real-backend-empty.config.ts",
+    "test:e2e:real": "sh -c 'export HRAMATKA_PROXY_PORT=$(node e2e/resolve-e2e-port.mjs); export HRAMATKA_E2E_ORIGIN=https://127.0.0.1:$HRAMATKA_PROXY_PORT; exec playwright test -c playwright.real-backend.config.ts \"$@\"' --",
+    "test:e2e:real:empty": "sh -c 'export HRAMATKA_PROXY_PORT=$(node e2e/resolve-e2e-port.mjs); export HRAMATKA_E2E_ORIGIN=https://127.0.0.1:$HRAMATKA_PROXY_PORT; exec playwright test -c playwright.real-backend-empty.config.ts \"$@\"' --",
     "stub": "node dev/server.js"
   },
   "dependencies": {
