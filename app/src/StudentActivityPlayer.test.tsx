@@ -24,6 +24,48 @@ describe('student activity player (#410)', () => {
     expect(blank).toHaveClass('correct');
   });
 
+  it('renders numbered single-brace cloze markers as every gap and colours checked answers', () => {
+    const blanks = Array.from({ length: 8 }, (_, index) => ({
+      id: index + 1,
+      answer: `слово${index + 1}`,
+      options: [`слово${index + 1}`, `інше${index + 1}`],
+    }));
+    renderActivity({
+      type: 'cloze', title: 'Заповніть пропуски',
+      payload: {
+        text: '{1} {2} {3} {4} {5}, {6} {7} {8} потрібна велика і світла вітальня.',
+        blanks,
+      },
+    });
+
+    const check = screen.getByRole('button', { name: 'Перевірити' });
+    expect(check).toBeDisabled();
+    for (const blank of blanks) {
+      const value = blank.id === 8 ? blank.options[1] : blank.answer;
+      fireEvent.change(screen.getByLabelText(`Пропуск ${blank.id}`), { target: { value } });
+    }
+    expect(screen.getAllByRole('combobox')).toHaveLength(8);
+    expect(check).toBeEnabled();
+
+    fireEvent.click(check);
+    expect(screen.getByLabelText('Пропуск 1')).toHaveClass('correct');
+    expect(screen.getByLabelText('Пропуск 8')).toHaveClass('wrong');
+  });
+
+  it('keeps word-adjacent and out-of-range brace expressions as prose', () => {
+    const { container } = renderActivity({
+      type: 'cloze', title: 'Заповніть пропуски',
+      payload: {
+        text: 'Позначення formula{1} і {9} лишаються в тексті, а {1} — пропуск.',
+        blanks: [{ id: 1, answer: 'слово', options: ['слово', 'інше'] }],
+      },
+    });
+
+    expect(container).toHaveTextContent('formula{1}');
+    expect(container).toHaveTextContent('{9}');
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
+  });
+
   it('colours checked fill-in answers instead of only reporting a result', () => {
     renderActivity({
       type: 'fill-in', title: 'Вставте слово',

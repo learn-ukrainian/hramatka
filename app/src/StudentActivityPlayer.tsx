@@ -149,13 +149,17 @@ function Cloze({ activity }: { activity: Activity }) {
   const reset = () => { setAnswers({}); setChecked(false); };
   const nodes = useMemo(() => {
     const text = String(activity.payload?.text ?? '');
-    const segments = text.split(/(\[___:\d+\]|\{(?:gap|blank)\})/g);
+    const segments = text.split(/(\[___:\d+\]|\{(?:gap|blank)\}|(?<![\p{L}\p{N}_])\{[1-9]\d*\}(?![\p{L}\p{N}_]))/gu);
     let implicitIndex = 0;
     return segments.map((segment, segmentIndex) => {
       const token = segment ?? '';
       const indexed = token.match(/^\[___:(\d+)\]$/);
-      if (!indexed && token !== '{gap}' && token !== '{blank}') return <span key={segmentIndex}>{token}</span>;
-      const blankIndex = indexed ? Number(indexed[1]) : (blanks[implicitIndex++]?.id ?? implicitIndex);
+      const singleBraceIndex = token.match(/^\{(\d+)\}$/);
+      const numberedIndex = indexed ?? singleBraceIndex;
+      if (!numberedIndex && token !== '{gap}' && token !== '{blank}') return <span key={segmentIndex}>{token}</span>;
+      const blankIndex = numberedIndex
+        ? Number(numberedIndex[1])
+        : (blanks[implicitIndex++]?.id ?? implicitIndex);
       const blank = blanks.find((candidate: any) => Number(candidate.id) === blankIndex) ?? blanks[blankIndex - 1];
       if (!blank) return <span key={segmentIndex}>{token}</span>;
       const correct = normalize(answers[blankIndex]) === normalize(blank.answer);
