@@ -1006,7 +1006,9 @@ export default function TeacherApp() {
         setBakeStatus(null);
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
-        setAnchorOpen(false);
+        // The student must receive the source text before the exercises; keep the
+        // teacher's review view compact, but open the reading on the run surface.
+        setAnchorOpen(mode === 'run');
         navigate({ view: 'lesson', lessonId: id, mode });
       } else if (res.status === 409) {
         await res.json().catch(() => ({}));
@@ -1765,7 +1767,12 @@ export default function TeacherApp() {
                   </span>
                 )}
                 <div className="lesson-actions">
-                  <button className="btn ghost" onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')} disabled>{t('lesson.reviewMode')}</button>
+                  <button
+                    type="button"
+                    className="btn ghost selected"
+                    aria-current="page"
+                    onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')}
+                  >{t('lesson.reviewMode')}</button>
                   {lesson && lesson.lesson.status === 'ready' && (
                     <button
                       type="button"

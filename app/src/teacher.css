@@ -287,6 +287,7 @@ button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
 .lesson-model { font-size: 12px; color: var(--ink-soft, #6b6b6b); }
 .lesson-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .lesson-actions button { font-size: 13px; padding: 7px 11px; }
+.lesson-actions .btn.ghost.selected { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 .meta {
   background: var(--accent-soft);

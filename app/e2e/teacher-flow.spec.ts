@@ -533,6 +533,10 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.waitForSelector('.block', { timeout: 15000 });
 
     await page.getByTestId('enter-student-mode-btn').click();
+    // The run surface opens the source text first so a student gets the reading
+    // context before the exercises; the toolbar must still collapse and reopen it.
+    await expect(page.getByTestId('anchor-panel-run')).toBeVisible();
+    await page.getByTestId('anchor-toggle-run').click();
     await expect(page.getByTestId('anchor-panel-run')).toHaveCount(0);
     await page.getByTestId('anchor-toggle-run').click();
     await expect(page.getByTestId('anchor-panel-run')).toBeVisible();

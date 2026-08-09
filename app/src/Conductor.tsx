@@ -4,6 +4,7 @@ import './conductor.css';
 import { DeliberateErrorBadge } from './DeliberateError';
 import { useT, type TFn, type ChromeKey } from './i18n';
 import { deliberateErrors, formatAnswerKeyDisplay } from './review-helpers';
+import StudentActivityPlayer from './StudentActivityPlayer';
 
 // Minimal shape for the lesson document (from app contract; no new API)
 export interface ConductorLessonDoc {
@@ -453,13 +454,14 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
 
   function renderShared() {
     if (!curB) return <div>{t('cond.endOfPlan')}</div>;
+    const corrections = curB.type === 'error-correction' ? deliberateErrors(curB.answer_key) : [];
     return (
       <div className="cond-shared">
         <div className="cond-taskmeta">
           <span className="num">{t('cond.taskCount', { i: visIndex, total })}</span>
         </div>
         <div data-activity data-activity-type={curB.type}>
-          <ActivityPlayer activity={curB.activity} isUkrainian />
+          {c.stud ? <StudentActivityPlayer activity={curB.activity} corrections={corrections} /> : <ActivityPlayer activity={curB.activity} isUkrainian />}
         </div>
       </div>
     );

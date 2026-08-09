@@ -1,0 +1,32 @@
+.student-activity { display: grid; gap: 12px; color: var(--ink); }
+.student-activity-title { margin: 0; font-size: 20px; }
+.student-instruction, .student-guidance { padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+.student-guidance { background: var(--wheat-soft); border: 1px solid var(--wheat); }
+.student-question { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.student-question p { margin: 0; }
+.student-choice-row, .student-choice-stack { display: flex; flex-wrap: wrap; gap: 8px; }
+.student-choice-stack { flex-direction: column; align-items: stretch; }
+.student-choice, .student-check, .student-retry { padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font-weight: 600; }
+.student-choice:hover:not(:disabled) { background: var(--accent-soft); }
+.student-choice.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.student-choice.correct, .student-select.correct { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.student-choice.wrong, .student-select.wrong { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.student-feedback { padding: 8px 10px; border-radius: 6px; font-weight: 600; }
+.student-feedback.correct { background: var(--ok-soft); color: var(--ok); }
+.student-feedback.wrong { background: var(--bad-soft); color: var(--bad); }
+.student-check { justify-self: start; background: var(--accent); border-color: var(--accent); color: var(--paper); }
+.student-retry { justify-self: start; background: var(--wheat-soft); border-color: var(--wheat); }
+.student-check:disabled { opacity: .55; cursor: not-allowed; }
+.student-fill-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.student-select { min-width: 130px; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.student-cloze-passage { line-height: 2.6; }
+.student-cloze { margin: 0 4px; }
+.student-step-two { font-weight: 600; }
+.student-step-one { font-weight: 600; }
+.student-error-sentence { line-height: 2; }
+.student-word { display: inline; padding: 1px 2px; border-radius: 3px; color: inherit; }
+.student-word:hover { background: var(--accent-soft); }
+.student-word.wrong { background: var(--bad-soft); color: var(--bad); }
+.student-questions { display: grid; gap: 10px; margin: 0; padding-inline-start: 24px; }
+.student-writing-label { font-weight: 600; }
+.student-writing { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); resize: vertical; }

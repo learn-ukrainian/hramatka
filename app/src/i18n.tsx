@@ -209,6 +209,22 @@ const DICT = {
   'lesson.model': { uk: 'Модель: {model}', en: 'Model: {model}' },
   'lesson.modelUnknown': { uk: 'невідомо', en: 'unknown' },
 
+  // ---- student widget feedback (#410) ----
+  'studentActivity.check': { uk: 'Перевірити', en: 'Check' },
+  'studentActivity.retry': { uk: 'Спробувати ще раз', en: 'Try again' },
+  'studentActivity.correct': { uk: '✓ Правильно', en: '✓ Correct' },
+  'studentActivity.incorrect': { uk: '✗ Спробуйте ще раз', en: '✗ Try again' },
+  'studentActivity.true': { uk: 'Правда', en: 'True' },
+  'studentActivity.false': { uk: 'Неправда', en: 'False' },
+  'studentActivity.choose': { uk: 'Оберіть відповідь', en: 'Choose an answer' },
+  'studentActivity.fillBlank': { uk: 'Пропуск {n}', en: 'Blank {n}' },
+  'studentActivity.clozeBlank': { uk: 'Пропуск {n}', en: 'Blank {n}' },
+  'studentActivity.findError': { uk: 'Крок 1: знайдіть помилку в реченні.', en: 'Step 1: find the error in the sentence.' },
+  'studentActivity.chooseCorrection': { uk: 'Оберіть правильну форму для «{word}»', en: 'Choose the correct form for “{word}”' },
+  'studentActivity.guidance': { uk: 'Для обговорення / оцінювання:', en: 'For discussion / grading:' },
+  'studentActivity.yourResponse': { uk: 'Ваша відповідь:', en: 'Your response:' },
+  'studentActivity.writingPlaceholder': { uk: 'Напишіть відповідь тут…', en: 'Write your response here…' },
+
   // Clipboard export (PR #120 folded into #114 i18n): teacher/student variants + copy-as-new action.
   // Lesson CONTENT text (anchor + activities) stays UA; only chrome labels/notices are translated here.
   'lesson.copyAsNew': { uk: 'Створити інший урок із цього тексту', en: 'Create another lesson from this text' },

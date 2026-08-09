@@ -14,6 +14,7 @@ import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import { DeliberateErrorBadge, DeliberateErrorList } from './DeliberateError';
 import { useT } from './i18n';
 import { deliberateErrors, formatAnswerKeyDisplay } from './review-helpers';
+import StudentActivityPlayer from './StudentActivityPlayer';
 
 export type LessonViewMode = 'review' | 'run' | 'conduct';
 
@@ -76,8 +77,9 @@ export default function LessonBlocks({
               const acked = acknowledgedIds.includes(block.id);
               const showKey = viewMode === 'review' && showAnswers;
               const typeChip = isWarn ? 'warn' : 'info';
-              // #164: review-only, so the student render can never reach it.
-              const intent = viewMode === 'review' ? deliberateErrors(block.answer_key) : [];
+              // #164: triples live on the outer block key because the activity envelope is frozen.
+              const corrections = block.type === 'error-correction' ? deliberateErrors(block.answer_key) : [];
+              const intent = viewMode === 'review' ? corrections : [];
               return (
                 <div
                   key={block.id}
@@ -100,11 +102,12 @@ export default function LessonBlocks({
 
                   {/* REAL WIDGET — zero fallback (container styled only; kit kept untouched) */}
                   <div className="activity-wrapper" data-activity data-activity-type={block.type}>
-                    <ActivityPlayer
+                    {isStudentView && <StudentActivityPlayer activity={block.activity} corrections={corrections} />}
+                    {!isStudentView && <ActivityPlayer
                       activity={block.activity}
                       isUkrainian={true}
                       // onComplete omitted for teacher review/run
-                    />
+                    />}
                   </div>
 
                   {showKey && (

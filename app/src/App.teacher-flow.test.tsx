@@ -159,4 +159,24 @@ describe('teacher lesson creation and list chrome', () => {
     expect(provenance).toHaveTextContent('Модель: невідомо');
     expect(provenance).not.toHaveTextContent('pilot');
   });
+
+  it('marks review mode as the active, available lesson view', async () => {
+    installFetch();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+    renderApp();
+
+    const reviewMode = await screen.findByRole('button', { name: 'Режим огляду' });
+    expect(reviewMode).toBeEnabled();
+    expect(reviewMode).toHaveAttribute('aria-current', 'page');
+    expect(reviewMode).toHaveClass('selected');
+  });
+
+  it('opens the reading text when the student run screen loads (#410)', async () => {
+    installFetch();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+    renderApp();
+
+    fireEvent.click(await screen.findByTestId('enter-student-mode-btn'));
+    expect(await screen.findByTestId('anchor-panel-run')).toHaveTextContent('Квартира була світліша за іншу.');
+  });
 });
