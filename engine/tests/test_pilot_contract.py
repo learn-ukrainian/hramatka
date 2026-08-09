@@ -34,7 +34,7 @@ EXPECTED_GATE_SUBMISSIONS = {
         "check_tokens": [
             ["книжок", "читання", "мозку"],
             ["книжки", "читання", "людей"],
-            ["дві третини", "третина", "мозку"]
+            ["дві третини", "третина", "мозку"],
         ],
         "evidence_span": [
             "На думку вчених, читання є одним з найскладніших завдань для мозку. "
@@ -46,9 +46,9 @@ EXPECTED_GATE_SUBMISSIONS = {
         "schema_tokens": [
             ("blanks[0]", ["завдань", "завдань", "книжок", "читання", "мозку"]),
             ("blanks[1]", ["мозку", "мозку", "книжки", "читання", "людей"]),
-            ("blanks[2]", ["17 ділянок", "17 ділянок", "дві третини", "третина", "мозку"])
+            ("blanks[2]", ["17 ділянок", "17 ділянок", "дві третини", "третина", "мозку"]),
         ],
-        "vesum": []
+        "vesum": [],
     },
     "error-correction": {
         "check_tokens": [],
@@ -65,14 +65,14 @@ EXPECTED_GATE_SUBMISSIONS = {
             ("items[0]", ["Після 17 потрібна форма родового множини."]),
             ("items[1]", ["У тексті саме «завдань для мозку»."]),
             ("items[2]", ["У тексті саме «хвороби Альцгеймера»."]),
-            ("items[3]", ["Після «жодної» потрібна форма родового однини."])
+            ("items[3]", ["Після «жодної» потрібна форма родового однини."]),
         ],
         "vesum": [
             ("items[0]", ["ділянки", "ділянок", "книжки"], "error_correction_vesum"),
-            ("items[1]", ["завдання", "завдань", "книжки"], "error_correction_vesum"),
-            ("items[2]", ["хвороба", "хвороби", "книжки"], "error_correction_vesum"),
-            ("items[3]", ["книжка", "книжки", "книжок"], "error_correction_vesum")
-        ]
+            ("items[1]", ["завданняк", "завдань", "телевізор"], "error_correction_vesum"),
+            ("items[2]", ["хворобак", "хвороби", "телевізор"], "error_correction_vesum"),
+            ("items[3]", ["книжкак", "книжки", "телевізор"], "error_correction_vesum"),
+        ],
     },
     "fill-in": {
         "check_tokens": [],
@@ -90,14 +90,14 @@ EXPECTED_GATE_SUBMISSIONS = {
             ("items[0]", ["У тексті саме «читання книжок»."]),
             ("items[1]", ["У тексті саме «ризик розвитку»."]),
             ("items[2]", ["У тексті саме «для мозку»."]),
-            ("items[3]", ["У тексті саме «знаходять час»."])
+            ("items[3]", ["У тексті саме «знаходять час»."]),
         ],
         "vesum": [
             ("items[0]", ["читання", "книжки", "насолоду", "телевізор"], "fill_in_vesum"),
             ("items[1]", ["ризик", "книжки", "читання", "телевізор"], "fill_in_vesum"),
             ("items[2]", ["мозку", "книжок", "читання", "телевізор"], "fill_in_vesum"),
-            ("items[3]", ["час", "книжки", "читання", "мозку"], "fill_in_vesum")
-        ]
+            ("items[3]", ["час", "книжки", "читання", "мозку"], "fill_in_vesum"),
+        ],
     },
     "mark-the-words": {
         "check_tokens": [],
@@ -108,13 +108,17 @@ EXPECTED_GATE_SUBMISSIONS = {
             "Під час читання активізуються одразу 17 ділянок головного мозку. "
             "Третина українців за рік не прочитує жодної книжки, зате дві третини "
             "щодня знаходять час увімкнути телевізор.",
-            "активізуються", "прочитує", "знаходять", "увімкнути", "рік"
+            "активізуються",
+            "прочитує",
+            "знаходять",
+            "увімкнути",
+            "рік",
         ],
         "matchup_left": [],
         "matchup_semantics": [],
         "numeral": [],
         "schema_tokens": [],
-        "vesum": []
+        "vesum": [],
     },
     "match-up": {
         "check_tokens": [["книга"], ["книга"], ["чимало"], ["непевність"]],
@@ -122,36 +126,36 @@ EXPECTED_GATE_SUBMISSIONS = {
             "не прочитує жодної книжки",
             "читання книжок",
             "Багато людей втратили",
-            "ризик розвитку хвороби"
+            "ризик розвитку хвороби",
         ],
         "matchup_left": ["книжки", "книжок", "багато", "ризик"],
         "matchup_semantics": [
             ("книжки", "книга"),
             ("книжок", "книга"),
             ("багато", "чимало"),
-            ("ризик", "непевність")
+            ("ризик", "непевність"),
         ],
         "numeral": [],
         "schema_tokens": [
             ("pairs[0]", ["книжки", "книга"]),
             ("pairs[1]", ["книжок", "книга"]),
             ("pairs[2]", ["багато", "чимало"]),
-            ("pairs[3]", ["ризик", "непевність"])
+            ("pairs[3]", ["ризик", "непевність"]),
         ],
-        "vesum": []
+        "vesum": [],
     },
     "quiz": {
         "check_tokens": [
             ["читання", "телевізор", "книжки"],
             ["третина", "телевізор", "мозку"],
             ["насолоду", "телевізор", "мозку"],
-            ["ділянок", "книжки", "телевізор"]
+            ["ділянок", "книжки", "телевізор"],
         ],
         "evidence_span": [
             "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера",
             "Третина українців за рік не прочитує жодної книжки",
             "Багато людей втратили насолоду від неспішного читання книжок",
-            "Під час читання активізуються одразу 17 ділянок головного мозку"
+            "Під час читання активізуються одразу 17 ділянок головного мозку",
         ],
         "matchup_left": [],
         "matchup_semantics": [],
@@ -163,7 +167,7 @@ EXPECTED_GATE_SUBMISSIONS = {
             ("items[2]", "Що втратили багато людей?"),
             ("items[2]", "насолоду телевізор мозку"),
             ("items[3]", "Що активізується під час читання?"),
-            ("items[3]", "17 ділянок книжки телевізор")
+            ("items[3]", "17 ділянок книжки телевізор"),
         ],
         "schema_tokens": [
             (
@@ -188,7 +192,7 @@ EXPECTED_GATE_SUBMISSIONS = {
                 ["Що активізується під час читання?", "17 ділянок", "книжки", "телевізор"],
             ),
         ],
-        "vesum": []
+        "vesum": [],
     },
     "short-writing": {
         "check_tokens": [],
@@ -197,11 +201,14 @@ EXPECTED_GATE_SUBMISSIONS = {
         "matchup_semantics": [],
         "numeral": [],
         "schema_tokens": [
-            ("text", [
-                "читання і телевізор: (1) ризик хвороби; (2) телевізор; (3) книжки",
-                "Читання корисне для мозку.",
-                "Є три змістові частини і зв'язок з опорою."
-            ])
+            (
+                "text",
+                [
+                    "читання і телевізор: (1) ризик хвороби; (2) телевізор; (3) книжки",
+                    "Читання корисне для мозку.",
+                    "Є три змістові частини і зв'язок з опорою.",
+                ],
+            )
         ],
         "vesum": [
             (
@@ -209,14 +216,14 @@ EXPECTED_GATE_SUBMISSIONS = {
                 ["читання", "телевізор", "ризик", "хвороби", "телевізор", "книжки"],
                 "open_task_vesum",
             )
-        ]
+        ],
     },
     "text-questions": {
         "check_tokens": [],
         "evidence_span": [
             "Під час читання активізуються одразу 17 ділянок головного мозку.",
             "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера",
-            "Багато людей втратили насолоду від неспішного читання книжок"
+            "Багато людей втратили насолоду від неспішного читання книжок",
         ],
         "matchup_left": [],
         "matchup_semantics": [],
@@ -253,8 +260,8 @@ EXPECTED_GATE_SUBMISSIONS = {
                 "items[2]",
                 ["Як", "ви", "застосуєте", "цю", "думку", "про", "читання", "власному", "досвіді"],
                 "open_task_vesum",
-            )
-        ]
+            ),
+        ],
     },
     "true-false": {
         "check_tokens": [
@@ -290,8 +297,8 @@ EXPECTED_GATE_SUBMISSIONS = {
             ("items[3]", ["Регулярне читання знижує ризик хвороби Альцгеймера.", None]),
             ("items[4]", ["Читання є одним з найскладніших завдань для мозку.", None]),
         ],
-        "vesum": []
-    }
+        "vesum": [],
+    },
 }
 
 
@@ -366,7 +373,7 @@ def test_pilot_gate_submitted_fields_pin(monkeypatch) -> None:
         raw = loader(0)
         clean, evidence, _kit_anchors = schema.parse_raw_activity(raw)
         gr = schema.GateResult()
-        
+
         schema_tokens_calls.clear()
         numeral_calls.clear()
         vesum_calls.clear()
@@ -374,9 +381,9 @@ def test_pilot_gate_submitted_fields_pin(monkeypatch) -> None:
         matchup_semantics_calls.clear()
         evidence_span_calls.clear()
         check_tokens_calls.clear()
-        
+
         registry.ACTIVITY_REGISTRY[name].gate(clean, evidence, anchor, gr)
-        
+
         actual_calls[name] = {
             "schema_tokens": list(schema_tokens_calls),
             "numeral": list(numeral_calls),
@@ -396,6 +403,7 @@ def test_pilot_gate_submitted_fields_pin_catches_dropped_field(monkeypatch) -> N
 
     def tampered_loader(idx):
         import copy
+
         raw = original_loader(idx)
         tampered_raw = copy.deepcopy(raw)
         for item in tampered_raw.get("items", []):
@@ -406,5 +414,6 @@ def test_pilot_gate_submitted_fields_pin_catches_dropped_field(monkeypatch) -> N
     monkeypatch.setitem(fixtures._READY_CANDIDATES, "true-false", tampered_loader)
 
     import pytest
+
     with pytest.raises(AssertionError):
         test_pilot_gate_submitted_fields_pin(monkeypatch)

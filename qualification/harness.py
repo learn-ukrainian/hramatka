@@ -36,6 +36,7 @@ from hramatka.api.qualified_models import (
     QualificationCandidateRegistry,
 )
 from hramatka.engine import ENGINE_VERSION, data, fixtures, flags, paths
+from hramatka.engine.closed_class_policy import is_closed_class_form
 from hramatka.engine.density_evaluator_v3 import MAX_REPAIR_ROUNDS, evaluate_phase_with_repair
 from hramatka.engine.lesson_capacity_v3 import (
     AllocatedSlot,
@@ -527,6 +528,9 @@ def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
     """
     db_path = paths.vesum_db()
     allowed_pos = _vesum_uninflectable_allowed_pos(answer, db_path)
+    seen = {answer.lower()}
+    candidates: list[str] = []
+
     if allowed_pos is not None:
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:
@@ -538,8 +542,6 @@ def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
             ).fetchall()
         finally:
             conn.close()
-        seen = {answer.lower()}
-        candidates: list[str] = []
         for (word_form,) in rows:
             key = word_form.lower()
             if key in seen:
@@ -553,8 +555,6 @@ def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
         for match in _vesum_matches(answer, db_path)
         if isinstance(match.get("lemma"), str)
     }
-    seen = {answer.lower()}
-    candidates = []
     for lemma in lemmas:
         for form in verify_lemma(lemma, db_path=db_path):
             word_form = form["word_form"]
@@ -563,6 +563,34 @@ def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
                 continue
             seen.add(key)
             candidates.append(word_form)
+
+    if len(candidates) < count:
+        for match in _vesum_matches(answer, db_path):
+            pos = match.get("pos")
+            if pos and isinstance(pos, str):
+                conn = sqlite3.connect(str(db_path), check_same_thread=False)
+                try:
+                    rows = conn.execute(
+                        "SELECT DISTINCT word_form FROM forms WHERE pos = ? ORDER BY word_form",
+                        (pos,),
+                    ).fetchall()
+                finally:
+                    conn.close()
+                for (word_form,) in rows:
+                    if word_form.lower() not in seen:
+                        seen.add(word_form.lower())
+                        candidates.append(word_form)
+                        if len(candidates) >= count:
+                            break
+            if len(candidates) >= count:
+                break
+    if len(candidates) < count:
+        for fallback_form in ("бути", "мати", "ставати", "слово", "текст", "новий", "добрий"):
+            if fallback_form.lower() not in seen:
+                seen.add(fallback_form.lower())
+                candidates.append(fallback_form)
+                if len(candidates) >= count:
+                    break
     return candidates[:count]
 
 
@@ -586,8 +614,12 @@ def _v3_live_record_from_kit(
             "instruction": "Оберіть правильний варіант.",
             "items": [
                 {
-                    "question": f"Яке слово підходить до контексту {index + 1}?",
-                    "options": [form, _v3_fixture_distractors(form)[0]],
+                    "question": (
+                        f"Яке слово «___» підходить до контексту {index + 1}?"
+                        if is_closed_class_form(form)
+                        else f"Яке слово підходить до контексту {index + 1}?"
+                    ),
+                    "options": [form, *_v3_fixture_distractors(form, count=2)],
                     "correct": 0,
                 }
                 for index, form in enumerate(forms)
@@ -600,7 +632,11 @@ def _v3_live_record_from_kit(
             "instruction": "Заповніть пропуск.",
             "text": "Це текст із кількома пропусками, які треба заповнити.",
             "blanks": [
-                {"id": index, "answer": form, "options": [form, _v3_fixture_distractors(form)[0]]}
+                {
+                    "id": index,
+                    "answer": form,
+                    "options": [form, *_v3_fixture_distractors(form, count=2)],
+                }
                 for index, form in enumerate(forms, start=1)
             ],
         }
@@ -615,7 +651,7 @@ def _v3_live_record_from_kit(
                 {
                     "sentence": f"Речення {index + 1} потребує правильного слова.",
                     "answer": form,
-                    "options": [form, _v3_fixture_distractors(form)[0]],
+                    "options": [form, *_v3_fixture_distractors(form, count=2)],
                 }
                 for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True))
             ],
@@ -633,8 +669,7 @@ def _v3_live_record_from_kit(
         }
         answer_key = {
             "items": [
-                {"index": index, "correct": correct}
-                for index, correct in enumerate(correct_values)
+                {"index": index, "correct": correct} for index, correct in enumerate(correct_values)
             ]
         }
     elif activity_type == "match-up":
@@ -667,16 +702,13 @@ def _v3_live_record_from_kit(
             "type": activity_type,
             "instruction": "Дайте відповідь.",
             "items": [
-                f"Яке питання стосується контексту {index + 1}?"
-                for index in range(len(forms))
+                f"Яке питання стосується контексту {index + 1}?" for index in range(len(forms))
             ],
         }
         answer_key = {"guidance": "x"}
     elif activity_type == "short-writing":
         prompt_fragments = [
-            fragment
-            for unit in certified_units
-            for fragment in unit["allowed_forms"]
+            fragment for unit in certified_units for fragment in unit["allowed_forms"]
         ]
         payload = {
             "type": activity_type,
@@ -684,9 +716,7 @@ def _v3_live_record_from_kit(
         }
         answer_key = {
             "guidance": (
-                "Текст має бути "
-                + " ".join(prompt_fragments)
-                + " та містити відповідні описи."
+                "Текст має бути " + " ".join(prompt_fragments) + " та містити відповідні описи."
             )
         }
     else:  # pragma: no cover - the closed production schedule controls kit types.
@@ -695,9 +725,9 @@ def _v3_live_record_from_kit(
         "slot_id": kit["slot_id"],
         "type": activity_type,
         "activity": {"payload": payload, "answer_key": answer_key},
-        "serialized_units": [
-            {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-        ][:unit_limit],
+        "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]][
+            :unit_limit
+        ],
     }
 
 

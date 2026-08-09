@@ -22,16 +22,16 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # The live baker now imports the v3.3 path; transcription still validates these
 # fail-closed selector literals against its template and density authorities
 # before it may copy a route aggregate here.
-PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.1"
+PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.2"
 # This is the canonical three-anchor aggregate of the currently pinned v3.3
 # qualification prompts.  It remains a selector literal so an empty registry
 # fails closed until the orchestrator transcribes a new matrix.
 PROMPT_SHA256: Final = ""
-TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.3"
-TEMPLATE_SHA256: Final = "8584cc56f96b694095a66a9d0e0cdd0a264903da00f0461638bda8a1ab62c5f3"
+TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.4"
+TEMPLATE_SHA256: Final = "ff77504227e205b9e5c40b2a97d3d583bb365545478376dc0fc265c7dbc794f6"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
-TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v2"
+TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
 
 

@@ -12,41 +12,47 @@ import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from . import paths
+from .closed_class_policy import (
+    CLOSED_CLASS_ALLOWED_SHAPES,
+    is_closed_class_form,
+)
 from .lesson_capacity_v3 import LessonAllocation
 from .linguistics import verify_lemma, verify_words
 from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
-PROMPT_PACK_VERSION = "PromptPackInput.v3.1"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.3"
-TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v2"
+PROMPT_PACK_VERSION = "PromptPackInput.v3.2"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.4"
+TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.3.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.4.md"
 
 # Literal strings that appear only in the full-density synthetic exemplar.  Their
 # presence in a model response means the serializer copied the exemplar instead
 # of generating teacher-ready content from the certified substrate.
-EXEMPLAR_ONLY_STRINGS = frozenset({
-    "SYNTHETIC-QUIZ-STEM",
-    "SYNTHETIC-CLOZE-TEXT",
-    "SYNTHETIC-FILLIN-STEM",
-    "SYNTHETIC-TRUEFALSE-STEM",
-    "SYNTHETIC-MATCH-LEFT",
-    "SYNTHETIC-MATCH-RIGHT",
-    "SYNTHETIC-ERROR-SOURCE",
-    "SYNTHETIC-ERROR-CORRECTION",
-    "SYNTHETIC-OPEN-QUESTION",
-    "SYNTHETIC-WRITING-PROMPT",
-    "SYNTHETIC-WRITING-GUIDANCE",
-    "SYNTHETIC-WRITING-TARGET",
-    "SYNTHETIC-MARK-TEXT",
-    "SYNTHETIC-DISTRACTOR",
-    "Синтетична вказівка.",
-})
+EXEMPLAR_ONLY_STRINGS = frozenset(
+    {
+        "SYNTHETIC-QUIZ-STEM",
+        "SYNTHETIC-CLOZE-TEXT",
+        "SYNTHETIC-FILLIN-STEM",
+        "SYNTHETIC-TRUEFALSE-STEM",
+        "SYNTHETIC-MATCH-LEFT",
+        "SYNTHETIC-MATCH-RIGHT",
+        "SYNTHETIC-ERROR-SOURCE",
+        "SYNTHETIC-ERROR-CORRECTION",
+        "SYNTHETIC-OPEN-QUESTION",
+        "SYNTHETIC-WRITING-PROMPT",
+        "SYNTHETIC-WRITING-GUIDANCE",
+        "SYNTHETIC-WRITING-TARGET",
+        "SYNTHETIC-MARK-TEXT",
+        "SYNTHETIC-DISTRACTOR",
+        "Синтетична вказівка.",
+    }
+)
 _EXEMPLAR_QUIZ_QUESTION_TEMPLATE = "Вкажіть правильну форму: {}"
 
 
@@ -85,6 +91,12 @@ def _type_kit(slot: object) -> dict[str, Any]:
         "certified_units": units,
         "registered_constraints": list(plan.registered_constraints),
         "certified_target_tokens": [token.to_dict() for token in plan.certified_target_tokens],
+        "degree_seed_pairs": [
+            sorted(pair) for pair in sorted(_DEGREE_SEED_PAIRS, key=lambda p: sorted(p))
+        ],
+        "aspect_seed_pairs": [
+            sorted(pair) for pair in sorted(_ASPECT_SEED_PAIRS, key=lambda p: sorted(p))
+        ],
     }
 
 
@@ -131,8 +143,7 @@ def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[
                 "type": activity_type,
                 "activity": _synthetic_activity_example(activity_type, count),
                 "serialized_units": [
-                    {"unit_id": f"<{activity_type}-unit-{index}>"}
-                    for index in range(1, count + 1)
+                    {"unit_id": f"<{activity_type}-unit-{index}>"} for index in range(1, count + 1)
                 ],
             }
         )
@@ -271,8 +282,7 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             },
             "answer_key": {
                 "items": [
-                    {"index": index, "correct": items[index]["correct"]}
-                    for index in range(count)
+                    {"index": index, "correct": items[index]["correct"]} for index in range(count)
                 ]
             },
         }
@@ -384,9 +394,7 @@ def _contains_form(text: str, form: str) -> bool:
     return bool(_word_boundary_pattern(form).search(text))
 
 
-def validate_verbatim_answer_ban(
-    activity: Mapping[str, Any], kit: Mapping[str, Any]
-) -> None:
+def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
     """Reject learner-facing prose that contains, names, or quotes a correct answer.
 
     The certified substrate supplies the correct form; the model must elicit it
@@ -414,6 +422,8 @@ def validate_verbatim_answer_ban(
     def _add_field(text: str, forms: list[str]) -> None:
         if isinstance(text, str):
             checks.append((text, forms))
+
+    db_path = paths.vesum_db()
 
     if activity_type == "quiz":
         instruction = payload.get("instruction", "")
@@ -446,10 +456,16 @@ def validate_verbatim_answer_ban(
                     if certified_match:
                         item_answers.append(certified_match[0])
                         all_answers.append(certified_match[0])
+            # Closed-class function words in quiz questions must be elicited via
+            # an explicit gap marker '___' rather than verbatim stem prose.
+            for form in item_answers:
+                if is_closed_class_form(form, db_path):
+                    if not isinstance(question, str) or "___" not in question:
+                        raise PromptPackV3Error(
+                            f"closed-class quiz stem missing gap marker '___': {question!r}"
+                        )
             item_checks.append((question, item_answers))
-        checks.extend(
-            (text, forms) for text, forms in item_checks if isinstance(text, str)
-        )
+        checks.extend((text, forms) for text, forms in item_checks if isinstance(text, str))
         _add_field(instruction, all_answers)
     elif activity_type == "cloze":
         instruction = payload.get("instruction", "")
@@ -473,9 +489,7 @@ def validate_verbatim_answer_ban(
                     item_answers.append(answer)
                     all_answers.append(answer)
                 item_checks.append((sentence, item_answers))
-        checks.extend(
-            (text, forms) for text, forms in item_checks if isinstance(text, str)
-        )
+        checks.extend((text, forms) for text, forms in item_checks if isinstance(text, str))
         _add_field(instruction, all_answers)
     elif activity_type == "error-correction":
         instruction = payload.get("instruction", "")
@@ -490,9 +504,7 @@ def validate_verbatim_answer_ban(
                         item_answers.append(correction)
                         all_answers.append(correction)
                 item_checks.append((item, item_answers))
-        checks.extend(
-            (text, forms) for text, forms in item_checks if isinstance(text, str)
-        )
+        checks.extend((text, forms) for text, forms in item_checks if isinstance(text, str))
         _add_field(instruction, all_answers)
     elif activity_type == "short-writing":
         instruction = payload.get("instruction", "")
@@ -517,6 +529,8 @@ def validate_verbatim_answer_ban(
                 f"learner-facing text is a bare answer form or template: {text!r}"
             )
         for form in forms:
+            if is_closed_class_form(form, db_path) and activity_type in CLOSED_CLASS_ALLOWED_SHAPES:
+                continue
             if _contains_form(text, form):
                 raise PromptPackV3Error(
                     f"learner-facing text contains answer form {form!r}: {text!r}"
@@ -527,9 +541,7 @@ def _token_count(text: str) -> int:
     return len(text.split())
 
 
-def validate_elicitation_shape(
-    activity: Mapping[str, Any], kit: Mapping[str, Any]
-) -> None:
+def validate_elicitation_shape(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
     """Require quiz/cloze/fill-in prompts to be composed sentences, not bare forms."""
     certified_forms = _certified_answer_forms(kit)
     payload = activity.get("payload")
@@ -628,17 +640,232 @@ def _uninflectable_allowed_pos(answer: str, db_path: Path) -> set[str] | None:
     return None
 
 
-def validate_distractor_adjacency(
-    activity: Mapping[str, Any], kit: Mapping[str, Any]
-) -> None:
+_DEGREE_SEED_PAIRS: Final[frozenset[frozenset[str]]] = frozenset(
+    {
+        frozenset({"добрий", "кращий"}),
+        frozenset({"високий", "вищий"}),
+        frozenset({"низький", "нижчий"}),
+        frozenset({"легкий", "легший"}),
+        frozenset({"великий", "більший"}),
+        frozenset({"малий", "менший"}),
+        frozenset({"поганий", "гірший"}),
+        frozenset({"глибокий", "глибший"}),
+        frozenset({"довгий", "довший"}),
+        frozenset({"широкий", "ширший"}),
+        frozenset({"вузький", "вужчий"}),
+        frozenset({"дорогий", "дорожчий"}),
+        frozenset({"близький", "ближчий"}),
+        frozenset({"далекий", "дальший"}),
+    }
+)
+
+
+def _degree_rank(tags_str: str) -> int | None:
+    if "compb" in tags_str:
+        return 0
+    if "compc" in tags_str:
+        return 1
+    if "comps" in tags_str:
+        return 2
+    return None
+
+
+def _strip_naj(word: str) -> str:
+    w = word.lower()
+    if w.startswith("най"):
+        return w[3:]
+    return w
+
+
+def _is_degree_adjacent(
+    answer: str, option: str, db_path: Path, kit: Mapping[str, Any] | None = None
+) -> bool:
+    """Return True if option and answer form a valid degree-adjacent pair (rank diff == 1)."""
+    ans_matches = _vesum_matches(answer, db_path)
+    opt_matches = _vesum_matches(option, db_path)
+    if not ans_matches or not opt_matches:
+        return False
+
+    ans_degrees = {_degree_rank(m.get("tags", "")) for m in ans_matches}
+    opt_degrees = {_degree_rank(m.get("tags", "")) for m in opt_matches}
+    ans_degrees.discard(None)
+    opt_degrees.discard(None)
+
+    has_rank_diff_1 = any(abs(d1 - d2) == 1 for d1 in ans_degrees for d2 in opt_degrees)
+    if not has_rank_diff_1:
+        return False
+
+    ans_frames = {
+        tuple(
+            t
+            for t in m.get("tags", "").split(":")
+            if t in {"m", "f", "n", "p", "nom", "gen", "dat", "acc", "instr", "loc", "voc"}
+        )
+        for m in ans_matches
+    }
+    opt_frames = {
+        tuple(
+            t
+            for t in m.get("tags", "").split(":")
+            if t in {"m", "f", "n", "p", "nom", "gen", "dat", "acc", "instr", "loc", "voc"}
+        )
+        for m in opt_matches
+    }
+    if ans_frames and opt_frames and not (ans_frames & opt_frames):
+        return False
+
+    ans_lemmas = {m.get("lemma", "").lower() for m in ans_matches if m.get("lemma")}
+    opt_lemmas = {m.get("lemma", "").lower() for m in opt_matches if m.get("lemma")}
+
+    ans_bases = ans_lemmas | {_strip_naj(lem) for lem in ans_lemmas}
+    opt_bases = opt_lemmas | {_strip_naj(lem) for lem in opt_lemmas}
+
+    if ans_bases & opt_bases:
+        return True
+
+    degree_pairs = (
+        frozenset(frozenset(p) for p in kit.get("degree_seed_pairs", ()))
+        if kit and isinstance(kit, Mapping) and "degree_seed_pairs" in kit
+        else _DEGREE_SEED_PAIRS
+    )
+    for pair in degree_pairs:
+        if (ans_bases & pair) and (opt_bases & pair):
+            return True
+
+    return False
+
+
+_IMPERFECTIVE_FORCING_CUES: Final[frozenset[str]] = frozenset(
+    {
+        "щодня",
+        "завжди",
+        "регулярно",
+        "кожного дня",
+        "часто",
+        "зазвичай",
+        "постійно",
+        "тривалий час",
+        "годинами",
+        "кожного ранку",
+        "щопонеділка",
+    }
+)
+
+_PERFECTIVE_FORCING_CUES: Final[frozenset[str]] = frozenset(
+    {"раптом", "зненацька", "за одну хвилину", "раптово", "вмить", "одного разу"}
+)
+
+_ASPECT_SEED_PAIRS: Final[frozenset[frozenset[str]]] = frozenset(
+    {
+        frozenset({"прочитувати", "прочитати"}),
+        frozenset({"читати", "прочитати"}),
+        frozenset({"писати", "написати"}),
+        frozenset({"робити", "зробити"}),
+        frozenset({"бачити", "побачити"}),
+        frozenset({"чути", "почути"}),
+        frozenset({"говорити", "сказати"}),
+        frozenset({"брати", "взяти"}),
+        frozenset({"допомагати", "допомогти"}),
+    }
+)
+
+
+def _is_aspect_adjacent(
+    answer: str,
+    option: str,
+    stem_text: str,
+    db_path: Path,
+    kit: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return True if option and answer are opposite aspect forms with a forcing cue in stem."""
+    if not stem_text:
+        return False
+
+    stem_lower = stem_text.lower()
+    words = re.findall(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", stem_lower)
+    if "не" in words or "ні" in words:
+        return False
+
+    ans_matches = _vesum_matches(answer, db_path)
+    opt_matches = _vesum_matches(option, db_path)
+    if not ans_matches or not opt_matches:
+        return False
+
+    ans_aspects = {
+        "imperf"
+        if "imperf" in m.get("tags", "")
+        else ("perf" if "perf" in m.get("tags", "") else None)
+        for m in ans_matches
+    }
+    opt_aspects = {
+        "imperf"
+        if "imperf" in m.get("tags", "")
+        else ("perf" if "perf" in m.get("tags", "") else None)
+        for m in opt_matches
+    }
+    ans_aspects.discard(None)
+    opt_aspects.discard(None)
+
+    is_opposite = ("imperf" in ans_aspects and "perf" in opt_aspects) or (
+        "perf" in ans_aspects and "imperf" in opt_aspects
+    )
+    if not is_opposite:
+        return False
+
+    ans_frames = {
+        tuple(
+            t
+            for t in m.get("tags", "").split(":")
+            if t in {"s", "p", "1", "2", "3", "m", "f", "n", "past", "inf"}
+        )
+        for m in ans_matches
+    }
+    opt_frames = {
+        tuple(
+            t
+            for t in m.get("tags", "").split(":")
+            if t in {"s", "p", "1", "2", "3", "m", "f", "n", "past", "inf"}
+        )
+        for m in opt_matches
+    }
+    if ans_frames and opt_frames and not (ans_frames & opt_frames):
+        return False
+
+    ans_lemmas = {m.get("lemma", "").lower() for m in ans_matches if m.get("lemma")}
+    opt_lemmas = {m.get("lemma", "").lower() for m in opt_matches if m.get("lemma")}
+
+    related = bool(ans_lemmas & opt_lemmas)
+    if not related:
+        aspect_pairs = (
+            frozenset(frozenset(p) for p in kit.get("aspect_seed_pairs", ()))
+            if kit and isinstance(kit, Mapping) and "aspect_seed_pairs" in kit
+            else _ASPECT_SEED_PAIRS
+        )
+        for pair in aspect_pairs:
+            if (ans_lemmas & pair) and (opt_lemmas & pair):
+                related = True
+                break
+
+    if not related:
+        return False
+
+    has_forcing_cue = any(
+        cue in stem_lower for cue in _IMPERFECTIVE_FORCING_CUES | _PERFECTIVE_FORCING_CUES
+    )
+    return has_forcing_cue
+
+
+def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
     """Require every distractor to be a real VESUM form adjacent to the answer.
 
     For INFLECTABLE answer forms the distractor must share at least one
-    lowercased VESUM lemma with the certified answer form.  For UNINFLECTABLE
+    lowercased VESUM lemma with the certified answer form, or be degree-adjacent
+    or aspect-adjacent with a forcing cue in the stem.  For UNINFLECTABLE
     answers -- closed-class POS (prep/part/conj) or a one-form paradigm -- the
     distractor must instead be a real VESUM word of the same POS class and
     distinct from the answer.
 
+    MCQ option lists must contain at least 3 options.
     The answer form must sit at the index declared by the answer key.
     """
     db_path = paths.vesum_db()
@@ -649,16 +876,20 @@ def validate_distractor_adjacency(
     answer_key = activity.get("answer_key")
 
     def _validate_options(
-        answer: str, options: Sequence[Any], correct_index: int, label: str
+        answer: str,
+        options: Sequence[Any],
+        correct_index: int,
+        label: str,
+        stem_text: str = "",
     ) -> None:
         if not isinstance(options, Sequence) or isinstance(options, (bytes, bytearray, str)):
             raise PromptPackV3Error(f"{label} options must be a list")
+        if len(options) < 3:
+            raise PromptPackV3Error(f"{label} options count must be at least 3")
         if correct_index < 0 or correct_index >= len(options):
             raise PromptPackV3Error(f"{label} correct index {correct_index} is out of range")
         if options[correct_index] != answer:
-            raise PromptPackV3Error(
-                f"{label} answer form is not at the declared correct index"
-            )
+            raise PromptPackV3Error(f"{label} answer form is not at the declared correct index")
         answer_lemmas = _lemma_set(answer, db_path)
         if not answer_lemmas:
             raise PromptPackV3Error(f"{label} answer form {answer!r} is not in VESUM")
@@ -683,6 +914,10 @@ def validate_distractor_adjacency(
                         f"{label} distractor {option!r} equals answer {answer!r}"
                     )
             elif not (answer_lemmas & option_lemmas):
+                if _is_degree_adjacent(answer, option, db_path, kit):
+                    continue
+                if _is_aspect_adjacent(answer, option, stem_text, db_path, kit):
+                    continue
                 raise PromptPackV3Error(
                     f"{label} distractor {option!r} does not share a lemma with answer {answer!r}"
                 )
@@ -710,9 +945,12 @@ def validate_distractor_adjacency(
                 key_item = key_items[index]
                 if isinstance(key_item, Mapping) and isinstance(key_item.get("correct"), int):
                     declared_correct = key_item["correct"]
-            _validate_options(answer, options, declared_correct, f"quiz items[{index}]")
+            _validate_options(
+                answer, options, declared_correct, f"quiz items[{index}]", item.get("question", "")
+            )
     elif activity_type == "cloze":
         key_blanks = answer_key.get("blanks", []) if isinstance(answer_key, Mapping) else []
+        text = payload.get("text", "")
         for index, blank in enumerate(payload.get("blanks", ())):
             if not isinstance(blank, Mapping):
                 continue
@@ -720,7 +958,13 @@ def validate_distractor_adjacency(
             if not isinstance(answer, str):
                 raise PromptPackV3Error(f"cloze blanks[{index}] lacks answer")
             # Cloze answer_key index is the blank id; assume ordered identity.
-            _validate_options(answer, blank.get("options"), 0, f"cloze blanks[{index}]")
+            _validate_options(
+                answer,
+                blank.get("options"),
+                0,
+                f"cloze blanks[{index}]",
+                text if isinstance(text, str) else "",
+            )
             if isinstance(key_blanks, Sequence) and index < len(key_blanks):
                 key_blank = key_blanks[index]
                 if isinstance(key_blank, Mapping) and key_blank.get("answer") != answer:
@@ -739,7 +983,9 @@ def validate_distractor_adjacency(
                 and key_forms[index] != answer
             ):
                 raise PromptPackV3Error(f"fill-in items[{index}] answer key mismatch")
-            _validate_options(answer, item.get("options"), 0, f"fill-in items[{index}]")
+            _validate_options(
+                answer, item.get("options"), 0, f"fill-in items[{index}]", item.get("sentence", "")
+            )
     elif activity_type == "error-correction":
         key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
         items = payload.get("items", ())
@@ -783,7 +1029,11 @@ def validate_distractor_adjacency(
                     if bool(w_pos & allowed_pos):
                         found_adjacent = True
                         break
-                elif bool(answer_lemmas & w_lemmas):
+                elif (
+                    bool(answer_lemmas & w_lemmas)
+                    or _is_degree_adjacent(answer, w, db_path, kit)
+                    or _is_aspect_adjacent(answer, w, item, db_path, kit)
+                ):
                     found_adjacent = True
                     break
             if not found_adjacent:
@@ -850,9 +1100,9 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
     if not isinstance(type_kits, list) or not type_kits:
         raise PromptPackV3Error("A v3.3 prompt needs non-empty type-kits.")
     if context.get("pack_version") != PROMPT_PACK_VERSION:
-        raise PromptPackV3Error("Prompt pack input version is not PromptPackInput.v3.1.")
+        raise PromptPackV3Error(f"Prompt pack input version is not {PROMPT_PACK_VERSION}.")
     if context.get("template_version") != TEMPLATE_VERSION:
-        raise PromptPackV3Error("Prompt context does not select gemma-phase-pack.v3.3.")
+        raise PromptPackV3Error(f"Prompt context does not select {TEMPLATE_VERSION}.")
     if context.get("type_kit_identity") != TYPE_KIT_IDENTITY:
         raise PromptPackV3Error("Prompt context has an unknown type-kit identity.")
     exemplars = full_density_exemplars(type_kits)
@@ -900,9 +1150,7 @@ def validate_learner_facing_fields(
 ) -> None:
     """Reject English true/false parentheticals anywhere learner prose can reach."""
     if any(_TRUE_FALSE_NARRATION_RE.search(text) for text in _learner_facing_strings(activity)):
-        raise PromptPackV3Error(
-            "Learner-facing fields must not contain (True) or (False)."
-        )
+        raise PromptPackV3Error("Learner-facing fields must not contain (True) or (False).")
 
 
 def _validate_response_shape(
@@ -935,9 +1183,8 @@ def _validate_slot_identity(
     fields = set(record)
     if fields != _VALID_SLOT_FIELDS and fields != _VALID_SLOT_FIELDS | {_SLOT_PROVENANCE_FIELD}:
         raise PromptPackV3Error(f"slots[{index}] leaks or omits v3.3 serialization fields.")
-    if (
-        record.get("slot_id") != type_kit.get("slot_id")
-        or record.get("type") != type_kit.get("type")
+    if record.get("slot_id") != type_kit.get("slot_id") or record.get("type") != type_kit.get(
+        "type"
     ):
         raise PromptPackV3Error(f"slots[{index}] is not the scheduled slot/type.")
     if not isinstance(record.get("activity"), Mapping):
@@ -974,9 +1221,7 @@ def validate_slot_deterministic_gates(
         gate(activity, type_kit)
 
 
-def validate_slot_serialization(
-    record: Mapping[str, Any], type_kit: Mapping[str, Any]
-) -> None:
+def validate_slot_serialization(record: Mapping[str, Any], type_kit: Mapping[str, Any]) -> None:
     """Validate the exact immutable substrate for one gated response record."""
     _validate_exact_serialization(record, type_kit)
 

@@ -32,9 +32,7 @@ def _context(*activity_types: str) -> dict:
     requested_types = activity_types or ("quiz",)
     slots = []
     for index, activity_type in enumerate(requested_types, start=1):
-        plan = BUILDERS[activity_type](
-            complete_inventory(), slot_id=f"P1-A{index}", phase=1
-        )
+        plan = BUILDERS[activity_type](complete_inventory(), slot_id=f"P1-A{index}", phase=1)
         assert plan.floor_met
         slots.append(
             AllocatedSlot(
@@ -61,9 +59,7 @@ def _payload(context: dict, *, activity: dict | None = None) -> dict:
                 "activity": activity
                 if index == 0 and activity is not None
                 else {"type": kit["type"], "instruction": "…"},
-                "serialized_units": [
-                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-                ],
+                "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]],
             }
             for index, kit in enumerate(context["type_kits"])
         ],
@@ -90,8 +86,8 @@ def _validate(payload: dict, context: dict, **overrides: object) -> list[dict]:
 def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
-    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.1"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.3"
+    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.2"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.4"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -124,7 +120,7 @@ def test_full_density_exemplars_are_requested_type_only_and_negative_is_six_item
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.3" in prompt
+    assert "v3.4" in prompt
 
 
 def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None:
@@ -408,9 +404,7 @@ def test_elicitation_shape_accepts_composed_item() -> None:
             "type": "cloze",
             "instruction": "Заповніть пропуск.",
             "text": "У місті сьогодні холодно, тому ми йдемо у кавʼярню.",
-            "blanks": [
-                {"id": 1, "answer": "кавʼярню", "options": ["кавʼярню", "кавʼярня"]}
-            ],
+            "blanks": [{"id": 1, "answer": "кавʼярню", "options": ["кавʼярню", "кавʼярня"]}],
         },
         "answer_key": {"blanks": [{"id": 1, "answer": "кавʼярню"}]},
     }
@@ -428,7 +422,7 @@ def test_distractor_adjacency_rejects_non_vesum_distractor() -> None:
             "items": [
                 {
                     "question": "Яка форма іменника потрібна тут?",
-                    "options": ["книжки", "вигаданеСлово123"],
+                    "options": ["книги", "вигаданеСлово123", "книг"],
                     "correct": 0,
                 }
             ],
@@ -450,7 +444,7 @@ def test_distractor_adjacency_rejects_unrelated_lemma_distractor() -> None:
             "items": [
                 {
                     "question": "Яка форма іменника потрібна тут?",
-                    "options": ["книжки", "телевізор"],
+                    "options": ["книги", "телевізор", "зошит"],
                     "correct": 0,
                 }
             ],
@@ -473,7 +467,7 @@ def test_distractor_adjacency_accepts_same_lemma_form() -> None:
             "items": [
                 {
                     "question": "Яка форма іменника потрібна тут?",
-                    "options": ["книжки", "книжок"],
+                    "options": ["книги", "книга", "книг"],
                     "correct": 0,
                 }
             ],
@@ -495,7 +489,7 @@ def test_distractor_adjacency_requires_answer_at_declared_index() -> None:
             "items": [
                 {
                     "question": "Яка форма іменника потрібна тут?",
-                    "options": ["книжок", "книжки"],
+                    "options": ["книг", "книги", "книга"],
                     "correct": 1,
                 }
             ],
@@ -517,7 +511,7 @@ def test_distractor_adjacency_accepts_same_class_prep_distractor() -> None:
             "items": [
                 {
                     "question": "Який прийменник потрібен тут?",
-                    "options": ["на", "про"],
+                    "options": ["на", "про", "під"],
                     "correct": 0,
                 }
             ],
@@ -539,7 +533,7 @@ def test_distractor_adjacency_rejects_wrong_class_uninflectable_distractor() -> 
             "items": [
                 {
                     "question": "Який прийменник потрібен тут?",
-                    "options": ["на", "нате"],
+                    "options": ["на", "нате", "під"],
                     "correct": 0,
                 }
             ],
@@ -562,7 +556,7 @@ def test_distractor_adjacency_rejects_identical_uninflectable_distractor() -> No
             "items": [
                 {
                     "question": "Який прийменник потрібен тут?",
-                    "options": ["на", "на"],
+                    "options": ["на", "на", "під"],
                     "correct": 0,
                 }
             ],
@@ -582,9 +576,7 @@ def test_error_correction_valid_adjacent_error_passes() -> None:
         "payload": {
             "type": "error-correction",
             "instruction": "Виправте помилку в реченні.",
-            "items": [
-                "У бібліотеці є багато цікаві книжки для читання."
-            ],
+            "items": ["У бібліотеці є багато цікаві книжки для читання."],
         },
         "answer_key": {"items": ["книжок"]},
     }
@@ -599,9 +591,7 @@ def test_error_correction_token_duplication_fails() -> None:
         "payload": {
             "type": "error-correction",
             "instruction": "Виправте помилку в реченні.",
-            "items": [
-                "думку думку вчених, читання є важливим."
-            ],
+            "items": ["думку думку вчених, читання є важливим."],
         },
         "answer_key": {"items": ["На"]},
     }
@@ -611,17 +601,16 @@ def test_error_correction_token_duplication_fails() -> None:
 
 def test_error_correction_correct_form_present_verbatim_fails() -> None:
     """Error-correction item containing the correct form verbatim fails."""
-    context = _context("error-correction")
-    kit = context["type_kits"][0]
+    kit = _context("error-correction")["type_kits"][0]
+    kit["certified_units"][0]["allowed_forms"] = ["читання"]
+    kit["certified_units"][0]["expected_key_or_rule"]["value"] = "читання"
     activity = {
         "payload": {
             "type": "error-correction",
             "instruction": "Виправте помилку в реченні.",
-            "items": [
-                "На думку вчених, читання є важливим."
-            ],
+            "items": ["На думку вчених, читання є важливим."],
         },
-        "answer_key": {"items": ["На"]},
+        "answer_key": {"items": ["читання"]},
     }
     with pytest.raises(PromptPackV3Error, match="contains answer form"):
         validate_verbatim_answer_ban(activity, kit)
@@ -635,9 +624,7 @@ def test_error_correction_wrong_class_adjacent_form_fails() -> None:
         "payload": {
             "type": "error-correction",
             "instruction": "Виправте помилку в реченні.",
-            "items": [
-                "Нате думку вчених, читання є важливим."
-            ],
+            "items": ["Нате думку вчених, читання є важливим."],
         },
         "answer_key": {"items": ["на"]},
     }
@@ -653,9 +640,7 @@ def test_error_correction_uninflectable_target_with_same_class_wrong_word_passes
         "payload": {
             "type": "error-correction",
             "instruction": "Виправте помилку в реченні.",
-            "items": [
-                "Про думку вчених, читання є важливим."
-            ],
+            "items": ["Про думку вчених, читання є важливим."],
         },
         "answer_key": {"items": ["на"]},
     }
@@ -669,9 +654,7 @@ def test_short_writing_elicitation_prompt_and_guidance_naming_passes() -> None:
     context = _context("short-writing")
     kit = context["type_kits"][0]
     target_forms = [
-        fragment
-        for unit in kit["certified_units"]
-        for fragment in unit["allowed_forms"]
+        fragment for unit in kit["certified_units"] for fragment in unit["allowed_forms"]
     ]
     activity = {
         "payload": {
@@ -747,4 +730,3 @@ def test_short_writing_concatenation_prompt_fails() -> None:
     }
     with pytest.raises(PromptPackV3Error, match="concatenation of raw certified forms"):
         validate_exemplar_contamination(activity, kit)
-

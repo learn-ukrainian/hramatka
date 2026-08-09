@@ -28,8 +28,8 @@ _LIST_TYPES = frozenset(
         "quiz",
         "cloze",
         "match-up",
-        "fill-in",
         "error-correction",
+        "fill-in",
         "text-questions",
     }
 )
@@ -51,20 +51,17 @@ def _source_id(anchor: str) -> str:
 
 def _sentences(anchor: str) -> tuple[AnchorSentence, ...]:
     rows: list[AnchorSentence] = []
-    for sentence_number, match in enumerate(_SENTENCE_RE.finditer(anchor), start=1):
-        text = match.group(0).strip()
-        if not text:
+    for sentence_number, text in enumerate(_SENTENCE_RE.findall(anchor), start=1):
+        if not text.strip():
             continue
         tokens: list[AnchorToken] = []
-        for token_number, token_match in enumerate(_TOKEN_RE.finditer(text), start=1):
+        for token_match in _TOKEN_RE.finditer(text):
             surface = token_match.group(0)
             parses = tuple(vesum_tags.parse_word(surface))
-            if not parses:
-                continue
             tokens.append(
                 AnchorToken(
                     sentence_id=f"s-{sentence_number}",
-                    token_id=f"s-{sentence_number}:t-{token_number}",
+                    token_id=f"s-{sentence_number}:t-{len(tokens) + 1}",
                     surface=surface,
                     start_offset=token_match.start(),
                     end_offset=token_match.end(),
@@ -107,6 +104,7 @@ def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> Cer
     groups = _token_groups(sentences)
     required = Counter(scheduled_types)
     group_index = 0
+
     groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
     for activity_type in scheduled_types:
         if activity_type == "short-writing" and groups_by_type[activity_type]:

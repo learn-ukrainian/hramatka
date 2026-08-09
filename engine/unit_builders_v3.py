@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from .closed_class_policy import CLOSED_CLASS_ALLOWED_SHAPES, is_closed_class_target
 from .gates import vesum_tags
 from .short_writing_constraints_v3 import (
     ConstraintSpec,
@@ -160,6 +161,7 @@ class CertificationInventory:
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
+
 def _sentences(inventory: CertificationInventory) -> dict[str, AnchorSentence]:
     result = {sentence.sentence_id: sentence for sentence in inventory.sentences}
     return result if len(result) == len(inventory.sentences) else {}
@@ -246,6 +248,13 @@ def _generic_builder(
         for candidate in inventory.candidates
         if candidate.activity_type == activity_type
         and _candidate_is_bound(candidate, sentences)
+        and (
+            activity_type in CLOSED_CLASS_ALLOWED_SHAPES
+            or activity_type == "text-questions"
+            or not is_closed_class_target(
+                {"expected_key": candidate.expected_key, "answer": candidate.expected_key}
+            )
+        )
         and (activity_type != "error-correction" or _has_one_certified_error(candidate))
     )
     if activity_type == "text-questions":
@@ -494,8 +503,10 @@ def _short_writing_prompt_markers(
     for spec in constraints:
         if spec.kind == "contains_lemma_set":
             lemmas = spec.params.get("lemmas")
-            if set(spec.params) != {"lemmas"} or not isinstance(lemmas, (list, tuple)) or not all(
-                isinstance(lemma, str) and lemma.strip() for lemma in lemmas
+            if (
+                set(spec.params) != {"lemmas"}
+                or not isinstance(lemmas, (list, tuple))
+                or not all(isinstance(lemma, str) and lemma.strip() for lemma in lemmas)
             ):
                 return None
             markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
@@ -514,9 +525,7 @@ def _short_writing_prompt_markers(
             ):
                 return None
             markers.append(
-                f"до {maximum} слів"
-                if minimum == 1
-                else f"від {minimum} до {maximum} слів"
+                f"до {maximum} слів" if minimum == 1 else f"від {minimum} до {maximum} слів"
             )
             continue
         if spec.kind == "min_verb_count":
@@ -546,9 +555,7 @@ def _short_writing_prompt_markers(
                 or not all(isinstance(lemma, str) and lemma.strip() for lemma in lemmas)
             ):
                 return None
-            markers.append(
-                f"мінімум {minimum} слів у {_UKRAINIAN_CASE_FORMS[case]} відмінку"
-            )
+            markers.append(f"мінімум {minimum} слів у {_UKRAINIAN_CASE_FORMS[case]} відмінку")
             markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
             continue
         return None

@@ -139,11 +139,11 @@ HALLUCINATED_ACTIVITY: dict = {
 # (phrase, context_case). All forms VESUM-verified; the gate must return
 # status == 'fail' for every one of them.
 NEGATIVE_NUMERAL_BANK: list[tuple[str, str | None]] = [
-    ("п'ять студенти", None),      # expected gen-pl студентів
-    ("два студентів", None),       # plain nom expected nom-pl студенти
-    ("дві столи", None),           # gender: masc noun needs два
-    ("двоє студенти", None),       # collective expects gen-pl
-    ("півтора років", None),       # expects gen-SG року
+    ("п'ять студенти", None),  # expected gen-pl студентів
+    ("два студентів", None),  # plain nom expected nom-pl студенти
+    ("дві столи", None),  # gender: masc noun needs два
+    ("двоє студенти", None),  # collective expects gen-pl
+    ("півтора років", None),  # expects gen-SG року
 ]
 
 # Positive numeral probes (learner-facing side) the gate must ACCEPT.
@@ -162,9 +162,7 @@ def mock_generator(_prompt: str) -> str:
 
 
 def mock_generator_with_hallucination(_prompt: str) -> str:
-    return json.dumps(
-        {"activities": [*GOOD_ACTIVITIES, HALLUCINATED_ACTIVITY]}, ensure_ascii=False
-    )
+    return json.dumps({"activities": [*GOOD_ACTIVITIES, HALLUCINATED_ACTIVITY]}, ensure_ascii=False)
 
 
 # --- Relocated shared bake fixtures (issue #97) ---
@@ -203,6 +201,56 @@ _TASK_LANGUAGE_FORMS = (
     {"word_form": "складним", "lemma": "складний", "tags": "adj:ins:m", "pos": "adj"},
     {"word_form": "завданням", "lemma": "завдання", "tags": "noun:inanim:ins:n", "pos": "noun"},
     {"word_form": "мозок", "lemma": "мозок", "tags": "noun:inanim:nom:m", "pos": "noun"},
+    {"word_form": "є", "lemma": "бути", "tags": "verb:impf:pres:3s", "pos": "verb"},
+    {"word_form": "бути", "lemma": "бути", "tags": "verb:impf:inf", "pos": "verb"},
+    {"word_form": "буде", "lemma": "бути", "tags": "verb:impf:fut:3s", "pos": "verb"},
+    {"word_form": "було", "lemma": "бути", "tags": "verb:impf:past:n", "pos": "verb"},
+    {"word_form": "Третина", "lemma": "третина", "tags": "noun:inanim:nom:f", "pos": "noun"},
+    {"word_form": "третина", "lemma": "третина", "tags": "noun:inanim:nom:f", "pos": "noun"},
+    {"word_form": "третини", "lemma": "третина", "tags": "noun:inanim:gen:f", "pos": "noun"},
+    {"word_form": "третині", "lemma": "третина", "tags": "noun:inanim:dat:f", "pos": "noun"},
+    {"word_form": "третину", "lemma": "третина", "tags": "noun:inanim:acc:f", "pos": "noun"},
+    {"word_form": "українців", "lemma": "українець", "tags": "noun:anim:gen:p", "pos": "noun"},
+    {"word_form": "українці", "lemma": "українець", "tags": "noun:anim:nom:p", "pos": "noun"},
+    {"word_form": "українцям", "lemma": "українець", "tags": "noun:anim:dat:p", "pos": "noun"},
+    {"word_form": "українець", "lemma": "українець", "tags": "noun:anim:nom:m", "pos": "noun"},
+    {"word_form": "книжка", "lemma": "книжка", "tags": "noun:inanim:nom:f", "pos": "noun"},
+    {"word_form": "книжки", "lemma": "книжка", "tags": "noun:inanim:gen:f", "pos": "noun"},
+    {"word_form": "книжок", "lemma": "книжка", "tags": "noun:inanim:gen:p", "pos": "noun"},
+    {"word_form": "книжку", "lemma": "книжка", "tags": "noun:inanim:acc:f", "pos": "noun"},
+    {"word_form": "книжці", "lemma": "книжка", "tags": "noun:inanim:loc:f", "pos": "noun"},
+    {"word_form": "рік", "lemma": "рік", "tags": "noun:inanim:nom:m", "pos": "noun"},
+    {"word_form": "року", "lemma": "рік", "tags": "noun:inanim:gen:m", "pos": "noun"},
+    {"word_form": "році", "lemma": "рік", "tags": "noun:inanim:loc:m", "pos": "noun"},
+    {"word_form": "роки", "lemma": "рік", "tags": "noun:inanim:nom:p", "pos": "noun"},
+    {"word_form": "час", "lemma": "час", "tags": "noun:inanim:nom:m", "pos": "noun"},
+    {"word_form": "часу", "lemma": "час", "tags": "noun:inanim:gen:m", "pos": "noun"},
+    {"word_form": "часі", "lemma": "час", "tags": "noun:inanim:loc:m", "pos": "noun"},
+    {"word_form": "мозку", "lemma": "мозок", "tags": "noun:inanim:gen:m", "pos": "noun"},
+    {"word_form": "мозком", "lemma": "мозок", "tags": "noun:inanim:ins:m", "pos": "noun"},
+    {"word_form": "ділянка", "lemma": "ділянка", "tags": "noun:inanim:nom:f", "pos": "noun"},
+    {"word_form": "ділянок", "lemma": "ділянка", "tags": "noun:inanim:gen:p", "pos": "noun"},
+    {"word_form": "ділянки", "lemma": "ділянка", "tags": "noun:inanim:gen:f", "pos": "noun"},
+    {"word_form": "ділянкам", "lemma": "ділянка", "tags": "noun:inanim:dat:p", "pos": "noun"},
+    {"word_form": "хвороба", "lemma": "хвороба", "tags": "noun:inanim:nom:f", "pos": "noun"},
+    {"word_form": "хвороби", "lemma": "хвороба", "tags": "noun:inanim:gen:f", "pos": "noun"},
+    {"word_form": "хворобі", "lemma": "хвороба", "tags": "noun:inanim:loc:f", "pos": "noun"},
+    {"word_form": "хворобу", "lemma": "хвороба", "tags": "noun:inanim:acc:f", "pos": "noun"},
+    {"word_form": "людина", "lemma": "людина", "tags": "noun:anim:nom:f", "pos": "noun"},
+    {"word_form": "людини", "lemma": "людина", "tags": "noun:anim:gen:f", "pos": "noun"},
+    {"word_form": "людині", "lemma": "людина", "tags": "noun:anim:dat:f", "pos": "noun"},
+    {"word_form": "людям", "lemma": "людина", "tags": "noun:anim:dat:p", "pos": "noun"},
+    {"word_form": "телевізора", "lemma": "телевізор", "tags": "noun:inanim:gen:m", "pos": "noun"},
+    {"word_form": "телевізорі", "lemma": "телевізор", "tags": "noun:inanim:loc:m", "pos": "noun"},
+    {"word_form": "читанню", "lemma": "читання", "tags": "noun:inanim:dat:n", "pos": "noun"},
+    {"word_form": "читанням", "lemma": "читання", "tags": "noun:inanim:ins:n", "pos": "noun"},
+    {"word_form": "вчений", "lemma": "вчений", "tags": "noun:anim:nom:m", "pos": "noun"},
+    {"word_form": "вченим", "lemma": "вчений", "tags": "noun:anim:dat:p", "pos": "noun"},
+    {"word_form": "завдання", "lemma": "завдання", "tags": "noun:inanim:nom:n", "pos": "noun"},
+    {"word_form": "ризик", "lemma": "ризик", "tags": "noun:inanim:nom:m", "pos": "noun"},
+    {"word_form": "ризику", "lemma": "ризик", "tags": "noun:inanim:gen:m", "pos": "noun"},
+    {"word_form": "розвиток", "lemma": "розвиток", "tags": "noun:inanim:nom:m", "pos": "noun"},
+    {"word_form": "розвитку", "lemma": "розвиток", "tags": "noun:inanim:gen:m", "pos": "noun"},
 )
 
 
@@ -469,7 +517,6 @@ def _ready_quiz(index: int) -> dict:
     }
 
 
-
 def _ready_error_correction(index: int) -> dict:
     item_sets = [
         [
@@ -482,10 +529,10 @@ def _ready_error_correction(index: int) -> dict:
                 "evidence": "Під час читання активізуються одразу 17 ділянок головного мозку.",
             },
             {
-                "sentence": "Третина українців за рік не прочитує жодної книжка",
-                "error": "книжка",
+                "sentence": "Третина українців за рік не прочитує жодної книжкак",
+                "error": "книжкак",
                 "correction": "книжки",
-                "options": ["книжка", "книжки", "книжок"],
+                "options": ["книжкак", "книжки", "телевізор"],
                 "explanation": "Після «жодної» потрібна форма родового однини.",
                 "evidence": "Третина українців за рік не прочитує жодної книжки",
             },
@@ -493,40 +540,39 @@ def _ready_error_correction(index: int) -> dict:
         [
             {
                 "sentence": (
-                    "Регулярне читання знижує в 2,5 рази ризик розвитку "
-                    "хвороба Альцгеймера"
+                    "Регулярне читання знижує в 2,5 рази ризик розвитку хворобак Альцгеймера"
                 ),
-                "error": "хвороба",
+                "error": "хворобак",
                 "correction": "хвороби",
-                "options": ["хвороба", "хвороби", "книжки"],
+                "options": ["хворобак", "хвороби", "телевізор"],
                 "explanation": "У тексті саме «хвороби Альцгеймера».",
                 "evidence": (
                     "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера"
                 ),
             },
             {
-                "sentence": "Багато людей втратили насолода від неспішного читання книжок",
-                "error": "насолода",
+                "sentence": "Багато людей втратили насолодак від неспішного читання книжок",
+                "error": "насолодак",
                 "correction": "насолоду",
-                "options": ["насолода", "насолоду", "книжки"],
+                "options": ["насолодак", "насолоду", "телевізор"],
                 "explanation": "У тексті саме «насолоду».",
                 "evidence": "Багато людей втратили насолоду від неспішного читання книжок",
             },
         ],
         [
             {
-                "sentence": "На думку вчених, читання є одним з найскладніших завдання для мозку",
-                "error": "завдання",
+                "sentence": "На думку вчених, читання є одним з найскладніших завданняк для мозку",
+                "error": "завданняк",
                 "correction": "завдань",
-                "options": ["завдання", "завдань", "книжки"],
+                "options": ["завданняк", "завдань", "телевізор"],
                 "explanation": "У тексті саме «завдань для мозку».",
                 "evidence": "На думку вчених, читання є одним з найскладніших завдань для мозку",
             },
             {
-                "sentence": "Дві третини щодня знаходять час увімкнути телевізора",
-                "error": "телевізора",
+                "sentence": "Дві третини щодня знаходять час увімкнути телевізорак",
+                "error": "телевізорак",
                 "correction": "телевізор",
-                "options": ["телевізора", "телевізор", "книжки"],
+                "options": ["телевізорак", "телевізор", "книжки"],
                 "explanation": "У тексті саме «увімкнути телевізор».",
                 "evidence": "дві третини щодня знаходять час увімкнути телевізор",
             },
@@ -553,7 +599,6 @@ def _ready_error_correction(index: int) -> dict:
         "instruction": f"Виправ помилку. #{index + 1}",
         "items": items,
     }
-
 
 
 def _ready_fill_in(index: int) -> dict:
@@ -601,7 +646,6 @@ def _ready_fill_in(index: int) -> dict:
     }
 
 
-
 def _ready_cloze(index: int) -> dict:
     variants = [
         {
@@ -639,12 +683,26 @@ def _ready_cloze(index: int) -> dict:
                     "answer": "книжки",
                     "options": ["книжки", "книжок", "читання", "телевізор"],
                 },
-                {"id": 2, "answer": "телевізор", "options": [
-                    "телевізор", "книжки", "читання", "мозку",
-                ]},
-                {"id": 3, "answer": "ризик", "options": [
-                    "ризик", "читання", "книжки", "телевізор",
-                ]},
+                {
+                    "id": 2,
+                    "answer": "телевізор",
+                    "options": [
+                        "телевізор",
+                        "книжки",
+                        "читання",
+                        "мозку",
+                    ],
+                },
+                {
+                    "id": 3,
+                    "answer": "ризик",
+                    "options": [
+                        "ризик",
+                        "читання",
+                        "книжки",
+                        "телевізор",
+                    ],
+                },
             ],
             "evidence": (
                 "Третина українців за рік не прочитує жодної книжки, зате дві третини "
@@ -687,7 +745,6 @@ def _ready_mark_the_words(index: int) -> dict:
     }
 
 
-
 def _ready_text_questions(index: int) -> dict:
     item_sets = [
         [
@@ -700,8 +757,7 @@ def _ready_text_questions(index: int) -> dict:
                 "question": "Чому, на вашу думку, регулярне читання важливе для мозку?",
                 "model_answer": "Регулярне читання.",
                 "evidence": (
-                    "Регулярне читання знижує в 2,5 рази ризик розвитку "
-                    "хвороби Альцгеймера"
+                    "Регулярне читання знижує в 2,5 рази ризик розвитку хвороби Альцгеймера"
                 ),
             },
             {
@@ -737,7 +793,6 @@ def _ready_text_questions(index: int) -> dict:
         "items": item_sets[index % len(item_sets)],
         "teacher_guidance": "Приймайте змістовні відповіді учнів.",
     }
-
 
 
 def _ready_match_up(index: int) -> dict:
@@ -793,7 +848,6 @@ def _ready_short_writing(index: int) -> dict:
         "teacher_guidance": "Оцінюйте зміст і зв'язність.",
         "evidence": variant["evidence"],
     }
-
 
 
 _READY_CANDIDATES = {
@@ -900,6 +954,11 @@ def _bundle_with_matchup_vocabulary(root):
                 ("чимало", "чимало", "adv:", "adverb"),
                 ("непевність", "непевність", "noun:inanim:f:v_naz", "noun"),
                 ("задача", "задача", "noun:inanim:f:v_naz", "noun"),
+                ("завдання", "завдання", "noun:inanim:n:v_naz", "noun"),
+                ("завданням", "завдання", "noun:inanim:n:v_or", "noun"),
+                ("активізуватись", "активізуватися", "verb:rev:imperf:inf", "verb"),
+                ("ділянку", "ділянка", "noun:inanim:f:v_zna", "noun"),
+                ("мізки", "мозок", "noun:inanim:m:v_naz", "noun"),
             ],
         )
         connection.commit()

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Literal
 
+from .closed_class_policy import CLOSED_CLASS_ALLOWED_SHAPES, is_closed_class_target
 from .teacher_ready_density_v3 import (
     COGNITIVE_OPERATION,
     floor_for,
@@ -240,11 +241,16 @@ class InsufficientAnchorCapacityEvent:
     """Recoverable pre-generation outcome after the lesson boundary is exhausted."""
 
     paragraph_ids: tuple[str, ...]
-    code: Literal["insufficient_anchor_capacity"] = "insufficient_anchor_capacity"
+    code: Literal["insufficient_anchor_capacity", "closed_class_shape_mismatch"] = (
+        "insufficient_anchor_capacity"
+    )
     recoverable: bool = True
 
     def __post_init__(self) -> None:
-        if not self.paragraph_ids or self.code != "insufficient_anchor_capacity":
+        if not self.paragraph_ids or self.code not in {
+            "insufficient_anchor_capacity",
+            "closed_class_shape_mismatch",
+        }:
             raise ValueError("Capacity events need a window and the locked failure code.")
         if not self.recoverable:
             raise ValueError("Insufficient anchor capacity must remain recoverable.")
@@ -651,7 +657,26 @@ def preflight_lesson(
                 event=None,
                 attempts=tuple(attempts),
             )
-    event = InsufficientAnchorCapacityEvent(paragraph_ids=attempts[-1].paragraph_ids)
+    last_slot_plans = _slot_plans_for_window(
+        _merged_inventory(anchor_window.widened_paragraphs()[-1]), slots, builders, duration_minutes
+    )
+    has_mismatch = any(
+        plan.activity_type not in CLOSED_CLASS_ALLOWED_SHAPES
+        and any(
+            is_closed_class_target(
+                {"expected_key": u.expected_key_or_rule.value, "allowed_forms": u.allowed_forms}
+            )
+            for u in plan.units
+        )
+        for sp in last_slot_plans
+        for plan in (sp.primary, *sp.replacements)
+    )
+    event_code: Literal["insufficient_anchor_capacity", "closed_class_shape_mismatch"] = (
+        "closed_class_shape_mismatch" if has_mismatch else "insufficient_anchor_capacity"
+    )
+    event = InsufficientAnchorCapacityEvent(
+        paragraph_ids=attempts[-1].paragraph_ids, code=event_code
+    )
     return LessonPreflightResult(
         allocation=None,
         event=event,

@@ -12,6 +12,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+from hramatka.engine.closed_class_policy import is_closed_class_form
 from hramatka.engine.gates import vesum_tags
 from hramatka.engine.short_writing_constraints_v3 import (
     ConstraintSpec,
@@ -66,7 +67,11 @@ def _sentences_and_tokens() -> tuple[tuple[AnchorSentence, ...], tuple[AnchorTok
 def complete_inventory() -> CertificationInventory:
     """Return one deterministic, all-type inventory derived from ``anchor01``."""
     sentences, tokens = _sentences_and_tokens()
-    usable_tokens = tuple(token for token in tokens if len(token.surface) > 1)
+    usable_tokens = tuple(
+        token
+        for token in tokens
+        if len(token.surface) > 1 and not is_closed_class_form(token.surface)
+    )
     selected = usable_tokens[:8]
     sentence_by_id = {sentence.sentence_id: sentence for sentence in sentences}
 

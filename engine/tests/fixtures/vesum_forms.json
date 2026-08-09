@@ -1,2504 +1,2582 @@
 [
- {
-  "word_form": "Карпатах",
-  "lemma": "Карпати",
-  "tags": "noun:inanim:p:v_mis:ns:prop:geo",
-  "pos": "noun"
- },
- {
-  "word_form": "Альцгеймера",
-  "lemma": "Альцгеймер",
-  "tags": "noun:anim:m:v_rod:prop:lname",
-  "pos": "noun"
- },
- {
-  "word_form": "активізуються",
-  "lemma": "активізуватися",
-  "tags": "verb:rev:imperf:pres:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "активізуються",
-  "lemma": "активізуватися",
-  "tags": "verb:rev:perf:futr:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "активізується",
-  "lemma": "активізуватися",
-  "tags": "verb:rev:imperf:pres:s:3",
-  "pos": "verb"
- },
- {
-  "word_form": "активізується",
-  "lemma": "активізуватися",
-  "tags": "verb:rev:perf:futr:s:3",
-  "pos": "verb"
- },
- {
-  "word_form": "багато",
-  "lemma": "багато",
-  "tags": "adv:compb:predic",
-  "pos": "adv"
- },
- {
-  "word_form": "багато",
-  "lemma": "багато",
-  "tags": "numr:p:v_naz:pron:ind",
-  "pos": "numr"
- },
- {
-  "word_form": "багато",
-  "lemma": "багато",
-  "tags": "numr:p:v_zna:pron:ind",
-  "pos": "numr"
- },
- {
-  "word_form": "бачу",
-  "lemma": "бачити",
-  "tags": "verb:imperf:pres:s:1:insert",
-  "pos": "verb"
- },
- {
-  "word_form": "березня",
-  "lemma": "березень",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "бо",
-  "lemma": "бо",
-  "tags": "conj:subord",
-  "pos": "conj"
- },
- {
-  "word_form": "бо",
-  "lemma": "бо",
-  "tags": "part",
-  "pos": "part"
- },
- {
-  "word_form": "велике",
-  "lemma": "великий",
-  "tags": "adj:n:v_kly:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "велике",
-  "lemma": "великий",
-  "tags": "adj:n:v_naz:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "велике",
-  "lemma": "великий",
-  "tags": "adj:n:v_zna:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "вмикають",
-  "lemma": "вмикати",
-  "tags": "verb:imperf:pres:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "вправ",
-  "lemma": "вправа",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "вправ",
-  "lemma": "вправити",
-  "tags": "verb:perf:impr:s:2",
-  "pos": "verb"
- },
- {
-  "word_form": "втратили",
-  "lemma": "втратити",
-  "tags": "verb:perf:past:p",
-  "pos": "verb"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "adj:p:v_mis:adjp:pasv:imperf",
-  "pos": "adj"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "adj:p:v_rod:adjp:pasv:imperf",
-  "pos": "adj"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "adj:p:v_zna:ranim:adjp:pasv:imperf",
-  "pos": "adj"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "noun:anim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "noun:anim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "вчених",
-  "lemma": "вчений",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "від",
-  "lemma": "від",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "відсотки",
-  "lemma": "відсоток",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "відсотки",
-  "lemma": "відсоток",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "відсотки",
-  "lemma": "відсоток",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "відсотків",
-  "lemma": "відсоток",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "вікон",
-  "lemma": "вікно",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "годин",
-  "lemma": "година",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "головного",
-  "lemma": "головний",
-  "tags": "adj:m:v_rod:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "головного",
-  "lemma": "головний",
-  "tags": "adj:m:v_zna:ranim:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "головного",
-  "lemma": "головний",
-  "tags": "adj:n:v_rod:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "головного",
-  "lemma": "головне",
-  "tags": "noun:inanim:n:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "гривень",
-  "lemma": "гривня",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривна",
-  "tags": "noun:inanim:f:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:f:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривна",
-  "tags": "noun:inanim:f:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:f:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "гривні",
-  "lemma": "гривня",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "два",
-  "lemma": "два",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "два",
-  "lemma": "два",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "двадцяти",
-  "lemma": "двадцять",
-  "tags": "numr:p:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "двадцяти",
-  "lemma": "двадцять",
-  "tags": "numr:p:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "двадцяти",
-  "lemma": "двадцять",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "двадцять",
-  "lemma": "двадцять",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "двадцять",
-  "lemma": "двадцять",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "двома",
-  "lemma": "два",
-  "tags": "numr:p:v_oru",
-  "pos": "numr"
- },
- {
-  "word_form": "двома",
-  "lemma": "двоє",
-  "tags": "numr:p:v_oru",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "два",
-  "tags": "numr:p:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "двоє",
-  "tags": "numr:p:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "два",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "двоє",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "два",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "двох",
-  "lemma": "двоє",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "двоє",
-  "lemma": "двоє",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "двоє",
-  "lemma": "двоє",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "дві",
-  "lemma": "два",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "дві",
-  "lemma": "два",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "двісті",
-  "lemma": "двісті",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "двісті",
-  "lemma": "двісті",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "для",
-  "lemma": "для",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "днів",
-  "lemma": "день",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "думку",
-  "lemma": "думка",
-  "tags": "noun:inanim:f:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "ділянок",
-  "lemma": "ділянка",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "ділянки",
-  "lemma": "ділянка",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "жодної",
-  "lemma": "жодний",
-  "tags": "adj:f:v_rod:pron:neg",
-  "pos": "adj"
- },
- {
-  "word_form": "з",
-  "lemma": "з",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "за",
-  "lemma": "за",
-  "tags": "adv:predic",
-  "pos": "adv"
- },
- {
-  "word_form": "за",
-  "lemma": "за",
-  "tags": "part",
-  "pos": "part"
- },
- {
-  "word_form": "за",
-  "lemma": "за",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "завдань",
-  "lemma": "завдання",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "задач",
-  "lemma": "задача",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:n:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:n:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:n:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:n:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "задоволення",
-  "lemma": "задоволення",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "зате",
-  "lemma": "зате",
-  "tags": "conj:coord",
-  "pos": "conj"
- },
- {
-  "word_form": "зі",
-  "lemma": "зі",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "знаходять",
-  "lemma": "знаходити",
-  "tags": "verb:imperf:pres:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "знижує",
-  "lemma": "знижувати",
-  "tags": "verb:imperf:pres:s:3",
-  "pos": "verb"
- },
- {
-  "word_form": "йдеться",
-  "lemma": "йтися",
-  "tags": "verb:rev:imperf:pres:s:3",
-  "pos": "verb"
- },
- {
-  "word_form": "кам'яниста",
-  "lemma": "кам'янистий",
-  "tags": "adj:f:v_kly",
-  "pos": "adj"
- },
- {
-  "word_form": "кам'яниста",
-  "lemma": "кам'янистий",
-  "tags": "adj:f:v_naz",
-  "pos": "adj"
- },
- {
-  "word_form": "квітень",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "квітень",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "квітневі",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "квітневі",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "квітнем",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "квітню",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "квітню",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "квітню",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "квітня",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "квітням",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "квітнями",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "квітнях",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "квітні",
-  "lemma": "квітень",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "квітні",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "квітні",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "квітні",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "квітнів",
-  "lemma": "квітень",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "книг",
-  "lemma": "книга",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "книга",
-  "lemma": "книга",
-  "tags": "noun:inanim:f:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "книги",
-  "lemma": "книга",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "книги",
-  "lemma": "книга",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "книги",
-  "lemma": "книга",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "книги",
-  "lemma": "книга",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "книжки",
-  "lemma": "книжка",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "книжки",
-  "lemma": "книжка",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "книжки",
-  "lemma": "книжка",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "книжки",
-  "lemma": "книжка",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "книжок",
-  "lemma": "книжка",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "користь",
-  "lemma": "користь",
-  "tags": "noun:inanim:f:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "користь",
-  "lemma": "користь",
-  "tags": "noun:inanim:f:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "люде",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_naz:arch",
-  "pos": "noun"
- },
- {
-  "word_form": "люде",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_zna:rare:arch",
-  "pos": "noun"
- },
- {
-  "word_form": "людей",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "людей",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "люди",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "люди",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "люди",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_zna:rare",
-  "pos": "noun"
- },
- {
-  "word_form": "людин",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "людин",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "людина",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "людинам",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "людинами",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "людинах",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "людини",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "людини",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "людини",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "людини",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "людино",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "людиною",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "людину",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "людині",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "людині",
-  "lemma": "людина",
-  "tags": "noun:anim:f:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "людьми",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "людям",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "людях",
-  "lemma": "людина",
-  "tags": "noun:anim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:anim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:anim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:anim:p:v_zna:rare",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "метри",
-  "lemma": "метр",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "мозку",
-  "lemma": "мозок",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "мозку",
-  "lemma": "мозок",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "мозку",
-  "lemma": "мозок",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "мозку",
-  "lemma": "мозок",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "мої",
-  "lemma": "мій",
-  "tags": "adj:p:v_kly:pron:pos",
-  "pos": "adj"
- },
- {
-  "word_form": "мої",
-  "lemma": "мій",
-  "tags": "adj:p:v_naz:pron:pos",
-  "pos": "adj"
- },
- {
-  "word_form": "мої",
-  "lemma": "мій",
-  "tags": "adj:p:v_zna:rinanim:pron:pos",
-  "pos": "adj"
- },
- {
-  "word_form": "мільйон",
-  "lemma": "мільйон",
-  "tags": "noun:inanim:m:v_naz:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "мільйон",
-  "lemma": "мільйон",
-  "tags": "noun:inanim:m:v_zna:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "мільйони",
-  "lemma": "мільйон",
-  "tags": "noun:inanim:p:v_kly:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "мільйони",
-  "lemma": "мільйон",
-  "tags": "noun:inanim:p:v_naz:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "мільйони",
-  "lemma": "мільйон",
-  "tags": "noun:inanim:p:v_zna:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "на",
-  "lemma": "на",
-  "tags": "intj",
-  "pos": "intj"
- },
- {
-  "word_form": "на",
-  "lemma": "на",
-  "tags": "part",
-  "pos": "part"
- },
- {
-  "word_form": "на",
-  "lemma": "на",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "нате",
-  "lemma": "нате",
-  "tags": "intj",
-  "pos": "intj"
- },
- {
-  "word_form": "найскладніших",
-  "lemma": "найскладніший",
-  "tags": "adj:p:v_mis:comps",
-  "pos": "adj"
- },
- {
-  "word_form": "найскладніших",
-  "lemma": "найскладніший",
-  "tags": "adj:p:v_rod:comps",
-  "pos": "adj"
- },
- {
-  "word_form": "найскладніших",
-  "lemma": "найскладніший",
-  "tags": "adj:p:v_zna:ranim:comps",
-  "pos": "adj"
- },
- {
-  "word_form": "насолоду",
-  "lemma": "насолода",
-  "tags": "noun:inanim:f:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "напиши",
-  "lemma": "написати",
-  "tags": "verb:perf:impr:s:2",
-  "pos": "verb"
- },
- {
-  "word_form": "не",
-  "lemma": "не",
-  "tags": "part",
-  "pos": "part"
- },
- {
-  "word_form": "ніж",
-  "lemma": "ніж",
-  "tags": "conj:subord",
-  "pos": "conj"
- },
- {
-  "word_form": "неспішного",
-  "lemma": "неспішний",
-  "tags": "adj:m:v_rod",
-  "pos": "adj"
- },
- {
-  "word_form": "неспішного",
-  "lemma": "неспішний",
-  "tags": "adj:m:v_zna:ranim",
-  "pos": "adj"
- },
- {
-  "word_form": "неспішного",
-  "lemma": "неспішний",
-  "tags": "adj:n:v_rod",
-  "pos": "adj"
- },
- {
-  "word_form": "нуль",
-  "lemma": "нуль",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "нуль",
-  "lemma": "нуль",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "обидва",
-  "lemma": "обидва",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "обидва",
-  "lemma": "обидва",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "обидві",
-  "lemma": "обидва",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "обидві",
-  "lemma": "обидва",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "обоє",
-  "lemma": "обоє",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "обоє",
-  "lemma": "обоє",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "одна",
-  "lemma": "один",
-  "tags": "numr:f:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "одним",
-  "lemma": "один",
-  "tags": "numr:m:v_oru",
-  "pos": "numr"
- },
- {
-  "word_form": "одним",
-  "lemma": "один",
-  "tags": "numr:n:v_oru",
-  "pos": "numr"
- },
- {
-  "word_form": "одним",
-  "lemma": "один",
-  "tags": "numr:p:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "одного",
-  "lemma": "один",
-  "tags": "numr:m:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "одного",
-  "lemma": "один",
-  "tags": "numr:m:v_zna:ranim",
-  "pos": "numr"
- },
- {
-  "word_form": "одного",
-  "lemma": "один",
-  "tags": "numr:n:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "одному",
-  "lemma": "один",
-  "tags": "numr:m:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "одному",
-  "lemma": "один",
-  "tags": "numr:m:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "одному",
-  "lemma": "один",
-  "tags": "numr:n:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "одному",
-  "lemma": "один",
-  "tags": "numr:n:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "одразу",
-  "lemma": "одразу",
-  "tags": "adv",
-  "pos": "adv"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ята",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ята",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ята",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ята",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ять",
-  "tags": "numr:p:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ять",
-  "tags": "numr:p:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "п'яти",
-  "lemma": "п'ять",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "п'ять",
-  "lemma": "п'ять",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "п'ять",
-  "lemma": "п'ять",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "перегляду",
-  "lemma": "перегляд",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "перегляду",
-  "lemma": "перегляд",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "перегляду",
-  "lemma": "перегляд",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "передач",
-  "lemma": "передача",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "питань",
-  "lemma": "питання",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "поверсі",
-  "lemma": "поверх",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "поверх",
-  "lemma": "поверх",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "поверх",
-  "lemma": "поверх",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "поверх",
-  "lemma": "поверх",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "половиною",
-  "lemma": "половина",
-  "tags": "noun:inanim:f:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "працюємо",
-  "lemma": "працювати",
-  "tags": "verb:imperf:pres:p:1",
-  "pos": "verb"
- },
- {
-  "word_form": "працюють",
-  "lemma": "працювати",
-  "tags": "verb:imperf:pres:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "прийшли",
-  "lemma": "прийти",
-  "tags": "verb:perf:past:p",
-  "pos": "verb"
- },
- {
-  "word_form": "пристрій",
-  "lemma": "пристрій",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "пристрій",
-  "lemma": "пристрій",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "пробіжки",
-  "lemma": "пробіжка",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "пробіжки",
-  "lemma": "пробіжка",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "пробіжки",
-  "lemma": "пробіжка",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "пробіжки",
-  "lemma": "пробіжка",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "пробіжку",
-  "lemma": "пробіжка",
-  "tags": "noun:inanim:f:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "простіше",
-  "lemma": "простіший",
-  "tags": "adj:n:v_kly:compc",
-  "pos": "adj"
- },
- {
-  "word_form": "простіше",
-  "lemma": "простіший",
-  "tags": "adj:n:v_naz:compc",
-  "pos": "adj"
- },
- {
-  "word_form": "простіше",
-  "lemma": "простіший",
-  "tags": "adj:n:v_zna:compc",
-  "pos": "adj"
- },
- {
-  "word_form": "простіше",
-  "lemma": "простіше",
-  "tags": "adv:compc:predic",
-  "pos": "adv"
- },
- {
-  "word_form": "прочитує",
-  "lemma": "прочитувати",
-  "tags": "verb:imperf:pres:s:3",
-  "pos": "verb"
- },
- {
-  "word_form": "про",
-  "lemma": "про",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_dav:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_kly:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_mis:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_naz:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_oru:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_rod:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:m:v_zna:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_dav:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_kly:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_mis:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_naz:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_oru:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_rod:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "півтора",
-  "lemma": "півтора",
-  "tags": "numr:n:v_zna:nv",
-  "pos": "numr"
- },
- {
-  "word_form": "під",
-  "lemma": "під",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "під",
-  "lemma": "під",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "під",
-  "lemma": "під",
-  "tags": "prep",
-  "pos": "prep"
- },
- {
-  "word_form": "рази",
-  "lemma": "раз",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "рази",
-  "lemma": "раз",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "рази",
-  "lemma": "раз",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "ранкової",
-  "lemma": "ранковий",
-  "tags": "adj:f:v_rod",
-  "pos": "adj"
- },
- {
-  "word_form": "ранкову",
-  "lemma": "ранковий",
-  "tags": "adj:f:v_zna",
-  "pos": "adj"
- },
- {
-  "word_form": "регулярне",
-  "lemma": "регулярний",
-  "tags": "adj:n:v_kly:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "регулярне",
-  "lemma": "регулярний",
-  "tags": "adj:n:v_naz:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "регулярне",
-  "lemma": "регулярний",
-  "tags": "adj:n:v_zna:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "ризик",
-  "lemma": "ризик",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "ризик",
-  "lemma": "ризик",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "речення",
-  "lemma": "речення",
-  "tags": "noun:inanim:n:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "розвитку",
-  "lemma": "розвиток",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "розвитку",
-  "lemma": "розвиток",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "розвитку",
-  "lemma": "розвиток",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "розвитку",
-  "lemma": "розвиток",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "розуму",
-  "lemma": "розум",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "розуму",
-  "lemma": "розум",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "розуму",
-  "lemma": "розум",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "рокам",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "роками",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "роках",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "роки",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "роки",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "роки",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "рокові",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "рокові",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "роком",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рок",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рок",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рок",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "року",
-  "lemma": "рок",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "років",
-  "lemma": "рік",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "році",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "роче",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "рік",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "рік",
-  "lemma": "рік",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "рік",
-  "lemma": "ріка",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "рік",
-  "lemma": "ректи",
-  "tags": "verb:imperf:past:m",
-  "pos": "verb"
- },
- {
-  "word_form": "серця",
-  "lemma": "серце",
-  "tags": "noun:inanim:n:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "серця",
-  "lemma": "серце",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "серця",
-  "lemma": "серце",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "серця",
-  "lemma": "серце",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "ста",
-  "lemma": "сто",
-  "tags": "numr:p:v_dav",
-  "pos": "numr"
- },
- {
-  "word_form": "ста",
-  "lemma": "сто",
-  "tags": "numr:p:v_mis",
-  "pos": "numr"
- },
- {
-  "word_form": "ста",
-  "lemma": "сто",
-  "tags": "numr:p:v_oru",
-  "pos": "numr"
- },
- {
-  "word_form": "ста",
-  "lemma": "сто",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "сто",
-  "lemma": "сто",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "сто",
-  "lemma": "сто",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "стола",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "стола",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_zna:var",
-  "pos": "noun"
- },
- {
-  "word_form": "столам",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "столами",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "столах",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "столе",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "столи",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "столи",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "столи",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "столові",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "столові",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "столом",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "столу",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "столу",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "столу",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "столі",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "столів",
-  "lemma": "стіл",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "студент",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "студента",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "студента",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "студентам",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "студентами",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "студентах",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "студенте",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "студенти",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "студенти",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "студенти",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_zna:rare",
-  "pos": "noun"
- },
- {
-  "word_form": "студентові",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "студентові",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "студентом",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "студенту",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_dav",
-  "pos": "noun"
- },
- {
-  "word_form": "студенту",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "студенті",
-  "lemma": "студент",
-  "tags": "noun:anim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "студентів",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "студентів",
-  "lemma": "студент",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "словами",
-  "lemma": "слово",
-  "tags": "noun:inanim:p:v_oru",
-  "pos": "noun"
- },
- {
-  "word_form": "своїми",
-  "lemma": "свій",
-  "tags": "adj:p:v_oru:pron:pos",
-  "pos": "adj"
- },
- {
-  "word_form": "стіл",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "стіл",
-  "lemma": "стіл",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "сімнадцятий",
-  "lemma": "сімнадцятий",
-  "tags": "adj:m:v_kly:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "сімнадцятий",
-  "lemma": "сімнадцятий",
-  "tags": "adj:m:v_naz:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "сімнадцятий",
-  "lemma": "сімнадцятий",
-  "tags": "adj:m:v_zna:rinanim:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "січня",
-  "lemma": "січень",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "сім",
-  "lemma": "сей",
-  "tags": "adj:m:v_mis:pron:dem:arch",
-  "pos": "adj"
- },
- {
-  "word_form": "сім",
-  "lemma": "сей",
-  "tags": "adj:n:v_mis:pron:dem:arch",
-  "pos": "adj"
- },
- {
-  "word_form": "сім",
-  "lemma": "се",
-  "tags": "noun:inanim:n:v_mis:pron:dem:arch",
-  "pos": "noun"
- },
- {
-  "word_form": "сім",
-  "lemma": "сім",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "сім",
-  "lemma": "сім",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "тексті",
-  "lemma": "текст",
-  "tags": "noun:inanim:m:v_mis",
-  "pos": "noun"
- },
- {
-  "word_form": "телевізор",
-  "lemma": "телевізор",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "телевізор",
-  "lemma": "телевізор",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "тисяч",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_rod:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисяча",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_naz:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячам",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_dav:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячами",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_oru:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячах",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_mis:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисяче",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_kly:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячею",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_oru:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячу",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_zna:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_dav:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_mis:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:f:v_rod:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_kly:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_naz:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячі",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_zna:numr",
-  "pos": "noun"
- },
- {
-  "word_form": "тисячів",
-  "lemma": "тисяча",
-  "tags": "noun:inanim:p:v_rod:numr:subst",
-  "pos": "noun"
- },
- {
-  "word_form": "третина",
-  "lemma": "третина",
-  "tags": "noun:inanim:f:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "третини",
-  "lemma": "третина",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "третини",
-  "lemma": "третина",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "третини",
-  "lemma": "третина",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "третини",
-  "lemma": "третина",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "третє",
-  "lemma": "третій",
-  "tags": "adj:n:v_kly:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "третє",
-  "lemma": "третій",
-  "tags": "adj:n:v_naz:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "третє",
-  "lemma": "третій",
-  "tags": "adj:n:v_zna:numr",
-  "pos": "adj"
- },
- {
-  "word_form": "трьох",
-  "lemma": "три",
-  "tags": "numr:p:v_rod",
-  "pos": "numr"
- },
- {
-  "word_form": "три",
-  "lemma": "три",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "три",
-  "lemma": "три",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "три",
-  "lemma": "терти",
-  "tags": "verb:imperf:impr:s:2",
-  "pos": "verb"
- },
- {
-  "word_form": "тридцять",
-  "lemma": "тридцять",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "тридцять",
-  "lemma": "тридцять",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "увімкнути",
-  "lemma": "увімкнути",
-  "tags": "verb:perf:inf",
-  "pos": "verb"
- },
- {
-  "word_form": "українці",
-  "lemma": "українець",
-  "tags": "noun:anim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "українців",
-  "lemma": "українець",
-  "tags": "noun:anim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "українців",
-  "lemma": "українець",
-  "tags": "noun:anim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "усі",
-  "lemma": "увесь",
-  "tags": "adj:p:v_naz:pron:gen",
-  "pos": "adj"
- },
- {
-  "word_form": "усі",
-  "lemma": "увесь",
-  "tags": "adj:p:v_zna:rinanim:pron:gen",
-  "pos": "adj"
- },
- {
-  "word_form": "усі",
-  "lemma": "усі",
-  "tags": "noun:anim:p:v_naz:pron:gen",
-  "pos": "noun"
- },
- {
-  "word_form": "усі",
-  "lemma": "ухо",
-  "tags": "noun:inanim:n:v_mis:arch",
-  "pos": "noun"
- },
- {
-  "word_form": "хвилин",
-  "lemma": "хвилина",
-  "tags": "noun:inanim:p:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "хвилини",
-  "lemma": "хвилина",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "хвороби",
-  "lemma": "хвороба",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "хвороби",
-  "lemma": "хвороба",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "хвороби",
-  "lemma": "хвороба",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "хвороби",
-  "lemma": "хвороба",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "час",
-  "lemma": "час",
-  "tags": "noun:inanim:m:v_naz:predic",
-  "pos": "noun"
- },
- {
-  "word_form": "час",
-  "lemma": "час",
-  "tags": "noun:inanim:m:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:n:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:n:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:n:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:n:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:p:v_kly",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:p:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "читання",
-  "lemma": "читання",
-  "tags": "noun:inanim:p:v_zna",
-  "pos": "noun"
- },
- {
-  "word_form": "читають",
-  "lemma": "читати",
-  "tags": "verb:imperf:pres:p:3",
-  "pos": "verb"
- },
- {
-  "word_form": "чотири",
-  "lemma": "чотири",
-  "tags": "numr:p:v_naz",
-  "pos": "numr"
- },
- {
-  "word_form": "чотири",
-  "lemma": "чотири",
-  "tags": "numr:p:v_zna",
-  "pos": "numr"
- },
- {
-  "word_form": "щодня",
-  "lemma": "щодня",
-  "tags": "adv",
-  "pos": "adv"
- },
- {
-  "word_form": "що",
-  "lemma": "що",
-  "tags": "noun:inanim:n:v_naz:pron:int:rel",
-  "pos": "noun"
- },
- {
-  "word_form": "Січі",
-  "lemma": "Січ",
-  "tags": "noun:inanim:f:v_rod:prop",
-  "pos": "noun"
- },
- {
-  "word_form": "січі",
-  "lemma": "січ",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "правильний",
-  "lemma": "правильний",
-  "tags": "adj:m:v_naz:compb",
-  "pos": "adj"
- },
- {
-  "word_form": "відмінок",
-  "lemma": "відмінок",
-  "tags": "noun:inanim:m:v_naz",
-  "pos": "noun"
- },
- {
-  "word_form": "множини",
-  "lemma": "множина",
-  "tags": "noun:inanim:f:v_rod",
-  "pos": "noun"
- },
- {
-  "word_form": "іменника",
-  "lemma": "іменник",
-  "tags": "noun:inanim:m:v_rod",
-  "pos": "noun"
- }
+  {
+    "word_form": "Карпатах",
+    "lemma": "Карпати",
+    "tags": "noun:inanim:p:v_mis:ns:prop:geo",
+    "pos": "noun"
+  },
+  {
+    "word_form": "Альцгеймера",
+    "lemma": "Альцгеймер",
+    "tags": "noun:anim:m:v_rod:prop:lname",
+    "pos": "noun"
+  },
+  {
+    "word_form": "активізуються",
+    "lemma": "активізуватися",
+    "tags": "verb:rev:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "активізуються",
+    "lemma": "активізуватися",
+    "tags": "verb:rev:perf:futr:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "активізується",
+    "lemma": "активізуватися",
+    "tags": "verb:rev:imperf:pres:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "активізується",
+    "lemma": "активізуватися",
+    "tags": "verb:rev:perf:futr:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "багато",
+    "lemma": "багато",
+    "tags": "adv:compb:predic",
+    "pos": "adv"
+  },
+  {
+    "word_form": "багато",
+    "lemma": "багато",
+    "tags": "numr:p:v_naz:pron:ind",
+    "pos": "numr"
+  },
+  {
+    "word_form": "багато",
+    "lemma": "багато",
+    "tags": "numr:p:v_zna:pron:ind",
+    "pos": "numr"
+  },
+  {
+    "word_form": "бачу",
+    "lemma": "бачити",
+    "tags": "verb:imperf:pres:s:1:insert",
+    "pos": "verb"
+  },
+  {
+    "word_form": "березня",
+    "lemma": "березень",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "бо",
+    "lemma": "бо",
+    "tags": "conj:subord",
+    "pos": "conj"
+  },
+  {
+    "word_form": "бо",
+    "lemma": "бо",
+    "tags": "part",
+    "pos": "part"
+  },
+  {
+    "word_form": "велике",
+    "lemma": "великий",
+    "tags": "adj:n:v_kly:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "велике",
+    "lemma": "великий",
+    "tags": "adj:n:v_naz:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "велике",
+    "lemma": "великий",
+    "tags": "adj:n:v_zna:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "вмикають",
+    "lemma": "вмикати",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "вправ",
+    "lemma": "вправа",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "вправ",
+    "lemma": "вправити",
+    "tags": "verb:perf:impr:s:2",
+    "pos": "verb"
+  },
+  {
+    "word_form": "втратили",
+    "lemma": "втратити",
+    "tags": "verb:perf:past:p",
+    "pos": "verb"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "adj:p:v_mis:adjp:pasv:imperf",
+    "pos": "adj"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "adj:p:v_rod:adjp:pasv:imperf",
+    "pos": "adj"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "adj:p:v_zna:ranim:adjp:pasv:imperf",
+    "pos": "adj"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "noun:anim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "noun:anim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "вчених",
+    "lemma": "вчений",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "від",
+    "lemma": "від",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "відсотки",
+    "lemma": "відсоток",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "відсотки",
+    "lemma": "відсоток",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "відсотки",
+    "lemma": "відсоток",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "відсотків",
+    "lemma": "відсоток",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "вікон",
+    "lemma": "вікно",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "годин",
+    "lemma": "година",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "головного",
+    "lemma": "головний",
+    "tags": "adj:m:v_rod:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "головного",
+    "lemma": "головний",
+    "tags": "adj:m:v_zna:ranim:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "головного",
+    "lemma": "головний",
+    "tags": "adj:n:v_rod:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "головного",
+    "lemma": "головне",
+    "tags": "noun:inanim:n:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривень",
+    "lemma": "гривня",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривна",
+    "tags": "noun:inanim:f:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:f:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривна",
+    "tags": "noun:inanim:f:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:f:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "гривні",
+    "lemma": "гривня",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "два",
+    "lemma": "два",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "два",
+    "lemma": "два",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двадцяти",
+    "lemma": "двадцять",
+    "tags": "numr:p:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двадцяти",
+    "lemma": "двадцять",
+    "tags": "numr:p:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двадцяти",
+    "lemma": "двадцять",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двадцять",
+    "lemma": "двадцять",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двадцять",
+    "lemma": "двадцять",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двома",
+    "lemma": "два",
+    "tags": "numr:p:v_oru",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двома",
+    "lemma": "двоє",
+    "tags": "numr:p:v_oru",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "два",
+    "tags": "numr:p:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "двоє",
+    "tags": "numr:p:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "два",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "двоє",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "два",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двох",
+    "lemma": "двоє",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двоє",
+    "lemma": "двоє",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двоє",
+    "lemma": "двоє",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "дві",
+    "lemma": "два",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "дві",
+    "lemma": "два",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двісті",
+    "lemma": "двісті",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "двісті",
+    "lemma": "двісті",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "для",
+    "lemma": "для",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "днів",
+    "lemma": "день",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "думку",
+    "lemma": "думка",
+    "tags": "noun:inanim:f:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ділянок",
+    "lemma": "ділянка",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ділянки",
+    "lemma": "ділянка",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "жодної",
+    "lemma": "жодний",
+    "tags": "adj:f:v_rod:pron:neg",
+    "pos": "adj"
+  },
+  {
+    "word_form": "з",
+    "lemma": "з",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "за",
+    "lemma": "за",
+    "tags": "adv:predic",
+    "pos": "adv"
+  },
+  {
+    "word_form": "за",
+    "lemma": "за",
+    "tags": "part",
+    "pos": "part"
+  },
+  {
+    "word_form": "за",
+    "lemma": "за",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "завдань",
+    "lemma": "завдання",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задач",
+    "lemma": "задача",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:n:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:n:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:n:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:n:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "задоволення",
+    "lemma": "задоволення",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "зате",
+    "lemma": "зате",
+    "tags": "conj:coord",
+    "pos": "conj"
+  },
+  {
+    "word_form": "зі",
+    "lemma": "зі",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "знаходять",
+    "lemma": "знаходити",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "знижує",
+    "lemma": "знижувати",
+    "tags": "verb:imperf:pres:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "йдеться",
+    "lemma": "йтися",
+    "tags": "verb:rev:imperf:pres:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "кам'яниста",
+    "lemma": "кам'янистий",
+    "tags": "adj:f:v_kly",
+    "pos": "adj"
+  },
+  {
+    "word_form": "кам'яниста",
+    "lemma": "кам'янистий",
+    "tags": "adj:f:v_naz",
+    "pos": "adj"
+  },
+  {
+    "word_form": "квітень",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітень",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітневі",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітневі",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітнем",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітню",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітню",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітню",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітня",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітням",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітнями",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітнях",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітні",
+    "lemma": "квітень",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітні",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітні",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітні",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "квітнів",
+    "lemma": "квітень",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книг",
+    "lemma": "книга",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книга",
+    "lemma": "книга",
+    "tags": "noun:inanim:f:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книги",
+    "lemma": "книга",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книги",
+    "lemma": "книга",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книги",
+    "lemma": "книга",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книги",
+    "lemma": "книга",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книжки",
+    "lemma": "книжка",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книжки",
+    "lemma": "книжка",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книжки",
+    "lemma": "книжка",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книжки",
+    "lemma": "книжка",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "книжок",
+    "lemma": "книжка",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "користь",
+    "lemma": "користь",
+    "tags": "noun:inanim:f:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "користь",
+    "lemma": "користь",
+    "tags": "noun:inanim:f:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "люде",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_naz:arch",
+    "pos": "noun"
+  },
+  {
+    "word_form": "люде",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_zna:rare:arch",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людей",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людей",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "люди",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "люди",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "люди",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_zna:rare",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людин",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людин",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людина",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людинам",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людинами",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людинах",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людини",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людини",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людини",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людини",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людино",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людиною",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людину",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людині",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людині",
+    "lemma": "людина",
+    "tags": "noun:anim:f:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людьми",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людям",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "людях",
+    "lemma": "людина",
+    "tags": "noun:anim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:anim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:anim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:anim:p:v_zna:rare",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "метри",
+    "lemma": "метр",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мозку",
+    "lemma": "мозок",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мозку",
+    "lemma": "мозок",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мозку",
+    "lemma": "мозок",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мозку",
+    "lemma": "мозок",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мої",
+    "lemma": "мій",
+    "tags": "adj:p:v_kly:pron:pos",
+    "pos": "adj"
+  },
+  {
+    "word_form": "мої",
+    "lemma": "мій",
+    "tags": "adj:p:v_naz:pron:pos",
+    "pos": "adj"
+  },
+  {
+    "word_form": "мої",
+    "lemma": "мій",
+    "tags": "adj:p:v_zna:rinanim:pron:pos",
+    "pos": "adj"
+  },
+  {
+    "word_form": "мільйон",
+    "lemma": "мільйон",
+    "tags": "noun:inanim:m:v_naz:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мільйон",
+    "lemma": "мільйон",
+    "tags": "noun:inanim:m:v_zna:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мільйони",
+    "lemma": "мільйон",
+    "tags": "noun:inanim:p:v_kly:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мільйони",
+    "lemma": "мільйон",
+    "tags": "noun:inanim:p:v_naz:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "мільйони",
+    "lemma": "мільйон",
+    "tags": "noun:inanim:p:v_zna:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "на",
+    "lemma": "на",
+    "tags": "intj",
+    "pos": "intj"
+  },
+  {
+    "word_form": "на",
+    "lemma": "на",
+    "tags": "part",
+    "pos": "part"
+  },
+  {
+    "word_form": "на",
+    "lemma": "на",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "нате",
+    "lemma": "нате",
+    "tags": "intj",
+    "pos": "intj"
+  },
+  {
+    "word_form": "найскладніших",
+    "lemma": "найскладніший",
+    "tags": "adj:p:v_mis:comps",
+    "pos": "adj"
+  },
+  {
+    "word_form": "найскладніших",
+    "lemma": "найскладніший",
+    "tags": "adj:p:v_rod:comps",
+    "pos": "adj"
+  },
+  {
+    "word_form": "найскладніших",
+    "lemma": "найскладніший",
+    "tags": "adj:p:v_zna:ranim:comps",
+    "pos": "adj"
+  },
+  {
+    "word_form": "насолоду",
+    "lemma": "насолода",
+    "tags": "noun:inanim:f:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "напиши",
+    "lemma": "написати",
+    "tags": "verb:perf:impr:s:2",
+    "pos": "verb"
+  },
+  {
+    "word_form": "не",
+    "lemma": "не",
+    "tags": "part",
+    "pos": "part"
+  },
+  {
+    "word_form": "ніж",
+    "lemma": "ніж",
+    "tags": "conj:subord",
+    "pos": "conj"
+  },
+  {
+    "word_form": "неспішного",
+    "lemma": "неспішний",
+    "tags": "adj:m:v_rod",
+    "pos": "adj"
+  },
+  {
+    "word_form": "неспішного",
+    "lemma": "неспішний",
+    "tags": "adj:m:v_zna:ranim",
+    "pos": "adj"
+  },
+  {
+    "word_form": "неспішного",
+    "lemma": "неспішний",
+    "tags": "adj:n:v_rod",
+    "pos": "adj"
+  },
+  {
+    "word_form": "нуль",
+    "lemma": "нуль",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "нуль",
+    "lemma": "нуль",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "обидва",
+    "lemma": "обидва",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "обидва",
+    "lemma": "обидва",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "обидві",
+    "lemma": "обидва",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "обидві",
+    "lemma": "обидва",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "обоє",
+    "lemma": "обоє",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "обоє",
+    "lemma": "обоє",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одна",
+    "lemma": "один",
+    "tags": "numr:f:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одним",
+    "lemma": "один",
+    "tags": "numr:m:v_oru",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одним",
+    "lemma": "один",
+    "tags": "numr:n:v_oru",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одним",
+    "lemma": "один",
+    "tags": "numr:p:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одного",
+    "lemma": "один",
+    "tags": "numr:m:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одного",
+    "lemma": "один",
+    "tags": "numr:m:v_zna:ranim",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одного",
+    "lemma": "один",
+    "tags": "numr:n:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одному",
+    "lemma": "один",
+    "tags": "numr:m:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одному",
+    "lemma": "один",
+    "tags": "numr:m:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одному",
+    "lemma": "один",
+    "tags": "numr:n:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одному",
+    "lemma": "один",
+    "tags": "numr:n:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "одразу",
+    "lemma": "одразу",
+    "tags": "adv",
+    "pos": "adv"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ята",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ята",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ята",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ята",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ять",
+    "tags": "numr:p:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ять",
+    "tags": "numr:p:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "п'яти",
+    "lemma": "п'ять",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "п'ять",
+    "lemma": "п'ять",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "п'ять",
+    "lemma": "п'ять",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "перегляду",
+    "lemma": "перегляд",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "перегляду",
+    "lemma": "перегляд",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "перегляду",
+    "lemma": "перегляд",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "передач",
+    "lemma": "передача",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "питань",
+    "lemma": "питання",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "поверсі",
+    "lemma": "поверх",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "поверх",
+    "lemma": "поверх",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "поверх",
+    "lemma": "поверх",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "поверх",
+    "lemma": "поверх",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "половиною",
+    "lemma": "половина",
+    "tags": "noun:inanim:f:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "працюємо",
+    "lemma": "працювати",
+    "tags": "verb:imperf:pres:p:1",
+    "pos": "verb"
+  },
+  {
+    "word_form": "працюють",
+    "lemma": "працювати",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "прийшли",
+    "lemma": "прийти",
+    "tags": "verb:perf:past:p",
+    "pos": "verb"
+  },
+  {
+    "word_form": "пристрій",
+    "lemma": "пристрій",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пристрій",
+    "lemma": "пристрій",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пробіжки",
+    "lemma": "пробіжка",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пробіжки",
+    "lemma": "пробіжка",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пробіжки",
+    "lemma": "пробіжка",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пробіжки",
+    "lemma": "пробіжка",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "пробіжку",
+    "lemma": "пробіжка",
+    "tags": "noun:inanim:f:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "простіше",
+    "lemma": "простіший",
+    "tags": "adj:n:v_kly:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "простіше",
+    "lemma": "простіший",
+    "tags": "adj:n:v_naz:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "простіше",
+    "lemma": "простіший",
+    "tags": "adj:n:v_zna:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "простіше",
+    "lemma": "простіше",
+    "tags": "adv:compc:predic",
+    "pos": "adv"
+  },
+  {
+    "word_form": "прочитує",
+    "lemma": "прочитувати",
+    "tags": "verb:imperf:pres:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "про",
+    "lemma": "про",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_dav:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_kly:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_mis:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_naz:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_oru:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_rod:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:m:v_zna:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_dav:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_kly:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_mis:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_naz:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_oru:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_rod:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "півтора",
+    "lemma": "півтора",
+    "tags": "numr:n:v_zna:nv",
+    "pos": "numr"
+  },
+  {
+    "word_form": "під",
+    "lemma": "під",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "під",
+    "lemma": "під",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "під",
+    "lemma": "під",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "рази",
+    "lemma": "раз",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рази",
+    "lemma": "раз",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рази",
+    "lemma": "раз",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ранкової",
+    "lemma": "ранковий",
+    "tags": "adj:f:v_rod",
+    "pos": "adj"
+  },
+  {
+    "word_form": "ранкову",
+    "lemma": "ранковий",
+    "tags": "adj:f:v_zna",
+    "pos": "adj"
+  },
+  {
+    "word_form": "регулярне",
+    "lemma": "регулярний",
+    "tags": "adj:n:v_kly:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "регулярне",
+    "lemma": "регулярний",
+    "tags": "adj:n:v_naz:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "регулярне",
+    "lemma": "регулярний",
+    "tags": "adj:n:v_zna:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "ризик",
+    "lemma": "ризик",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ризик",
+    "lemma": "ризик",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "речення",
+    "lemma": "речення",
+    "tags": "noun:inanim:n:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розвитку",
+    "lemma": "розвиток",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розвитку",
+    "lemma": "розвиток",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розвитку",
+    "lemma": "розвиток",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розвитку",
+    "lemma": "розвиток",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розуму",
+    "lemma": "розум",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розуму",
+    "lemma": "розум",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "розуму",
+    "lemma": "розум",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рокам",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роками",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роках",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роки",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роки",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роки",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рокові",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рокові",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роком",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рок",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рок",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рок",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "року",
+    "lemma": "рок",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "років",
+    "lemma": "рік",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "році",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "роче",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рік",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рік",
+    "lemma": "рік",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рік",
+    "lemma": "ріка",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "рік",
+    "lemma": "ректи",
+    "tags": "verb:imperf:past:m",
+    "pos": "verb"
+  },
+  {
+    "word_form": "серця",
+    "lemma": "серце",
+    "tags": "noun:inanim:n:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "серця",
+    "lemma": "серце",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "серця",
+    "lemma": "серце",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "серця",
+    "lemma": "серце",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ста",
+    "lemma": "сто",
+    "tags": "numr:p:v_dav",
+    "pos": "numr"
+  },
+  {
+    "word_form": "ста",
+    "lemma": "сто",
+    "tags": "numr:p:v_mis",
+    "pos": "numr"
+  },
+  {
+    "word_form": "ста",
+    "lemma": "сто",
+    "tags": "numr:p:v_oru",
+    "pos": "numr"
+  },
+  {
+    "word_form": "ста",
+    "lemma": "сто",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "сто",
+    "lemma": "сто",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "сто",
+    "lemma": "сто",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "стола",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "стола",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_zna:var",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столам",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столами",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столах",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столе",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столи",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столи",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столи",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столові",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столові",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столом",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столу",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столу",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столу",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столі",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "столів",
+    "lemma": "стіл",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студент",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студента",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студента",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентам",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентами",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентах",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенте",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенти",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенти",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенти",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_zna:rare",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентові",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентові",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентом",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенту",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_dav",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенту",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студенті",
+    "lemma": "студент",
+    "tags": "noun:anim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентів",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "студентів",
+    "lemma": "студент",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "словами",
+    "lemma": "слово",
+    "tags": "noun:inanim:p:v_oru",
+    "pos": "noun"
+  },
+  {
+    "word_form": "своїми",
+    "lemma": "свій",
+    "tags": "adj:p:v_oru:pron:pos",
+    "pos": "adj"
+  },
+  {
+    "word_form": "стіл",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "стіл",
+    "lemma": "стіл",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "сімнадцятий",
+    "lemma": "сімнадцятий",
+    "tags": "adj:m:v_kly:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "сімнадцятий",
+    "lemma": "сімнадцятий",
+    "tags": "adj:m:v_naz:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "сімнадцятий",
+    "lemma": "сімнадцятий",
+    "tags": "adj:m:v_zna:rinanim:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "січня",
+    "lemma": "січень",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "сім",
+    "lemma": "сей",
+    "tags": "adj:m:v_mis:pron:dem:arch",
+    "pos": "adj"
+  },
+  {
+    "word_form": "сім",
+    "lemma": "сей",
+    "tags": "adj:n:v_mis:pron:dem:arch",
+    "pos": "adj"
+  },
+  {
+    "word_form": "сім",
+    "lemma": "се",
+    "tags": "noun:inanim:n:v_mis:pron:dem:arch",
+    "pos": "noun"
+  },
+  {
+    "word_form": "сім",
+    "lemma": "сім",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "сім",
+    "lemma": "сім",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "тексті",
+    "lemma": "текст",
+    "tags": "noun:inanim:m:v_mis",
+    "pos": "noun"
+  },
+  {
+    "word_form": "телевізор",
+    "lemma": "телевізор",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "телевізор",
+    "lemma": "телевізор",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисяч",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_rod:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисяча",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_naz:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячам",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_dav:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячами",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_oru:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячах",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_mis:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисяче",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_kly:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячею",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_oru:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячу",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_zna:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_dav:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_mis:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:f:v_rod:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_kly:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_naz:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячі",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_zna:numr",
+    "pos": "noun"
+  },
+  {
+    "word_form": "тисячів",
+    "lemma": "тисяча",
+    "tags": "noun:inanim:p:v_rod:numr:subst",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третина",
+    "lemma": "третина",
+    "tags": "noun:inanim:f:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третини",
+    "lemma": "третина",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третини",
+    "lemma": "третина",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третини",
+    "lemma": "третина",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третини",
+    "lemma": "третина",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "третє",
+    "lemma": "третій",
+    "tags": "adj:n:v_kly:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "третє",
+    "lemma": "третій",
+    "tags": "adj:n:v_naz:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "третє",
+    "lemma": "третій",
+    "tags": "adj:n:v_zna:numr",
+    "pos": "adj"
+  },
+  {
+    "word_form": "трьох",
+    "lemma": "три",
+    "tags": "numr:p:v_rod",
+    "pos": "numr"
+  },
+  {
+    "word_form": "три",
+    "lemma": "три",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "три",
+    "lemma": "три",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "три",
+    "lemma": "терти",
+    "tags": "verb:imperf:impr:s:2",
+    "pos": "verb"
+  },
+  {
+    "word_form": "тридцять",
+    "lemma": "тридцять",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "тридцять",
+    "lemma": "тридцять",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "увімкнути",
+    "lemma": "увімкнути",
+    "tags": "verb:perf:inf",
+    "pos": "verb"
+  },
+  {
+    "word_form": "українці",
+    "lemma": "українець",
+    "tags": "noun:anim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "українців",
+    "lemma": "українець",
+    "tags": "noun:anim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "українців",
+    "lemma": "українець",
+    "tags": "noun:anim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "усі",
+    "lemma": "увесь",
+    "tags": "adj:p:v_naz:pron:gen",
+    "pos": "adj"
+  },
+  {
+    "word_form": "усі",
+    "lemma": "увесь",
+    "tags": "adj:p:v_zna:rinanim:pron:gen",
+    "pos": "adj"
+  },
+  {
+    "word_form": "усі",
+    "lemma": "усі",
+    "tags": "noun:anim:p:v_naz:pron:gen",
+    "pos": "noun"
+  },
+  {
+    "word_form": "усі",
+    "lemma": "ухо",
+    "tags": "noun:inanim:n:v_mis:arch",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвилин",
+    "lemma": "хвилина",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвилини",
+    "lemma": "хвилина",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвороби",
+    "lemma": "хвороба",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвороби",
+    "lemma": "хвороба",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвороби",
+    "lemma": "хвороба",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "хвороби",
+    "lemma": "хвороба",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "час",
+    "lemma": "час",
+    "tags": "noun:inanim:m:v_naz:predic",
+    "pos": "noun"
+  },
+  {
+    "word_form": "час",
+    "lemma": "час",
+    "tags": "noun:inanim:m:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:n:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:n:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:n:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:n:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:p:v_kly",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:p:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читання",
+    "lemma": "читання",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "читають",
+    "lemma": "читати",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "чотири",
+    "lemma": "чотири",
+    "tags": "numr:p:v_naz",
+    "pos": "numr"
+  },
+  {
+    "word_form": "чотири",
+    "lemma": "чотири",
+    "tags": "numr:p:v_zna",
+    "pos": "numr"
+  },
+  {
+    "word_form": "щодня",
+    "lemma": "щодня",
+    "tags": "adv",
+    "pos": "adv"
+  },
+  {
+    "word_form": "що",
+    "lemma": "що",
+    "tags": "noun:inanim:n:v_naz:pron:int:rel",
+    "pos": "noun"
+  },
+  {
+    "word_form": "Січі",
+    "lemma": "Січ",
+    "tags": "noun:inanim:f:v_rod:prop",
+    "pos": "noun"
+  },
+  {
+    "word_form": "січі",
+    "lemma": "січ",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "правильний",
+    "lemma": "правильний",
+    "tags": "adj:m:v_naz:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "відмінок",
+    "lemma": "відмінок",
+    "tags": "noun:inanim:m:v_naz",
+    "pos": "noun"
+  },
+  {
+    "word_form": "множини",
+    "lemma": "множина",
+    "tags": "noun:inanim:f:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "іменника",
+    "lemma": "іменник",
+    "tags": "noun:inanim:m:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "в",
+    "lemma": "в",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "без",
+    "lemma": "без",
+    "tags": "prep",
+    "pos": "prep"
+  },
+  {
+    "word_form": "складніших",
+    "lemma": "складніший",
+    "tags": "adj:p:v_rod:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "складніших",
+    "lemma": "складніший",
+    "tags": "adj:p:v_zna:ranim:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "складніших",
+    "lemma": "складніший",
+    "tags": "adj:p:v_mis:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "складніший",
+    "lemma": "складніший",
+    "tags": "adj:m:v_naz:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "складніший",
+    "lemma": "складніший",
+    "tags": "adj:m:v_zna:rinanim:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "складніший",
+    "lemma": "складніший",
+    "tags": "adj:m:v_kly:compc",
+    "pos": "adj"
+  },
+  {
+    "word_form": "прочитувати",
+    "lemma": "прочитувати",
+    "tags": "verb:imperf:inf",
+    "pos": "verb"
+  },
+  {
+    "word_form": "прочитає",
+    "lemma": "прочитати",
+    "tags": "verb:perf:futr:s:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "прочитати",
+    "lemma": "прочитати",
+    "tags": "verb:perf:inf",
+    "pos": "verb"
+  },
+  {
+    "word_form": "прочитують",
+    "lemma": "прочитувати",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "прочитають",
+    "lemma": "прочитати",
+    "tags": "verb:perf:futr:p:3",
+    "pos": "verb"
+  }
 ]
