@@ -679,6 +679,7 @@ class EngineLessonBaker:
                             blames_source=False,
                         )
                     blocks: list[dict[str, Any]] = []
+                    phase_evaluations: list[tuple[Any, str, int]] = []
                     raw_attempt_counter = [0]
                     raw_out_root = self._engine_out_dir
                     raw_bake_id = job_id if isinstance(job_id, str) else None
@@ -718,19 +719,29 @@ class EngineLessonBaker:
                             ),
                         )
                         self._record_qualification_evaluation(phase, evaluated)
-                        if evaluated.disposition != "teacher_ready":
-                            if raw_out_root is not None:
-                                _persist_raw_parse_failure(
-                                    initial_raw,
-                                    bake_artifact_dir(raw_out_root, bake_id=raw_bake_id),
-                                    initial_attempt,
-                                )
-                            raise FloorUnmetError(
-                                "Bake failed: v3 serialization did not produce "
-                                "every certified slot.",
-                                blames_source=False,
-                            )
-                        blocks.extend(self._block(block, len(blocks)) for block in evaluated.blocks)
+                        phase_evaluations.append((evaluated, initial_raw, initial_attempt))
+                        blocks.extend(
+                            self._block(block, len(blocks))
+                            for block in evaluated.blocks
+                            if block.accepted
+                        )
+                    if any(
+                        evaluated.disposition != "teacher_ready"
+                        for evaluated, _initial_raw, _initial_attempt in phase_evaluations
+                    ):
+                        if raw_out_root is not None:
+                            artifact_dir = bake_artifact_dir(raw_out_root, bake_id=raw_bake_id)
+                            for evaluated, initial_raw, initial_attempt in phase_evaluations:
+                                if evaluated.disposition != "teacher_ready":
+                                    _persist_raw_parse_failure(
+                                        initial_raw,
+                                        artifact_dir,
+                                        initial_attempt,
+                                    )
+                        raise FloorUnmetError(
+                            "Bake failed: v3 serialization did not produce every certified slot.",
+                            blames_source=False,
+                        )
                     context.update_progress_db(step="assembly")
                     return {"blocks": blocks, "rejected": []}
             except (data.DataConfigError, data.DataDriftError) as error:
