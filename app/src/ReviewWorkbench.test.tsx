@@ -173,6 +173,7 @@ describe('ReviewWorkbench deliberate-error affordance (#208 / #164)', () => {
           onRestoreRejected={vi.fn()}
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
+          onActivityFeedback={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={true}
@@ -228,6 +229,7 @@ describe('ReviewWorkbench honesty flags', () => {
           onRestoreRejected={vi.fn()}
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
+          onActivityFeedback={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={false}
@@ -255,6 +257,7 @@ describe('ReviewWorkbench answer key rendering', () => {
           onRestoreRejected={vi.fn()}
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
+          onActivityFeedback={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={true}
@@ -321,6 +324,7 @@ function renderWorkbench(
     onRestoreRejected: vi.fn(),
     onAckWarning: vi.fn(),
     onSaveActivity: vi.fn(),
+    onActivityFeedback: vi.fn(),
     onAcceptLesson: vi.fn(),
     onReturnToDraft: vi.fn(),
     allWarningsAcked: true,
@@ -409,5 +413,87 @@ describe('ReviewWorkbench focus notice (#191)', () => {
 
     expect(screen.queryByTestId('focus-notice')).toBeNull();
     expect(screen.queryByTestId('focus-notice-print')).toBeNull();
+  });
+});
+
+describe('engine-flagged blocks — badge, ack flow, and teacher feedback (#402)', () => {
+  const FLAG_REASON = 'Двигун вважає цю вправу неякісною.';
+
+  function flaggedResource(
+    feedback?: LessonResourceView['activity_feedback'],
+  ): LessonResourceView {
+    const blocks = mockResource.lesson.blocks.map((block, index) =>
+      index === 0
+        ? {
+            ...block,
+            quality: 'engine_flagged' as const,
+            flag_reason_uk: FLAG_REASON,
+            flagged_content_hash: 'a'.repeat(64),
+            engine_reason_class: 'deterministic_gate: fixture',
+          }
+        : block,
+    );
+    return {
+      ...mockResource,
+      activity_feedback: feedback,
+      lesson: { ...mockResource.lesson, blocks },
+    };
+  }
+
+  it('renders the engine-authored reason verbatim, a distinct card, and the ack button', () => {
+    renderWorkbench(flaggedResource());
+
+    expect(screen.getByTestId('flagged-badge')).toHaveTextContent(FLAG_REASON);
+    const card = document.querySelector('[data-block-id="block-1"]') as HTMLElement;
+    expect(card.className).toContain('flagged');
+    const okCard = document.querySelector('[data-block-id="block-2"]') as HTMLElement;
+    expect(okCard.className).not.toContain('flagged');
+    // The flagged block joins the ordinary acknowledge-then-accept flow.
+    expect(card.querySelector('[data-action="b-accept"]')).not.toBeNull();
+  });
+
+  it('submits «вправа погана» with the optional comment', () => {
+    const props = renderWorkbench(flaggedResource());
+
+    fireEvent.change(screen.getByTestId('feedback-comment'), {
+      target: { value: 'Завдання не пасує до тексту.' },
+    });
+    fireEvent.click(screen.getByText('Вправа погана'));
+
+    expect(props.onActivityFeedback).toHaveBeenCalledWith(
+      'block-1',
+      'bad',
+      'Завдання не пасує до тексту.',
+    );
+  });
+
+  it('submits «вправа добра» with a null comment when none is typed', () => {
+    const props = renderWorkbench(flaggedResource());
+
+    fireEvent.click(screen.getByText('Вправа добра'));
+
+    expect(props.onActivityFeedback).toHaveBeenCalledWith('block-1', 'good', null);
+  });
+
+  it('shows the saved applicable verdict and reopens the form on change', () => {
+    renderWorkbench(
+      flaggedResource({
+        'block-1': { verdict: 'bad', comment: null, updated_at: '2026-08-09T00:00:00Z' },
+      }),
+    );
+
+    expect(screen.getByTestId('feedback-saved')).toBeInTheDocument();
+    expect(screen.queryByTestId('feedback-form')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Змінити оцінку'));
+
+    expect(screen.getByTestId('feedback-form')).toBeInTheDocument();
+  });
+
+  it('never renders feedback chrome on unflagged blocks', () => {
+    renderWorkbench(mockResource);
+
+    expect(screen.queryByTestId('feedback-form')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('flagged-badge')).not.toBeInTheDocument();
   });
 });

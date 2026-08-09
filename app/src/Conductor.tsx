@@ -19,6 +19,8 @@ export interface ConductorLessonDoc {
     answer_key: any;
     mark: 'ok' | 'warn';
     note: string | null;
+    /** #402: engine-flagged blocks are teacher-review-only, never conducted. */
+    quality?: 'engine_ok' | 'engine_flagged';
   }>;
   rejected?: any[];
 }
@@ -80,7 +82,11 @@ function initCond(l: ConductorLessonDoc): CondState {
   const pd = info.pd;
   // Honest adaptation: use the blocks the lesson already contains (engine chose the set for this duration).
   // Demo sliced using planSplit; real lessons already embody the selected set.
-  const plan = (l.blocks || []).map((b) => b.id);
+  // #402: conducting projects to students, so engine-flagged blocks stay out —
+  // the class sees exactly what a dropped slot used to leave: nothing.
+  const plan = (l.blocks || [])
+    .filter((b) => b.quality !== 'engine_flagged')
+    .map((b) => b.id);
   return {
     lid: l.id,
     dur: d,

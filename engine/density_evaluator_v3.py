@@ -143,12 +143,21 @@ class BlockEvaluation:
     observed_units: int
     receipt: BlockDensityReceipt | None
     activity: Mapping[str, Any] | None = None
+    attempted_record: Mapping[str, Any] | None = None
     errors: tuple[SlotError, ...] = ()
     generator: str | None = None
 
     def __post_init__(self) -> None:
         if not self.slot_id.strip() or self.phase < 1 or self.observed_units < 0:
             raise ValueError("Block evaluations need a slot, phase, and non-negative unit count.")
+        if self.attempted_record is not None and self.disposition not in {
+            "density_shortfall",
+            "failed",
+            "dropped",
+        }:
+            raise ValueError(
+                "Only non-accepted dispositions may carry the last shape-valid attempt."
+            )
         floor = floor_for(self.activity_type)
         if self.disposition in {"ready", "tray"}:
             if self.activity is None or self.receipt is None or not self.receipt.floor_met:
@@ -596,6 +605,10 @@ def _evaluate_payload(
                     disposition="density_shortfall",
                     observed_units=observed_units[slot_id],
                     receipt=shortfalls[slot_id],
+                    # This attempt's own shape-valid record (#402): captured only
+                    # here and in the failed branch, never on ready/tray, and
+                    # never accumulated across rounds.
+                    attempted_record=checked.get(slot_id),
                     errors=errors,
                 )
             )
@@ -608,6 +621,7 @@ def _evaluate_payload(
                     disposition="failed",
                     observed_units=observed_units[slot_id],
                     receipt=None,
+                    attempted_record=checked.get(slot_id),
                     errors=errors,
                 )
             )
@@ -832,6 +846,10 @@ def _try_replacements(
 
 
 def _dropped(previous: BlockEvaluation, slot_id: str, *, reason: str) -> BlockEvaluation:
+    # #402 flag-don't-drop is presentation only: the internal ``dropped``
+    # disposition and ``accepted == False`` semantics must never be renamed or
+    # softened to reflect the presence of ``attempted_record``.  Density
+    # accounting, dispositions, and the qualification bar stay receipt-driven.
     if reason == "repair_exhausted":
         cause = "repair_exhausted: no certified replacement serialized successfully"
     elif reason == "not_repairable":
@@ -853,5 +871,8 @@ def _dropped(previous: BlockEvaluation, slot_id: str, *, reason: str) -> BlockEv
         disposition="dropped",
         observed_units=previous.observed_units,
         receipt=receipt,
+        # The last attempt's shape-valid record, frozen at classification time
+        # (#402).  Carried forward unchanged; never regenerated after the drop.
+        attempted_record=previous.attempted_record,
         errors=(*previous.errors, error),
     )

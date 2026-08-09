@@ -28,6 +28,9 @@ export interface LessonBlocksBlock {
   note: string | null;
   edited: boolean;
   provenance?: any;
+  /** #402: engine verdict; `flag_reason_uk` is engine-authored UK, rendered verbatim. */
+  quality?: 'engine_ok' | 'engine_flagged';
+  flag_reason_uk?: string | null;
 }
 
 export interface LessonBlocksProps {
@@ -52,6 +55,10 @@ export default function LessonBlocks({
   const isStudentView = viewMode === 'run';
   const phases: Record<number, LessonBlocksBlock[]> = { 1: [], 2: [], 3: [] };
   blocks.forEach(b => {
+    // #402: an engine-flagged block is teacher-review-only. The student render
+    // stays byte-for-byte what it was before flagging existed (N-1 exercises),
+    // exactly as a dropped slot was never visible to a student.
+    if (isStudentView && b.quality === 'engine_flagged') return;
     if (phases[b.phase]) phases[b.phase].push(b);
   });
 
@@ -65,6 +72,7 @@ export default function LessonBlocks({
             <h3>{t('blocks.phase', { phase })}</h3>
             {bs.map(block => {
               const isWarn = block.mark === 'warn';
+              const isFlagged = block.quality === 'engine_flagged';
               const acked = acknowledgedIds.includes(block.id);
               const showKey = viewMode === 'review' && showAnswers;
               const typeChip = isWarn ? 'warn' : 'info';
@@ -73,7 +81,7 @@ export default function LessonBlocks({
               return (
                 <div
                   key={block.id}
-                  className={`block ${isStudentView ? 'student-block' : ''} ${isWarn && !isStudentView ? 'warn' : 'ok'} ${block.edited && !isStudentView ? 'edited' : ''}`}
+                  className={`block ${isStudentView ? 'student-block' : ''} ${isWarn && !isStudentView ? 'warn' : 'ok'} ${isFlagged && !isStudentView ? 'flagged' : ''} ${block.edited && !isStudentView ? 'edited' : ''}`}
                   data-testid={isStudentView ? 'student-block' : undefined}
                 >
                   {!isStudentView && (
@@ -81,6 +89,10 @@ export default function LessonBlocks({
                       <span className={`chip ${typeChip}`}>{block.type}</span>
                       <span className="mode">{block.mode}</span>
                       {isWarn && <span className="warn-badge">{t('blocks.warnBadge')}</span>}
+                      {/* #402: engine-authored UK verdict, rendered verbatim. */}
+                      {isFlagged && block.flag_reason_uk && (
+                        <span className="flagged-badge" lang="uk">{block.flag_reason_uk}</span>
+                      )}
                       {intent.length > 0 && <DeliberateErrorBadge />}
                       {block.provenance?.external_options && <span className="prov">{t('blocks.externalOptions')}</span>}
                     </div>

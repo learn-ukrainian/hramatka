@@ -25,10 +25,13 @@ VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor"
 LU_ACTIVITY = "lu.activity.v1@1.0.0"
 LU_LESSON = "lu.lesson.v1@1.0.0"
 PILOT_LU_ACTIVITY = "lu.activity.v1@1.0.0-ffd54054"
-# 1.2.0 adds the optional rejected-draft answer-key carrier for
-# error-correction activities.  Legacy drafts omit it and stay valid.  Older
-# pins remain on disk as immutable provenance for recorded bake fingerprints.
-PILOT_LU_LESSON = "lu.lesson.v1@1.2.0-ffed19d"
+# 1.3.0 adds the required engine quality flag on every block plus the
+# contentless flagged-notice rejected-tray shape (#402 flag-don't-drop).  It is
+# a private-first adapted pin derived from the verbatim 1.2.0 schema, pending
+# upstream publication.  A 1.2.0-pinned validator must reject a 1.3.0 document
+# (additive-but-not-silently-compatible).  Older pins remain on disk as
+# immutable provenance for recorded bake fingerprints.
+PILOT_LU_LESSON = "lu.lesson.v1@1.3.0"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
 TRAILSPEC_V1 = "trailspec.v1@1.0.0-1356e7c4"
 STEP_RECEIPT_V1 = "step-receipt.v1@1.0.0-1356e7c4"

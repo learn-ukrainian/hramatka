@@ -1499,6 +1499,12 @@ class EngineLessonBaker:
                 "gates": gates,
                 "external_options": review,
             },
+            # lu.lesson.v1@1.3.0 (#402): the legacy pack path never flags —
+            # everything it emits passed its own gates.
+            "quality": "engine_ok",
+            "flag_reason_uk": None,
+            "flagged_content_hash": None,
+            "engine_reason_class": None,
         }
 
 

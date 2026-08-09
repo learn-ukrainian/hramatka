@@ -76,6 +76,11 @@ interface LessonBlock {
   note: string | null;
   edited: boolean;
   provenance: any;
+  /** #402: engine verdict on the block; reason is engine-authored Ukrainian. */
+  quality?: 'engine_ok' | 'engine_flagged';
+  flag_reason_uk?: string | null;
+  flagged_content_hash?: string | null;
+  engine_reason_class?: string | null;
 }
 
 interface LessonDocument {
@@ -105,6 +110,8 @@ interface LessonResource {
   accepted_at: string | null;
   accepted_revision: number | null;
   warning_acknowledgements: string[];
+  /** Applicable-only teacher verdicts on flagged blocks, keyed by block id (#402). */
+  activity_feedback?: Record<string, { verdict: 'good' | 'bad'; comment: string | null; updated_at: string }>;
   logical_model_id: string | null;
   methodology?: 'ttt';
   grammar_focus?: string | null;
@@ -1319,6 +1326,15 @@ export default function TeacherApp() {
       body: JSON.stringify({ expected_revision: lesson!.revision, activity }),
     });
 
+  // #402: no expected_revision — staleness is hash-gated server-side against
+  // the block's flag-time content hash, not the lesson revision.
+  const putActivityFeedback = (blockId: string, verdict: 'good' | 'bad', comment: string | null) =>
+    reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/feedback`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
+      body: JSON.stringify({ verdict, ...(comment ? { comment } : {}) }),
+    });
+
   const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => (
     <LessonBlocks
       blocks={l.lesson.blocks}
@@ -1978,6 +1994,7 @@ export default function TeacherApp() {
                       onSaveActivity={replaceActivity}
                       onAcceptLesson={acceptLesson}
                       onReturnToDraft={returnToDraft}
+                      onActivityFeedback={putActivityFeedback}
                       allWarningsAcked={allVisibleWarningsAcked(lesson)}
                     />
                   )}

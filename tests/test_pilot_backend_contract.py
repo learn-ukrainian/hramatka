@@ -128,6 +128,10 @@ class ErrorCorrectionFixtureBaker(FixtureBaker):
                 "gates": ["vesum"],
                 "external_options": False,
             },
+            "quality": "engine_ok",
+            "flag_reason_uk": None,
+            "flagged_content_hash": None,
+            "engine_reason_class": None,
         }
         return template
 

@@ -199,3 +199,54 @@ describe('lessons without intent metadata are unchanged (#164)', () => {
     expect(screen.getByTestId('teacher-answer-key')).toBeInTheDocument();
   });
 });
+
+describe('engine-flagged blocks (#402)', () => {
+  const FLAG_REASON = 'Двигун вважає цю вправу неякісною.';
+
+  function flaggedBlock(): LessonBlocksBlock {
+    return {
+      ...ecBlock({ items: [CORRECTED_SENTENCE] }),
+      id: 'block-flagged-1',
+      quality: 'engine_flagged',
+      flag_reason_uk: FLAG_REASON,
+    };
+  }
+
+  it('review mode shows the engine-authored reason verbatim on a visually distinct card', () => {
+    const { container } = renderBlocks(flaggedBlock(), 'review');
+
+    expect(screen.getByText(FLAG_REASON)).toBeInTheDocument();
+    const card = container.querySelector('.block') as HTMLElement;
+    expect(card.className).toContain('flagged');
+
+    const { container: okContainer } = renderBlocks(
+      { ...flaggedBlock(), quality: 'engine_ok', flag_reason_uk: null },
+      'review',
+    );
+    const okCard = okContainer.querySelector('.block') as HTMLElement;
+    // Not just "an extra span exists": the card classes themselves differ.
+    expect(card.className).not.toBe(okCard.className);
+    expect(okCard.className).not.toContain('flagged');
+  });
+
+  it('the student run view never renders a flagged block at all', () => {
+    render(
+      <LangProvider>
+        <LessonBlocks
+          blocks={[flaggedBlock(), ecBlock({ items: [CORRECTED_SENTENCE] })]}
+          viewMode="run"
+          showAnswers={false}
+          acknowledgedIds={[]}
+          onAck={() => {}}
+          loading={false}
+        />
+      </LangProvider>,
+    );
+
+    // Exactly one student block: the ok one. The flagged block is absent from
+    // the DOM, not hidden by a stylesheet.
+    expect(screen.getAllByTestId('student-block')).toHaveLength(1);
+    expect(screen.queryByText(FLAG_REASON)).not.toBeInTheDocument();
+    expect(document.querySelector('[data-block-id="block-flagged-1"]')).toBeNull();
+  });
+});

@@ -1,0 +1,18 @@
+{
+  "artifact": "lu.lesson.v1",
+  "version": "1.3.0",
+  "kind": "json-schema",
+  "description": "Private-first lesson contract derived from the verbatim 1.2.0 pin: adds the required engine quality flag on every block (flag-don't-drop, #402) and the contentless flagged-notice rejected-tray shape. Pending upstream publication to the public activity-kit package.",
+  "source": {
+    "repo": "learn-ukrainian/learn-ukrainian.github.io",
+    "path": "packages/activity-kit/src/lu.lesson.v1.schema.json",
+    "commit": "ffed19d00d939fa0885ec8af372997c60834873f"
+  },
+  "adapted": true,
+  "files": {
+    "lu.lesson.v1.schema.json": {
+      "sha256": "df0798af8f379d8c7903f2a50159dac2e241120e6cd54edcaead1ad76fa41e92",
+      "size": 19186
+    }
+  }
+}

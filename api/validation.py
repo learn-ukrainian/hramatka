@@ -53,6 +53,10 @@ def validate_lesson(lesson: dict[str, Any]) -> None:
     allowed = set(PILOT_ACTIVITY_TYPES)
     for collection in ("blocks", "rejected"):
         for item in lesson.get(collection, []):
+            if collection == "rejected" and item.get("type") == "flagged-notice":
+                # A contentless engine notice (#402) has no activity to check;
+                # the pinned schema already forbids it from carrying one.
+                continue
             item_type = item.get("type")
             activity_type = (item.get("activity") or {}).get("type")
             if item_type not in allowed or activity_type != item_type:
@@ -60,21 +64,31 @@ def validate_lesson(lesson: dict[str, Any]) -> None:
     _validate_cloze_marker_invariants(lesson)
 
 
+def cloze_markers_align(activity: Any) -> bool:
+    """Whether a cloze activity's numbered markers match its blank positions.
+
+    Shared by lesson validation and the #402 flagged-block screen: an activity
+    that fails this invariant can never appear inline in a lesson document, so
+    the bake adapter must route it to the contentless rejected-tray notice
+    instead of shipping a document ``validate_lesson`` will refuse.
+    """
+    if not isinstance(activity, dict) or activity.get("type") != "cloze":
+        return True
+    payload = activity.get("payload") or {}
+    text = payload.get("text")
+    blanks = payload.get("blanks")
+    if not isinstance(text, str) or not isinstance(blanks, list):
+        return True  # The frozen schema has already reported malformed shapes.
+    marker_numbers = {int(value) for value in _CLOZE_MARKER_RE.findall(text)}
+    if not marker_numbers:
+        return True
+    return marker_numbers == set(range(1, len(blanks) + 1))
+
+
 def _validate_cloze_marker_invariants(lesson: dict[str, Any]) -> None:
     """Keep numbered internal and rendered cloze markers aligned to blank positions."""
     for collection in ("blocks", "rejected"):
         for item in lesson.get(collection, []):
             activity = item.get("activity") or {}
-            if activity.get("type") != "cloze":
-                continue
-            payload = activity.get("payload") or {}
-            text = payload.get("text")
-            blanks = payload.get("blanks")
-            if not isinstance(text, str) or not isinstance(blanks, list):
-                continue  # The frozen schema has already reported malformed shapes.
-            marker_numbers = {int(value) for value in _CLOZE_MARKER_RE.findall(text)}
-            if not marker_numbers:
-                continue
-            expected_numbers = set(range(1, len(blanks) + 1))
-            if marker_numbers != expected_numbers:
+            if not cloze_markers_align(activity):
                 raise ValueError("Cloze markers must be 1-based and match the blank positions.")

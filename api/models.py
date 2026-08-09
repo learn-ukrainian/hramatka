@@ -128,6 +128,26 @@ class DurationMutation(FrozenModel):
     duration: Literal[45, 60, 90]
 
 
+class ActivityFeedbackMutation(FrozenModel):
+    """PUT body for teacher feedback on an engine-flagged block (#402).
+
+    Deliberately no ``expected_revision``: staleness is hash-gated against the
+    block's flag-time ``flagged_content_hash`` server-side, so a revision race
+    cannot attach a verdict to changed content.
+    """
+
+    verdict: Literal["good", "bad"]
+    comment: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def normalize_comment(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        return trimmed or None
+
+
 class TeacherPreferences(FrozenModel):
     """GET response and PUT body for per-teacher defaults (owner-scoped)."""
 

@@ -114,6 +114,10 @@ class WarningAcknowledgementsRequired(ValueError):
         super().__init__("Visible warning blocks require acknowledgement.")
 
 
+class FeedbackNotApplicable(ValueError):
+    """Teacher feedback targets a block that is not currently engine-flagged (#402)."""
+
+
 # Kept as a compatibility import for callers still using the prototype spelling.
 WarningBlocksUnacknowledged = WarningAcknowledgementsRequired
 
@@ -133,7 +137,9 @@ def block_needs_review(block: Mapping[str, Any]) -> bool:
 
     Mirrors the UI predicate ``blockNeedsReview`` in
     ``hramatka/app/src/review-helpers.ts``: a block needs review when its mark
-    is ``warn`` **or** ``provenance.external_options`` is strictly true.
+    is ``warn``, ``provenance.external_options`` is strictly true, **or** the
+    engine flagged it (``quality == "engine_flagged"``, #402) — flagged blocks
+    join the existing acknowledge-then-accept flow rather than a novel block.
 
     This is the single server-side definition used by both
     ``acknowledge_warning`` (which ids may be acked) and ``accept_lesson``
@@ -141,6 +147,8 @@ def block_needs_review(block: Mapping[str, Any]) -> bool:
     by routing them through this helper only.
     """
     if block.get("mark") == "warn":
+        return True
+    if block.get("quality") == "engine_flagged":
         return True
     provenance = block.get("provenance")
     return isinstance(provenance, Mapping) and provenance.get("external_options") is True
@@ -1886,6 +1894,143 @@ class JobStore:
                 cursor.rowcount, connection, teacher_id, lesson_id, expected_revision
             )
             return self._require_owned(connection, teacher_id, lesson_id)
+
+    # -- Teacher feedback on engine-flagged blocks (#402) ------------------
+
+    def put_activity_feedback(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        *,
+        slot_id: str,
+        verdict: str,
+        comment: str | None,
+    ) -> JobRecord:
+        """Record the teacher's verdict on a flagged block.
+
+        State machine (design of record, issue #402): a PUT against a block
+        that is not currently ``engine_flagged`` is refused; the first PUT
+        inserts; a same-hash PUT revises in place; a hash mismatch (rebake or
+        re-flag produced new content under the same slot) soft-closes the old
+        row via ``superseded_at`` — never deletes it — and inserts a fresh
+        current row.  The comparison hash is always the block's flag-time
+        ``flagged_content_hash``, never recomputed and never client-supplied.
+        """
+        if verdict not in {"good", "bad"}:
+            raise ValueError("Feedback verdict must be 'good' or 'bad'.")
+        if comment is not None and (
+            not isinstance(comment, str) or not comment.strip() or len(comment) > 2000
+        ):
+            raise ValueError("Feedback comments must be non-empty text up to 2000 characters.")
+        with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            self._require_ready(job)
+            lesson = self._require_lesson(job)
+            block = next(
+                (
+                    candidate
+                    for candidate in lesson.get("blocks", [])
+                    if isinstance(candidate, Mapping) and candidate.get("id") == slot_id
+                ),
+                None,
+            )
+            if block is None:
+                raise LessonBlockNotFound(slot_id)
+            if block.get("quality") != "engine_flagged":
+                raise FeedbackNotApplicable("The block is not currently engine-flagged.")
+            wire_hash = block.get("flagged_content_hash")
+            if not isinstance(wire_hash, str) or not wire_hash:
+                raise PersistenceUnavailable(
+                    "A flagged block has no frozen content hash."
+                )
+            timestamp = now_iso()
+            current = connection.execute(
+                """
+                SELECT * FROM activity_feedback
+                WHERE lesson_id = ? AND slot_id = ? AND superseded_at IS NULL
+                """,
+                (lesson_id, slot_id),
+            ).fetchone()
+            if current is not None and current["activity_payload_hash"] == wire_hash:
+                connection.execute(
+                    """
+                    UPDATE activity_feedback
+                    SET teacher_verdict = ?, comment = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (verdict, comment, timestamp, current["id"]),
+                )
+                return job
+            if current is not None:
+                connection.execute(
+                    "UPDATE activity_feedback SET superseded_at = ? WHERE id = ?",
+                    (timestamp, current["id"]),
+                )
+            connection.execute(
+                """
+                INSERT INTO activity_feedback (
+                    id, lesson_id, slot_id, activity_payload_hash,
+                    engine_reason_class, engine_reason_uk, teacher_verdict,
+                    comment, created_at, updated_at, superseded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    lesson_id,
+                    slot_id,
+                    wire_hash,
+                    str(block.get("engine_reason_class") or ""),
+                    str(block.get("flag_reason_uk") or ""),
+                    verdict,
+                    comment,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            return job
+
+    def applicable_activity_feedback(
+        self, teacher_id: str, lesson_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """Current-judgment feedback rows keyed by block id.
+
+        Binds to the design's ``applicable`` definition: ``superseded_at IS
+        NULL`` **and** the row's hash equals the live block's frozen
+        ``flagged_content_hash``.  A history-current row whose content has
+        since changed is presented as "no feedback yet", never as the
+        teacher's opinion of what is on screen; it stays queryable unfiltered
+        for the out-of-scope analytics step.
+        """
+        with self._read_connection() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            if job.lesson is None:
+                return {}
+            live_hashes = {
+                block.get("id"): block.get("flagged_content_hash")
+                for block in job.lesson.get("blocks", [])
+                if isinstance(block, Mapping)
+                and block.get("quality") == "engine_flagged"
+                and isinstance(block.get("flagged_content_hash"), str)
+            }
+            if not live_hashes:
+                return {}
+            rows = connection.execute(
+                """
+                SELECT slot_id, activity_payload_hash, teacher_verdict, comment, updated_at
+                FROM activity_feedback
+                WHERE lesson_id = ? AND superseded_at IS NULL
+                """,
+                (lesson_id,),
+            ).fetchall()
+            applicable: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                if live_hashes.get(row["slot_id"]) == row["activity_payload_hash"]:
+                    applicable[row["slot_id"]] = {
+                        "verdict": row["teacher_verdict"],
+                        "comment": row["comment"],
+                        "updated_at": row["updated_at"],
+                    }
+            return applicable
 
     # -- SQLite plumbing and row mapping -----------------------------------
 

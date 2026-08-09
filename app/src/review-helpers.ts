@@ -50,12 +50,30 @@ export interface ReviewBlock {
     gates?: string[];
     external_options?: boolean;
   };
+  /**
+   * The engine's honest verdict (lu.lesson.v1 >= 1.3.0, #402): `engine_flagged`
+   * content shipped in place after failing gates or exhausting repair.
+   * `flag_reason_uk` is engine-authored teacher-facing Ukrainian — render it
+   * verbatim, never translate it; non-null exactly when flagged.
+   */
+  quality?: 'engine_ok' | 'engine_flagged';
+  flag_reason_uk?: string | null;
+  flagged_content_hash?: string | null;
+  engine_reason_class?: string | null;
 }
 
 export interface RejectedEntry {
   type: string;
-  activity: Record<string, unknown>;
+  /** Exactly null for the contentless `flagged-notice` shape (#402). */
+  activity: Record<string, unknown> | null;
   reason: string;
+}
+
+/** The teacher's applicable verdict on one flagged block (#402). */
+export interface ActivityFeedbackEntry {
+  verdict: 'good' | 'bad';
+  comment: string | null;
+  updated_at: string;
 }
 
 /**
@@ -290,6 +308,7 @@ export function activityTypeLabel(type: string): string {
     'error-correction': 'type.error-correction',
     'text-questions': 'type.text-questions',
     'short-writing': 'type.short-writing',
+    'flagged-notice': 'type.flagged-notice',
   };
   return keys[type] || type;
 }
@@ -430,7 +449,12 @@ export function formatAnswerKeyDisplay(
 }
 
 export function blockNeedsReview(block: ReviewBlock): boolean {
-  return block.mark === 'warn' || block.provenance?.external_options === true;
+  // Mirrors `block_needs_review` in hramatka/api/store.py — keep in lockstep.
+  return (
+    block.mark === 'warn'
+    || block.quality === 'engine_flagged'
+    || block.provenance?.external_options === true
+  );
 }
 
 /**

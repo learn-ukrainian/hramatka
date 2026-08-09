@@ -7,6 +7,7 @@ import {
   type ReviewBlock,
   type RejectedEntry,
   type FocusStatus,
+  type ActivityFeedbackEntry,
   splitReviewBlocks,
   PHASE_LABELS,
   marginStateChip,
@@ -23,6 +24,8 @@ export interface LessonResourceView {
   lesson_id: string;
   revision: number;
   warning_acknowledgements: string[];
+  /** Applicable-only verdicts keyed by flagged block id (#402). */
+  activity_feedback?: Record<string, ActivityFeedbackEntry>;
   lesson: {
     title: string;
     level: string;
@@ -49,6 +52,7 @@ export interface ReviewWorkbenchProps {
   onSaveActivity: (blockId: string, activity: Record<string, unknown>) => void;
   onAcceptLesson: () => void;
   onReturnToDraft: () => void;
+  onActivityFeedback: (blockId: string, verdict: 'good' | 'bad', comment: string | null) => void;
   allWarningsAcked: boolean;
 }
 
@@ -65,11 +69,15 @@ export default function ReviewWorkbench({
   onSaveActivity,
   onAcceptLesson,
   onReturnToDraft,
+  onActivityFeedback,
   allWarningsAcked,
 }: ReviewWorkbenchProps) {
   const { lesson, warning_acknowledgements } = resource;
+  const activityFeedback = resource.activity_feedback || {};
   const [showRejected, setShowRejected] = useState(false);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [feedbackComments, setFeedbackComments] = useState<Record<string, string>>({});
+  const [feedbackReopened, setFeedbackReopened] = useState<Record<string, boolean>>({});
 
   const { byPhase, reserve } = splitReviewBlocks(lesson.blocks, lesson.duration);
   const acks = new Set(warning_acknowledgements);
@@ -145,10 +153,62 @@ export default function ReviewWorkbench({
     );
   };
 
+  const renderFeedback = (block: ReviewBlock) => {
+    // #402: the teacher judges the engine's verdict on a flagged block.
+    const saved = activityFeedback[block.id];
+    const reopened = feedbackReopened[block.id] === true;
+    if (saved && !reopened) {
+      return (
+        <span className="feedback-state" data-testid="feedback-saved">
+          <span className={`chip ${saved.verdict === 'good' ? 'ok' : 'bad'}`}>
+            {t(saved.verdict === 'good' ? 'feedback.savedGood' : 'feedback.savedBad')}
+          </span>
+          <button
+            type="button"
+            className="link-btn"
+            data-action="feedback-change"
+            onClick={() => setFeedbackReopened((prev) => ({ ...prev, [block.id]: true }))}
+            disabled={loading}
+          >
+            {t('feedback.change')}
+          </button>
+        </span>
+      );
+    }
+    const comment = feedbackComments[block.id] ?? saved?.comment ?? '';
+    const submit = (verdict: 'good' | 'bad') => {
+      onActivityFeedback(block.id, verdict, comment.trim() || null);
+      setFeedbackReopened((prev) => ({ ...prev, [block.id]: false }));
+    };
+    return (
+      <span className="feedback-form" data-testid="feedback-form">
+        <span className="mnote">{t('feedback.prompt')}</span>
+        <textarea
+          className="feedback-comment"
+          data-testid="feedback-comment"
+          placeholder={t('feedback.commentPlaceholder')}
+          value={comment}
+          maxLength={2000}
+          onChange={(event) =>
+            setFeedbackComments((prev) => ({ ...prev, [block.id]: event.target.value }))
+          }
+          disabled={loading}
+        />
+        <button type="button" data-action="feedback-good" onClick={() => submit('good')} disabled={loading}>
+          {t('feedback.good')}
+        </button>
+        <button type="button" data-action="feedback-bad" onClick={() => submit('bad')} disabled={loading}>
+          {t('feedback.bad')}
+        </button>
+      </span>
+    );
+  };
+
   const renderMargin = (block: ReviewBlock) => {
     const acked = acks.has(block.id);
     const chip = marginStateChip(block, acked);
     const isWarn = blockNeedsReview(block);
+    const isFlagged = block.quality === 'engine_flagged';
     // #113 deliberately clears a warning acknowledgement after an edit. An edited
     // visible warning must therefore remain acknowledgeable, not become a dead end.
     const showAck = isWarn && !acked;
@@ -156,6 +216,12 @@ export default function ReviewWorkbench({
     return (
       <div className="dmargin noprint">
         <span className={`chip ${chip.className}`}>{t(chip.key as ChromeKey)}</span>
+        {/* #402: the engine's verdict, engine-authored UK, rendered verbatim. */}
+        {isFlagged && block.flag_reason_uk && (
+          <span className="mnote flagged-badge" lang="uk" data-testid="flagged-badge">
+            {block.flag_reason_uk}
+          </span>
+        )}
         {block.note && <span className="mnote">{block.note}</span>}
         {block.provenance && <span className="mnote">{t('review.source')}{block.provenance.source || '—'} · {t('review.generator')}{block.provenance.generator || '—'}</span>}
         {block.provenance && <span className="mnote">{t('review.checks')}{block.provenance.gates?.length ? block.provenance.gates.join(', ') : '—'}</span>}
@@ -171,6 +237,7 @@ export default function ReviewWorkbench({
             </button>
           )}
         </span>
+        {isFlagged && renderFeedback(block)}
       </div>
     );
   };
@@ -179,7 +246,7 @@ export default function ReviewWorkbench({
     <div
       key={block.id}
       id={`blk${block.id}`}
-      className={`dblock block ${block.mark === 'warn' ? 'warn' : 'ok'} ${block.edited ? 'edited' : ''} ${editingBlockId === block.id ? 'editing' : ''}`}
+      className={`dblock block ${block.mark === 'warn' ? 'warn' : 'ok'} ${block.quality === 'engine_flagged' ? 'flagged' : ''} ${block.edited ? 'edited' : ''} ${editingBlockId === block.id ? 'editing' : ''}`}
       data-block-id={block.id}
     >
       <span className="type">

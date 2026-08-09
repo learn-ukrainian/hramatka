@@ -684,6 +684,7 @@ const DICT = {
   'type.error-correction': { uk: 'Виправте помилку', en: 'Error correction' },
   'type.text-questions': { uk: 'Питання до тексту', en: 'Text questions' },
   'type.short-writing': { uk: 'Коротке письмо', en: 'Short writing' },
+  'type.flagged-notice': { uk: 'Двигун не зміг створити вправу', en: 'The engine could not create this activity' },
   // phase titles
   'phase.test1': { uk: 'Тест 1 — що учні вже знають', en: 'Test 1 — what students already know' },
   'phase.teach': { uk: 'Навчання — закриваємо прогалину', en: 'Teaching — close the gap' },
@@ -731,6 +732,15 @@ const DICT = {
   'review.phaseDuration': { uk: '≈ {minutes} хв', en: '≈ {minutes} min' },
   'review.durationChip': { uk: '{minutes} хв', en: '{minutes} min' },
   'review.rejectedNote': { uk: '(нічого не ховаємо).', en: '(nothing is hidden).' },
+
+  // teacher feedback on engine-flagged blocks (#402)
+  'feedback.prompt': { uk: 'Ваша оцінка цієї вправи:', en: 'Your verdict on this activity:' },
+  'feedback.good': { uk: 'Вправа добра', en: 'Good activity' },
+  'feedback.bad': { uk: 'Вправа погана', en: 'Bad activity' },
+  'feedback.commentPlaceholder': { uk: 'Коментар (необовʼязково)', en: 'Comment (optional)' },
+  'feedback.savedGood': { uk: 'Ви оцінили: вправа добра', en: 'Your verdict: good activity' },
+  'feedback.savedBad': { uk: 'Ви оцінили: вправа погана', en: 'Your verdict: bad activity' },
+  'feedback.change': { uk: 'Змінити оцінку', en: 'Change verdict' },
 
   // activity editor field labels
   'editor.field.title': { uk: 'Назва', en: 'Title' },

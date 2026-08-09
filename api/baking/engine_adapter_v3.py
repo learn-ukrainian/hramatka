@@ -8,6 +8,7 @@ repair loop.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -52,6 +53,8 @@ from hramatka.engine.transport import (
 )
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
+from ..store import canonical_json
+from ..validation import cloze_markers_align
 from .artifacts import bake_artifact_dir
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
@@ -72,6 +75,42 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
+
+# Teacher-facing Ukrainian for the engine's flag verdict (#402), keyed by the
+# rule-named ``CAUSE_VOCABULARY`` of the CURRENT evaluator/gate stack
+# (re-derived from #406) plus the ``_dropped()``/shortfall wrapper causes.  Raw
+# causes and validator class names must never reach a ``*_uk`` field.  Engine-
+# internal rules (serialization exactness, raw contract, unregistered gates)
+# deliberately share the generic row: their distinction means nothing to a
+# teacher.  ``gap_construction`` matches without a colon — its cause may carry
+# a rule-name suffix or arrive bare.
+_FLAG_REASON_UK_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("density_shortfall:", "Вправа занадто коротка — недостатньо мовного матеріалу."),
+    ("response_shape:", "Двигун не зміг створити цю вправу."),
+    ("learner_facing_fields:", "У тексті для учнів є англійські позначки."),
+    ("activity_binding:", "Вправа не відповідає запланованому матеріалу уроку."),
+    (
+        "exemplar_contamination:",
+        "Вправа повторює шаблонний приклад замість власного змісту.",
+    ),
+    ("verbatim_answer_ban:", "У завданні видно правильну відповідь."),
+    ("elicitation_shape:", "Завдання не сформульовано повним реченням."),
+    ("gap_construction", "Пропуски у вправі побудовано неправильно."),
+    ("distractor_adjacency:", "Варіанти відповідей у вправі неякісні."),
+    ("serialization_exactness:", "Двигун виявив помилку в цій вправі."),
+    ("raw_contract:", "Двигун виявив помилку в цій вправі."),
+    ("deterministic_gate:", "Двигун виявив помилку в цій вправі."),
+    ("not_repairable:", "Двигун вважає цю вправу неякісною."),
+    (
+        "repair_exhausted:",
+        "Двигун кілька разів намагався виправити цю вправу, але не зміг.",
+    ),
+)
+# Rendering-infra failures are not a quality judgment; their causes stay off
+# the teacher copy.  When one is the freshest granular cause, the wrapper
+# disposition (``repair_exhausted``/``not_repairable``) supplies the wording.
+_INFRA_CAUSE_PREFIXES = ("repair_renderer:", "replacement_renderer:")
+_FLAG_REASON_UK_FALLBACK = "Двигун виявив помилку в цій вправі."
 
 
 def _persist_raw_parse_failure(raw: str, out_dir: str | Path, attempt: int) -> None:
@@ -478,6 +517,35 @@ def _bind_learner_payload_to_certified_units(
     raise ValueError("v3 activity payload has no certified-unit binding rule.")
 
 
+def _reason_class_for(block: Any) -> str:
+    """Return the freshest granular cause for a non-accepted block (#402).
+
+    ``_dropped()`` always appends its own wrapper cause last, so the classifying
+    cause of the terminal attempt sits at ``errors[-2]`` whenever a pre-wrapper
+    cause exists.  ``errors[-1]`` is a defensive fallback only: every dropped
+    block carries at least its wrapper plus the terminal attempt's own cause.
+    """
+    errors = tuple(block.errors)
+    if not errors:
+        raise ValueError("A flagged block needs at least one recorded cause.")
+    if len(errors) >= 2:
+        return errors[-2].cause
+    return errors[-1].cause
+
+
+def _flag_reason_fields(block: Any) -> tuple[str, str]:
+    """One source feeds both the wire ``engine_reason_class`` and the UK copy."""
+    reason_class = _reason_class_for(block)
+    lookup = reason_class
+    if lookup.startswith(_INFRA_CAUSE_PREFIXES):
+        # Infra failure is not a quality judgment; phrase the wrapper instead.
+        lookup = tuple(block.errors)[-1].cause
+    for prefix, reason_uk in _FLAG_REASON_UK_BY_PREFIX:
+        if lookup.startswith(prefix):
+            return reason_class, reason_uk
+    return reason_class, _FLAG_REASON_UK_FALLBACK
+
+
 def _raw_activity_contract(activity: Mapping[str, Any]) -> None:
     payload = activity["payload"]
     answer_key = activity["answer_key"]
@@ -706,6 +774,7 @@ class EngineLessonBaker:
                             blames_source=False,
                         )
                     blocks: list[dict[str, Any]] = []
+                    rejected: list[dict[str, Any]] = []
                     phase_evaluations: list[tuple[Any, str, int]] = []
                     raw_attempt_counter = [0]
                     raw_out_root = self._engine_out_dir
@@ -748,11 +817,20 @@ class EngineLessonBaker:
                         )
                         self._record_qualification_evaluation(phase, evaluated)
                         phase_evaluations.append((evaluated, initial_raw, initial_attempt))
-                        blocks.extend(
-                            self._block(block, len(blocks))
-                            for block in evaluated.blocks
-                            if block.accepted
-                        )
+                        for block in evaluated.blocks:
+                            if block.accepted:
+                                blocks.append(self._block(block, len(blocks)))
+                                continue
+                            # #402 flag-don't-drop: a failed slot ships in place,
+                            # engine-flagged, when its last shape-valid attempt
+                            # can legally render; otherwise the rejected tray
+                            # carries a contentless notice.  Never both, and the
+                            # engine-side disposition stays ``dropped``.
+                            flagged = self._flagged_block(block, len(blocks))
+                            if flagged is not None:
+                                blocks.append(flagged)
+                            else:
+                                rejected.append(self._flag_notice(block))
                     if any(
                         evaluated.disposition != "teacher_ready"
                         for evaluated, _initial_raw, _initial_attempt in phase_evaluations
@@ -766,12 +844,18 @@ class EngineLessonBaker:
                                         artifact_dir,
                                         initial_attempt,
                                     )
-                        raise FloorUnmetError(
-                            "Bake failed: v3 serialization did not produce every certified slot.",
-                            blames_source=False,
-                        )
+                        # #402: the lesson ships with visible flagged content
+                        # instead of failing.  Only a bake with nothing visible
+                        # at all still fails closed — an empty lesson would be
+                        # its own kind of silent drop.
+                        if not blocks:
+                            raise FloorUnmetError(
+                                "Bake failed: v3 serialization did not produce every "
+                                "certified slot.",
+                                blames_source=False,
+                            )
                     context.update_progress_db(step="assembly")
-                    return {"blocks": blocks, "rejected": []}
+                    return {"blocks": blocks, "rejected": rejected}
             except (data.DataConfigError, data.DataDriftError) as error:
                 raise GenerationFailed(
                     "Bake failed: the lesson data bundle is unavailable or has drifted.",
@@ -958,4 +1042,81 @@ class EngineLessonBaker:
                 "gates": ["v3"],
                 "external_options": False,
             },
+            "quality": "engine_ok",
+            "flag_reason_uk": None,
+            "flagged_content_hash": None,
+            "engine_reason_class": None,
         }
+
+    @staticmethod
+    def _flagged_block(evaluation: Any, index: int) -> dict[str, Any] | None:
+        """Mirror ``_block`` for a dropped slot's last shape-valid attempt (#402).
+
+        Returns ``None`` when the attempt cannot legally render inline: the
+        envelope must satisfy the same pinned pilot activity contract and cloze
+        marker invariant that ``validate_lesson`` enforces on every block, and
+        its payload must be the scheduled type.  Content is never fabricated to
+        force an inline card — those drops stay in the rejected tray as a
+        contentless notice.
+        """
+        record = evaluation.attempted_record
+        if not isinstance(record, Mapping):
+            return None
+        activity = record.get("activity")
+        if not isinstance(activity, Mapping):
+            return None
+        payload = activity.get("payload")
+        answer_key = activity.get("answer_key")
+        if not isinstance(payload, Mapping) or not isinstance(answer_key, Mapping):
+            return None
+        activity_type = evaluation.activity_type
+        if activity_type not in _TITLES or payload.get("type") != activity_type:
+            return None
+        model = record.get("_generator_model_id")
+        model = model if isinstance(model, str) and model else "unknown"
+        envelope = {
+            "id": f"activity-{activity_type}-{index + 1}",
+            "type": activity_type,
+            "title": _TITLES[activity_type],
+            "level": "b1",
+            "payload": dict(payload),
+            "answer_key": dict(answer_key),
+            # Truthful provenance: no v3 gate certified this content.
+            "provenance": {"source": "generated", "generator": model, "gates": []},
+        }
+        if next(iter(_ACTIVITY_VALIDATOR.iter_errors(envelope)), None) is not None:
+            return None
+        if not cloze_markers_align(envelope):
+            return None
+        reason_class, reason_uk = _flag_reason_fields(evaluation)
+        return {
+            "id": f"block-{index + 1}",
+            "phase": evaluation.phase,
+            "type": activity_type,
+            "mode": _mode(evaluation.phase, activity_type),
+            "activity": envelope,
+            "answer_key": dict(answer_key),
+            "mark": "ok",
+            "note": None,
+            "edited": False,
+            "provenance": {
+                "source": "generated",
+                "generator": model,
+                "gates": [],
+                "external_options": False,
+            },
+            "quality": "engine_flagged",
+            "flag_reason_uk": reason_uk,
+            # Frozen at flag time from the exact wire envelope bytes; feedback
+            # staleness compares against this, never a recomputed hash.
+            "flagged_content_hash": hashlib.sha256(
+                canonical_json(envelope).encode("utf-8")
+            ).hexdigest(),
+            "engine_reason_class": reason_class,
+        }
+
+    @staticmethod
+    def _flag_notice(evaluation: Any) -> dict[str, Any]:
+        """Contentless rejected-tray notice for a drop with nothing safe to inline."""
+        _reason_class, reason_uk = _flag_reason_fields(evaluation)
+        return {"type": "flagged-notice", "activity": None, "reason": reason_uk}

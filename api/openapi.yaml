@@ -674,6 +674,46 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/feedback:
+    put:
+      tags: [Lessons]
+      operationId: putActivityFeedback
+      summary: Record the teacher's verdict on an engine-flagged block
+      description: |
+        Upsert keyed on `(lesson_id, block_id)`. The server compares the
+        block's flag-time `flagged_content_hash` with the current feedback
+        row: a same-hash PUT revises the verdict in place, a hash mismatch
+        soft-closes the old row (`superseded_at`) and starts a fresh one, and
+        a block that is not currently `engine_flagged` is refused with 409.
+        No `expected_revision`: staleness is hash-gated server-side.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/ActivityFeedbackMutation'
+      responses:
+        '200':
+          description: Feedback recorded and the materialized lesson returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResource'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonBlockNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons/{lesson_id}/rejected/{rejected_index}/restore:
     post:
       tags: [Lessons]
@@ -934,6 +974,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/DurationMutation'
+    ActivityFeedbackMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ActivityFeedbackMutation'
   schemas:
     PilotActivityType:
       $ref: ../contracts/pilot_activity_types.schema.json#/$defs/pilotActivityType
@@ -1349,6 +1395,10 @@ components:
         - note
         - edited
         - provenance
+        - quality
+        - flag_reason_uk
+        - flagged_content_hash
+        - engine_reason_class
       properties:
         id:
           type: string
@@ -1374,9 +1424,34 @@ components:
           type: boolean
         provenance:
           $ref: '#/components/schemas/BlockProvenance'
+        quality:
+          type: string
+          enum: [engine_ok, engine_flagged]
+          description: |
+            The engine's honest verdict on this block (#402). `engine_flagged`
+            content shipped in place after failing gates or exhausting repair;
+            it never counts as a ready unit and never reaches the student view.
+        flag_reason_uk:
+          type: [string, 'null']
+          minLength: 1
+          description: Teacher-readable Ukrainian flag reason; non-null iff flagged.
+        flagged_content_hash:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            sha256 of the canonical flagged activity envelope, frozen at flag
+            time; the feedback endpoint's staleness gate. Non-null iff flagged.
+        engine_reason_class:
+          type: [string, 'null']
+          minLength: 1
+          description: |
+            Raw engine cause class for analytics; teacher-hidden by design.
+            Non-null iff flagged.
       description: |
         `type` MUST equal `activity.type`. If `provenance.external_options` is
         true, `mark` MUST be `warn`. Auto-checkable types MUST carry an answer key.
+        `flag_reason_uk`, `flagged_content_hash`, and `engine_reason_class` are
+        non-null exactly when `quality` is `engine_flagged`.
     RejectedDraft:
       oneOf:
         - type: object
@@ -1413,10 +1488,25 @@ components:
             reason:
               type: string
               minLength: 1
+        - type: object
+          additionalProperties: false
+          required: [type, activity, reason]
+          properties:
+            type:
+              type: string
+              const: flagged-notice
+            activity:
+              type: 'null'
+            reason:
+              type: string
+              minLength: 1
       description: |
         `type` MUST equal `activity.type`. Only error-correction drafts may
         carry the optional outer answer key; the inner activity remains a pure
-        `lu.activity.v1` document.
+        `lu.activity.v1` document. The `flagged-notice` shape (#402) is a
+        contentless engine notice: no shape-valid attempt ever existed for the
+        slot, so `activity` is exactly null, the reason is teacher-readable
+        Ukrainian, and it cannot be restored as an activity.
     RejectedDraftAnswerKey:
       type: object
       additionalProperties: false
@@ -1563,6 +1653,7 @@ components:
         - accepted_at
         - accepted_revision
         - warning_acknowledgements
+        - activity_feedback
         - logical_model_id
         - methodology
         - grammar_focus
@@ -1585,6 +1676,26 @@ components:
           uniqueItems: true
           items:
             type: string
+        activity_feedback:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [verdict, comment, updated_at]
+            properties:
+              verdict:
+                type: string
+                enum: [good, bad]
+              comment:
+                type: [string, 'null']
+              updated_at:
+                type: string
+                format: date-time
+          description: |
+            Applicable-only teacher verdicts keyed by flagged block id (#402):
+            a row is present only while its flag-time content hash still
+            matches the live block, so it is always the teacher's judgment of
+            what is currently on screen.
         logical_model_id:
           type: [string, 'null']
           description: Null only for a durable lesson created before model selection.
@@ -1638,6 +1749,18 @@ components:
         phase:
           type: integer
           enum: [1, 2, 3]
+    ActivityFeedbackMutation:
+      type: object
+      additionalProperties: false
+      required: [verdict]
+      properties:
+        verdict:
+          type: string
+          enum: [good, bad]
+          description: «вправа добра» / «вправа погана»
+        comment:
+          type: [string, 'null']
+          maxLength: 2000
           default: 2
           description: Phase to receive the restored warning; defaults to phase 2.
     DurationMutation:

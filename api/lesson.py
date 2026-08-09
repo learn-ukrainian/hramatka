@@ -72,6 +72,14 @@ def _normalize_rejected_entries(lesson: dict[str, Any]) -> None:
     """Convert engine-template rejection markers into frozen lesson entries."""
     normalized = []
     for entry in lesson.get("rejected", []):
+        if entry.get("type") == "flagged-notice":
+            # #402 contentless engine notice: ``activity`` must stay exactly
+            # null — the ``or {}`` fold below would break the pinned
+            # flagged-notice schema branch on the very next validation.
+            normalized.append(
+                {"type": "flagged-notice", "activity": None, "reason": entry["reason"]}
+            )
+            continue
         activity = entry.get("activity") or {}
         activity_type = activity.get("type")
         entry_type = activity_type if entry.get("type") == "gate-failed" else entry.get("type")
@@ -170,7 +178,15 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
     if not isinstance(rejected, list) or not 0 <= rejected_index < len(rejected):
         raise IndexError("Rejected entry not found.")
     entry = rejected.pop(rejected_index)
+    # #402: a contentless flagged notice (activity is null by contract) must
+    # survive a restore attempt — this type check runs BEFORE the isinstance
+    # guard below, which would otherwise silently eat the popped entry.
+    if isinstance(entry, dict) and entry.get("type") == "flagged-notice":
+        rejected.insert(rejected_index, entry)
+        raise ValueError("A notice cannot be restored as an activity.")
     if not isinstance(entry, dict) or not isinstance(entry.get("activity"), dict):
+        # Reinsert before raising: an invalid entry is refused, never dropped.
+        rejected.insert(rejected_index, entry)
         raise ValueError("Rejected entry is invalid.")
     # `shortfall-notice:` is still emitted by the engine.  `focus-notice:` no
     # longer is, but lessons baked before the focus_status carrier landed keep
@@ -201,6 +217,10 @@ def restore_rejected_entry(lesson: dict[str, Any], rejected_index: int, phase: i
                 "gates": [],
                 "external_options": False,
             },
+            "quality": "engine_ok",
+            "flag_reason_uk": None,
+            "flagged_content_hash": None,
+            "engine_reason_class": None,
         },
     )
     return block_id
@@ -235,6 +255,16 @@ def replace_block_activity(
             if isinstance(new_key, dict) and "corrections" not in new_key:
                 block["answer_key"] = {**new_key, "corrections": preserved}
     block["edited"] = True
+    if block.get("quality") == "engine_flagged":
+        # Teacher-authored replacement content is no longer the engine's
+        # rejected attempt, so it must not keep wearing the engine badge
+        # (#402).  Deliberate asymmetry with ``mark == "warn"``, which does
+        # survive edits: the external-options concern outlives a text change,
+        # the engine's verdict on content that no longer exists does not.
+        block["quality"] = "engine_ok"
+        block["flag_reason_uk"] = None
+        block["flagged_content_hash"] = None
+        block["engine_reason_class"] = None
     is_warning = block.get("mark") == "warn"
     if is_warning:
         # A teacher edit is never an acknowledgement of a warning.

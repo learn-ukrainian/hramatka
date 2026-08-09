@@ -37,6 +37,7 @@ from .baking.engine_adapter_v3 import EngineLessonBaker
 from .baking.port import LessonBaker
 from .config import Settings
 from .models import (
+    ActivityFeedbackMutation,
     ActivityReplacementMutation,
     BlockMoveMutation,
     DurationMutation,
@@ -60,6 +61,7 @@ from .review_attestation import ReviewAttestationError, ReviewAttestor
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
 from .store import (
+    FeedbackNotApplicable,
     IdempotencyConflict,
     InviteUnavailable,
     JobRecord,
@@ -249,7 +251,9 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
     return payload
 
 
-def _resource_payload(job: JobRecord) -> dict[str, object]:
+def _resource_payload(
+    job: JobRecord, activity_feedback: dict[str, dict[str, object]] | None = None
+) -> dict[str, object]:
     if job.lesson is None:  # pragma: no cover - enforced by the ready-state check
         raise RuntimeError("A ready lesson aggregate must have a lesson document.")
     lesson = copy.deepcopy(job.lesson)
@@ -265,6 +269,10 @@ def _resource_payload(job: JobRecord) -> dict[str, object]:
         "accepted_at": job.accepted_at,
         "accepted_revision": job.accepted_revision,
         "warning_acknowledgements": sorted(job.warning_acknowledgements),
+        # Applicable-only teacher verdicts on engine-flagged blocks (#402):
+        # a row whose flag-time hash no longer matches the live block is
+        # presented as "no feedback yet", never as a current judgment.
+        "activity_feedback": dict(activity_feedback or {}),
         "logical_model_id": job.logical_model_id,
         # Keep the pinned lesson document valid while giving current clients
         # explicit names for the durable create-form choices.
@@ -546,6 +554,13 @@ def create_app(
         if job is None:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return job
+
+    def lesson_resource(job: JobRecord) -> dict[str, object]:
+        """The one lesson-resource assembly: always carries applicable feedback."""
+        feedback: dict[str, dict[str, object]] = {}
+        if job.status == "ready" and job.lesson is not None:
+            feedback = store.applicable_activity_feedback(job.teacher_id, job.id)
+        return _resource_payload(job, activity_feedback=feedback)
 
     def raise_review_mutation_error(error: Exception, lesson_id: str) -> None:
         """Map every durable review-edit failure to the frozen error envelope."""
@@ -890,7 +905,7 @@ def create_app(
         job = owner_job(session.teacher_id, _lesson_id(lesson_id))
         if job.status != "ready" or job.lesson is None:
             raise PilotError(409, "lesson_not_ready", "Урок ще не готовий.")
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.delete("/api/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_lesson(
@@ -1041,7 +1056,7 @@ def create_app(
             raise PilotError(
                 404, "warning_block_not_found", "Блок-попередження не знайдено."
             ) from error
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/move")
     def move_block(
@@ -1071,7 +1086,7 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/remove")
     def remove_block(
@@ -1100,7 +1115,7 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/include")
     def include_reserve_block(
@@ -1129,7 +1144,7 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.put("/api/lessons/{lesson_id}/blocks/{block_id}/activity")
     def replace_block_activity(
@@ -1159,7 +1174,38 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
+
+    @app.put("/api/lessons/{lesson_id}/blocks/{block_id}/feedback")
+    def put_activity_feedback(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: ActivityFeedbackMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job = store.put_activity_feedback(
+                session.teacher_id,
+                lesson_key,
+                slot_id=block_id,
+                verdict=request_body.verdict,
+                comment=request_body.comment,
+            )
+        except FeedbackNotApplicable as error:
+            raise PilotError(
+                409,
+                "feedback_not_applicable",
+                "Блок наразі не позначено двигуном.",
+                lesson_id=lesson_key,
+            ) from error
+        except (LessonNotFound, LessonBlockNotFound, LessonStateConflict) as error:
+            raise_review_mutation_error(error, lesson_key)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/rejected/{rejected_index}/restore")
     def restore_rejected_entry(
@@ -1186,7 +1232,7 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/duration")
     def select_duration(
@@ -1210,7 +1256,7 @@ def create_app(
             ReviewMutationInvalid,
         ) as error:
             raise_review_mutation_error(error, lesson_key)
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/accept")
     def accept_lesson(
@@ -1247,7 +1293,7 @@ def create_app(
                 "Підтвердьте всі видимі попередження перед прийняттям уроку.",
                 lesson_id=lesson_key,
             ) from error
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.post("/api/lessons/{lesson_id}/draft")
     def return_to_draft(
@@ -1277,7 +1323,7 @@ def create_app(
                 "Стан уроку не дозволяє цю зміну.",
                 lesson_id=lesson_key,
             ) from error
-        return _resource_payload(job)
+        return lesson_resource(job)
 
     @app.get("/api/healthz")
     def healthz() -> dict[str, str]:
