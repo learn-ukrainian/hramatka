@@ -18,7 +18,7 @@ from .prompt_pack_v3 import (
     DeterministicGate,
     PromptPackV3Error,
     RawContractValidator,
-    RepairableGapConstructionError,
+    RuleNamedRejection,
     build_phase_context,
     validate_slot_deterministic_gates,
     validate_slot_raw_contract,
@@ -36,14 +36,41 @@ RepairRenderer = Callable[["RepairRequest"], object]
 ReplacementRenderer = Callable[["ReplacementRequest"], object]
 
 
-class RepairableSerializationError(ValueError):
-    """A deterministic gate found a model-side immutable-plan binding error.
+CAUSE_VOCABULARY: dict[str, str] = {
+    "response_shape": "response_shape: exact_scheduled_slot_response",
+    "learner_facing_fields": "learner_facing_fields: ukrainian_boolean_labels",
+    "activity_binding": "activity_binding: certified_unit_binding",
+    "exemplar_contamination": "exemplar_contamination: no_synthetic_or_raw_certified_content",
+    "verbatim_answer_ban": "verbatim_answer_ban: answer_forms_excluded_from_learner_prose",
+    "elicitation_shape": "elicitation_shape: composed_learner_context",
+    "gap_construction": "gap_construction",
+    "distractor_adjacency": "distractor_adjacency: vesum_adjacent_distractors",
+    "distractor_repeated_token": "distractor_adjacency: error_correction_no_repeated_tokens",
+    "serialization_exactness": "serialization_exactness: scheduled_unit_references",
+    "raw_contract": "raw_contract: pilot_activity_schema",
+    "repair_renderer": "repair_renderer: slot_response_unavailable",
+    "replacement_renderer": "replacement_renderer: slot_response_unavailable",
+    "unregistered_deterministic_gate": "deterministic_gate: unregistered_rule",
+}
 
-    The gate still runs before serialization and still fails closed.  This
-    marker only says that the bad learner payload can be re-rendered from the
-    unchanged certified slot plan, so it is eligible for the same two bounded
-    serializer repair rounds as a bad unit-ID list.
-    """
+_REPAIRABLE_CAUSE_KEYS = frozenset(
+    {
+        "response_shape",
+        "learner_facing_fields",
+        "activity_binding",
+        "exemplar_contamination",
+        "verbatim_answer_ban",
+        "elicitation_shape",
+        "gap_construction",
+        "distractor_adjacency",
+        "distractor_repeated_token",
+        "serialization_exactness",
+        "raw_contract",
+    }
+)
+_REPAIRABLE_CAUSE_PREFIXES = tuple(
+    CAUSE_VOCABULARY[key].split(":", 1)[0] + ":" for key in _REPAIRABLE_CAUSE_KEYS
+)
 
 
 class _FrozenDict(dict[str, object]):
@@ -160,24 +187,15 @@ class BlockEvaluation:
 
     @property
     def repairable(self) -> bool:
-        """Only a serializer's count/ID/substrate failure may consume repair rounds.
+        """Return whether a fixed-kit renderer can repair this model output.
 
-        The evaluator expands an omitted scheduled ID into this slot-local
-        error before the other validation stages.  It is a response count
-        failure, so it must use the same immutable-plan repair path as an
-        incomplete ``serialized_units`` reference list.  The production
-        binding gate can also mark a learner payload detached from that same
-        immutable substrate as ``serialization``; arbitrary gate failures
-        remain ineligible.
+        Every named bake-path cause is a deterministic property of a provider
+        response, not an allocation or source-data failure. Re-rendering one
+        slot from its unchanged certified plan is therefore safe. Preflight,
+        bundle, and context failures remain outside this slot-level loop.
         """
         return self.disposition == "density_shortfall" or any(
-            error.cause.startswith(
-                (
-                    "serialization:",
-                    "gap_construction:",
-                    "response_shape: missing slot response",
-                )
-            )
+            error.cause.startswith(_REPAIRABLE_CAUSE_PREFIXES)
             for error in self.errors
         )
 
@@ -391,8 +409,8 @@ def evaluate_phase_with_repair(
             )
             try:
                 records.append(_repair_record(repair_renderer(request), slot_id))
-            except Exception as exc:  # renderer failures are recoverable and slot-local
-                renderer_errors[slot_id] = (_error(slot_id, "repair_renderer", exc),)
+            except Exception:  # renderer failures are recoverable and slot-local
+                renderer_errors[slot_id] = (_rule_error(slot_id, "repair_renderer"),)
         attempt = _evaluate_payload(
             {"slots": records},
             context=context,
@@ -468,8 +486,8 @@ def _evaluate_payload(
             continue
         try:
             checked[slot_id] = validate_slot_shape(record, type_kits[slot_id])
-        except Exception as exc:
-            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "response_shape", exc))
+        except Exception:
+            errors_by_slot.setdefault(slot_id, []).append(_rule_error(slot_id, "response_shape"))
 
     # Preserve the pack's ordering contract: every deterministic gate completes
     # before this evaluator makes any count, substrate, or raw-contract decision.
@@ -484,13 +502,13 @@ def _evaluate_payload(
                 record, type_kits[slot_id], deterministic_gates=deterministic_gates
             )
             gated[slot_id] = record
-        except RepairableSerializationError as exc:
-            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "serialization", exc))
-        except RepairableGapConstructionError as exc:
-            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "gap_construction", exc))
-        except Exception as exc:
+        except RuleNamedRejection as error:
             errors_by_slot.setdefault(slot_id, []).append(
-                _error(slot_id, "deterministic_gate", exc)
+                _rule_error(slot_id, error.rule_key, suffix=error.suffix)
+            )
+        except Exception:
+            errors_by_slot.setdefault(slot_id, []).append(
+                _rule_error(slot_id, "unregistered_deterministic_gate")
             )
 
     serialized: dict[str, Mapping[str, Any]] = {}
@@ -523,8 +541,10 @@ def _evaluate_payload(
         try:
             validate_slot_serialization(record, type_kits[slot_id])
             serialized[slot_id] = record
-        except Exception as exc:
-            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "serialization", exc))
+        except Exception:
+            errors_by_slot.setdefault(slot_id, []).append(
+                _rule_error(slot_id, "serialization_exactness")
+            )
 
     activities: dict[str, Mapping[str, Any]] = {}
     for slot in slots:
@@ -536,8 +556,8 @@ def _evaluate_payload(
             activities[slot_id] = validate_slot_raw_contract(
                 record, raw_contract_validator=raw_contract_validator
             )
-        except Exception as exc:
-            errors_by_slot.setdefault(slot_id, []).append(_error(slot_id, "raw_contract", exc))
+        except Exception:
+            errors_by_slot.setdefault(slot_id, []).append(_rule_error(slot_id, "raw_contract"))
 
     blocks: list[BlockEvaluation] = []
     for slot in slots:
@@ -633,7 +653,7 @@ def _records_for_slots(
     ):
         for slot_id in expected_ids:
             errors[slot_id] = [
-                SlotError(slot_id, "response_shape: expected exactly one slots array")
+                _rule_error(slot_id, "response_shape")
             ]
         return records, errors, unassigned
     for record in payload["slots"]:
@@ -641,28 +661,28 @@ def _records_for_slots(
         if isinstance(reported, str) and reported in expected_ids:
             if reported in records:
                 errors.setdefault(reported, []).append(
-                    SlotError(reported, "response_shape: duplicate slot response")
+                    _rule_error(reported, "response_shape")
                 )
                 records.pop(reported, None)
                 duplicate_ids.add(reported)
             elif reported in duplicate_ids:
                 errors.setdefault(reported, []).append(
-                    SlotError(reported, "response_shape: duplicate slot response")
+                    _rule_error(reported, "response_shape")
                 )
             else:
                 records[reported] = record
             continue
         if isinstance(reported, str) and reported.strip():
             unassigned.append(
-                SlotError("unassigned", "response_shape: unscheduled slot response")
+                _rule_error("unassigned", "response_shape")
             )
         else:
             unassigned.append(
-                SlotError("unassigned", "response_shape: slot_id is missing or invalid")
+                _rule_error("unassigned", "response_shape")
             )
     for slot_id in expected_ids:
         if slot_id not in records and slot_id not in errors:
-            errors[slot_id] = [SlotError(slot_id, "response_shape: missing slot response")]
+            errors[slot_id] = [_rule_error(slot_id, "response_shape")]
     return records, errors, unassigned
 
 
@@ -678,9 +698,10 @@ def _tray_ids_for_slots(
     return tuple(slot_id for slot_id in tray_slot_ids if slot_id in slot_ids)
 
 
-def _error(slot_id: str, stage: str, exc: Exception) -> SlotError:
-    detail = str(exc).strip() or type(exc).__name__
-    return SlotError(slot_id, f"{stage}: {detail}")
+def _rule_error(slot_id: str, rule_key: str, *, suffix: str | None = None) -> SlotError:
+    """Build a content-free, repair-actionable cause from the fixed vocabulary."""
+    cause = CAUSE_VOCABULARY[rule_key]
+    return SlotError(slot_id, cause if suffix is None else f"{cause}: {suffix}")
 
 
 def _freeze_context(context: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -791,9 +812,9 @@ def _try_replacements(
         renderer_errors: dict[str, tuple[SlotError, ...]] = {}
         try:
             record = _repair_record(replacement_renderer(request), slot.slot_id)
-        except Exception as exc:  # a failed certified replacement stays recoverable
+        except Exception:  # a failed certified replacement stays recoverable
             record = None
-            renderer_errors[slot.slot_id] = (_error(slot.slot_id, "replacement_renderer", exc),)
+            renderer_errors[slot.slot_id] = (_rule_error(slot.slot_id, "replacement_renderer"),)
         attempt = _evaluate_payload(
             {"slots": []} if record is None else {"slots": [record]},
             context=context,

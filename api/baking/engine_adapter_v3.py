@@ -20,7 +20,6 @@ from hramatka.engine import data, vendoring
 from hramatka.engine.anchor_inventory_v3 import inventory_for_group, inventory_from_anchor
 from hramatka.engine.density_evaluator_v3 import (
     MAX_REPAIR_ROUNDS,
-    RepairableSerializationError,
     RepairRequest,
     ReplacementRequest,
     SlotError,
@@ -34,6 +33,7 @@ from hramatka.engine.lesson_capacity_v3 import (
     preflight_lesson,
 )
 from hramatka.engine.prompt_pack_v3 import (
+    RepairableSerializationError,
     _contains_form,
     build_phase_context,
     render_phase_prompt,

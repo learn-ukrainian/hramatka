@@ -8,6 +8,7 @@ import pytest
 
 from hramatka.api.baking.engine_adapter_v3 import _activity_gate, _raw_activity_contract
 from hramatka.engine.density_evaluator_v3 import (
+    CAUSE_VOCABULARY,
     _replacement_slot,
     evaluate_phase_response,
     evaluate_phase_with_repair,
@@ -90,6 +91,26 @@ def _passing_gate(_activity: dict, _kit: dict) -> None:
 
 def _passing_raw_contract(_activity: dict) -> None:
     return None
+
+
+def test_cause_vocabulary_covers_every_bake_path_rejection_stage() -> None:
+    """Removing any production cause mapping fails this explicit rule-pair pin."""
+    assert CAUSE_VOCABULARY == {
+        "response_shape": "response_shape: exact_scheduled_slot_response",
+        "learner_facing_fields": "learner_facing_fields: ukrainian_boolean_labels",
+        "activity_binding": "activity_binding: certified_unit_binding",
+        "exemplar_contamination": "exemplar_contamination: no_synthetic_or_raw_certified_content",
+        "verbatim_answer_ban": "verbatim_answer_ban: answer_forms_excluded_from_learner_prose",
+        "elicitation_shape": "elicitation_shape: composed_learner_context",
+        "gap_construction": "gap_construction",
+        "distractor_adjacency": "distractor_adjacency: vesum_adjacent_distractors",
+        "distractor_repeated_token": "distractor_adjacency: error_correction_no_repeated_tokens",
+        "serialization_exactness": "serialization_exactness: scheduled_unit_references",
+        "raw_contract": "raw_contract: pilot_activity_schema",
+        "repair_renderer": "repair_renderer: slot_response_unavailable",
+        "replacement_renderer": "replacement_renderer: slot_response_unavailable",
+        "unregistered_deterministic_gate": "deterministic_gate: unregistered_rule",
+    }
 
 
 def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
@@ -254,7 +275,7 @@ def test_gate_failure_is_slot_specific_and_does_not_hide_other_block_grading() -
     assert failed.errors == (failed.errors[0],)
     assert failed.errors[0].to_dict() == {
         "slot_id": "P1-A1",
-        "cause": "deterministic_gate: blocked",
+        "cause": "deterministic_gate: unregistered_rule",
     }
 
 
@@ -465,8 +486,8 @@ def test_stray_responses_are_unassigned_without_poisoning_scheduled_slots() -> N
 
     assert trailing.blocks[0].disposition == "ready"
     assert [error.to_dict() for error in trailing.unassigned_errors] == [
-        {"slot_id": "unassigned", "cause": "response_shape: slot_id is missing or invalid"},
-        {"slot_id": "unassigned", "cause": "response_shape: unscheduled slot response"},
+        {"slot_id": "unassigned", "cause": "response_shape: exact_scheduled_slot_response"},
+        {"slot_id": "unassigned", "cause": "response_shape: exact_scheduled_slot_response"},
     ]
 
     leading_payload = _payload(allocation)
@@ -481,8 +502,8 @@ def test_stray_responses_are_unassigned_without_poisoning_scheduled_slots() -> N
 
     assert leading.blocks[0].disposition == "ready"
     assert [error.to_dict() for error in leading.unassigned_errors] == [
-        {"slot_id": "unassigned", "cause": "response_shape: slot_id is missing or invalid"},
-        {"slot_id": "unassigned", "cause": "response_shape: unscheduled slot response"},
+        {"slot_id": "unassigned", "cause": "response_shape: exact_scheduled_slot_response"},
+        {"slot_id": "unassigned", "cause": "response_shape: exact_scheduled_slot_response"},
     ]
 
 
@@ -501,8 +522,8 @@ def test_duplicate_scheduled_records_remain_fail_closed() -> None:
 
     assert evaluated.blocks[0].disposition == "failed"
     assert [error.cause for error in evaluated.blocks[0].errors] == [
-        "response_shape: duplicate slot response",
-        "response_shape: duplicate slot response",
+        "response_shape: exact_scheduled_slot_response",
+        "response_shape: exact_scheduled_slot_response",
     ]
 
 
@@ -598,7 +619,7 @@ def test_repair_renderer_failure_keeps_the_second_round_and_replacement_path() -
     assert evaluated.blocks[0].activity_type == "cloze"
     assert evaluated.blocks[0].disposition == "ready"
     assert any(
-        error.cause == "repair_renderer: renderer unavailable"
+        error.cause == "repair_renderer: slot_response_unavailable"
         for error in evaluated.attempts[1].blocks[0].errors
     )
     assert not any(

@@ -61,12 +61,34 @@ class PromptPackV3Error(ValueError):
     """A deterministic v3.3 pack serialization or validation failure."""
 
 
+class RepairableSerializationError(PromptPackV3Error):
+    """A model-side binding failure that can be re-rendered from the fixed kit."""
+
+
 class RepairableGapConstructionError(PromptPackV3Error):
     """A content-free gap-shape failure that can be re-rendered from the fixed kit."""
 
 
+class RuleNamedRejection(PromptPackV3Error):
+    """A deterministic model-output rejection with a stable, safe rule key."""
+
+    def __init__(self, rule_key: str, *, suffix: str | None = None) -> None:
+        self.rule_key = rule_key
+        self.suffix = suffix
+        super().__init__(rule_key if suffix is None else f"{rule_key}: {suffix}")
+
+
 DeterministicGate = Callable[[Mapping[str, Any], Mapping[str, Any]], None]
 RawContractValidator = Callable[[Mapping[str, Any]], None]
+
+_DETERMINISTIC_GATE_RULE_KEYS: Final[dict[str, str]] = {
+    "_activity_gate": "activity_binding",
+    "validate_exemplar_contamination": "exemplar_contamination",
+    "validate_verbatim_answer_ban": "verbatim_answer_ban",
+    "validate_elicitation_shape": "elicitation_shape",
+    "validate_gap_construction": "gap_construction",
+    "validate_distractor_adjacency": "distractor_adjacency",
+}
 
 _CLOZE_MARKER_RE = re.compile(r"\{[1-9]\d*\}")
 _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+")
@@ -1334,9 +1356,27 @@ def validate_slot_deterministic_gates(
     activity = record.get("activity")
     if not isinstance(activity, Mapping):  # guarded by ``validate_slot_shape``
         raise PromptPackV3Error("v3.3 slot activity must be an object.")
-    validate_learner_facing_fields(activity, type_kit)
+    try:
+        validate_learner_facing_fields(activity, type_kit)
+    except Exception as error:
+        raise RuleNamedRejection("learner_facing_fields") from error
     for gate in deterministic_gates:
-        gate(activity, type_kit)
+        try:
+            gate(activity, type_kit)
+        except RepairableSerializationError as error:
+            raise RuleNamedRejection("activity_binding") from error
+        except RepairableGapConstructionError as error:
+            raise RuleNamedRejection("gap_construction", suffix=str(error)) from error
+        except Exception as error:
+            gate_name = getattr(gate, "__name__", "")
+            rule_key = _DETERMINISTIC_GATE_RULE_KEYS.get(
+                gate_name, "unregistered_deterministic_gate"
+            )
+            if gate_name == "validate_distractor_adjacency" and "repeated token corruption" in str(
+                error
+            ):
+                rule_key = "distractor_repeated_token"
+            raise RuleNamedRejection(rule_key) from error
 
 
 def validate_slot_serialization(record: Mapping[str, Any], type_kit: Mapping[str, Any]) -> None:
