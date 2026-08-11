@@ -161,13 +161,21 @@ EXPECTED_GATE_SUBMISSIONS = {
         "matchup_semantics": [],
         "numeral": [
             ("items[0]", "Що знижує ризик хвороби Альцгеймера?"),
-            ("items[0]", "читання телевізор книжки"),
+            ("items[0]", "читання"),
+            ("items[0]", "телевізор"),
+            ("items[0]", "книжки"),
             ("items[1]", "Скільки українців не прочитує жодної книжки?"),
-            ("items[1]", "третина телевізор мозку"),
+            ("items[1]", "третина"),
+            ("items[1]", "телевізор"),
+            ("items[1]", "мозку"),
             ("items[2]", "Що втратили багато людей?"),
-            ("items[2]", "насолоду телевізор мозку"),
+            ("items[2]", "насолоду"),
+            ("items[2]", "телевізор"),
+            ("items[2]", "мозку"),
             ("items[3]", "Що активізується під час читання?"),
-            ("items[3]", "17 ділянок книжки телевізор"),
+            ("items[3]", "17 ділянок"),
+            ("items[3]", "книжки"),
+            ("items[3]", "телевізор"),
         ],
         "schema_tokens": [
             (
@@ -395,6 +403,56 @@ def test_pilot_gate_submitted_fields_pin(monkeypatch) -> None:
         }
 
     assert actual_calls == EXPECTED_GATE_SUBMISSIONS
+
+
+def test_quiz_numeral_gate_does_not_cross_option_boundaries() -> None:
+    """Independent choices must never become one synthetic numeral phrase."""
+    anchor = "Як ми обоє шукали квартиру. Ми шукали квартиру."
+    activity = {
+        "type": "quiz",
+        "instruction": "Оберіть правильне слово.",
+        "items": [
+            {
+                "question": "Яке слово завершує речення?",
+                "options": ["обоє", "Як", "шукали"],
+                "correct": 2,
+            }
+        ],
+    }
+    evidence = [schema.Evidence(quote="Ми шукали квартиру.", locator="items[0]")]
+    gate_result = schema.GateResult()
+
+    registry._gate_quiz(activity, evidence, anchor, gate_result)
+
+    assert not any(
+        check.gate == "numeral" and check.status == "fail"
+        for check in gate_result.checks
+    )
+
+
+def test_quiz_numeral_gate_still_checks_inside_each_option() -> None:
+    """A malformed numeral phrase inside one choice must still fail."""
+    anchor = "Як ми шукали квартиру. У кімнаті стояли столи."
+    activity = {
+        "type": "quiz",
+        "instruction": "Оберіть правильне слово.",
+        "items": [
+            {
+                "question": "Яке слово завершує речення?",
+                "options": ["дві столи", "Як", "шукали"],
+                "correct": 2,
+            }
+        ],
+    }
+    evidence = [schema.Evidence(quote="Як ми шукали квартиру.", locator="items[0]")]
+    gate_result = schema.GateResult()
+
+    registry._gate_quiz(activity, evidence, anchor, gate_result)
+
+    assert any(
+        check.gate == "numeral" and check.status == "fail"
+        for check in gate_result.checks
+    )
 
 
 def test_pilot_gate_submitted_fields_pin_catches_dropped_field(monkeypatch) -> None:

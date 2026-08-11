@@ -851,7 +851,13 @@ def _gate_quiz(
         _warn_external_phrases(distractors, anchor_body, gr, loc)
         _gate_schema_tokens([item.get("question"), *options], anchor_body, gr, loc)
         _run_numeral_gate(item.get("question", ""), gr, loc)
-        _run_numeral_gate(" ".join(options), gr, loc)
+        # Options are mutually exclusive learner choices, not consecutive
+        # words in one phrase.  Joining them lets the final word of one option
+        # govern the first word of the next and creates false numeral failures
+        # such as ``обоє`` + ``Як``.  Multi-word numeral phrases remain intact
+        # because each complete option is checked independently.
+        for option in options:
+            _run_numeral_gate(option, gr, loc)
 
 
 def _gate_error_correction_derived(
