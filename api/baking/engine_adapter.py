@@ -41,12 +41,35 @@ from hramatka.engine import (
 from hramatka.engine.gates import vesum as vesum_gate
 from hramatka.engine.generate import GEMMA_MODEL, call_gemma
 from hramatka.engine.prompts import active_writer_prompt_version
-from hramatka.sizing_policy import B1, phase_plan, resolve_duration
+from hramatka.sizing_policy import B1, resolve_duration
 
 from .artifacts import bake_artifact_dir, configured_engine_out_dir, prune_engine_out
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
 log = logging.getLogger(__name__)
+
+
+def _legacy_phase_plan(duration: int) -> list[int]:
+    """Keep the retired v2 adapter on its original density contract.
+
+    The deployed v3 adapter and teacher review surfaces own the live sizing
+    policy. This adapter remains testable for archived fallback evidence, but
+    must not silently inherit the v3 six-block cutover and lower its 28-unit
+    delivery floor.
+    """
+    contract = content_density.teacher_ready_density(duration)
+    return [
+        phase
+        for phase, slots in sorted(contract.phase_blocks.items())
+        for _ in range(slots)
+    ]
+
+
+def phase_plan(level: str, duration: int) -> list[int]:
+    """Compatibility seam for archived v2 tests and injected bake plans."""
+    if level != B1:
+        raise ValueError(f"Unsupported legacy lesson level: {level!r}")
+    return _legacy_phase_plan(duration)
 
 # Real-Gemma measurement and pilot bakes yielded roughly 60–75% gate-ready
 # candidates. Use the conservative measured floor: a plan of N TTT slots asks

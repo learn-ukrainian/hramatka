@@ -22,7 +22,6 @@ from hramatka.api.baking.engine_adapter import EngineLessonBaker
 from hramatka.api.baking.port import BakeError
 from hramatka.engine import content_density, fixtures, pipeline, schema
 from hramatka.engine.fixtures import _bundle_with_matchup_vocabulary
-from hramatka.sizing_policy import B1, phase_plan
 
 
 def _anchor_snapshot() -> dict:
@@ -107,7 +106,7 @@ def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
     )
     baked = baker.bake(fixtures.load_anchor(), duration=45, focus=None)
 
-    expected_counts = engine_adapter._candidate_count_plan(phase_plan(B1, 45))
+    expected_counts = engine_adapter._candidate_count_plan(engine_adapter.phase_plan("B1", 45))
     # Each phase starts with exactly its derived request. A phase can make its
     # existing one safety regeneration request when a candidate is gated out.
     assert all(counts in requested_counts for counts in expected_counts.values())
@@ -130,7 +129,7 @@ def test_e2e_baker_fills_eight_blocks_with_whole_lesson_variety(tmp_path):
 
 
 def test_e2e_baker_runs_three_independent_phases_concurrently(tmp_path):
-    plans = engine_adapter._candidate_count_plan(phase_plan(B1, 45))
+    plans = engine_adapter._candidate_count_plan(engine_adapter.phase_plan("B1", 45))
     started = threading.Event()
     active = 0
     max_active = 0

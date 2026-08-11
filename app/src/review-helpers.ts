@@ -21,7 +21,7 @@ export const PILOT_ACTIVITY_TYPES: readonly PilotActivityType[] = [
 // Must stay byte-for-byte equal to hramatka/sizing_policy.py.  The Python
 // sizing-policy test parses this JSON literal and rejects drift before build.
 const REVIEW_PHASE_BUDGETS_RAW = {
-  "45": { "1": 3, "2": 4, "3": 1 },
+  "45": { "1": 2, "2": 3, "3": 1 },
   "60": { "1": 3, "2": 5, "3": 2 },
   "90": { "1": 4, "2": 5, "3": 3 }
 } as const;

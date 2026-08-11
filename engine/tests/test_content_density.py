@@ -19,7 +19,6 @@ from hramatka.engine import (
     schema,
     selector,
 )
-from hramatka.sizing_policy import B1, phase_plan
 
 VARENIKI_SENTENCE = "Замісіть мʼяке тісто й залиште його на пів години під рушником."
 
@@ -79,8 +78,8 @@ def _fixture_candidate(activity_type: str, index: int) -> schema.HramatkaActivit
     )
 
 
-def _production_selection(duration: int) -> dict[int, list[schema.HramatkaActivity]]:
-    plan = phase_plan(B1, duration)
+def _legacy_v2_selection(duration: int) -> dict[int, list[schema.HramatkaActivity]]:
+    plan = engine_adapter.phase_plan("B1", duration)
     count_plans = engine_adapter._prompt_pack_candidate_count_plan(plan)  # noqa: SLF001
     pools: dict[int, list[schema.HramatkaActivity]] = {}
     candidate_index = 0
@@ -103,7 +102,7 @@ def _production_selection(duration: int) -> dict[int, list[schema.HramatkaActivi
     )
 
 
-def test_production_45_60_90_plans_satisfy_the_teacher_ready_receipt() -> None:
+def test_legacy_v2_plans_preserve_their_teacher_ready_receipts() -> None:
     for duration in (45, 60, 90):
         contract = content_density.teacher_ready_density(duration)
         expected_plan = [
@@ -111,11 +110,11 @@ def test_production_45_60_90_plans_satisfy_the_teacher_ready_receipt() -> None:
             for phase, count in contract.phase_blocks.items()
             for _ in range(count)
         ]
-        # Production sizing and delivery density are separate modules.  Prove
-        # their live, unpatched B1 contracts are identical for every duration.
-        assert phase_plan(B1, duration) == expected_plan
-        assert Counter(phase_plan(B1, duration)) == contract.phase_blocks
-        selected_by_phase = _production_selection(duration)
+        # The retired adapter and its density receipt remain one frozen contract
+        # even though the deployed v3 review policy has changed for 45 minutes.
+        assert engine_adapter.phase_plan("B1", duration) == expected_plan
+        assert Counter(engine_adapter.phase_plan("B1", duration)) == contract.phase_blocks
+        selected_by_phase = _legacy_v2_selection(duration)
         receipt = content_density.evaluate_teacher_ready_density(
             selected_by_phase, duration=duration
         )
@@ -123,7 +122,7 @@ def test_production_45_60_90_plans_satisfy_the_teacher_ready_receipt() -> None:
         assert receipt.phase_counts == dict(
             contract.phase_blocks
         )
-        # This is the production prompt-pack bank, not a hand-picked lesson.
+        # This is the legacy prompt-pack bank, not a hand-picked lesson.
         # Response-unit prioritization must retain the four-family first-pass
         # floor while still reaching the duration's response target.
         assert len(receipt.type_units) >= contract.min_types
@@ -153,7 +152,7 @@ def test_prompt_pack_cloze_uses_the_canonical_registry_target() -> None:
 
 
 def test_legacy_flat_floor_check_fails_closed_without_phase_assignment() -> None:
-    selected_by_phase = _production_selection(45)
+    selected_by_phase = _legacy_v2_selection(45)
     selected = [
         candidate
         for phase in sorted(selected_by_phase)
@@ -200,7 +199,7 @@ def test_minimum_activity_types_is_an_enforced_delivery_error() -> None:
 
 
 def test_repair_planner_targets_block_density_response_variety_and_phase_three() -> None:
-    plan = phase_plan(B1, 45)
+    plan = engine_adapter.phase_plan("B1", 45)
     count_plans = engine_adapter._prompt_pack_candidate_count_plan(plan)  # noqa: SLF001
     slots = [
         {"slot_id": f"P{phase}-A{position}", "type": activity_type}
@@ -237,7 +236,7 @@ def test_repair_planner_targets_block_density_response_variety_and_phase_three()
         for slot in request.slots
     )
 
-    valid = _production_selection(45)
+    valid = _legacy_v2_selection(45)
     invalid_cloze = _fixture_candidate("cloze", 99)
     invalid_cloze.activity["blanks"] = invalid_cloze.activity["blanks"][:1]
     valid[2][-1] = invalid_cloze
@@ -248,7 +247,7 @@ def test_repair_planner_targets_block_density_response_variety_and_phase_three()
         (2, "cloze")
     ]
 
-    no_transfer = _production_selection(45)
+    no_transfer = _legacy_v2_selection(45)
     no_transfer[3] = [_fixture_candidate("quiz", 100)]
     transfer_requests = repair.RepairPlanner(pack, duration=45, started_at=0).plan(
         round=1, selected_by_phase=no_transfer, slots_by_phase=slots_by_phase, now=1
@@ -259,7 +258,7 @@ def test_repair_planner_targets_block_density_response_variety_and_phase_three()
 
 
 def test_response_repair_preserves_sole_productive_slot_and_closes_real_shortfall() -> None:
-    plan = phase_plan(B1, 45)
+    plan = engine_adapter.phase_plan("B1", 45)
     count_plans = engine_adapter._prompt_pack_candidate_count_plan(plan)  # noqa: SLF001
     slots_by_phase = Counter(plan)
     slots = [
