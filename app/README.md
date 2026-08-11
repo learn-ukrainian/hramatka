@@ -59,10 +59,13 @@ npm run build     # tsc + vite build → dist/ (static bundle)
 - No token in localStorage/sessionStorage ever.
 
 ## CI
-Extended in `../../.github/workflows/private-boundary.yml`. The job runs boundary + python tests + (node setup + app `npm ci` + typecheck + lint + build + test + e2e). The vendored tarball means no public checkout or ACTIVITY_KIT_DIR override is required.
+Defined in `../../.github/workflows/private-boundary.yml`. Draft PRs run the
+changed Python tests and only the frontend or real-backend lane whose owned
+paths changed. Ready PRs and `main` run the complete Python, frontend, stub
+browser, and real-backend browser gates. The vendored tarball means no public
+checkout or `ACTIVITY_KIT_DIR` override is required.
 
 ## Production note
 The bundle is served by Caddy at `/teacher/*` (SPA fallback to index.html) + `/api/*` proxy to backend on same origin. Cookie `__Host-hramatka_session`.
 
 **PR evidence required:** test + e2e output + DOM/screenshot proving one golden lesson renders all 9 blocks with zero fallbacks.
-

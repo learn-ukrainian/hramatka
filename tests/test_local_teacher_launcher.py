@@ -1541,7 +1541,15 @@ def test_real_backend_uses_repository_venv_prefix_outside_ci(tmp_path: Path) -> 
         if process.poll() is None:
             process.terminate()
         process.communicate(timeout=10)
-        shutil.rmtree(state_directory)
+        try:
+            shutil.rmtree(state_directory)
+        except FileNotFoundError:
+            # Another owner-aware cleanup may win after this child exits. A
+            # missing tree is already the required postcondition; retry only if
+            # a disappearing child entry left the root behind.
+            if state_directory.exists():
+                shutil.rmtree(state_directory)
+        assert not state_directory.exists()
 
 
 def test_real_backend_rejects_wrong_interpreter_before_runtime_imports(
