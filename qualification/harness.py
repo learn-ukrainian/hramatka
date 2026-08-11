@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,19 +29,26 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from hramatka.api.app import create_app
-from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker
+from hramatka.api.baking.engine_adapter_v3 import (
+    EngineLessonBaker,
+    _inventory_candidate_types,
+    _inventory_replacement_types,
+    _lesson_slots,
+    _slot_builders,
+)
 from hramatka.api.config import Settings
 from hramatka.api.qualified_models import (
     DENSITY_CONTRACT_VERSION,
     QualificationCandidateRegistry,
 )
 from hramatka.engine import ENGINE_VERSION, data, fixtures, flags, paths
-from hramatka.engine.closed_class_policy import is_closed_class_form
+from hramatka.engine.anchor_inventory_v3 import inventory_from_anchor
 from hramatka.engine.density_evaluator_v3 import MAX_REPAIR_ROUNDS, evaluate_phase_with_repair
 from hramatka.engine.lesson_capacity_v3 import (
-    AllocatedSlot,
-    ConditionalReplacement,
+    AnchorParagraph,
+    AnchorWindow,
     LessonAllocation,
+    preflight_lesson,
 )
 from hramatka.engine.linguistics import verify_lemma
 from hramatka.engine.prompt_pack_v3 import (
@@ -52,8 +59,11 @@ from hramatka.engine.prompt_pack_v3 import (
 )
 from hramatka.engine.prompt_pack_v3 import (
     TYPE_KIT_IDENTITY,
+    _catalog_positive_lemma,
+    _degree_rank,
     _vesum_matches,
     build_phase_context,
+    one_slot_context,
     render_phase_prompt,
     template_digest,
 )
@@ -63,8 +73,7 @@ from hramatka.engine.prompt_pack_v3 import (
 from hramatka.engine.providers import telemetry_ctx
 from hramatka.engine.serializer_policy import serializer_temperature
 from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint
-from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
-from hramatka.engine.unit_builders_v3 import BUILDERS
+from hramatka.engine.tests.fixtures.density_v3_regression_fixture import DENSITY_V3_ANCHOR
 
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
@@ -165,7 +174,7 @@ def deterministic_runtime_anchors() -> dict[str, RuntimeAnchor]:
     The source body remains in the pre-existing engine fixture.  This package
     commits only identifiers and hashes in its manifest, never those bytes.
     """
-    source = fixtures.load_anchor()
+    source = DENSITY_V3_ANCHOR
     return {
         "b1-narrative": RuntimeAnchor(
             "b1-narrative", "synthetic-runtime-fixture/b1-narrative", source
@@ -231,46 +240,27 @@ def _certified_activity(activity: dict[str, Any], kit: Mapping[str, Any]) -> dic
 
 
 def _v3_qualification_allocation() -> LessonAllocation:
-    """Return a deterministic 45-minute v3 allocation for tooling-only probes.
-
-    This deliberately lives in the qualification harness, not the live baker:
-    Slice 7 owns exposing v3 generation in production.  The inventory derives
-    only from the existing source-safe engine fixture.
-    """
-    inventory = complete_inventory()
-    scheduled = (
-        (1, "quiz"),
-        (1, "cloze"),
-        (1, "fill-in"),
-        (2, "true-false"),
-        (2, "quiz"),
-        (2, "match-up"),
-        (2, "error-correction"),
-        (3, "short-writing"),
+    """Return a deterministic allocation through the live inventory/preflight path."""
+    slots = _lesson_slots(45)
+    inventory = inventory_from_anchor(
+        DENSITY_V3_ANCHOR,
+        scheduled_types=_inventory_candidate_types(slots),
+        replacement_types=_inventory_replacement_types(slots),
+        duration_minutes=45,
     )
-    slots: list[AllocatedSlot] = []
-    for position, (phase, activity_type) in enumerate(scheduled, start=1):
-        slot_id = f"P{phase}-A{sum(1 for previous, _ in scheduled[:position] if previous == phase)}"
-        plan = BUILDERS[activity_type](inventory, slot_id=slot_id, phase=phase)
-        if not plan.floor_met:
-            raise QualificationError("v3 qualification fixture did not certify a complete slot.")
-        replacements = ()
-        if slot_id == "P2-A1":
-            replacement_plan = BUILDERS["cloze"](inventory, slot_id=slot_id, phase=phase)
-            if not replacement_plan.floor_met:
-                raise QualificationError("v3 qualification fixture has no certified replacement.")
-            replacements = (ConditionalReplacement("cloze", replacement_plan),)
-        slots.append(
-            AllocatedSlot(
-                slot_id=slot_id,
-                phase=phase,
-                requested_type=activity_type,
-                scheduled_type=activity_type,
-                plan=plan,
-                conditional_replacements=replacements,
-            )
-        )
-    return LessonAllocation(paragraph_ids=("qualification-fixture",), slots=tuple(slots))
+    result = preflight_lesson(
+        AnchorWindow(
+            paragraphs=(AnchorParagraph("qualification-fixture", inventory),),
+            initial_start=0,
+            initial_end=0,
+        ),
+        duration_minutes=45,
+        slots=slots,
+        builders=_slot_builders(slots),
+    )
+    if result.allocation is None:
+        raise QualificationError("v3 production inventory fixture did not preflight.")
+    return result.allocation
 
 
 def _v3_probe_prompt(
@@ -286,9 +276,14 @@ def _v3_probe_prompt(
     The trailing metadata lets the qualification-only provider adapter request a
     one-slot repair response without changing its frozen v3 context.
     """
+    prompt_context = (
+        one_slot_context(context, slot_id=slot_id)
+        if slot_id is not None and mode != "initial"
+        else context
+    )
     return "\n\n".join(
         (
-            render_phase_prompt(context),
+            render_phase_prompt(prompt_context),
             "=== QUALIFICATION V3 PROBE (metadata) ===\n```json\n"
             + json.dumps(
                 {
@@ -594,6 +589,100 @@ def _v3_fixture_distractors(answer: str, count: int = 1) -> list[str]:
     return candidates[:count]
 
 
+def _blank_rendering_surface(unit: Mapping[str, Any], answer: str, marker: str) -> str:
+    """Copy the engine-certified learner carrier without reconstructing it."""
+    surface = unit.get("gapped_rendering_surface")
+    if not isinstance(surface, str) or surface.count(marker) != 1:
+        raise QualificationError("Qualification kit has no certified gapped surface.")
+    return surface
+
+
+def _cloze_text_from_units(units: Sequence[Mapping[str, Any]], forms: Sequence[str]) -> str:
+    """Merge shared carrier sentences once and place every ordered marker."""
+    if units and len({unit.get("rendering_surface") for unit in units}) == 1:
+        surface = units[0].get("rendering_surface")
+        spans: list[tuple[int, int, int, str]] = []
+        if isinstance(surface, str):
+            for index, (unit, form) in enumerate(zip(units, forms, strict=True), start=1):
+                distinctness = unit.get("distinctness")
+                gap = distinctness.get("gap") if isinstance(distinctness, Mapping) else None
+                start = gap.get("start_offset") if isinstance(gap, Mapping) else None
+                end = gap.get("end_offset") if isinstance(gap, Mapping) else None
+                if not isinstance(start, int) or not isinstance(end, int):
+                    break
+                if surface[start:end] != form:
+                    raise QualificationError("Qualification cloze span does not bind its answer.")
+                spans.append((start, end, index, form))
+            else:
+                rendered = surface
+                for start, end, index, _form in reversed(spans):
+                    rendered = rendered[:start] + f"{{{index}}}" + rendered[end:]
+                return rendered
+    passages: dict[str, str] = {}
+    for index, (unit, form) in enumerate(zip(units, forms, strict=True), start=1):
+        surface = unit.get("rendering_surface")
+        if not isinstance(surface, str) or form not in surface:
+            raise QualificationError("Qualification cloze unit lacks an answer-bound surface.")
+        current = passages.setdefault(surface, surface)
+        passages[surface] = current.replace(form, f"{{{index}}}", 1)
+    return " ".join(passages.values())
+
+
+def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
+    """Compose a natural source-grounded question for the unit's locked category."""
+    surface = unit.get("rendering_surface")
+    distinctness = unit.get("distinctness")
+    category = distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
+    intent = distinctness.get("question_intent") if isinstance(distinctness, Mapping) else None
+    frame = distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
+    prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
+    if not isinstance(surface, str) or not isinstance(category, str):
+        raise QualificationError("Qualification text-question kit is malformed.")
+    if not isinstance(prefixes, list) or not all(
+        isinstance(prefix, str) and prefix.strip() for prefix in prefixes
+    ):
+        raise QualificationError("Qualification text-question frame is malformed.")
+    terms: list[str] = []
+    lemmas: set[str] = set()
+    for word in re.findall(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+", surface):
+        match = next(
+            (
+                row
+                for row in _vesum_matches(word, paths.vesum_db())
+                if row.get("pos") in {"noun", "verb", "adj", "adv"}
+                and isinstance(row.get("lemma"), str)
+            ),
+            None,
+        )
+        if match is None or str(match["lemma"]).casefold() in lemmas:
+            continue
+        lemmas.add(str(match["lemma"]).casefold())
+        terms.append(word)
+        if len(terms) == 2:
+            break
+    if not terms:
+        raise QualificationError("Qualification text-question surface lacks a content term.")
+    first = next(
+        (
+            word
+            for word in re.findall(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+", surface)
+            if _catalog_positive_lemma(word) is not None
+            and any(
+                _degree_rank(str(match.get("tags", ""))) in {1, 2}
+                for match in _vesum_matches(word, paths.vesum_db())
+            )
+        ),
+        terms[0],
+    )
+    if category == "comprehension" and intent == "fact-recovery":
+        return f"{prefixes[0]} «{first}» ({index + 1})?"
+    if category == "explanation_inference" and intent == "explicit-causal":
+        return f"{prefixes[0]} в уривку згадано «{first}» ({index + 1})?"
+    if category == "anchored_application" and intent == "realistic-transfer":
+        return f"{prefixes[0]} ідею про «{first}» у подібній ситуації ({index + 1})?"
+    raise QualificationError("Qualification text-question purpose is unknown.")
+
+
 def _v3_live_record_from_kit(
     kit: Mapping[str, Any], *, unit_limit: int | None = None
 ) -> dict[str, Any]:
@@ -608,21 +697,28 @@ def _v3_live_record_from_kit(
     certified_units = json.loads(json.dumps(kit["certified_units"], ensure_ascii=False))
     forms = [unit["allowed_forms"][0] for unit in certified_units]
     expected_keys = [unit["expected_key_or_rule"]["value"] for unit in certified_units]
+
+    def closed_options(unit: Mapping[str, Any], form: str, index: int) -> list[str]:
+        distinctness = unit.get("distinctness")
+        choice_bank = distinctness.get("choice_bank") if isinstance(distinctness, Mapping) else None
+        if isinstance(choice_bank, list) and form in choice_bank:
+            options = [item for item in choice_bank if item != form]
+            options.insert(index % len(choice_bank), form)
+            return options
+        distractors = _v3_fixture_distractors(form, count=2)
+        options = list(distractors)
+        options.insert(index % 3, form)
+        return options
+
     if activity_type == "quiz":
         items = []
         key_items = []
-        for index, form in enumerate(forms):
-            distractors = _v3_fixture_distractors(form, count=2)
-            pos = index % 3
-            options = list(distractors)
-            options.insert(pos, form)
+        for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True)):
+            options = closed_options(unit, form, index)
+            pos = options.index(form)
             items.append(
                 {
-                    "question": (
-                        f"Яке слово «___» підходить до контексту {index + 1}?"
-                        if is_closed_class_form(form)
-                        else f"Яке слово підходить до контексту {index + 1}?"
-                    ),
+                    "question": _blank_rendering_surface(unit, form, "___"),
                     "options": options,
                     "correct": pos,
                 }
@@ -637,11 +733,8 @@ def _v3_live_record_from_kit(
     elif activity_type == "cloze":
         blanks = []
         key_blanks = []
-        for index, form in enumerate(forms, start=1):
-            distractors = _v3_fixture_distractors(form, count=2)
-            pos = (index - 1) % 3
-            options = list(distractors)
-            options.insert(pos, form)
+        for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True), start=1):
+            options = closed_options(unit, form, index - 1)
             blanks.append(
                 {
                     "id": index,
@@ -650,26 +743,23 @@ def _v3_live_record_from_kit(
                 }
             )
             key_blanks.append({"id": index, "answer": form})
+        marked_surface = kit.get("marked_rendering_surface")
+        if not isinstance(marked_surface, str):
+            raise QualificationError("Qualification cloze kit lacks its marked passage.")
         payload = {
             "type": activity_type,
             "instruction": "Заповніть пропуск.",
-            "text": (
-                "Це {1} текст із {2} видимим {3} контекстом, у якому {4} "
-                "більшість {5} слів {6} лишається {7} для {8} розуміння."
-            ),
+            "text": marked_surface,
             "blanks": blanks,
         }
         answer_key = {"blanks": key_blanks}
     elif activity_type == "fill-in":
         items = []
-        for index, (_unit, form) in enumerate(zip(certified_units, forms, strict=True)):
-            distractors = _v3_fixture_distractors(form, count=2)
-            pos = index % 3
-            options = list(distractors)
-            options.insert(pos, form)
+        for index, (unit, form) in enumerate(zip(certified_units, forms, strict=True)):
+            options = closed_options(unit, form, index)
             items.append(
                 {
-                    "sentence": f"Речення {index + 1} потребує правильного слова ___.",
+                    "sentence": _blank_rendering_surface(unit, form, "___"),
                     "answer": form,
                     "options": options,
                 }
@@ -696,9 +786,20 @@ def _v3_live_record_from_kit(
             ]
         }
     elif activity_type == "match-up":
+        relations = {
+            unit.get("distinctness", {}).get("pair", {}).get("relation") for unit in certified_units
+        }
+        instruction = {
+            frozenset({"degree-comparison-paraphrase.v1"}): (
+                "З'єднайте кожне порівняльне твердження з рівнозначним перефразуванням."
+            ),
+            frozenset({"degree-priority-recommendation.v2"}): (
+                "З'єднайте опис потреб і пріоритетів з рекомендованим варіантом."
+            ),
+        }.get(frozenset(relations), "Знайдіть пару.")
         payload = {
             "type": activity_type,
-            "instruction": "Знайдіть пару.",
+            "instruction": instruction,
             "pairs": [
                 {"left": unit["allowed_forms"][0], "right": unit["allowed_forms"][1]}
                 for unit in certified_units
@@ -711,13 +812,7 @@ def _v3_live_record_from_kit(
         payload = {
             "type": activity_type,
             "instruction": "Виправте помилку.",
-            "items": [
-                (
-                    f"Речення {index + 1} містить помилкову форму "
-                    f"{_v3_fixture_distractors(expected_keys[index])[0]}."
-                )
-                for index in range(len(expected_keys))
-            ],
+            "items": forms,
         }
         answer_key = {"items": expected_keys}
     elif activity_type == "text-questions":
@@ -725,7 +820,7 @@ def _v3_live_record_from_kit(
             "type": activity_type,
             "instruction": "Дайте відповідь.",
             "items": [
-                f"Яке питання стосується контексту {index + 1}?" for index in range(len(forms))
+                _question_from_unit(unit, index) for index, unit in enumerate(certified_units)
             ],
         }
         answer_key = {"guidance": "x"}
@@ -733,15 +828,21 @@ def _v3_live_record_from_kit(
         prompt_fragments = [
             fragment for unit in certified_units for fragment in unit["allowed_forms"]
         ]
-        payload = {
-            "type": activity_type,
-            "prompt": "Напишіть короткий текст про ваш розклад дня.",
-        }
-        answer_key = {
-            "guidance": (
-                "Текст має бути " + " ".join(prompt_fragments) + " та містити відповідні описи."
+        if kit.get("focus_alignment") == "degree-writing":
+            scenario = certified_units[0].get("rendering_surface")
+            if not isinstance(scenario, str):
+                raise QualificationError("Qualification degree-writing scenario is missing.")
+            prompt = (
+                f"{scenario}\nПорівняйте квартири, виберіть одну й обґрунтуйте вибір. "
+                "Ужийте щонайменше 3 прикметники у вищому або найвищому ступені, "
+                "узгоджуючи форми природно. Вимоги: " + ", ".join(prompt_fragments) + "."
             )
-        }
+        else:
+            prompt = (
+                "Напишіть короткий текст про ваш розклад дня: " + ", ".join(prompt_fragments) + "."
+            )
+        payload = {"type": activity_type, "prompt": prompt}
+        answer_key = {"guidance": "Перевірте виконання кожної умови."}
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")
     return {

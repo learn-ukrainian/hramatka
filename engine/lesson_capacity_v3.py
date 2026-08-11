@@ -315,9 +315,16 @@ class _Choice:
     substitution_reason: Literal["preflight_unavailable", "capacity"] | None
 
 
-def _operation_for(activity_type: str) -> str:
-    """Use the existing operation identities for the unchanged ≤2 reuse rule."""
-    return COGNITIVE_OPERATION.get(activity_type, activity_type)
+def _operation_for(plan: UnitPlan) -> str:
+    """Return the certified cognitive operation used for source-reuse checks."""
+    alignments = {
+        unit.distinctness.get("focus_alignment")
+        for unit in plan.units
+        if isinstance(unit.distinctness.get("focus_alignment"), str)
+    }
+    if len(alignments) == 1:
+        return next(iter(alignments))
+    return COGNITIVE_OPERATION.get(plan.activity_type, plan.activity_type)
 
 
 def _non_evidence_claims(plan: UnitPlan) -> tuple[tuple[str, str], ...]:
@@ -351,12 +358,21 @@ def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
         return False
     if not reservation.claims.isdisjoint(claims):
         return False
-    operation = _operation_for(plan.activity_type)
+    operation = _operation_for(plan)
     for source_id in _source_evidence_ids(plan):
         prior_uses = reservation.source_usage.get(source_id, ())
         if len(prior_uses) >= 2:
             return False
-        if any(use.phase == plan.phase or use.operation == operation for use in prior_uses):
+        if any(use.operation == operation for use in prior_uses):
+            return False
+        if any(
+            use.phase == plan.phase
+            and not (
+                (use.operation.startswith("degree-") or use.operation == "anchor-comprehension")
+                and (operation.startswith("degree-") or operation == "anchor-comprehension")
+            )
+            for use in prior_uses
+        ):
             return False
     return True
 
@@ -364,7 +380,7 @@ def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
 def _reserve(reservation: _Reservation, plan: UnitPlan) -> _Reservation:
     claims = reservation.claims | frozenset(_non_evidence_claims(plan))
     source_usage = {source_id: tuple(uses) for source_id, uses in reservation.source_usage.items()}
-    use = _SourceUse(phase=plan.phase, operation=_operation_for(plan.activity_type))
+    use = _SourceUse(phase=plan.phase, operation=_operation_for(plan))
     for source_id in _source_evidence_ids(plan):
         source_usage[source_id] = (*source_usage.get(source_id, ()), use)
     return _Reservation(claims=frozenset(claims), source_usage=source_usage)

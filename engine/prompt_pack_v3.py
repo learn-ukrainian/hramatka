@@ -10,11 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
 from . import paths
+from .anchor_inventory_v3 import DEGREE_CATALOG_VERSION, DEGREE_LADDERS, degree_role
 from .closed_class_policy import (
     CLOSED_CLASS_ALLOWED_SHAPES,
     is_closed_class_form,
@@ -24,15 +26,15 @@ from .linguistics import verify_lemma, verify_words
 from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
-PROMPT_PACK_VERSION = "PromptPackInput.v3.2"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.6"
-TEMPLATE_SHA256: Final[str] = "d55591b54961d2b789a42b413f6d3f5ad9404950ebf3492e5e0d02929eb5cd89"
+PROMPT_PACK_VERSION = "PromptPackInput.v3.3"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.11"
+TEMPLATE_SHA256: Final[str] = "8a5df04165e812bdccaa6da5557b8ed09208540ea43b9a3bef5fb3e22ea25f3b"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.6.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.11.md"
 
-# Literal strings that appear only in the full-density synthetic exemplar.  Their
+# Literal strings that appear only in the compact synthetic schema shapes.  Their
 # presence in a model response means the serializer copied the exemplar instead
 # of generating teacher-ready content from the certified substrate.
 EXEMPLAR_ONLY_STRINGS = frozenset(
@@ -88,10 +90,117 @@ _DETERMINISTIC_GATE_RULE_KEYS: Final[dict[str, str]] = {
     "validate_elicitation_shape": "elicitation_shape",
     "validate_gap_construction": "gap_construction",
     "validate_distractor_adjacency": "distractor_adjacency",
+    "validate_non_revealing_sequence": "non_revealing_sequence",
+    "validate_activity_purpose": "activity_purpose",
+    "validate_visible_writing_constraints": "short_writing_visible_constraints",
 }
+_ACTIVITY_PURPOSE_SAFE_PREFIXES: Final[dict[str, str]] = {
+    "text question asks for a token label instead of meaning": "token_retrieval",
+    "text question ignores its certified question category": "question_category_mismatch",
+    "text question ignores its certified purpose intent": "question_intent_mismatch",
+    "text question is detached from its rendering surface": "source_lemma_overlap_missing",
+    "text question omits its certified comparison": "degree_comparison_missing",
+    "text question turns a contrast into one causal reason": "contrast_causality_malformed",
+    "text question restates its expected answer": "answer_leak",
+    "text question uses unresolved source deixis": "unresolved_reference",
+}
+
+
+def _activity_purpose_safe_suffix(error: Exception) -> str | None:
+    """Return an actionable content-free code and failing item index."""
+    message = str(error)
+    code = next(
+        (
+            safe_code
+            for prefix, safe_code in _ACTIVITY_PURPOSE_SAFE_PREFIXES.items()
+            if message.startswith(prefix)
+        ),
+        None,
+    )
+    if code is None:
+        return None
+    index = re.search(r"items\[(\d+)\]", message)
+    return code if index is None else f"{code}:item={index.group(1)}"
+
 
 _CLOZE_MARKER_RE = re.compile(r"\{[1-9]\d*\}")
 _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+")
+_EXPLICIT_CAUSAL_SURFACE_RE = re.compile(
+    r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b",
+    re.IGNORECASE,
+)
+_UNRESOLVED_QUESTION_DEIXIS_RE = re.compile(
+    r"\b(?:цих|цьому|цього)\b",
+    re.IGNORECASE,
+)
+
+_TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
+    "quiz": {
+        "purpose": "test one grammatical or lexical choice in meaningful context",
+        "required": "copy each certified_unit.gapped_rendering_surface byte for byte",
+        "reject": "successively blanking one sentence or exposing another unit answer",
+    },
+    "cloze": {
+        "purpose": "read a coherent passage and restore context-supported forms",
+        "required": "copy marked_rendering_surface verbatim into payload.text",
+        "reject": "repeated carrier sentences, adjacent marker runs, or a mostly blank passage",
+    },
+    "fill-in": {
+        "purpose": "apply one form from a certified shared bank in a complete sentence",
+        "required": (
+            "copy each certified_unit.gapped_rendering_surface byte for byte and use the "
+            "complete distinctness.choice_bank as options"
+        ),
+        "reject": "meta-linguistic carriers, one-lemma suffix clues, or repeated templates",
+    },
+    "true-false": {
+        "purpose": "evaluate the meaning of a plausible complete statement",
+        "required": "statement exactly equals certified_units[i].allowed_forms[0]",
+        "reject": "word doubling, token swapping, paraphrase, or syntax corruption",
+    },
+    "match-up": {
+        "purpose": "associate forms by the one certified relation declared by the board",
+        "required": (
+            "pair exactly equals its certified semantic pair, and the Ukrainian "
+            "instruction explicitly names that relation"
+        ),
+        "reject": "vague wording, mixed relations, invented pairs, or same-root morphology",
+    },
+    "error-correction": {
+        "purpose": "identify and repair one realistic form error",
+        "required": "source exactly equals the certified one-error allowed surface",
+        "reject": "free rewriting, repeated-token corruption, or multiple errors",
+    },
+    "text-questions": {
+        "purpose": "check comprehension, inference, and anchored application",
+        "required": (
+            "one certified question_frame prefix and one naturally reused content lemma from "
+            "rendering_surface"
+        ),
+        "reject": "asking only for a token, preposition, conjunction, or part of speech",
+    },
+    "mark-the-words": {
+        "purpose": "notice every certified comparison-degree form in the certified source excerpts",
+        "required": "exact merged rendering surfaces and exact certified target words",
+        "reject": "isolated word lists, invented targets, or a grammar-label question",
+    },
+    "short-writing": {
+        "purpose": "produce a focused response under visible constraints",
+        "required": "payload.prompt contains every certified constraint marker verbatim",
+        "reject": "requirements present only in hidden guidance",
+    },
+}
+
+_CONTRASTIVE_NEGATIVES: Final[dict[str, str]] = {
+    "quiz": "REJECT: eight questions reveal successive words of one source sentence.",
+    "cloze": "REJECT: {1} {2} {3} is a consecutive blank run without local context.",
+    "true-false": "REJECT: a false statement doubles or reorders words.",
+    "match-up": "REJECT: left and right are same-root degree forms or neighboring source words.",
+    "error-correction": "REJECT: all items mutate the same sentence or contain several errors.",
+    "text-questions": "REJECT: questions merely ask which token or part of speech occurs.",
+    "mark-the-words": "REJECT: targets are copied into a detached word list.",
+    "short-writing": "REJECT: word range and required lemma appear only in answer guidance.",
+}
 
 
 def _canonical(value: object) -> str:
@@ -110,6 +219,69 @@ def template_digest() -> str:
     return hashlib.sha256(_template_source().encode("utf-8")).hexdigest()
 
 
+def _marked_cloze_rendering_surface(units: Sequence[Mapping[str, Any]]) -> str:
+    """Render the one exact marked passage from certified cloze spans."""
+    surfaces = [unit.get("rendering_surface") for unit in units]
+    if not surfaces or not all(isinstance(surface, str) and surface for surface in surfaces):
+        raise PromptPackV3Error("Cloze units need certified rendering surfaces.")
+    carrier_passage = " ".join(dict.fromkeys(surfaces))
+    spans: list[tuple[int, int, int]] = []
+    for index, unit in enumerate(units, start=1):
+        allowed_forms = unit.get("allowed_forms")
+        distinctness = unit.get("distinctness")
+        gap = distinctness.get("gap") if isinstance(distinctness, Mapping) else None
+        start = gap.get("start_offset") if isinstance(gap, Mapping) else None
+        end = gap.get("end_offset") if isinstance(gap, Mapping) else None
+        if (
+            not isinstance(allowed_forms, Sequence)
+            or isinstance(allowed_forms, (str, bytes))
+            or not allowed_forms
+            or not isinstance(allowed_forms[0], str)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or start < 0
+            or end <= start
+            or carrier_passage[start:end] != allowed_forms[0]
+        ):
+            raise PromptPackV3Error("Cloze gap span is detached from its certified answer.")
+        spans.append((start, end, index))
+    ordered_spans = sorted(spans)
+    if any(
+        left[1] > right[0]
+        for left, right in zip(ordered_spans, ordered_spans[1:], strict=False)
+    ):
+        raise PromptPackV3Error("Cloze gap spans overlap.")
+    marked = carrier_passage
+    for start, end, index in reversed(ordered_spans):
+        marked = marked[:start] + f"{{{index}}}" + marked[end:]
+    return marked
+
+
+def _gapped_rendering_surface(unit: Mapping[str, Any]) -> str:
+    """Render one exact learner carrier from its certified source span."""
+    surface = unit.get("rendering_surface")
+    allowed_forms = unit.get("allowed_forms")
+    distinctness = unit.get("distinctness")
+    gap = distinctness.get("gap") if isinstance(distinctness, Mapping) else None
+    start = gap.get("start_offset") if isinstance(gap, Mapping) else None
+    end = gap.get("end_offset") if isinstance(gap, Mapping) else None
+    if (
+        not isinstance(surface, str)
+        or not surface
+        or not isinstance(allowed_forms, Sequence)
+        or isinstance(allowed_forms, (str, bytes))
+        or not allowed_forms
+        or not isinstance(allowed_forms[0], str)
+        or not isinstance(start, int)
+        or not isinstance(end, int)
+        or start < 0
+        or end <= start
+        or surface[start:end] != allowed_forms[0]
+    ):
+        raise PromptPackV3Error("Closed activity gap span is detached from its certified answer.")
+    return surface[:start] + "___" + surface[end:]
+
+
 def _type_kit(slot: object) -> dict[str, Any]:
     """Project one allocated slot into the new, immutable v3 type-kit."""
     plan = slot.plan
@@ -118,7 +290,22 @@ def _type_kit(slot: object) -> dict[str, Any]:
     expected_count = floor_for(plan.activity_type).minimum_units
     if len(units) != expected_count or len(unit_ids) != len(set(unit_ids)):
         raise PromptPackV3Error("Allocation must contain one exact floor-sized unit plan per slot.")
-    return {
+    alignments = [
+        unit.get("distinctness", {}).get("focus_alignment")
+        for unit in units
+        if isinstance(unit.get("distinctness"), Mapping)
+        and isinstance(unit.get("distinctness", {}).get("focus_alignment"), str)
+    ]
+    focus_alignment = None
+    if alignments and len(alignments) == len(units) and set(alignments) == {"degree-primary"}:
+        focus_alignment = "degree-primary"
+    elif alignments and len(alignments) == len(units) and len(set(alignments)) == 1:
+        focus_alignment = alignments[0]
+    elif len(alignments) >= 6 and set(alignments) == {"degree-reinforcement"}:
+        focus_alignment = "degree-reinforcement"
+    elif alignments == ["degree-writing"]:
+        focus_alignment = "degree-writing"
+    kit = {
         "identity": TYPE_KIT_IDENTITY,
         "slot_id": slot.slot_id,
         "phase": slot.phase,
@@ -128,16 +315,60 @@ def _type_kit(slot: object) -> dict[str, Any]:
         "certified_units": units,
         "registered_constraints": list(plan.registered_constraints),
         "certified_target_tokens": [token.to_dict() for token in plan.certified_target_tokens],
+        "focus_alignment": focus_alignment,
+        "degree_catalog_version": DEGREE_CATALOG_VERSION,
         "degree_seed_pairs": [
             sorted(pair) for pair in sorted(_DEGREE_SEED_PAIRS, key=lambda p: sorted(p))
-        ],
+        ]
+        + [[row.positive, row.comparative] for row in DEGREE_LADDERS.values()],
         "aspect_seed_pairs": [
             sorted(pair) for pair in sorted(_ASPECT_SEED_PAIRS, key=lambda p: sorted(p))
         ],
     }
+    if plan.activity_type == "cloze":
+        kit["marked_rendering_surface"] = _marked_cloze_rendering_surface(units)
+    elif plan.activity_type in {"quiz", "fill-in"}:
+        for unit in units:
+            unit["gapped_rendering_surface"] = _gapped_rendering_surface(unit)
+    elif plan.activity_type == "text-questions":
+        for unit in units:
+            distinctness = unit.get("distinctness")
+            category = (
+                distinctness.get("question_category")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            intent = (
+                distinctness.get("question_intent")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            frame = (
+                distinctness.get("question_frame")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
+            if (
+                not isinstance(prefixes, list)
+                or not prefixes
+                or not all(isinstance(prefix, str) and prefix.strip() for prefix in prefixes)
+                or frame.get("category") != category
+                or frame.get("intent") != intent
+            ):
+                raise PromptPackV3Error("Text-question unit lacks a certified question frame.")
+            if intent == "explicit-causal" and not _EXPLICIT_CAUSAL_SURFACE_RE.search(
+                str(unit.get("rendering_surface", ""))
+            ):
+                raise PromptPackV3Error(
+                    "Text-question explanation unit lacks an explicit causal source warrant."
+                )
+    return kit
 
 
-def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str, Any]:
+def build_phase_context(
+    allocation: LessonAllocation, *, phase: int, focus: str | None = None
+) -> dict[str, Any]:
     """Build the only v3.3 model input from a completed exact-cover allocation."""
     if not isinstance(allocation, LessonAllocation):
         raise TypeError("Prompt pack v3.3 requires a completed LessonAllocation.")
@@ -145,6 +376,25 @@ def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str
     if not slots:
         raise PromptPackV3Error(f"Allocation has no scheduled slots for phase {phase}.")
     type_kits = [_type_kit(slot) for slot in slots]
+    normalized_focus = focus.casefold() if isinstance(focus, str) else ""
+    is_degree_lesson = len(allocation.slots) == 10 and (
+        "компаратив" in normalized_focus
+        or "суперлатив" in normalized_focus
+        or ("ступен" in normalized_focus and "порівнян" in normalized_focus)
+    )
+    if is_degree_lesson:
+        for kit in type_kits:
+            expected_role = degree_role(str(kit["slot_id"]), str(kit["type"]))
+            if expected_role is None:
+                raise PromptPackV3Error("Degree lesson contains an unregistered slot role.")
+            if expected_role == "anchor-comprehension":
+                continue
+            actual_role = kit.get("focus_alignment")
+            if expected_role == "degree-writing":
+                if actual_role != "degree-writing":
+                    raise PromptPackV3Error("Degree writing slot is detached from its role.")
+            elif actual_role != expected_role:
+                raise PromptPackV3Error("Degree closed slot is detached from its role.")
     context = {
         "pack_version": PROMPT_PACK_VERSION,
         "template_version": TEMPLATE_VERSION,
@@ -152,6 +402,7 @@ def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str
         "type_kit_identity": TYPE_KIT_IDENTITY,
         "serializer_temperature": serializer_temperature(),
         "phase": phase,
+        "lesson_focus": focus.strip()[:200] if isinstance(focus, str) and focus.strip() else None,
         "paragraph_ids": list(allocation.paragraph_ids),
         "response_order": [kit["slot_id"] for kit in type_kits],
         "type_kits": type_kits,
@@ -160,8 +411,608 @@ def build_phase_context(allocation: LessonAllocation, *, phase: int) -> dict[str
     return context
 
 
-def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Return one exact-floor exemplar per requested type, and no others."""
+def _plan_degree_class(unit: object) -> str | None:
+    distinctness = getattr(unit, "distinctness", None)
+    value = distinctness.get("degree_class") if isinstance(distinctness, Mapping) else None
+    return value if value in {"positive", "comparative", "superlative"} else None
+
+
+def _plan_source_lemma(unit: object) -> str | None:
+    distinctness = getattr(unit, "distinctness", None)
+    value = distinctness.get("source_lemma") if isinstance(distinctness, Mapping) else None
+    return value.casefold() if isinstance(value, str) and value.strip() else None
+
+
+def _carrier_skeleton(surface: str, answer: str) -> str:
+    blanked = surface.replace(answer, "___", 1).casefold()
+    preserved = {
+        "за",
+        "ніж",
+        "серед",
+        "усіх",
+        "ще",
+        "так",
+        "само",
+        "як",
+        "удвічі",
+        "дедалі",
+        "щораз",
+    }
+    return " ".join(
+        token if token == "___" or token in preserved else "WORD"
+        for token in re.findall(r"___|[А-Яа-яІіЇїЄєҐґʼ’'-]+", blanked)
+    )
+
+
+def _answer_carrier_sentence(surface: str, answer: str) -> str:
+    """Return one normalized answer-bearing sentence from a passage carrier."""
+    return " ".join(
+        next(
+            (
+                match.group(0).strip()
+                for match in re.finditer(r"[^.!?…]+[.!?…]?", surface)
+                if match.group(0).count(answer) == 1
+            ),
+            surface,
+        )
+        .casefold()
+        .split()
+    )
+
+
+def _blanked_carrier(surface: str, answer: str) -> str:
+    """Return the exact answer-bearing carrier sentence with one visible gap."""
+    return _answer_carrier_sentence(surface, answer).replace(answer.casefold(), "___", 1)
+
+
+def _agreement_frames(form: str) -> set[tuple[str, str, str]]:
+    frames: set[tuple[str, str, str]] = set()
+    for match in _vesum_matches(form, paths.vesum_db()):
+        tags = str(match.get("tags", "")).split(":")
+        gender = next((tag for tag in tags if tag in {"m", "f", "n", "p"}), "")
+        case = next((tag for tag in tags if tag.startswith("v_")), "")
+        number = "p" if "p" in tags else "s"
+        if gender and case:
+            frames.add((gender, case, number))
+    return frames
+
+
+def _surface_has_degree_cue(surface: str, degree_class: str) -> bool:
+    normalized = surface.casefold()
+    if degree_class == "positive":
+        return bool(
+            re.search(
+                r"\b(?:так\s+само|так(?:ий|а|е|і)\s+сам(?:ий|а|е|і))\b.+\bяк\b",
+                normalized,
+            )
+        )
+    if degree_class == "comparative":
+        return bool(
+            re.search(r"\b(?:ніж|удвічі|дедалі|щораз|ще)\b", normalized)
+            or re.search(r"\bза\b", normalized)
+            or re.search(r"\bщо\b.+\bто\b", normalized)
+            or re.search(r"\bчим\b.+\bтим\b", normalized)
+        )
+    return bool(re.search(r"\b(?:серед|з\s+усіх)\b", normalized))
+
+
+def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
+    """Fail closed on the advisor-approved degree lesson before provider spend."""
+    expected = tuple(
+        (slot_id, activity_type)
+        for slot_id, activity_type, _role in (
+            ("P1-A1", "text-questions", "anchor-comprehension"),
+            ("P1-A2", "quiz", "degree-recognition"),
+            ("P1-A3", "cloze", "degree-cloze"),
+            ("P2-A1", "fill-in", "degree-formation"),
+            ("P2-A2", "match-up", "degree-positive-comparative"),
+            ("P2-A3", "error-correction", "degree-error-correction"),
+            ("P2-A4", "quiz", "degree-comparison-syntax"),
+            ("P2-A5", "fill-in", "degree-context"),
+            ("P3-A1", "match-up", "degree-comparative-superlative"),
+            ("P3-A2", "short-writing", "degree-writing"),
+        )
+    )
+    observed = tuple((slot.slot_id, slot.scheduled_type) for slot in allocation.slots)
+    if observed != expected:
+        return
+
+    role_by_slot = {
+        slot.slot_id: degree_role(slot.slot_id, slot.scheduled_type) for slot in allocation.slots
+    }
+    carriers: list[tuple[str, str, str]] = []
+    keyed_lemmas: Counter[str] = Counter()
+    phase_one_surfaces: dict[str, set[str]] = {}
+    family_counts: Counter[str] = Counter()
+    block_sequences: dict[str, tuple[str, ...]] = {}
+    scored_carrier_roles = {
+        "degree-recognition",
+        "degree-cloze",
+        "degree-formation",
+        "degree-error-correction",
+        "degree-comparison-syntax",
+        "degree-context",
+    }
+
+    for slot in allocation.slots:
+        role = role_by_slot[slot.slot_id]
+        if role is None or len(slot.plan.units) != floor_for(slot.scheduled_type).minimum_units:
+            raise PromptPackV3Error("Degree lesson plan is missing a complete registered role.")
+        degree_classes = [_plan_degree_class(unit) for unit in slot.plan.units]
+        sequence: list[str] = []
+        if role in {
+            "degree-recognition",
+            "degree-cloze",
+            "degree-formation",
+            "degree-comparison-syntax",
+            "degree-context",
+        }:
+            if any(item is None for item in degree_classes):
+                raise PromptPackV3Error("Degree lesson plan omits a certified degree class.")
+            counts = Counter(degree_classes)
+            if max(counts.values(), default=0) > 6:
+                raise PromptPackV3Error("Degree lesson plan has a monotone answer category.")
+            if role in {"degree-recognition", "degree-cloze", "degree-comparison-syntax"}:
+                if counts["positive"] < 2 or counts["comparative"] + counts["superlative"] < 4:
+                    raise PromptPackV3Error(
+                        "Degree contrast plan lacks a mixed answer distribution."
+                    )
+            if role == "degree-context" and counts["superlative"] < 3:
+                raise PromptPackV3Error("Guided degree production lacks superlative constructions.")
+
+        for unit, degree_class in zip(slot.plan.units, degree_classes, strict=True):
+            surface = unit.rendering_surface
+            distinctness = unit.distinctness
+            answer = (
+                unit.expected_key_or_rule.value
+                if slot.scheduled_type == "error-correction"
+                else unit.allowed_forms[0]
+                if unit.allowed_forms
+                else ""
+            )
+            if slot.scheduled_type in {"quiz", "cloze", "fill-in", "error-correction"}:
+                if not isinstance(surface, str) or not surface or not answer:
+                    raise PromptPackV3Error("Degree lesson plan contains an unbound carrier.")
+                carriers.append((slot.slot_id, surface, answer))
+                if re.search(
+                    r"\b(?:ступінь|прикметник|форма|вищий\s+ступінь|найвищий\s+ступінь)\b",
+                    surface.casefold(),
+                ):
+                    raise PromptPackV3Error(
+                        "Degree lesson plan contains a meta-linguistic carrier."
+                    )
+            if role in scored_carrier_roles:
+                frame_family = distinctness.get("frame_family")
+                warrant = distinctness.get("semantic_warrant")
+                if (
+                    not isinstance(frame_family, str)
+                    or not frame_family.strip()
+                    or not isinstance(warrant, str)
+                    or not warrant.strip()
+                ):
+                    raise PromptPackV3Error(
+                        "Degree scored carrier lacks its certified family or semantic warrant."
+                    )
+                family_counts[frame_family] += 1
+                sequence.append(frame_family)
+                choice_bank = distinctness.get("choice_bank")
+                exclusions = distinctness.get("exclusion_warrants")
+                if isinstance(choice_bank, Sequence) and not isinstance(choice_bank, (str, bytes)):
+                    if (
+                        not isinstance(exclusions, Mapping)
+                        or set(exclusions) != set(choice_bank) - {answer}
+                        or not all(
+                            isinstance(value, str) and value.strip()
+                            for value in exclusions.values()
+                        )
+                    ):
+                        raise PromptPackV3Error(
+                            "Degree scored carrier lacks per-option exclusion warrants."
+                        )
+            elif role in {"degree-positive-comparative", "degree-comparative-superlative"}:
+                pair = distinctness.get("pair")
+                relation = pair.get("relation") if isinstance(pair, Mapping) else None
+                if not isinstance(relation, str) or not relation.strip():
+                    raise PromptPackV3Error("Degree match board lacks its relation family.")
+                sequence.append(relation)
+            if isinstance(degree_class, str) and not _surface_has_degree_cue(
+                surface or "", degree_class
+            ):
+                raise PromptPackV3Error(
+                    "Degree lesson plan contains an unlicensed answer degree at "
+                    f"{slot.slot_id}:{unit.unit_id}."
+                )
+            lemma = _plan_source_lemma(unit)
+            if lemma is not None and slot.scheduled_type != "match-up":
+                keyed_lemmas[lemma] += 1
+
+        if sequence:
+            if role in scored_carrier_roles and max(Counter(sequence).values(), default=0) > 2:
+                raise PromptPackV3Error("One degree block overuses a carrier-frame family.")
+            block_sequences[slot.slot_id] = tuple(sequence)
+
+        if slot.phase == 1:
+            phase_one_surfaces[slot.slot_id] = {
+                " ".join(unit.rendering_surface.casefold().split())
+                for unit in slot.plan.units
+                if isinstance(unit.rendering_surface, str)
+            }
+
+    if max(keyed_lemmas.values(), default=0) > 3:
+        raise PromptPackV3Error("Degree lesson plan reuses one keyed adjective in too many blocks.")
+    if max(family_counts.values(), default=0) > 4:
+        raise PromptPackV3Error("Degree lesson plan overuses one carrier-frame family.")
+
+    scored_sequences = [
+        sequence
+        for slot_id, sequence in block_sequences.items()
+        if role_by_slot[slot_id] in scored_carrier_roles
+    ]
+    if len(scored_sequences) != len(set(scored_sequences)):
+        raise PromptPackV3Error("Degree scored blocks repeat an ordered family sequence.")
+    for activity_type in {slot.scheduled_type for slot in allocation.slots}:
+        same_type = [
+            block_sequences[slot.slot_id]
+            for slot in allocation.slots
+            if slot.scheduled_type == activity_type and slot.slot_id in block_sequences
+        ]
+        for index, left in enumerate(same_type):
+            for right in same_type[index + 1 :]:
+                if (
+                    len(left) == len(right)
+                    and sum(a != b for a, b in zip(left, right, strict=True)) < 3
+                ):
+                    raise PromptPackV3Error(
+                        "Repeated activity types do not differ across three family positions."
+                    )
+
+    exact_carriers = [
+        _answer_carrier_sentence(surface, answer) for _slot, surface, answer in carriers
+    ]
+    if len(exact_carriers) != len(set(exact_carriers)):
+        raise PromptPackV3Error("Degree lesson plan repeats an exact carrier sentence.")
+    normalized_carriers = [_blanked_carrier(surface, answer) for _slot, surface, answer in carriers]
+    if len(normalized_carriers) != len(set(normalized_carriers)):
+        raise PromptPackV3Error("Degree lesson plan repeats a blanked carrier sentence.")
+    skeletons_by_slot: dict[str, Counter[str]] = {}
+    lesson_skeletons: Counter[str] = Counter()
+    for slot_id, surface, answer in carriers:
+        skeleton = _carrier_skeleton(surface, answer)
+        skeletons_by_slot.setdefault(slot_id, Counter())[skeleton] += 1
+        lesson_skeletons[skeleton] += 1
+    if (
+        any(max(counts.values(), default=0) > 2 for counts in skeletons_by_slot.values())
+        or max(lesson_skeletons.values(), default=0) > 4
+    ):
+        raise PromptPackV3Error("Degree lesson plan repeats one carrier template too often.")
+
+    phase_one_sets = list(phase_one_surfaces.values())
+    if any(
+        left & right
+        for index, left in enumerate(phase_one_sets)
+        for right in phase_one_sets[index + 1 :]
+    ):
+        raise PromptPackV3Error("Degree lesson plan leaks one Phase-1 carrier across blocks.")
+
+    text_slot = next(slot for slot in allocation.slots if slot.slot_id == "P1-A1")
+    degree_question_sources = sum(
+        any(
+            _degree_rank(str(match.get("tags", ""))) in {1, 2}
+            for word in _UKRAINIAN_WORD_RE.findall(unit.rendering_surface or "")
+            for match in _vesum_matches(word, paths.vesum_db())
+        )
+        for unit in text_slot.plan.units
+    )
+    if degree_question_sources < 3:
+        raise PromptPackV3Error("Degree lesson plan lacks three comparison-focused questions.")
+    expected_question_intents = (
+        "fact-recovery",
+        "fact-recovery",
+        "fact-recovery",
+        "explicit-causal",
+        "explicit-causal",
+        "explicit-causal",
+        "realistic-transfer",
+        "realistic-transfer",
+    )
+    causal_re = re.compile(r"\b(?:тому|бо|адже|оскільки|щоб|завдяки|через\s+те)\b|[:—]")
+    for expected_intent, unit in zip(expected_question_intents, text_slot.plan.units, strict=True):
+        actual_intent = unit.distinctness.get("question_intent")
+        if actual_intent != expected_intent:
+            raise PromptPackV3Error("Text-question unit lacks its certified purpose intent.")
+        if expected_intent == "explicit-causal" and not causal_re.search(
+            (unit.rendering_surface or "").casefold()
+        ):
+            raise PromptPackV3Error("Explanation question lacks an explicit source relation.")
+
+    formation = next(slot for slot in allocation.slots if slot.slot_id == "P2-A1")
+    formation_classes = Counter(
+        unit.distinctness.get("morphology_class") for unit in formation.plan.units
+    )
+    if formation_classes["alternation"] < 3 or formation_classes["suppletive"] < 2:
+        raise PromptPackV3Error("Degree formation plan lacks morphological-class coverage.")
+    for unit in formation.plan.units:
+        lemma = _plan_source_lemma(unit)
+        if not isinstance(lemma, str) or not re.search(
+            rf"\(\s*{re.escape(lemma)}\s*\)\s*$",
+            unit.rendering_surface or "",
+            re.IGNORECASE,
+        ):
+            raise PromptPackV3Error(
+                "Degree formation carrier omits its visible dictionary-form transformation cue."
+            )
+
+    contextual = next(slot for slot in allocation.slots if slot.slot_id == "P2-A5")
+    contextual_cues = re.compile(
+        r"\b(?:після|чому|тому|для|коли|серед|з\s+усіх|більшість)\b",
+        re.IGNORECASE,
+    )
+    context_cue_count = sum(
+        bool(contextual_cues.search(unit.rendering_surface or ""))
+        for unit in contextual.plan.units
+    )
+    has_transformation_suffix = any(
+        re.search(r"\([^)]*\)\s*$", unit.rendering_surface or "")
+        for unit in contextual.plan.units
+    )
+    if context_cue_count < 6 or has_transformation_suffix:
+        raise PromptPackV3Error(
+            "Degree context block does not differ from guided transformation practice."
+        )
+
+    for slot_id in ("P1-A2", "P1-A3", "P2-A4"):
+        slot = next(candidate for candidate in allocation.slots if candidate.slot_id == slot_id)
+        for unit in slot.plan.units:
+            raw_bank = unit.distinctness.get("choice_bank")
+            if (
+                not isinstance(raw_bank, Sequence)
+                or isinstance(raw_bank, (str, bytes))
+                or len(raw_bank) != 3
+                or len(set(raw_bank)) != 3
+                or unit.allowed_forms[0] not in raw_bank
+            ):
+                raise PromptPackV3Error("Degree contrast bank is incomplete or inconsistent.")
+            answer_frames = _agreement_frames(unit.allowed_forms[0])
+            if not answer_frames or any(
+                not (answer_frames & _agreement_frames(option)) for option in raw_bank
+            ):
+                raise PromptPackV3Error("Degree contrast bank mixes agreement frames.")
+            positive_lemmas = {
+                lemma
+                for option in raw_bank
+                if (lemma := _catalog_positive_lemma(option)) is not None
+            }
+            degree_classes = {
+                rank
+                for option in raw_bank
+                for match in _vesum_matches(option, paths.vesum_db())
+                if (rank := _degree_rank(str(match.get("tags", "")))) is not None
+            }
+            if len(positive_lemmas) != 1 or len(degree_classes) < 2:
+                raise PromptPackV3Error(
+                    "Degree contrast bank lacks a same-lemma degree contrast at "
+                    f"{slot_id}:{unit.unit_id}."
+                )
+
+    for slot_id in ("P2-A1", "P2-A5"):
+        slot = next(candidate for candidate in allocation.slots if candidate.slot_id == slot_id)
+        answers = [unit.allowed_forms[0] for unit in slot.plan.units]
+        if len(answers) != len(set(answers)):
+            raise PromptPackV3Error("Degree shared bank repeats an answer key.")
+        expected_bank = set(answers)
+        observed_banks: list[frozenset[str]] = []
+        for unit in slot.plan.units:
+            raw_bank = unit.distinctness.get("choice_bank")
+            if (
+                not isinstance(raw_bank, Sequence)
+                or isinstance(raw_bank, (str, bytes))
+                or len(raw_bank) != 6
+                or len(set(raw_bank)) != 6
+                or unit.allowed_forms[0] not in raw_bank
+                or not set(raw_bank) <= expected_bank
+            ):
+                raise PromptPackV3Error("Degree shared bank is incomplete or inconsistent.")
+            observed_banks.append(frozenset(raw_bank))
+            answer_frames = _agreement_frames(unit.allowed_forms[0])
+            option_frames = [_agreement_frames(option) for option in raw_bank]
+            survivor_degrees = {
+                rank
+                for option in raw_bank
+                for match in _vesum_matches(option, paths.vesum_db())
+                if (rank := _degree_rank(str(match.get("tags", "")))) is not None
+            }
+            exclusions = unit.distinctness.get("exclusion_warrants")
+            if not answer_frames or any(
+                not frames or not (answer_frames & frames) for frames in option_frames
+            ):
+                raise PromptPackV3Error(
+                    f"Degree shared bank mixes agreement frames at {slot_id}:{unit.unit_id}."
+                )
+            if len(survivor_degrees) < 2:
+                raise PromptPackV3Error(
+                    f"Degree shared bank lacks mixed degree classes at {slot_id}:{unit.unit_id}."
+                )
+            if (
+                not isinstance(exclusions, Mapping)
+                or set(exclusions) != set(raw_bank) - {unit.allowed_forms[0]}
+                or not all(
+                    isinstance(value, str) and value.strip() for value in exclusions.values()
+                )
+            ):
+                raise PromptPackV3Error(
+                    f"Degree shared bank lacks option exclusions at {slot_id}:{unit.unit_id}."
+                )
+        if (
+            len(set(observed_banks)) != len(observed_banks)
+            or set().union(*observed_banks) != expected_bank
+        ):
+            raise PromptPackV3Error("Degree shared banks do not rotate across every answer key.")
+
+    for slot_id in ("P2-A2", "P3-A1"):
+        slot = next(candidate for candidate in allocation.slots if candidate.slot_id == slot_id)
+        for unit in slot.plan.units:
+            pair = unit.distinctness.get("pair")
+            if not isinstance(pair, Mapping):
+                raise PromptPackV3Error("Degree match board omits its certified relation.")
+            left_lemmas = {
+                lemma
+                for word in _UKRAINIAN_WORD_RE.findall(str(pair.get("left", "")))
+                if (lemma := _catalog_positive_lemma(word)) is not None
+            }
+            right_lemmas = {
+                lemma
+                for word in _UKRAINIAN_WORD_RE.findall(str(pair.get("right", "")))
+                if (lemma := _catalog_positive_lemma(word)) is not None
+            }
+            if left_lemmas & right_lemmas:
+                raise PromptPackV3Error("Degree match board contains a same-root pair.")
+
+    paraphrase_slot = next(slot for slot in allocation.slots if slot.slot_id == "P2-A2")
+    irregular_lemmas = {"добрий", "поганий", "великий", "малий"}
+    irregular_pairs = 0
+    consequence_re = re.compile(
+        r"\b(?:доведеться|потрапляє|дорога|легше|важче|опалювати|складніше|більше|гірше)\b",
+        re.IGNORECASE,
+    )
+    for unit in paraphrase_slot.plan.units:
+        pair = unit.distinctness["pair"]
+        left = str(pair["left"])
+        right = str(pair["right"])
+        words = _UKRAINIAN_WORD_RE.findall(left)
+        if {
+            lemma for word in words if (lemma := _catalog_positive_lemma(word)) is not None
+        } & irregular_lemmas:
+            irregular_pairs += 1
+        if (
+            len(_UKRAINIAN_WORD_RE.findall(left)) < 4
+            or len(_UKRAINIAN_WORD_RE.findall(right)) < 4
+            or not consequence_re.search(right)
+            or not any(_catalog_positive_lemma(word) is not None for word in words)
+        ):
+            raise PromptPackV3Error(
+                "Degree paraphrase board contains a bare form or non-equivalent lookup pair."
+            )
+    if irregular_pairs < 2:
+        raise PromptPackV3Error("Degree paraphrase board lacks suppletive comparison coverage.")
+
+    situation_slot = next(slot for slot in allocation.slots if slot.slot_id == "P3-A1")
+    winner_positions: Counter[str] = Counter()
+    priority_re = re.compile(
+        r"\b(?:шукає|потрібн\w*|важлив\w*|може|важко|не\s+хоче)\b",
+        re.IGNORECASE,
+    )
+    for unit in situation_slot.plan.units:
+        situation = str(unit.distinctness["pair"]["left"])
+        conclusion = str(unit.distinctness["pair"]["right"]).casefold()
+        if (
+            len(_UKRAINIAN_WORD_RE.findall(situation)) < 10
+            or not priority_re.search(situation)
+            or "бо" not in conclusion
+        ):
+            raise PromptPackV3Error(
+                "Degree recommendation board omits a learner priority or explicit reason."
+            )
+        winner = next(
+            (
+                position
+                for position, pattern in {
+                    "first": r"\bперш(?:ий|а|е)\b",
+                    "second": r"\bдруг(?:ий|а|е)\b",
+                    "third": r"\bтрет(?:ій|я|є)\b",
+                }.items()
+                if re.search(pattern, conclusion)
+            ),
+            None,
+        )
+        if winner is not None:
+            winner_positions[winner] += 1
+    if len(winner_positions) < 3 or max(winner_positions.values(), default=0) > 4:
+        raise PromptPackV3Error("Degree situation board has a monotone winning position.")
+
+    class_families: dict[str, set[str]] = {"comparative": set(), "superlative": set()}
+    for slot in allocation.slots:
+        for unit in slot.plan.units:
+            degree_class = _plan_degree_class(unit)
+            frame_family = unit.distinctness.get("frame_family")
+            if degree_class in class_families and isinstance(frame_family, str):
+                class_families[degree_class].add(frame_family)
+    if len(class_families["comparative"]) < 3 or len(class_families["superlative"]) < 2:
+        raise PromptPackV3Error("Degree catalog lacks distinct comparative/superlative families.")
+
+    correction = next(slot for slot in allocation.slots if slot.slot_id == "P2-A3")
+    if (
+        sum(
+            unit.distinctness.get("question_intent") == "degree-specific"
+            for unit in correction.plan.units
+        )
+        < 5
+    ):
+        raise PromptPackV3Error("Degree correction block overuses elementary agreement errors.")
+
+    writing = next(slot for slot in allocation.slots if slot.slot_id == "P3-A2")
+    writing_unit = writing.plan.units[0]
+    specs = writing_unit.distinctness.get("constraint_specs")
+    lemma_specs = [
+        spec
+        for spec in specs or ()
+        if isinstance(spec, Mapping) and spec.get("kind") == "contains_lemma_set"
+    ]
+    lemmas = (
+        lemma_specs[0].get("params", {}).get("lemmas", ())
+        if len(lemma_specs) == 1 and isinstance(lemma_specs[0].get("params"), Mapping)
+        else ()
+    )
+    warrants = writing_unit.distinctness.get("attribute_warrants")
+    scenario_lemmas = {
+        _catalog_positive_lemma(word) or str(match["lemma"]).casefold()
+        for word in _UKRAINIAN_WORD_RE.findall(writing_unit.rendering_surface or "")
+        for match in _vesum_matches(word, paths.vesum_db())
+        if isinstance(match.get("lemma"), str)
+    }
+    if (
+        not isinstance(lemmas, (list, tuple))
+        or len(lemmas) < 3
+        or not set(lemmas) <= scenario_lemmas
+        or not isinstance(warrants, Mapping)
+        or set(warrants) != set(lemmas)
+        or not all(isinstance(value, str) and value.strip() for value in warrants.values())
+        or any(_catalog_positive_lemma(str(lemma)) not in {None, str(lemma)} for lemma in lemmas)
+    ):
+        raise PromptPackV3Error("Degree writing constraints are not lemma-bound to the scenario.")
+    leaked_degree_lemmas = {
+        _catalog_positive_lemma(word)
+        for word in _UKRAINIAN_WORD_RE.findall(writing_unit.rendering_surface or "")
+        for match in _vesum_matches(word, paths.vesum_db())
+        if _degree_rank(str(match.get("tags", ""))) in {1, 2}
+    }
+    if set(lemmas) & leaked_degree_lemmas:
+        raise PromptPackV3Error("Degree writing scenario leaks a target degree form.")
+
+
+def one_slot_context(context: Mapping[str, Any], *, slot_id: str) -> dict[str, Any]:
+    """Return an integrity-bound one-kit context for a repair or replacement."""
+    _validate_context_integrity(context)
+    type_kits = context.get("type_kits")
+    if not isinstance(type_kits, list):
+        raise PromptPackV3Error("A repair context needs type-kits.")
+    matches = [
+        kit for kit in type_kits if isinstance(kit, Mapping) and kit.get("slot_id") == slot_id
+    ]
+    if len(matches) != 1:
+        raise PromptPackV3Error("A repair context must select exactly one scheduled slot.")
+    narrowed = {
+        str(key): value
+        for key, value in context.items()
+        if key not in {"context_sha256", "response_order", "type_kits"}
+    }
+    narrowed["response_order"] = [slot_id]
+    narrowed["type_kits"] = [dict(matches[0])]
+    narrowed["context_sha256"] = hashlib.sha256(_canonical(narrowed).encode("utf-8")).hexdigest()
+    return narrowed
+
+
+def compact_schema_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return one one-item schema shape per requested type, plus its exact count."""
     exemplars: list[dict[str, Any]] = []
     seen: set[str] = set()
     for kit in type_kits:
@@ -170,21 +1021,30 @@ def full_density_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[
         if not isinstance(activity_type, str) or not isinstance(count, int) or count < 1:
             raise PromptPackV3Error("A requested type-kit needs a positive scheduled unit count.")
         if count != floor_for(activity_type).minimum_units:
-            raise PromptPackV3Error("A full-density exemplar must use the locked v3 type floor.")
+            raise PromptPackV3Error("A compact exemplar must retain the locked v3 type floor.")
         if activity_type in seen:
             continue
         seen.add(activity_type)
         exemplars.append(
             {
-                "slot_id": f"<synthetic-{activity_type}-slot>",
                 "type": activity_type,
-                "activity": _synthetic_activity_example(activity_type, count),
-                "serialized_units": [
-                    {"unit_id": f"<{activity_type}-unit-{index}>"} for index in range(1, count + 1)
-                ],
+                "required_unit_count": count,
+                "one_item_slot_shape": {
+                    "slot_id": f"<synthetic-{activity_type}-slot>",
+                    "type": activity_type,
+                    "activity": _synthetic_activity_example(activity_type, 1),
+                    "serialized_units": [{"unit_id": f"<{activity_type}-unit-1>"}],
+                },
             }
         )
     return exemplars
+
+
+def _synthetic_options(form: str, index: int) -> tuple[list[str], int]:
+    correct = (index - 1) % 3
+    options = [f"SYNTHETIC-DISTRACTOR-A-{index}", f"SYNTHETIC-DISTRACTOR-B-{index}"]
+    options.insert(correct, form)
+    return options, correct
 
 
 def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
@@ -197,32 +1057,37 @@ def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
     the certified form without quoting it.
     """
     if activity_type == "quiz":
-        return [
-            {
-                "question": f"SYNTHETIC-QUIZ-STEM {index}: якою буде форма?",
-                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
-                "correct": 0,
-            }
-            for index in range(1, count + 1)
-        ]
+        items = []
+        for index in range(1, count + 1):
+            options, correct = _synthetic_options(f"форм{index}", index)
+            items.append(
+                {
+                    "question": f"SYNTHETIC-QUIZ-STEM {index}: якою буде форма?",
+                    "options": options,
+                    "correct": correct,
+                }
+            )
+        return items
     if activity_type == "cloze":
-        return [
-            {
-                "id": index,
-                "answer": f"форм{index}",
-                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
-            }
-            for index in range(1, count + 1)
-        ]
+        items = []
+        for index in range(1, count + 1):
+            answer = f"форм{index}"
+            options, _correct = _synthetic_options(answer, index)
+            items.append({"id": index, "answer": answer, "options": options})
+        return items
     if activity_type == "fill-in":
-        return [
-            {
-                "sentence": f"SYNTHETIC-FILLIN-STEM {index}: речення потребує слова.",
-                "answer": f"форм{index}",
-                "options": [f"форм{index}", "SYNTHETIC-DISTRACTOR"],
-            }
-            for index in range(1, count + 1)
-        ]
+        items = []
+        for index in range(1, count + 1):
+            answer = f"форм{index}"
+            options, _correct = _synthetic_options(answer, index)
+            items.append(
+                {
+                    "sentence": f"SYNTHETIC-FILLIN-STEM {index}: речення потребує слова.",
+                    "answer": answer,
+                    "options": options,
+                }
+            )
+        return items
     if activity_type == "true-false":
         return [
             {
@@ -274,11 +1139,11 @@ def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
                 "target_words": [f"форм{index}" for index in range(1, count + 1)],
             }
         ]
-    raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
+    raise PromptPackV3Error(f"A compact exemplar has unsupported type {activity_type!r}.")
 
 
 def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any]:
-    """Return a concrete, non-copyable full-density activity shape for one requested type."""
+    """Return a concrete, non-copyable compact activity shape."""
     items = _synthetic_items(activity_type, count)
     if activity_type == "quiz":
         return {
@@ -287,7 +1152,11 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
                 "instruction": "Оберіть правильний варіант.",
                 "items": items,
             },
-            "answer_key": {"items": [{"index": index, "correct": 0} for index in range(count)]},
+            "answer_key": {
+                "items": [
+                    {"index": index, "correct": item["correct"]} for index, item in enumerate(items)
+                ]
+            },
         }
     if activity_type == "cloze":
         return {
@@ -372,7 +1241,7 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             },
             "answer_key": {"target_words": mark_item["target_words"]},
         }
-    raise PromptPackV3Error(f"A full-density exemplar has unsupported type {activity_type!r}.")
+    raise PromptPackV3Error(f"A compact exemplar has unsupported type {activity_type!r}.")
 
 
 def _primary_forms(type_kit: Mapping[str, Any]) -> tuple[str, ...]:
@@ -429,6 +1298,45 @@ def _word_boundary_pattern(form: str) -> re.Pattern[str]:
 
 def _contains_form(text: str, form: str) -> bool:
     return bool(_word_boundary_pattern(form).search(text))
+
+
+def _is_certified_error_correction_context(
+    item: str,
+    correction: str,
+    unit: object,
+) -> bool:
+    """Return whether ``item`` is the certified one-token error surface.
+
+    A correction can occur naturally elsewhere in its source sentence.  That
+    is safe only when the immutable unit proves that the learner item is the
+    exact derived surface and that restoring ``correction`` at the one changed
+    token reconstructs the certified source surface.
+    """
+    if not isinstance(unit, Mapping):
+        return False
+    allowed_forms = unit.get("allowed_forms")
+    rendering_surface = unit.get("rendering_surface")
+    if (
+        not isinstance(allowed_forms, list)
+        or len(allowed_forms) < 2
+        or allowed_forms[0] != item
+        or allowed_forms[1] != correction
+        or not isinstance(rendering_surface, str)
+    ):
+        return False
+
+    item_words = re.findall(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", item)
+    source_words = re.findall(r"[А-ЯҐЄІЇа-яґєіїʼ'’]+", rendering_surface)
+    if len(item_words) != len(source_words):
+        return False
+    differences = [
+        index
+        for index, (item_word, source_word) in enumerate(zip(item_words, source_words, strict=True))
+        if item_word != source_word
+    ]
+    return (
+        len(differences) == 1 and source_words[differences[0]].casefold() == correction.casefold()
+    )
 
 
 def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
@@ -513,7 +1421,15 @@ def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, 
                 if isinstance(answer, str):
                     all_answers.append(answer)
         _add_field(instruction, all_answers)
-        _add_field(text, all_answers)
+        # The exact cloze text is independently reconstructed from certified
+        # source sentences and ordered markers by the binding gate. Repeated
+        # lexical forms elsewhere in that source passage are legitimate
+        # context, not an invented answer leak.
+        # A marker-free payload is not a valid reconstructed passage, however,
+        # so retain the whole-slot answer-leak rejection for that malformed
+        # shape before the gap-construction gate reports its missing markers.
+        if isinstance(text, str) and not _CLOZE_MARKER_RE.search(text):
+            _add_field(text, all_answers)
     elif activity_type == "fill-in":
         instruction = payload.get("instruction", "")
         item_checks: list[tuple[str, list[str]]] = []
@@ -530,38 +1446,33 @@ def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, 
         _add_field(instruction, all_answers)
     elif activity_type == "error-correction":
         instruction = payload.get("instruction", "")
-        item_checks: list[tuple[str, list[str]]] = []
         corrections = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
-        for index, item in enumerate(payload.get("items", ())):
-            if isinstance(item, str):
-                item_answers: list[str] = []
-                if isinstance(corrections, Sequence) and index < len(corrections):
-                    correction = corrections[index]
-                    if isinstance(correction, str):
-                        item_answers.append(correction)
-                        all_answers.append(correction)
-                item_checks.append((item, item_answers))
-        checks.extend((text, forms) for text, forms in item_checks if isinstance(text, str))
+        units = kit.get("certified_units", ())
+        if isinstance(corrections, Sequence) and not isinstance(
+            corrections, (bytes, bytearray, str)
+        ):
+            all_answers.extend(item for item in corrections if isinstance(item, str))
+            for index, (item, correction) in enumerate(
+                zip(payload.get("items", ()), corrections, strict=False)
+            ):
+                if not isinstance(item, str) or not isinstance(correction, str):
+                    continue
+                unit = units[index] if isinstance(units, Sequence) and index < len(units) else None
+                if not _is_certified_error_correction_context(item, correction, unit):
+                    _add_field(item, [correction])
+        # The adapter also binds every learner item byte-for-byte to its unit;
+        # this independent check limits the contextual exception to a proven
+        # one-token mutation.  Instructions may never disclose corrections.
         _add_field(instruction, all_answers)
     elif activity_type == "short-writing":
-        instruction = payload.get("instruction", "")
-        prompt = payload.get("prompt")
-        target_forms: list[str] = []
-        for unit in kit.get("certified_units", ()):
-            if isinstance(unit, Mapping):
-                allowed = unit.get("allowed_forms")
-                if isinstance(allowed, list):
-                    target_forms.extend(f for f in allowed if isinstance(f, str))
-        if isinstance(prompt, str):
-            checks.append((prompt, target_forms))
-            all_answers.extend(target_forms)
-        _add_field(instruction, all_answers)
+        # These are learner-visible task constraints, not hidden answer forms.
+        return
 
     if not any(forms for _, forms in checks):
         return
 
     for text, forms in checks:
-        if _is_trivial_template(text, certified_forms):
+        if activity_type != "error-correction" and _is_trivial_template(text, certified_forms):
             raise PromptPackV3Error(
                 f"learner-facing text is a bare answer form or template: {text!r}"
             )
@@ -591,7 +1502,9 @@ def validate_elicitation_shape(activity: Mapping[str, Any], kit: Mapping[str, An
             raise PromptPackV3Error(f"{label} is empty or missing")
         if _token_count(text) < 2:
             raise PromptPackV3Error(f"{label} must be a composed sentence: {text!r}")
-        if text in certified_forms or _is_trivial_template(text, certified_forms):
+        if activity_type != "error-correction" and (
+            text in certified_forms or _is_trivial_template(text, certified_forms)
+        ):
             raise PromptPackV3Error(f"{label} is a bare answer form or template: {text!r}")
 
     if activity_type == "quiz":
@@ -633,6 +1546,17 @@ def validate_gap_construction(activity: Mapping[str, Any], _kit: Mapping[str, An
         marker_count = len(_CLOZE_MARKER_RE.findall(text))
         if marker_count != len(blanks):
             raise RepairableGapConstructionError("cloze_markers_match_blanks")
+        marker_ids = [int(value[1:-1]) for value in _CLOZE_MARKER_RE.findall(text)]
+        if marker_ids != list(range(1, marker_count + 1)):
+            raise RepairableGapConstructionError("cloze_markers_ordered")
+        segments = _CLOZE_MARKER_RE.split(text)
+        visible_by_segment = [len(_UKRAINIAN_WORD_RE.findall(segment)) for segment in segments]
+        if marker_count and (
+            visible_by_segment[0] < 2
+            or visible_by_segment[-1] < 2
+            or any(count < 3 for count in visible_by_segment[1:-1])
+        ):
+            raise RepairableGapConstructionError("cloze_local_context")
         visible_words = len(_UKRAINIAN_WORD_RE.findall(_CLOZE_MARKER_RE.sub("", text)))
         if marker_count and visible_words <= marker_count:
             raise RepairableGapConstructionError("cloze_context_visible_majority")
@@ -658,6 +1582,322 @@ def validate_gap_construction(activity: Mapping[str, Any], _kit: Mapping[str, An
     }
     if len(items) >= 2 and len(carrier_sentences) < 2:
         raise RepairableGapConstructionError("fill_in_distinct_carrier_sentences")
+
+
+def validate_non_revealing_sequence(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
+    """Reject repeated learner-facing stems in multi-item activities."""
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    activity_type = payload.get("type")
+    stems: list[str] = []
+    if activity_type == "quiz":
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, Mapping) or not isinstance(item.get("question"), str):
+                continue
+            stems.append(item["question"])
+    elif activity_type == "fill-in":
+        items = payload.get("items")
+        if isinstance(items, list):
+            stems.extend(
+                item["sentence"]
+                for item in items
+                if isinstance(item, Mapping) and isinstance(item.get("sentence"), str)
+            )
+    elif activity_type == "true-false":
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            stems.extend(
+                item["statement"]
+                for item in raw_items
+                if isinstance(item, Mapping) and isinstance(item.get("statement"), str)
+            )
+    elif activity_type in {"error-correction", "text-questions"}:
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            stems.extend(item for item in raw_items if isinstance(item, str))
+    normalized = [" ".join(stem.casefold().split()) for stem in stems if stem.strip()]
+    if normalized and len(normalized) != len(set(normalized)):
+        raise PromptPackV3Error("multi-item activity repeats a learner-facing stem")
+    if (
+        isinstance(kit.get("focus_alignment"), str)
+        and str(kit["focus_alignment"]).startswith("degree-")
+        and stems
+        and max(Counter(_carrier_skeleton(stem, "___") for stem in stems).values()) > 2
+    ):
+        raise PromptPackV3Error("multi-item activity repeats a learner-facing template")
+
+
+_TOKEN_RETRIEVAL_QUESTION_RE = re.compile(
+    r"\b(?:яке|який|яка|які)\s+(?:слово|прийменник|сполучник|займенник|частина\s+мови)\b",
+    re.IGNORECASE,
+)
+
+
+def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
+    """Require source-grounded, category-appropriate text questions."""
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        return
+    if payload.get("type") == "match-up":
+        instruction = payload.get("instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise PromptPackV3Error("match-up instruction does not declare its relation")
+        relations = {
+            pair.get("relation")
+            for unit in kit.get("certified_units", ())
+            if isinstance(unit, Mapping)
+            and isinstance((distinctness := unit.get("distinctness")), Mapping)
+            and isinstance((pair := distinctness.get("pair")), Mapping)
+            and isinstance(pair.get("relation"), str)
+        }
+        normalized = instruction.casefold()
+        if relations == {"vesum_degree_positive_comparative.v1"}:
+            if not (
+                re.search(r"початков|звичайн|прикметник", normalized)
+                and re.search(r"вищ|порівняль", normalized)
+            ):
+                raise PromptPackV3Error("match-up instruction hides positive-comparative relation")
+        elif relations == {"vesum_degree_comparative_superlative.v1"}:
+            if not ("вищ" in normalized and "найвищ" in normalized):
+                raise PromptPackV3Error(
+                    "match-up instruction hides comparative-superlative relation"
+                )
+        elif relations == {"degree-comparison-paraphrase.v1"}:
+            if not (
+                re.search(r"перефраз|те\s+саме|рівнознач|відповідн", normalized)
+                and re.search(r"порівнян|твердж|реченн", normalized)
+            ):
+                raise PromptPackV3Error("match-up instruction hides comparison-paraphrase relation")
+        elif relations == {"degree-priority-recommendation.v2"}:
+            if not (
+                re.search(r"потреб|пріоритет|опис|ситуац", normalized)
+                and re.search(r"виснов|рекомендац|варіант", normalized)
+            ):
+                raise PromptPackV3Error(
+                    "match-up instruction hides priority-recommendation relation"
+                )
+        elif relations == {"atlas_antonym.v1"}:
+            if not re.search(r"антонім|протилеж", normalized):
+                raise PromptPackV3Error("match-up instruction hides antonym relation")
+        elif relations == {"atlas_synonym.v1"}:
+            if not re.search(r"синонім|близьк.*значенн", normalized):
+                raise PromptPackV3Error("match-up instruction hides synonym relation")
+        else:
+            raise PromptPackV3Error("match-up board mixes or omits certified relations")
+        return
+    if payload.get("type") != "text-questions":
+        return
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return
+    units = kit.get("certified_units")
+    if not isinstance(units, list) or len(items) != len(units):
+        return
+    category_patterns = {
+        "comprehension": re.compile(
+            r"\b(?:що|хто|де|коли|скільки|який|яка|які|яке)\b", re.IGNORECASE
+        ),
+        "explanation_inference": re.compile(
+            r"\b(?:чому|навіщо)\b|з\s+якої\s+причини|"
+            r"що\s+(?:це\s+)?(?:пояснює|показує|свідчить)|"
+            r"який\s+висновок|як\s+(?:ви|можна)\s+(?:пояснити|поясните|зрозуміти)",
+            re.IGNORECASE,
+        ),
+        "anchored_application": re.compile(
+            r"\b(?:як|де)\b.*\b(?:застосувати|використати|скористатися)\b|"
+            r"\b(?:у|в)\s+якій\b.*\bситуації\b|"
+            r"\b(?:власному\s+досвіді|з\s+(?:вашого|твого)\s+досвіду|"
+            r"подібній\s+ситуації|повсякденному\s+житті)\b|"
+            r"\bчи\s+доводилося\s+(?:вам|тобі)\b",
+            re.IGNORECASE,
+        ),
+    }
+    db_path = paths.vesum_db()
+    for index, (item, unit) in enumerate(zip(items, units, strict=True)):
+        if not isinstance(item, str):
+            continue
+        if len(_UKRAINIAN_WORD_RE.findall(item)) < 3 or _TOKEN_RETRIEVAL_QUESTION_RE.search(item):
+            raise PromptPackV3Error(
+                f"text question asks for a token label instead of meaning at items[{index}]"
+            )
+        if not isinstance(unit, Mapping):
+            continue
+        rendering_surface = unit.get("rendering_surface")
+        distinctness = unit.get("distinctness")
+        category = (
+            distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
+        )
+        intent = distinctness.get("question_intent") if isinstance(distinctness, Mapping) else None
+        frame = distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
+        prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
+        normalized_item = item.strip().casefold()
+        matched_prefix = next(
+            (
+                prefix.strip()
+                for prefix in (prefixes if isinstance(prefixes, list) else ())
+                if isinstance(prefix, str)
+                and normalized_item.startswith(prefix.strip().casefold())
+                and (
+                    len(normalized_item) == len(prefix.strip())
+                    or not normalized_item[len(prefix.strip())].isalnum()
+                )
+            ),
+            None,
+        )
+        if (
+            not isinstance(prefixes, list)
+            or not prefixes
+            or matched_prefix is None
+        ):
+            raise PromptPackV3Error(
+                f"text question ignores its certified question category at items[{index}]"
+            )
+        question_topic = item.strip()[len(matched_prefix) :].strip(" \t\n:—–-?!.«»")
+        pattern = category_patterns.get(category)
+        if pattern is None or not pattern.search(item):
+            raise PromptPackV3Error(
+                f"text question ignores its certified question category at items[{index}]"
+            )
+        expected_intent = {
+            "comprehension": "fact-recovery",
+            "explanation_inference": "explicit-causal",
+            "anchored_application": "realistic-transfer",
+        }.get(category)
+        if intent is not None and intent != expected_intent:
+            raise PromptPackV3Error(
+                f"text question ignores its certified purpose intent at items[{index}]"
+            )
+        if intent == "realistic-transfer" and re.search(
+            r"через\s+те,?\s+що[^?!.]{0,180}\bале\b",
+            item,
+            re.IGNORECASE,
+        ):
+            raise PromptPackV3Error(
+                f"text question turns a contrast into one causal reason at items[{index}]"
+            )
+        if len(_UKRAINIAN_WORD_RE.findall(question_topic)) > 9:
+            raise PromptPackV3Error(
+                f"text question restates its expected answer at items[{index}]"
+            )
+        if _UNRESOLVED_QUESTION_DEIXIS_RE.search(question_topic):
+            raise PromptPackV3Error(
+                f"text question uses unresolved source deixis at items[{index}]"
+            )
+        source_lemmas = {
+            lemma
+            for word in _UKRAINIAN_WORD_RE.findall(rendering_surface or "")
+            for match in _vesum_matches(word, db_path)
+            if match.get("pos") in {"noun", "verb", "adj", "adv"}
+            and isinstance((lemma := match.get("lemma")), str)
+        }
+        question_lemmas = {
+            lemma
+            for word in _UKRAINIAN_WORD_RE.findall(item)
+            for match in _vesum_matches(word, db_path)
+            if match.get("pos") in {"noun", "verb", "adj", "adv"}
+            and isinstance((lemma := match.get("lemma")), str)
+        }
+        # One naturally reused content lemma plus a locked cognitive category
+        # grounds the question without forcing awkward two-word parroting of
+        # the source sentence.  Distinct-stem and token-retrieval gates still
+        # reject generic or degenerate question sets.
+        required_overlap = min(1, len(source_lemmas))
+        if required_overlap == 0 or len(source_lemmas & question_lemmas) < required_overlap:
+            raise PromptPackV3Error(
+                f"text question is detached from its rendering surface at items[{index}]"
+            )
+        source_degree_lemmas = {
+            lemma
+            for word in _UKRAINIAN_WORD_RE.findall(rendering_surface or "")
+            if (lemma := _catalog_positive_lemma(word)) is not None
+            and any(
+                _degree_rank(str(match.get("tags", ""))) in {1, 2}
+                for match in _vesum_matches(word, db_path)
+            )
+        }
+        question_degree_lemmas = {
+            lemma
+            for word in _UKRAINIAN_WORD_RE.findall(item)
+            if (lemma := _catalog_positive_lemma(word)) is not None
+        }
+        if source_degree_lemmas and not source_degree_lemmas & question_degree_lemmas:
+            raise PromptPackV3Error(
+                f"text question omits its certified comparison at items[{index}]"
+            )
+
+
+def validate_visible_writing_constraints(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> None:
+    """Require every certified productive-task marker in the learner prompt."""
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping) or payload.get("type") != "short-writing":
+        return
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise PromptPackV3Error("short-writing prompt is missing")
+    markers = tuple(
+        marker
+        for unit in kit.get("certified_units", ())
+        if isinstance(unit, Mapping) and isinstance(unit.get("allowed_forms"), list)
+        for marker in unit["allowed_forms"]
+        if isinstance(marker, str) and marker
+    )
+    for marker in markers:
+        if not _contains_form(prompt, marker):
+            raise PromptPackV3Error("short-writing prompt omits a certified constraint")
+    if kit.get("focus_alignment") == "degree-writing":
+        normalized = prompt.casefold()
+        if "ступен" in normalized and "порівнян" in normalized:
+            raise PromptPackV3Error("short-writing prompt exposes a grammar label as its theme")
+        if not re.search(r"порівн|зістав|обґрунт|поясн|вибер|кращ", normalized):
+            raise PromptPackV3Error(
+                "short-writing prompt does not ask for a communicative comparison or choice"
+            )
+        if not re.search(r"(?:мінімум|щонайменше)\s+3\b", normalized) or not re.search(
+            r"вищ|найвищ", normalized
+        ):
+            raise PromptPackV3Error(
+                "short-writing prompt omits the required degree-adjective count"
+            )
+        if re.search(r"\b(?:використайте|ужийте)\s+(?:усі\s+)?слова\b", normalized):
+            raise PromptPackV3Error(
+                "short-writing prompt requires literal base words instead of derived degree forms"
+            )
+        units = kit.get("certified_units")
+        unit = units[0] if isinstance(units, list) and len(units) == 1 else None
+        surface = unit.get("rendering_surface") if isinstance(unit, Mapping) else None
+        distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+        warrants = (
+            distinctness.get("attribute_warrants") if isinstance(distinctness, Mapping) else None
+        )
+        required_lemmas = set(warrants) if isinstance(warrants, Mapping) else set()
+        if (
+            not isinstance(surface, str)
+            or surface not in prompt
+            or not required_lemmas
+            or len(
+                {
+                    _catalog_positive_lemma(word)
+                    for word in _UKRAINIAN_WORD_RE.findall(surface)
+                    if _catalog_positive_lemma(word) is not None
+                }
+            )
+            < 3
+        ):
+            raise PromptPackV3Error("short-writing prompt omits its certified factual scenario")
+        leaked = {
+            _catalog_positive_lemma(word)
+            for word in _UKRAINIAN_WORD_RE.findall(prompt)
+            for match in _vesum_matches(word, paths.vesum_db())
+            if _degree_rank(str(match.get("tags", ""))) in {1, 2}
+        }
+        if required_lemmas & leaked:
+            raise PromptPackV3Error("short-writing prompt leaks a target degree form")
 
 
 # Closed-class parts of speech.  Words belonging to these classes have no
@@ -694,6 +1934,34 @@ def _lemma_set(form: str, db_path: Path) -> set[str]:
 def _pos_set(form: str, db_path: Path) -> set[str]:
     """Return the set of VESUM POS tags for ``form``."""
     return {pos for pos in (match.get("pos") for match in _vesum_matches(form, db_path)) if pos}
+
+
+def _personal_pronoun_frames(form: str, db_path: Path) -> set[tuple[str, str]]:
+    """Return (case, number) frames for personal-pronoun analyses.
+
+    Person and gender are the meaningful distractor contrast (for example
+    ``Ми / Ви / Вони`` in one plural nominative subject slot), not a reason to
+    reject an otherwise morphosyntactically adjacent option.
+    """
+    frames: set[tuple[str, str]] = set()
+    for match in _vesum_matches(form, db_path):
+        tags = str(match.get("tags", "")).split(":")
+        if "pron" not in tags or "pers" not in tags:
+            continue
+        person_index = tags.index("pers") + 1
+        person = tags[person_index] if person_index < len(tags) else ""
+        case = next((tag for tag in tags if tag.startswith("v_")), "")
+        number = "pl" if "p" in tags else "sg"
+        if person and case:
+            frames.add((case, number))
+    return frames
+
+
+def _is_personal_pronoun_adjacent(answer: str, option: str, db_path: Path) -> bool:
+    """Allow a real pronoun alternative in the same case/number frame."""
+    answer_frames = _personal_pronoun_frames(answer, db_path)
+    option_frames = _personal_pronoun_frames(option, db_path)
+    return bool(answer_frames and answer_frames & option_frames)
 
 
 def _is_single_form_lemma(lemma: str, db_path: Path) -> bool:
@@ -740,6 +2008,14 @@ _DEGREE_SEED_PAIRS: Final[frozenset[frozenset[str]]] = frozenset(
         frozenset({"дорогий", "дорожчий"}),
         frozenset({"близький", "ближчий"}),
         frozenset({"далекий", "дальший"}),
+        frozenset({"дешевий", "дешевший"}),
+        frozenset({"дивний", "дивніший"}),
+        frozenset({"світлий", "світліший"}),
+        frozenset({"теплий", "тепліший"}),
+        frozenset({"важливий", "важливіший"}),
+        frozenset({"простий", "простіший"}),
+        frozenset({"тихий", "тихіший"}),
+        frozenset({"холодний", "холодніший"}),
     }
 )
 
@@ -752,6 +2028,29 @@ def _degree_rank(tags_str: str) -> int | None:
     if "comps" in tags_str:
         return 2
     return None
+
+
+def _catalog_positive_lemma(form: str) -> str | None:
+    normalized = form.casefold()
+    normalized_candidates = {normalized}
+    normalized_candidates.update(
+        str(match.get("lemma", "")).casefold()
+        for match in _vesum_matches(normalized, paths.vesum_db())
+        if str(match.get("tags", "")).startswith("adj:")
+    )
+    return next(
+        (
+            ladder.positive
+            for ladder in DEGREE_LADDERS.values()
+            if normalized_candidates
+            & {
+                ladder.positive.casefold(),
+                ladder.comparative.casefold(),
+                ladder.superlative.casefold(),
+            }
+        ),
+        None,
+    )
 
 
 def _strip_degree(word: str) -> set[str]:
@@ -949,11 +2248,12 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
     """Require every distractor to be a real VESUM form adjacent to the answer.
 
     For INFLECTABLE answer forms the distractor must share at least one
-    lowercased VESUM lemma with the certified answer form, or be degree-adjacent
-    or aspect-adjacent with a forcing cue in the stem.  For UNINFLECTABLE
-    answers -- closed-class POS (prep/part/conj) or a one-form paradigm -- the
-    distractor must instead be a real VESUM word of the same POS class and
-    distinct from the answer.
+    lowercased VESUM lemma with the certified answer form, be a personal
+    pronoun in the same person/case/number frame, or be degree-adjacent or
+    aspect-adjacent with a forcing cue in the stem. For UNINFLECTABLE answers --
+    closed-class POS (prep/part/conj) or a one-form paradigm -- the distractor
+    must instead be a real VESUM word of the same POS class and distinct from
+    the answer.
 
     MCQ option lists must contain at least 3 options.
     The answer form must sit at the index declared by the answer key.
@@ -971,6 +2271,7 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
         correct_index: int,
         label: str,
         stem_text: str = "",
+        unit_index: int | None = None,
     ) -> None:
         if not isinstance(options, Sequence) or isinstance(options, (bytes, bytearray, str)):
             raise PromptPackV3Error(f"{label} options must be a list")
@@ -989,16 +2290,96 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
         answer_lemmas = _lemma_set(answer, db_path)
         if not answer_lemmas:
             raise PromptPackV3Error(f"{label} answer form {answer!r} is not in VESUM")
+        certified_units = kit.get("certified_units", ())
+        unit_distinctness = None
+        if (
+            isinstance(unit_index, int)
+            and isinstance(certified_units, Sequence)
+            and unit_index < len(certified_units)
+            and isinstance(certified_units[unit_index], Mapping)
+        ):
+            candidate_distinctness = certified_units[unit_index].get("distinctness")
+            if isinstance(candidate_distinctness, Mapping):
+                unit_distinctness = candidate_distinctness
+        unit_alignment = (
+            unit_distinctness.get("focus_alignment")
+            if isinstance(unit_distinctness, Mapping)
+            else None
+        )
+        choice_bank = (
+            unit_distinctness.get("choice_bank") if isinstance(unit_distinctness, Mapping) else None
+        )
+        shared_degree_bank = (
+            unit_alignment in {"degree-formation", "degree-context"}
+            and isinstance(choice_bank, list)
+            and len(choice_bank) >= 6
+        )
+        closed_degree_bank = (
+            isinstance(unit_alignment, str)
+            and unit_alignment.startswith("degree-")
+            and isinstance(choice_bank, list)
+        )
+        if closed_degree_bank and (
+            len(options) != len(choice_bank) or set(options) != set(choice_bank)
+        ):
+            raise PromptPackV3Error(f"{label} does not preserve its exact certified choice bank")
+        if shared_degree_bank:
+            degree_classes: set[int] = set()
+            positive_lemmas: set[str] = set()
+            for option in options:
+                if not isinstance(option, str):
+                    raise PromptPackV3Error(f"{label} option must be a string")
+                matches = _vesum_matches(option, db_path)
+                ranks = {
+                    rank
+                    for match in matches
+                    if (rank := _degree_rank(str(match.get("tags", "")))) is not None
+                }
+                positive = _catalog_positive_lemma(option)
+                if not ranks or positive is None:
+                    raise PromptPackV3Error(
+                        f"{label} shared-bank option {option!r} is not a catalogued degree form"
+                    )
+                degree_classes.update(ranks)
+                if positive in positive_lemmas:
+                    raise PromptPackV3Error(
+                        f"{label} shared bank repeats one adjective degree paradigm"
+                    )
+                positive_lemmas.add(positive)
+            if len(degree_classes) < 2:
+                raise PromptPackV3Error(f"{label} shared bank has only one degree category")
+            return
+        if closed_degree_bank:
+            degree_classes: set[int] = set()
+            positive_lemmas: set[str] = set()
+            for option in options:
+                if not isinstance(option, str):
+                    raise PromptPackV3Error(f"{label} option must be a string")
+                matches = _vesum_matches(option, db_path)
+                ranks = {
+                    rank
+                    for match in matches
+                    if (rank := _degree_rank(str(match.get("tags", "")))) is not None
+                }
+                positive = _catalog_positive_lemma(option)
+                if not ranks or positive is None:
+                    raise PromptPackV3Error(
+                        f"{label} option {option!r} is not a catalogued degree form"
+                    )
+                degree_classes.update(ranks)
+                positive_lemmas.add(positive)
+            if len(positive_lemmas) != 1 or len(degree_classes) < 2:
+                raise PromptPackV3Error(f"{label} same-lemma bank lacks a real degree contrast")
+            return
         allowed_pos = _uninflectable_allowed_pos(answer, db_path)
+        degree_adjacent_count = 0
         for option_index, option in enumerate(options):
             if not isinstance(option, str):
                 raise PromptPackV3Error(f"{label} option must be a string")
             if option_index == correct_index:
                 continue
             if option.lower() == answer.lower():
-                raise PromptPackV3Error(
-                    f"{label} distractor {option!r} equals answer {answer!r}"
-                )
+                raise PromptPackV3Error(f"{label} distractor {option!r} equals answer {answer!r}")
             option_lemmas = _lemma_set(option, db_path)
             if not option_lemmas:
                 raise PromptPackV3Error(f"{label} distractor {option!r} is not in VESUM")
@@ -1010,13 +2391,27 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                         f"as answer {answer!r}"
                     )
             elif not (answer_lemmas & option_lemmas):
+                if _is_personal_pronoun_adjacent(answer, option, db_path):
+                    continue
                 if _is_degree_adjacent(answer, option, db_path, kit):
+                    degree_adjacent_count += 1
                     continue
                 if _is_aspect_adjacent(answer, option, stem_text, db_path, kit):
                     continue
                 raise PromptPackV3Error(
                     f"{label} distractor {option!r} does not share a lemma with answer {answer!r}"
                 )
+        kit_alignment = kit.get("focus_alignment")
+        if (isinstance(kit_alignment, str) and kit_alignment.startswith("degree-")) or (
+            isinstance(unit_alignment, str) and unit_alignment.startswith("degree-")
+        ):
+            if not any(
+                _degree_rank(str(match.get("tags", ""))) is not None
+                for match in _vesum_matches(answer, db_path)
+            ):
+                raise PromptPackV3Error(f"{label} answer is detached from the degree focus")
+            if degree_adjacent_count == 0:
+                raise PromptPackV3Error(f"{label} needs at least one degree-contrast distractor")
 
     if activity_type == "quiz":
         key_items = answer_key.get("items", []) if isinstance(answer_key, Mapping) else []
@@ -1043,7 +2438,12 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 if isinstance(key_item, Mapping) and isinstance(key_item.get("correct"), int):
                     declared_correct = key_item["correct"]
             _validate_options(
-                answer, options, declared_correct, f"quiz items[{index}]", item.get("question", "")
+                answer,
+                options,
+                declared_correct,
+                f"quiz items[{index}]",
+                item.get("question", ""),
+                index,
             )
             correct_indices.append(declared_correct)
         if len(correct_indices) >= 3 and len(set(correct_indices)) == 1:
@@ -1079,6 +2479,7 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 correct_idx,
                 f"cloze blanks[{index}]",
                 text if isinstance(text, str) else "",
+                index,
             )
             correct_indices.append(correct_idx)
             if isinstance(key_blanks, Sequence) and index < len(key_blanks):
@@ -1118,7 +2519,12 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 )
             correct_idx = options.index(answer)
             _validate_options(
-                answer, options, correct_idx, f"fill-in items[{index}]", item.get("sentence", "")
+                answer,
+                options,
+                correct_idx,
+                f"fill-in items[{index}]",
+                item.get("sentence", ""),
+                index,
             )
             correct_indices.append(correct_idx)
         if len(correct_indices) >= 3 and len(set(correct_indices)) == 1:
@@ -1188,7 +2594,7 @@ def validate_exemplar_contamination(
 ) -> None:
     """Reject learner-facing output that copies the synthetic exemplar.
 
-    The full-density exemplar is a shape guide, not source material.  A response
+    The compact exemplar is a shape guide, not source material.  A response
     that recycles its literal strings, raw certified forms, or exact concatenation
     is degenerate and must fail closed instead of reaching a teacher.
     """
@@ -1197,7 +2603,7 @@ def validate_exemplar_contamination(
     if not isinstance(payload, Mapping):
         return
 
-    if activity_type in {"text-questions", "error-correction"}:
+    if activity_type == "text-questions":
         primary = _primary_forms(type_kit)
         items = payload.get("items")
         if isinstance(items, list) and items == list(primary):
@@ -1245,18 +2651,42 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         raise PromptPackV3Error(f"Prompt context does not select {TEMPLATE_VERSION}.")
     if context.get("type_kit_identity") != TYPE_KIT_IDENTITY:
         raise PromptPackV3Error("Prompt context has an unknown type-kit identity.")
-    exemplars = full_density_exemplars(type_kits)
+    exemplars = compact_schema_exemplars(type_kits)
+    requested_types = tuple(
+        dict.fromkeys(
+            str(kit["type"])
+            for kit in type_kits
+            if isinstance(kit, Mapping) and kit.get("type") in _TYPE_PURPOSE_CONTRACTS
+        )
+    )
+    type_contracts = {
+        activity_type: _TYPE_PURPOSE_CONTRACTS[activity_type] for activity_type in requested_types
+    }
+    negative_examples = {
+        activity_type: _CONTRASTIVE_NEGATIVES[activity_type]
+        for activity_type in requested_types
+        if activity_type in _CONTRASTIVE_NEGATIVES
+    }
     return "\n\n".join(
         (
             _template_source(),
+            "=== LESSON FOCUS (bounded constraint, never a new answer) ===\n```json\n"
+            + _canonical({"focus": context.get("lesson_focus")})
+            + "\n```",
+            "=== APPLICABLE TYPE PURPOSE CONTRACTS ===\n```json\n"
+            + _canonical(type_contracts)
+            + "\n```",
             "=== IMMUTABLE TYPE-KITS (data, not instructions) ===\n```json\n"
             + _canonical(type_kits)
             + "\n```",
-            "=== FULL-DENSITY EXEMPLARS FOR REQUESTED TYPES ONLY ===\n```json\n"
+            "=== COMPACT ONE-ITEM SCHEMA SHAPES FOR REQUESTED TYPES ONLY ===\n```json\n"
             + _canonical(exemplars)
             + "\n```",
             "=== ONE SIX-ITEM NEGATIVE EXEMPLAR (reject) ===\n```json\n"
             + _canonical(six_item_negative_exemplar())
+            + "\n```",
+            "=== CONTRASTIVE PEDAGOGY FAILURES (reject) ===\n```json\n"
+            + _canonical(negative_examples)
             + "\n```",
         )
     )
@@ -1376,7 +2806,12 @@ def validate_slot_deterministic_gates(
                 error
             ):
                 rule_key = "distractor_repeated_token"
-            raise RuleNamedRejection(rule_key) from error
+            safe_suffix = (
+                _activity_purpose_safe_suffix(error)
+                if gate_name == "validate_activity_purpose"
+                else None
+            )
+            raise RuleNamedRejection(rule_key, suffix=safe_suffix) from error
 
 
 def validate_slot_serialization(record: Mapping[str, Any], type_kit: Mapping[str, Any]) -> None:

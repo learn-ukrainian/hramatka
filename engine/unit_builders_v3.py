@@ -8,6 +8,7 @@ models nor imports the production planner, prompt pack, pipeline, or API.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -40,6 +41,27 @@ from .unit_plan_v3 import (
 )
 
 _TOKEN_RE: Final = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
+_TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "comprehension": (
+            "Що повідомляє уривок про",
+            "Що сказано в уривку про",
+            "Який факт подає уривок про",
+        ),
+        "explanation_inference": (
+            "Чому",
+            "З якої причини",
+            "Як можна пояснити",
+        ),
+        "anchored_application": (
+            "Як можна застосувати",
+            "У якій подібній ситуації",
+            "У якій реальній ситуації",
+            "Чи доводилося вам",
+            "З вашого досвіду",
+        ),
+    }
+)
 _UKRAINIAN_CASE_FORMS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "nom": "називному",
@@ -99,6 +121,19 @@ class EvidenceCandidate:
     category: str | None = None
     certified_error_count: int = 0
     derived_surface: str | None = None
+    focus_alignment: str | None = None
+    source_lemma: str | None = None
+    kit_rule_id: str | None = None
+    rendering_surface: str | None = None
+    target_start_offset: int | None = None
+    target_end_offset: int | None = None
+    degree_class: str | None = None
+    morphology_class: str | None = None
+    choice_bank: tuple[str, ...] = ()
+    frame_family: str | None = None
+    semantic_warrant: str | None = None
+    exclusion_warrants: tuple[tuple[str, str], ...] = ()
+    question_intent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +144,7 @@ class TrueFalseFact:
     source_surface: str
     replacement_surface: str
     truth_value: bool
+    mutation_rule_id: str = "replace-one-surface.v1"
 
 
 @dataclass(frozen=True)
@@ -119,6 +155,7 @@ class AtlasPassPair:
     right: str
     literal_evidence: str
     atlas_pass: bool
+    relation: str = "legacy.unspecified"
 
 
 @dataclass(frozen=True)
@@ -136,6 +173,8 @@ class ShortWritingTask:
     prompt: str
     constraints: tuple[ConstraintSpec, ...]
     sample_tokens: tuple[VesumToken, ...]
+    focus_alignment: str | None = None
+    attribute_warrants: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -184,10 +223,16 @@ def _candidate_is_bound(
     )
 
 
+def _source_diverse(source_ids: tuple[str, ...], *, maximum_per_source: int = 2) -> bool:
+    counts = Counter(source_ids)
+    return len(counts) >= 4 and max(counts.values(), default=0) <= maximum_per_source
+
+
 def _has_one_certified_error(candidate: EvidenceCandidate) -> bool:
-    if candidate.derived_surface is None or candidate.derived_surface == candidate.literal_evidence:
+    correct_surface = candidate.rendering_surface or candidate.literal_evidence
+    if candidate.derived_surface is None or candidate.derived_surface == correct_surface:
         return False
-    evidence_tokens = _TOKEN_RE.findall(candidate.literal_evidence)
+    evidence_tokens = _TOKEN_RE.findall(correct_surface)
     derived_tokens = _TOKEN_RE.findall(candidate.derived_surface)
     if len(evidence_tokens) != len(derived_tokens):
         return False
@@ -206,25 +251,99 @@ def _candidate_unit(
         candidate.certified_error_count if candidate.activity_type == "error-correction" else 0
     )
     distinctness: dict[str, object]
-    if candidate.activity_type == "cloze":
+    if candidate.activity_type in {"quiz", "cloze", "fill-in"}:
+        rendering_surface = candidate.rendering_surface or candidate.literal_evidence
+        if (
+            candidate.target_start_offset is None
+            or candidate.target_end_offset is None
+            or rendering_surface[
+                candidate.target_start_offset : candidate.target_end_offset
+            ]
+            != candidate.expected_key
+        ):
+            raise ValueError("Closed activity gap offsets must bind the certified answer.")
+        if (
+            len(candidate.choice_bank) < 3
+            or len(candidate.choice_bank) != len(set(candidate.choice_bank))
+            or candidate.expected_key not in candidate.choice_bank
+            or {option for option, _warrant in candidate.exclusion_warrants}
+            != set(candidate.choice_bank) - {candidate.expected_key}
+            or not all(warrant.strip() for _option, warrant in candidate.exclusion_warrants)
+        ):
+            raise ValueError("Closed activity options need a complete exclusion-warranted bank.")
         distinctness = {
-            "gap": {"sentence_id": candidate.sentence_id, "token_id": candidate.token_id},
+            "gap": {
+                "sentence_id": candidate.sentence_id,
+                "token_id": candidate.token_id,
+                "start_offset": candidate.target_start_offset,
+                "end_offset": candidate.target_end_offset,
+            },
             "semantic_target": candidate.semantic_target,
         }
+        if candidate.activity_type != "cloze":
+            distinctness["stem"] = candidate.candidate_id
     else:
         distinctness = {
             "stem": candidate.candidate_id,
             "semantic_target": candidate.semantic_target,
         }
+        if candidate.activity_type == "error-correction" and candidate.kit_rule_id is None:
+            if candidate.target_start_offset is None or candidate.morphology_class is None:
+                raise ValueError("Error-correction needs a classified target position.")
+            distinctness["error_position"] = (
+                "sentence-initial" if candidate.target_start_offset == 0 else "within-sentence"
+            )
         if candidate.activity_type == "text-questions":
             distinctness["question_category"] = candidate.category
+            prefixes = _TEXT_QUESTION_ALLOWED_PREFIXES.get(candidate.category or "")
+            if prefixes is None:
+                raise ValueError("Text-question category has no certified question frame.")
+            distinctness["question_frame"] = {
+                "allowed_prefixes": list(prefixes),
+                "category": candidate.category,
+                "intent": candidate.question_intent,
+            }
+    if candidate.question_intent is not None:
+        distinctness["question_intent"] = candidate.question_intent
+    if candidate.focus_alignment is not None:
+        distinctness["focus_alignment"] = candidate.focus_alignment
+    if candidate.source_lemma is not None:
+        distinctness["source_lemma"] = candidate.source_lemma
+    if candidate.degree_class is not None:
+        distinctness["degree_class"] = candidate.degree_class
+    if candidate.morphology_class is not None:
+        distinctness["morphology_class"] = candidate.morphology_class
+    if candidate.choice_bank:
+        distinctness["choice_bank"] = list(candidate.choice_bank)
+    if candidate.frame_family is not None:
+        distinctness["frame_family"] = candidate.frame_family
+    if candidate.semantic_warrant is not None:
+        distinctness["semantic_warrant"] = candidate.semantic_warrant
+    if candidate.exclusion_warrants:
+        distinctness["exclusion_warrants"] = dict(candidate.exclusion_warrants)
+    if candidate.kit_rule_id is not None:
+        if not candidate.source_lemma:
+            raise ValueError("Degree-kit candidates need a source lemma claim.")
+        resource_claims = (
+            ResourceClaim("degree_unit", f"{candidate.kit_rule_id}:{candidate.source_lemma}"),
+            ResourceClaim("candidate", candidate.candidate_id),
+        )
+        anchor = UnitAnchor("kit", f"{candidate.kit_rule_id}:{candidate.source_lemma}")
+    else:
+        resource_claims = (
+            ResourceClaim("sentence", candidate.sentence_id),
+            *(
+                ()
+                if candidate.activity_type == "text-questions"
+                else (ResourceClaim("token", candidate.token_id),)
+            ),
+            ResourceClaim("candidate", candidate.candidate_id),
+        )
+        anchor = UnitAnchor("evidence", f"{inventory.source_id}:{candidate.sentence_id}")
     return CertifiedUnit(
         unit_id=candidate.candidate_id,
-        resource_claims=(
-            ResourceClaim("sentence", candidate.sentence_id),
-            ResourceClaim("candidate", candidate.candidate_id),
-        ),
-        anchor=UnitAnchor("evidence", f"{inventory.source_id}:{candidate.sentence_id}"),
+        resource_claims=resource_claims,
+        anchor=anchor,
         allowed_forms=(candidate.derived_surface or candidate.expected_key, candidate.expected_key)
         if error_count
         else (candidate.expected_key,),
@@ -233,9 +352,7 @@ def _candidate_unit(
         ),
         citation_plan=(Citation(inventory.source_id, f"sentence:{candidate.sentence_id}"),),
         distinctness=distinctness,
-        rendering_surface=(
-            candidate.literal_evidence if candidate.activity_type == "fill-in" else None
-        ),
+        rendering_surface=candidate.rendering_surface or candidate.literal_evidence,
     )
 
 
@@ -257,6 +374,29 @@ def _generic_builder(
         )
         and (activity_type != "error-correction" or _has_one_certified_error(candidate))
     )
+    if len({candidate.focus_alignment for candidate in candidates}) > 1:
+        candidates = ()
+    if activity_type == "cloze":
+        sentence_rank = {sentence_id: index for index, sentence_id in enumerate(sentences)}
+        token_offset = {
+            token.token_id: token.start_offset
+            for sentence in sentences.values()
+            for token in sentence.tokens
+        }
+        candidates = tuple(
+            sorted(
+                candidates,
+                key=lambda item: (
+                    item.target_start_offset
+                    if item.target_start_offset is not None
+                    else sentence_rank[item.sentence_id],
+                    item.target_end_offset
+                    if item.target_end_offset is not None
+                    else token_offset[item.token_id],
+                    item.candidate_id,
+                ),
+            )
+        )
     if activity_type == "text-questions":
         minima = floor_for(activity_type).category_minima
         assert minima is not None
@@ -271,6 +411,24 @@ def _generic_builder(
             for category, minimum in required.items()
         ):
             candidates = ()
+    if activity_type == "error-correction" and any(
+        candidate.kit_rule_id is None for candidate in candidates
+    ) and (
+        len({candidate.morphology_class for candidate in candidates}) < 3
+        or sum(candidate.target_start_offset == 0 for candidate in candidates) > 4
+    ):
+        candidates = ()
+    evidence_candidates = tuple(item for item in candidates if item.kit_rule_id is None)
+    if evidence_candidates:
+        maximum_per_source = 2 if activity_type == "cloze" else 1
+        if not _source_diverse(
+            tuple(item.sentence_id for item in evidence_candidates),
+            maximum_per_source=maximum_per_source,
+        ):
+            candidates = ()
+    kit_lemmas = tuple(item.source_lemma for item in candidates if item.kit_rule_id is not None)
+    if kit_lemmas and (None in kit_lemmas or len(kit_lemmas) != len(set(kit_lemmas))):
+        candidates = ()
     return certify_unit_plan(
         slot_id=slot_id,
         phase=phase,
@@ -348,7 +506,7 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
         sentence = sentences.get(fact.sentence_id)
         if sentence is None or fact.literal_evidence not in sentence.text:
             continue
-        rule_id = "replace-one-surface.v1"
+        rule_id = fact.mutation_rule_id
         if fact.truth_value:
             statement, expected = fact.literal_evidence, ExpectedKeyRule("key", "true")
         else:
@@ -367,6 +525,7 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
                 unit_id=fact.fact_id,
                 resource_claims=(
                     ResourceClaim("sentence", fact.sentence_id),
+                    ResourceClaim("fact_surface", fact.fact_id),
                     ResourceClaim("fact", fact.fact_id),
                 ),
                 anchor=UnitAnchor("evidence", f"{inventory.source_id}:{fact.sentence_id}"),
@@ -377,10 +536,16 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
                     "stem": statement,
                     "semantic_target": f"true-false:{fact.fact_id}",
                     "literal_evidence": fact.literal_evidence,
-                    "mutation_rule_id": rule_id if not fact.truth_value else "identity.evidence.v1",
+                    "mutation_rule_id": rule_id,
                 },
             )
         )
+    fact_source_ids = tuple(fact.sentence_id for fact in inventory.true_false_facts)
+    if units and not _source_diverse(fact_source_ids):
+        units = []
+    normalized_statements = [" ".join(unit.allowed_forms[0].casefold().split()) for unit in units]
+    if len(normalized_statements) != len(set(normalized_statements)):
+        units = []
     return certify_unit_plan(
         slot_id=slot_id, phase=phase, activity_type="true-false", units=tuple(units)
     )
@@ -389,28 +554,65 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
 def _build_match_up(inventory: CertificationInventory, *, slot_id: str, phase: int) -> UnitPlan:
     sentences = _sentences(inventory)
     units = []
+    allowed_relations = {
+        "atlas_antonym.v1",
+        "atlas_synonym.v1",
+        "vesum_degree_positive_comparative.v1",
+        "vesum_degree_comparative_superlative.v1",
+        "degree-comparison-paraphrase.v1",
+        "degree-priority-recommendation.v2",
+    }
     for pair in inventory.atlas_pairs:
         sentence = sentences.get(pair.sentence_id)
         if (
             not pair.atlas_pass
             or sentence is None
             or pair.literal_evidence not in sentence.text
+            or pair.relation not in allowed_relations
             or not pair.pair_id
             or not pair.left.strip()
             or not pair.right.strip()
         ):
             continue
+        degree_role = {
+            "vesum_degree_positive_comparative.v1": "degree-positive-comparative",
+            "vesum_degree_comparative_superlative.v1": "degree-comparative-superlative",
+            "degree-comparison-paraphrase.v1": "degree-positive-comparative",
+            "degree-priority-recommendation.v2": "degree-comparative-superlative",
+        }.get(pair.relation)
+        claim_kind = "degree_pair" if degree_role is not None else "atlas_pair"
         units.append(
             CertifiedUnit(
                 unit_id=pair.pair_id,
-                resource_claims=(ResourceClaim("atlas_pair", pair.pair_id),),
-                anchor=UnitAnchor("kit", f"atlas:{pair.pair_id}"),
+                resource_claims=(
+                    ResourceClaim("sentence", pair.sentence_id),
+                    ResourceClaim(claim_kind, pair.pair_id),
+                ),
+                anchor=UnitAnchor(
+                    "kit",
+                    f"{'degree' if degree_role is not None else 'atlas'}:{pair.pair_id}",
+                ),
                 allowed_forms=(pair.left, pair.right),
                 expected_key_or_rule=ExpectedKeyRule("key", pair.right),
                 citation_plan=(Citation(inventory.source_id, f"sentence:{pair.sentence_id}"),),
-                distinctness={"pair": {"left": pair.left, "right": pair.right}},
+                distinctness={
+                    "pair": {
+                        "left": pair.left,
+                        "right": pair.right,
+                        "relation": pair.relation,
+                    },
+                    **({"focus_alignment": degree_role} if degree_role is not None else {}),
+                },
+                rendering_surface=pair.literal_evidence,
             )
         )
+    atlas_source_ids = tuple(
+        pair.sentence_id
+        for pair in inventory.atlas_pairs
+        if pair.relation in {"atlas_antonym.v1", "atlas_synonym.v1"}
+    )
+    if units and atlas_source_ids and not _source_diverse(atlas_source_ids, maximum_per_source=3):
+        units = []
     return certify_unit_plan(slot_id=slot_id, phase=phase, activity_type="match-up", units=units)
 
 
@@ -430,8 +632,11 @@ def _build_mark_the_words(
             continue
         if indexes != list(range(min(indexes), max(indexes) + 1)):
             continue
-        criterion = vesum_tags.parse_criterion(request.criterion)
-        if criterion is None or len(set(request.target_token_ids)) != len(request.target_token_ids):
+        degree_criterion = request.criterion == "degree=comparison"
+        criterion = None if degree_criterion else vesum_tags.parse_criterion(request.criterion)
+        if (not degree_criterion and criterion is None) or len(
+            set(request.target_token_ids)
+        ) != len(request.target_token_ids):
             continue
         target_records: list[CertifiedTargetToken] = []
         units: list[CertifiedUnit] = []
@@ -439,9 +644,18 @@ def _build_mark_the_words(
             token = tokens.get(token_id)
             if token is None or token.sentence_id not in request.sentence_ids:
                 break
-            if not any(
-                vesum_tags.matches_criterion(parse, criterion) for parse in token.vesum_parses
-            ):
+            if degree_criterion:
+                matches = any(
+                    parse.get("pos") == "adj"
+                    and any(marker in str(parse.get("raw", "")) for marker in ("compc", "comps"))
+                    for parse in token.vesum_parses
+                )
+            else:
+                assert criterion is not None
+                matches = any(
+                    vesum_tags.matches_criterion(parse, criterion) for parse in token.vesum_parses
+                )
+            if not matches:
                 break
             target = CertifiedTargetToken(
                 sentence_id=token.sentence_id,
@@ -460,8 +674,10 @@ def _build_mark_the_words(
                     expected_key_or_rule=ExpectedKeyRule("rule", request.criterion),
                     citation_plan=(Citation(inventory.source_id, f"sentence:{token.sentence_id}"),),
                     distinctness={
-                        "target": {"sentence_id": token.sentence_id, "token_id": token.token_id}
+                        "target": {"sentence_id": token.sentence_id, "token_id": token.token_id},
+                        **({"focus_alignment": "degree-primary"} if degree_criterion else {}),
                     },
+                    rendering_surface=sentences[token.sentence_id].text,
                 )
             )
         else:
@@ -477,6 +693,8 @@ def _build_mark_the_words(
 
 def _short_writing_prompt_markers(
     constraints: tuple[ConstraintSpec, ...],
+    *,
+    degree_writing: bool = False,
 ) -> tuple[str, ...] | None:
     """Return the concrete learner-facing markers for the currently built task.
 
@@ -509,7 +727,11 @@ def _short_writing_prompt_markers(
                 or not all(isinstance(lemma, str) and lemma.strip() for lemma in lemmas)
             ):
                 return None
-            markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
+            if degree_writing:
+                quoted = ", ".join(f"«{lemma}»" for lemma in lemmas)
+                markers.append(f"утворіть потрібні форми від прикметників {quoted}")
+            else:
+                markers.extend(f"«{lemma}»" for lemma in lemmas if isinstance(lemma, str))
             continue
         if spec.kind == "word_count_range":
             minimum = spec.params.get("minimum")
@@ -569,14 +791,47 @@ def _build_short_writing(
     for task in inventory.writing_tasks:
         sentence = sentences.get(task.sentence_id)
         names = registered_constraint_names(task.constraints)
-        prompt_markers = _short_writing_prompt_markers(task.constraints)
+        degree_writing = task.focus_alignment == "degree-writing"
+        prompt_markers = _short_writing_prompt_markers(
+            task.constraints,
+            degree_writing=degree_writing,
+        )
+        source_verifiable_constraints = tuple(
+            spec for spec in task.constraints if spec.kind != "word_count_range"
+        )
+        constraints_to_validate = tuple(
+            spec
+            for spec in source_verifiable_constraints
+            if not (degree_writing and spec.kind == "contains_lemma_set")
+        )
+        constraints_bind_source = (
+            validate_constraints(constraints_to_validate, task.sample_tokens)
+            if constraints_to_validate
+            else degree_writing
+        )
+        attribute_warrants = dict(task.attribute_warrants)
+        prompt_binds_source = task.prompt in sentence.text if sentence is not None else False
+        if degree_writing:
+            lemma_specs = [spec for spec in task.constraints if spec.kind == "contains_lemma_set"]
+            required_lemmas = (
+                tuple(lemma_specs[0].params.get("lemmas", ())) if len(lemma_specs) == 1 else ()
+            )
+            prompt_binds_source = (
+                bool(required_lemmas)
+                and set(attribute_warrants) == set(required_lemmas)
+                and all(
+                    isinstance(value, str) and value.strip()
+                    for value in attribute_warrants.values()
+                )
+            )
         if (
             sentence is None
-            or task.prompt not in sentence.text
+            or not prompt_binds_source
             or names is None
             or prompt_markers is None
             or "word_count_range" not in names
-            or not validate_constraints(task.constraints, task.sample_tokens)
+            or not source_verifiable_constraints
+            or not constraints_bind_source
         ):
             continue
         unit = CertifiedUnit(
@@ -594,7 +849,14 @@ def _build_short_writing(
                 "constraint_specs": [
                     {"kind": spec.kind, "params": dict(spec.params)} for spec in task.constraints
                 ],
+                **(
+                    {"focus_alignment": task.focus_alignment}
+                    if task.focus_alignment is not None
+                    else {}
+                ),
+                **({"attribute_warrants": attribute_warrants} if attribute_warrants else {}),
             },
+            rendering_surface=task.prompt,
         )
         return certify_unit_plan(
             slot_id=slot_id,

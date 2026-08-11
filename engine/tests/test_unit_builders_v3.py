@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+import re
+from collections import Counter
+from dataclasses import replace
+
 import pytest
 
+from hramatka.engine.anchor_inventory_v3 import (
+    DEGREE_WRITING_LEMMAS,
+    DEGREE_WRITING_SCENARIO,
+    DEGREE_WRITING_WARRANTS,
+    _certified_choice_bank,
+    _eligible_tokens,
+    _focus_rank,
+    _is_degree_token,
+    _lemma_for,
+    _sentences,
+    inventory_for_group,
+    inventory_from_anchor,
+)
 from hramatka.engine.short_writing_constraints_v3 import (
     CONSTRAINT_REGISTRY,
     ConstraintSpec,
@@ -11,6 +28,7 @@ from hramatka.engine.short_writing_constraints_v3 import (
 )
 from hramatka.engine.teacher_ready_density_v3 import floor_for
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import (
+    DENSITY_V3_ANCHOR,
     complete_inventory,
     insufficient_inventory,
 )
@@ -22,10 +40,27 @@ from hramatka.engine.true_false_catalog_v3 import (
 )
 from hramatka.engine.unit_builders_v3 import (
     BUILDERS,
+    AnchorSentence,
+    AnchorToken,
     CertificationInventory,
+    MarkTheWordsRequest,
     build_mark_the_words,
     build_short_writing,
 )
+
+_PRODUCTION_ANCHOR = DENSITY_V3_ANCHOR
+_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
+
+
+def _production_plan(activity_type: str, *, duration: int = 45, focus: str | None = None):
+    inventory = inventory_from_anchor(
+        _PRODUCTION_ANCHOR,
+        scheduled_types=(activity_type,),
+        duration_minutes=duration,
+        focus=focus,
+    )
+    selected = inventory_for_group(inventory, activity_type=activity_type, group_number=1)
+    return BUILDERS[activity_type](selected, slot_id="P1-A1", phase=1)
 
 
 @pytest.mark.parametrize("activity_type", tuple(BUILDERS))
@@ -50,6 +85,350 @@ def test_each_builder_returns_unavailable_for_an_insufficient_anchor(activity_ty
 
     assert plan.disposition == "unavailable"
     assert plan.units == ()
+
+
+@pytest.mark.parametrize(
+    "activity_type",
+    (
+        "quiz",
+        "cloze",
+        "fill-in",
+        "error-correction",
+        "text-questions",
+    ),
+)
+def test_production_inventory_units_span_four_sentences_with_at_most_two_each(
+    activity_type: str,
+) -> None:
+    plan = _production_plan(activity_type)
+    sentence_ids = [
+        claim.resource_id
+        for unit in plan.units
+        for claim in unit.resource_claims
+        if claim.kind == "sentence"
+    ]
+
+    assert plan.disposition == "certified"
+    assert len(plan.units) == floor_for(activity_type).minimum_units == 8
+    assert len(set(sentence_ids)) >= 4
+    assert max(Counter(sentence_ids).values()) <= 2
+
+
+def test_whitespace_only_sentence_matches_keep_dense_ids_and_cloze_capacity() -> None:
+    anchor = _PRODUCTION_ANCHOR.replace("\n", " \n")
+    sentences = _sentences(anchor)
+
+    assert [sentence.sentence_id for sentence in sentences] == [
+        f"s-{index}" for index in range(1, len(sentences) + 1)
+    ]
+    inventory = inventory_from_anchor(
+        anchor,
+        scheduled_types=("cloze",),
+        duration_minutes=45,
+    )
+    selected = inventory_for_group(inventory, activity_type="cloze", group_number=1)
+    plan = BUILDERS["cloze"](selected, slot_id="P1-A1", phase=1)
+    assert plan.disposition == "certified"
+
+
+def test_generic_builder_rejects_mixed_focus_alignment() -> None:
+    inventory = complete_inventory()
+    changed = False
+    candidates = []
+    for candidate in inventory.candidates:
+        if candidate.activity_type == "fill-in" and not changed:
+            candidate = replace(candidate, focus_alignment="degree-reinforcement")
+            changed = True
+        candidates.append(candidate)
+    assert changed
+
+    plan = BUILDERS["fill-in"](
+        replace(inventory, candidates=tuple(candidates)),
+        slot_id="P1-A1",
+        phase=1,
+    )
+    assert plan.disposition == "unavailable"
+
+
+@pytest.mark.parametrize("activity_type", ("quiz", "cloze", "fill-in"))
+def test_production_closed_units_certify_exact_spans_banks_and_exclusions(
+    activity_type: str,
+) -> None:
+    plan = _production_plan(activity_type)
+
+    assert plan.disposition == "certified"
+    for unit in plan.units:
+        answer = unit.allowed_forms[0]
+        gap = unit.distinctness["gap"]
+        bank = unit.distinctness["choice_bank"]
+        exclusions = unit.distinctness["exclusion_warrants"]
+        assert unit.rendering_surface[gap["start_offset"] : gap["end_offset"]] == answer
+        assert len(bank) >= 3
+        assert len(bank) == len(set(bank))
+        assert answer in bank
+        assert set(exclusions) == set(bank) - {answer}
+
+
+def test_production_text_question_explanations_have_real_causal_warrants() -> None:
+    plan = _production_plan("text-questions")
+    causal = [
+        unit
+        for unit in plan.units
+        if unit.distinctness.get("question_intent") == "explicit-causal"
+    ]
+
+    assert plan.disposition == "certified"
+    assert len(causal) == 3
+    assert all(
+        re.search(
+            r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b",
+            unit.rendering_surface or "",
+            re.IGNORECASE,
+        )
+        for unit in causal
+    )
+    assert all(unit.distinctness.get("question_frame") for unit in plan.units)
+
+
+def test_colons_and_dashes_do_not_create_text_question_causal_capacity() -> None:
+    anchor = _PRODUCTION_ANCHOR
+    unwarranted = (
+        anchor.replace(", бо ", ": ")
+        .replace(", щоб ", " — ")
+        .replace(", оскільки ", ": ")
+    )
+    inventory = inventory_from_anchor(
+        unwarranted,
+        scheduled_types=("text-questions",),
+        duration_minutes=45,
+    )
+    selected = inventory_for_group(
+        inventory,
+        activity_type="text-questions",
+        group_number=1,
+    )
+    plan = BUILDERS["text-questions"](selected, slot_id="P1-A1", phase=1)
+
+    assert not any(
+        candidate.question_intent == "explicit-causal" for candidate in inventory.candidates
+    )
+    assert plan.disposition == "unavailable"
+
+
+def test_production_true_false_refuses_generic_predicate_negation() -> None:
+    plan = _production_plan("true-false")
+
+    assert plan.disposition == "unavailable"
+    assert plan.units == ()
+
+
+def test_match_up_lemma_prefers_geographic_parse_and_rejects_person_homonym() -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="Львові",
+        start_offset=0,
+        end_offset=6,
+        vesum_parses=(
+            {
+                "pos": "noun",
+                "raw": "noun:anim:m:v_dav:prop:fname",
+                "lemma": "Лев",
+            },
+            {
+                "pos": "noun",
+                "raw": "noun:inanim:m:v_mis:prop:geo",
+                "lemma": "Львів",
+            },
+        ),
+    )
+
+    assert _lemma_for(token) == "Львів"
+
+
+def test_anchor_inventory_splits_an_unpunctuated_title_from_the_first_sentence() -> None:
+    rows = _sentences("Короткий заголовок\nМи читаємо текст.")
+
+    assert [row.text for row in rows] == ["Короткий заголовок", "Ми читаємо текст."]
+
+
+def test_comparison_focus_prioritizes_certified_degree_forms() -> None:
+    comparative = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="тепліша",
+        start_offset=0,
+        end_offset=7,
+        vesum_parses=({"pos": "adj", "raw": "adj:f:v_naz:compc", "lemma": "тепліший"},),
+    )
+    unrelated = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-2",
+        surface="квартира",
+        start_offset=8,
+        end_offset=16,
+        vesum_parses=({"pos": "noun", "raw": "noun:inanim:f:v_naz", "lemma": "квартира"},),
+    )
+
+    focus = "ступені порівняння прикметників"
+    assert _focus_rank(comparative, focus) < _focus_rank(unrelated, focus)
+
+
+def test_predicative_adverb_homonym_is_not_an_adjective_degree_target() -> None:
+    ambiguous = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="тепліше",
+        start_offset=0,
+        end_offset=7,
+        vesum_parses=(
+            {"pos": "adj", "raw": "adj:n:v_naz:compc", "lemma": "тепліший"},
+            {"pos": "adv", "raw": "adv:compc:predic", "lemma": "тепло"},
+        ),
+    )
+
+    assert not _is_degree_token(ambiguous)
+
+
+def test_closed_class_homograph_cannot_supply_a_content_choice_bank() -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="Під",
+        start_offset=0,
+        end_offset=3,
+        vesum_parses=(
+            {"pos": "prep", "raw": "prep", "lemma": "під"},
+            {"pos": "noun", "raw": "noun:inanim:m:v_naz", "lemma": "под"},
+        ),
+    )
+
+    assert _certified_choice_bank(token) is None
+
+
+def test_imperative_target_cannot_supply_an_ambiguous_closed_choice_bank() -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="Візьміть",
+        start_offset=0,
+        end_offset=7,
+        vesum_parses=(
+            {"pos": "verb", "raw": "verb:perf:impr:p:2", "lemma": "взяти"},
+        ),
+    )
+
+    assert _certified_choice_bank(token) is None
+
+
+def test_short_writing_rejects_an_ambiguous_content_lemma() -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="зв'язки",
+        start_offset=0,
+        end_offset=7,
+        vesum_parses=(
+            {"pos": "noun", "raw": "noun:inanim:p:v_naz", "lemma": "зв'язок"},
+            {"pos": "noun", "raw": "noun:inanim:p:v_naz", "lemma": "зв'язка"},
+        ),
+    )
+    sentence = AnchorSentence("s-1", "зв'язки допомагають.", (token,))
+
+    assert _eligible_tokens("short-writing", sentence) == ()
+
+
+def test_match_up_builder_accepts_only_certified_atlas_antonyms() -> None:
+    plan = BUILDERS["match-up"](complete_inventory(), slot_id="P1-A1", phase=1)
+
+    assert plan.disposition == "certified"
+    assert all(unit.distinctness["pair"]["relation"] == "atlas_antonym.v1" for unit in plan.units)
+    assert all(
+        unit.allowed_forms[0].casefold() != unit.allowed_forms[1].casefold() for unit in plan.units
+    )
+
+
+def test_production_error_correction_changes_exactly_one_word_per_item() -> None:
+    plan = _production_plan("error-correction")
+
+    assert len({unit.distinctness["morphology_class"] for unit in plan.units}) >= 3
+    assert sum(
+        unit.distinctness["error_position"] == "sentence-initial" for unit in plan.units
+    ) <= 4
+    for unit in plan.units:
+        wrong_words = _WORD_RE.findall(unit.allowed_forms[0])
+        source_words = _WORD_RE.findall(unit.rendering_surface or "")
+        assert len(wrong_words) == len(source_words)
+        assert (
+            sum(
+                wrong.casefold() != source.casefold()
+                for wrong, source in zip(wrong_words, source_words, strict=True)
+            )
+            == 1
+        )
+        assert unit.expected_key_or_rule.certified_error_count == 1
+
+
+def test_production_short_writing_uses_a_self_contained_source_prompt() -> None:
+    plan = _production_plan("short-writing")
+    prompt = plan.units[0].rendering_surface or ""
+
+    assert plan.disposition == "certified"
+    assert not re.match(
+        r"^(?:так(?:ий|а|е|і)|це|цей|ця|ці|також|тому)\b",
+        prompt,
+        re.IGNORECASE,
+    )
+    assert not prompt.endswith("!")
+
+
+def test_degree_writing_still_validates_non_lemma_source_constraints() -> None:
+    inventory = complete_inventory()
+    task = inventory.writing_tasks[0]
+    constraints = (
+        ConstraintSpec("contains_lemma_set", {"lemmas": DEGREE_WRITING_LEMMAS}),
+        ConstraintSpec("word_count_range", {"minimum": 60, "maximum": 80}),
+        ConstraintSpec("min_verb_count", {"minimum": 100}),
+    )
+    degree_task = replace(
+        task,
+        prompt=DEGREE_WRITING_SCENARIO,
+        constraints=constraints,
+        focus_alignment="degree-writing",
+        attribute_warrants=DEGREE_WRITING_WARRANTS,
+    )
+
+    plan = build_short_writing(
+        replace(inventory, writing_tasks=(degree_task,)),
+        slot_id="P3-A1",
+        phase=3,
+    )
+
+    assert plan.disposition == "unavailable"
+
+
+def test_generic_error_correction_is_not_mislabelled_as_degree_reinforcement() -> None:
+    plan = _production_plan(
+        "error-correction",
+        focus="ступені порівняння прикметників",
+    )
+
+    assert plan.disposition == "certified"
+    assert all(unit.distinctness.get("focus_alignment") is None for unit in plan.units)
+
+
+@pytest.mark.parametrize(
+    ("duration", "marker"),
+    ((45, "від 60 до 80 слів"), (60, "від 80 до 110 слів"), (90, "від 120 до 160 слів")),
+)
+def test_production_short_writing_uses_visible_duration_specific_range(
+    duration: int, marker: str
+) -> None:
+    plan = _production_plan("short-writing", duration=duration)
+
+    assert plan.disposition == "certified"
+    assert marker in plan.units[0].allowed_forms
+    assert "до 200 слів" not in plan.units[0].allowed_forms
 
 
 def test_fill_in_builder_carries_exact_evidence_rendering_surfaces() -> None:
@@ -108,7 +487,8 @@ def test_short_writing_registry_is_closed_and_uses_regex_and_vesum_evidence() ->
         "target_case_usage",
         "word_count_range",
     }
-    assert validate_constraints(task.constraints, task.sample_tokens)
+    source_verifiable = tuple(spec for spec in task.constraints if spec.kind != "word_count_range")
+    assert validate_constraints(source_verifiable, task.sample_tokens)
     assert validate_constraints((case_constraint,), task.sample_tokens)
     assert not validate_constraints((ConstraintSpec("llm_judgment", {}),), task.sample_tokens)
 
@@ -123,7 +503,7 @@ def test_short_writing_plan_carries_exact_learner_facing_constraint_fragments() 
     assert plan.units[0].allowed_forms == (
         f"«{lemma}»",
         "мінімум 1 дієслово",
-        "до 200 слів",
+        "від 60 до 80 слів",
     )
 
 
@@ -136,6 +516,49 @@ def test_mark_the_words_plan_records_exact_certified_target_token_records() -> N
         token.surface and token.end_offset > token.start_offset
         for token in plan.certified_target_tokens
     )
+
+
+def test_comparison_mark_rejects_plain_compb_adjectives() -> None:
+    sentences = []
+    target_ids = []
+    for sentence_number, text in enumerate(
+        ("Теплий світлий тихий довгий.", "Новий добрий простий сильний."),
+        start=1,
+    ):
+        sentence_id = f"s-{sentence_number}"
+        tokens = []
+        for token_number, match in enumerate(_WORD_RE.finditer(text), start=1):
+            token_id = f"{sentence_id}:t-{token_number}"
+            target_ids.append(token_id)
+            tokens.append(
+                AnchorToken(
+                    sentence_id=sentence_id,
+                    token_id=token_id,
+                    surface=match.group(0),
+                    start_offset=match.start(),
+                    end_offset=match.end(),
+                    vesum_parses=(
+                        {"pos": "adj", "raw": "adj:m:v_naz:compb", "lemma": match.group(0)},
+                    ),
+                )
+            )
+        sentences.append(AnchorSentence(sentence_id=sentence_id, text=text, tokens=tuple(tokens)))
+    inventory = CertificationInventory(
+        source_id="comparison-base-only",
+        sentences=tuple(sentences),
+        mark_requests=(
+            MarkTheWordsRequest(
+                request_id="degree-comparison",
+                sentence_ids=("s-1", "s-2"),
+                criterion="degree=comparison",
+                target_token_ids=tuple(target_ids),
+            ),
+        ),
+    )
+
+    plan = build_mark_the_words(inventory, slot_id="P2-A5", phase=2)
+
+    assert plan.disposition == "unavailable"
 
 
 def test_text_question_builder_preserves_the_locked_3_3_2_categories() -> None:

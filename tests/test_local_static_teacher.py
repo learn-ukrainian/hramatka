@@ -108,7 +108,7 @@ def test_deployed_configuration_defaults_to_api_observed_and_has_no_local_door(
     assert not settings.local_static_teacher_enabled
 
 
-def test_marked_local_launcher_lists_the_transcribed_run12_model(
+def test_marked_local_launcher_fails_closed_without_current_qualification(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -124,9 +124,9 @@ def test_marked_local_launcher_lists_the_transcribed_run12_model(
         assert client.get(_STATIC_PATH, follow_redirects=False).status_code == 303
         payload = client.get("/api/lesson-models").json()
 
-    assert [model["id"] for model in payload["models"]] == ["gemini-3.1-pro"]
+    assert payload["models"] == []
     assert payload["unavailable_message"] == (
-        "Показано лише моделі з повною кваліфікацією для поточних правил уроку."
+        "Моделі тимчасово недоступні: кваліфікація для поточних правил уроку ще не завершена."
     )
 
 

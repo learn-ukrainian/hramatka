@@ -10,15 +10,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft7Validator
 
 from hramatka.engine import data, vendoring
-from hramatka.engine.anchor_inventory_v3 import inventory_for_group, inventory_from_anchor
+from hramatka.engine.anchor_inventory_v3 import (
+    DEGREE_60_SCHEDULE,
+    inventory_for_group,
+    inventory_from_anchor,
+)
 from hramatka.engine.density_evaluator_v3 import (
     MAX_REPAIR_ROUNDS,
     RepairRequest,
@@ -26,6 +31,7 @@ from hramatka.engine.density_evaluator_v3 import (
     SlotError,
     evaluate_phase_with_repair,
 )
+from hramatka.engine.gates.vesum import is_anchor_verbatim
 from hramatka.engine.json_tolerance import extract_json, repair_split_envelope
 from hramatka.engine.lesson_capacity_v3 import (
     AnchorParagraph,
@@ -37,12 +43,17 @@ from hramatka.engine.prompt_pack_v3 import (
     RepairableSerializationError,
     _contains_form,
     build_phase_context,
+    one_slot_context,
     render_phase_prompt,
+    validate_activity_purpose,
+    validate_degree_lesson_plan,
     validate_distractor_adjacency,
     validate_elicitation_shape,
     validate_exemplar_contamination,
     validate_gap_construction,
+    validate_non_revealing_sequence,
     validate_verbatim_answer_ban,
+    validate_visible_writing_constraints,
 )
 from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 from hramatka.engine.teacher_ready_density_v3 import phase_shape_for
@@ -63,6 +74,7 @@ _ACTIVITY_VALIDATOR = Draft7Validator(_ACTIVITY_SCHEMA)
 _RAW_PARSE_FAILURE_MAX_BYTES = 512 * 1024
 _RAW_PARSE_FAILURE_TRUNCATION_MARKER = "\n...TRUNCATED\n"
 _V3_TOP_LEVEL_KEYS = frozenset({"slots"})
+_UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
 
 _TITLES = {
     "true-false": "Перевірмо розуміння",
@@ -75,6 +87,44 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
+
+
+def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return learner choice surfaces that must be honest about outside text."""
+    surfaces: list[str] = []
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            options = item.get("options")
+            if isinstance(options, list):
+                surfaces.extend(option for option in options if isinstance(option, str))
+    blanks = payload.get("blanks")
+    if isinstance(blanks, list):
+        for blank in blanks:
+            options = blank.get("options") if isinstance(blank, Mapping) else None
+            if isinstance(options, list):
+                surfaces.extend(option for option in options if isinstance(option, str))
+    pairs = payload.get("pairs")
+    if isinstance(pairs, list):
+        for pair in pairs:
+            if isinstance(pair, Mapping):
+                surfaces.extend(
+                    value
+                    for key in ("left", "right")
+                    if isinstance((value := pair.get(key)), str)
+                )
+    return tuple(surfaces)
+
+
+def _has_external_options(payload: Mapping[str, Any], anchor_text: str | None) -> bool:
+    surfaces = _external_option_surfaces(payload)
+    return bool(
+        anchor_text
+        and surfaces
+        and any(not is_anchor_verbatim(surface, anchor_text) for surface in surfaces)
+    )
 
 # Teacher-facing Ukrainian for the engine's flag verdict (#402), keyed by the
 # rule-named ``CAUSE_VOCABULARY`` of the CURRENT evaluator/gate stack
@@ -97,6 +147,12 @@ _FLAG_REASON_UK_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("elicitation_shape:", "Завдання не сформульовано повним реченням."),
     ("gap_construction", "Пропуски у вправі побудовано неправильно."),
     ("distractor_adjacency:", "Варіанти відповідей у вправі неякісні."),
+    ("non_revealing_sequence:", "Завдання повторюються або підказують відповіді."),
+    ("activity_purpose:", "Завдання не перевіряє розуміння змісту."),
+    (
+        "short_writing_visible_constraints:",
+        "У завданні на письмо не видно всіх обов'язкових умов.",
+    ),
     ("serialization_exactness:", "Двигун виявив помилку в цій вправі."),
     ("raw_contract:", "Двигун виявив помилку в цій вправі."),
     ("deterministic_gate:", "Двигун виявив помилку в цій вправі."),
@@ -134,14 +190,27 @@ def _mode(phase: int, activity_type: str) -> str:
     return "письмово" if activity_type == "cloze" else "усно"
 
 
-def _scheduled_types(duration: int) -> tuple[str, ...]:
+def _is_degree_focus(focus: str | None) -> bool:
+    if not isinstance(focus, str):
+        return False
+    normalized = focus.casefold()
+    return (
+        "компаратив" in normalized
+        or "суперлатив" in normalized
+        or ("ступен" in normalized and "порівнян" in normalized)
+    )
+
+
+def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]:
     """Return the one deterministic v3 schedule for a supported phase shape."""
+    if duration == 60 and _is_degree_focus(focus):
+        return tuple(activity_type for _slot_id, activity_type, _role in DEGREE_60_SCHEDULE)
     by_duration = {
         45: (
             "quiz",
             "cloze",
             "fill-in",
-            "true-false",
+            "quiz",
             "match-up",
             "error-correction",
             "text-questions",
@@ -151,19 +220,19 @@ def _scheduled_types(duration: int) -> tuple[str, ...]:
             "quiz",
             "cloze",
             "fill-in",
-            "true-false",
+            "quiz",
             "match-up",
             "error-correction",
             "text-questions",
-            "quiz",
+            "fill-in",
+            "match-up",
             "short-writing",
-            "cloze",
         ),
         90: (
             "quiz",
             "cloze",
             "fill-in",
-            "true-false",
+            "quiz",
             "match-up",
             "error-correction",
             "text-questions",
@@ -171,18 +240,22 @@ def _scheduled_types(duration: int) -> tuple[str, ...]:
             "quiz",
             "cloze",
             "fill-in",
-            "true-false",
+            "quiz",
         ),
     }
     return by_duration[duration]
 
 
-def _lesson_slots(duration: int) -> tuple[LessonSlot, ...]:
+def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, ...]:
     shape = phase_shape_for(duration)
-    scheduled = _scheduled_types(duration)
+    scheduled = _scheduled_types(duration, focus)
     if len(scheduled) != sum(shape.phase_slots.values()):  # pragma: no cover - static guard
         raise RuntimeError("v3 schedule must fill the complete configured phase shape.")
     slots: list[LessonSlot] = []
+    replacement_policy = {
+        "match-up": ("quiz", "fill-in"),
+        "true-false": ("quiz",),
+    }
     index = 0
     for phase, count in sorted(shape.phase_slots.items()):
         for position in range(1, count + 1):
@@ -191,6 +264,7 @@ def _lesson_slots(duration: int) -> tuple[LessonSlot, ...]:
                     slot_id=f"P{phase}-A{position}",
                     phase=phase,
                     requested_type=scheduled[index],
+                    replacement_types=replacement_policy.get(scheduled[index], ()),
                 )
             )
             index += 1
@@ -199,26 +273,42 @@ def _lesson_slots(duration: int) -> tuple[LessonSlot, ...]:
 
 def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., object]]:
     """Bind repeated types to distinct pre-certified anchor resource groups."""
-    occurrence_by_slot: dict[str, int] = {}
+    occurrence_by_slot_type: dict[tuple[str, str], int] = {}
     occurrences: Counter[str] = Counter()
     for slot in slots:
-        occurrences[slot.requested_type] += 1
-        occurrence_by_slot[slot.slot_id] = occurrences[slot.requested_type]
+        activity_type = slot.requested_type
+        occurrences[activity_type] += 1
+        occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
+    for slot in slots:
+        for activity_type in slot.replacement_types:
+            occurrences[activity_type] += 1
+            occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
 
     def builder_for(activity_type: str) -> Callable[..., object]:
         def build(inventory: object, *, slot_id: str, phase: int) -> object:
-            if slot_id not in occurrence_by_slot:
+            occurrence = occurrence_by_slot_type.get((slot_id, activity_type))
+            if occurrence is None:
                 raise ValueError("v3 preflight received an unknown scheduled slot.")
             selected = inventory_for_group(
                 inventory,  # type: ignore[arg-type]
                 activity_type=activity_type,
-                group_number=occurrence_by_slot[slot_id],
+                group_number=occurrence,
             )
             return BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
 
         return build
 
     return {activity_type: builder_for(activity_type) for activity_type in BUILDERS}
+
+
+def _inventory_candidate_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]:
+    """Return the primary inventory lane in stable slot order."""
+    return tuple(slot.requested_type for slot in slots)
+
+
+def _inventory_replacement_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]:
+    """Return the optional replacement lane after all primary occurrences."""
+    return tuple(activity_type for slot in slots for activity_type in slot.replacement_types)
 
 
 def _anchor_text(anchor: str | Mapping[str, object]) -> str:
@@ -245,6 +335,159 @@ def _parse_payload(raw: object) -> object:
     raise GenerationUnparseable("v3 serializer returned invalid JSON.")
 
 
+def _canonicalize_redundant_payload_fields(
+    parsed: object,
+) -> tuple[dict[str, object], ...]:
+    """Restore only schema-required copies already present in the answer key.
+
+    Quiz ``correct`` indices and cloze ``answer`` strings are represented in
+    both payload and answer key by the public activity contract.  A missing
+    payload copy carries no independent pedagogical information, so restore it
+    deterministically from the same indexed/same-ID key.  Supplied values are
+    never overwritten; malformed or ambiguous keys remain untouched and fail
+    the ordinary exact-binding gates.
+    """
+    if not isinstance(parsed, Mapping) or not isinstance(parsed.get("slots"), list):
+        return ()
+    events: list[dict[str, object]] = []
+    for record in parsed["slots"]:
+        if not isinstance(record, dict):
+            continue
+        slot_id = record.get("slot_id")
+        activity = record.get("activity")
+        if not isinstance(slot_id, str) or not isinstance(activity, dict):
+            continue
+        payload = activity.get("payload")
+        answer_key = activity.get("answer_key")
+        if not isinstance(payload, dict) or not isinstance(answer_key, Mapping):
+            continue
+        activity_type = payload.get("type")
+        restored = 0
+        field = ""
+        if activity_type == "quiz":
+            items = payload.get("items")
+            key_items = answer_key.get("items")
+            if isinstance(items, list) and isinstance(key_items, list):
+                for index, item in enumerate(items):
+                    if not isinstance(item, dict) or "correct" in item or index >= len(key_items):
+                        continue
+                    key_item = key_items[index]
+                    correct = key_item.get("correct") if isinstance(key_item, Mapping) else None
+                    key_index = key_item.get("index") if isinstance(key_item, Mapping) else None
+                    if (
+                        isinstance(key_index, int)
+                        and not isinstance(key_index, bool)
+                        and key_index == index
+                        and isinstance(correct, int)
+                        and not isinstance(correct, bool)
+                    ):
+                        item["correct"] = correct
+                        restored += 1
+                field = "payload.items[].correct"
+        elif activity_type == "cloze":
+            blanks = payload.get("blanks")
+            key_blanks = answer_key.get("blanks")
+            if isinstance(blanks, list) and isinstance(key_blanks, list):
+                keyed: dict[int, str] = {}
+                duplicate_ids: set[int] = set()
+                for key_blank in key_blanks:
+                    if not isinstance(key_blank, Mapping):
+                        continue
+                    blank_id = key_blank.get("id")
+                    answer = key_blank.get("answer")
+                    if not isinstance(blank_id, int) or isinstance(blank_id, bool):
+                        continue
+                    if not isinstance(answer, str) or not answer:
+                        continue
+                    if blank_id in keyed:
+                        duplicate_ids.add(blank_id)
+                    keyed[blank_id] = answer
+                for blank in blanks:
+                    if not isinstance(blank, dict) or "answer" in blank:
+                        continue
+                    blank_id = blank.get("id")
+                    if (
+                        not isinstance(blank_id, int)
+                        or isinstance(blank_id, bool)
+                        or blank_id in duplicate_ids
+                        or blank_id not in keyed
+                    ):
+                        continue
+                    blank["answer"] = keyed[blank_id]
+                    restored += 1
+                field = "payload.blanks[].answer"
+        if restored:
+            events.append(
+                {
+                    "event": "v3_redundant_field_canonicalized",
+                    "slot_id": slot_id,
+                    "activity_type": activity_type,
+                    "field": field,
+                    "count": restored,
+                }
+            )
+    return tuple(events)
+
+
+def _deterministic_quiz_replacement(request: ReplacementRequest) -> dict[str, object]:
+    """Serialize a certified contextual quiz fallback without an LLM call."""
+    if request.activity_type != "quiz":
+        raise ValueError("Deterministic replacement supports only quiz plans.")
+    items: list[dict[str, object]] = []
+    key_items: list[dict[str, object]] = []
+    unit_refs: list[dict[str, str]] = []
+    for index, unit in enumerate(request.plan.units):
+        if not unit.allowed_forms:
+            raise ValueError("Certified quiz replacement lacks an answer form.")
+        answer = unit.allowed_forms[0]
+        distinctness = unit.distinctness
+        raw_bank = distinctness.get("choice_bank")
+        gap = distinctness.get("gap")
+        if (
+            not isinstance(raw_bank, Sequence)
+            or isinstance(raw_bank, (str, bytes))
+            or answer not in raw_bank
+            or len(raw_bank) < 3
+            or not isinstance(gap, Mapping)
+        ):
+            raise ValueError("Certified quiz replacement lacks its closed learner surface.")
+        start = gap.get("start_offset")
+        end = gap.get("end_offset")
+        if (
+            not isinstance(start, int)
+            or not isinstance(end, int)
+            or unit.rendering_surface[start:end] != answer
+        ):
+            raise ValueError("Certified quiz replacement gap is detached from its answer.")
+        bank = list(raw_bank)
+        correct = index % len(bank)
+        options = [option for option in bank if option != answer]
+        options.insert(correct, answer)
+        items.append(
+            {
+                "question": unit.rendering_surface[:start] + "___" + unit.rendering_surface[end:],
+                "options": options,
+                "correct": correct,
+            }
+        )
+        key_items.append({"index": index, "correct": correct})
+        unit_refs.append({"unit_id": unit.unit_id})
+    return {
+        "slot_id": request.slot_id,
+        "type": "quiz",
+        "activity": {
+            "payload": {
+                "type": "quiz",
+                "instruction": "Оберіть правильну форму.",
+                "items": items,
+            },
+            "answer_key": {"items": key_items},
+        },
+        "serialized_units": unit_refs,
+        "_generator_model_id": "hramatka-deterministic-v3",
+    }
+
+
 def _is_v3_slots_payload(payload: object) -> bool:
     return (
         isinstance(payload, Mapping)
@@ -268,7 +511,7 @@ def _activity_gate(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
         # than an arbitrary content gate or an allocation failure.  Preserve
         # the immutable-plan-only repair contract by marking just this exact
         # substrate-binding class for the evaluator's bounded repair path.
-        if "detached from certified units" in str(error):
+        if "detached from certified" in str(error):
             raise RepairableSerializationError(str(error)) from error
         raise
 
@@ -308,7 +551,7 @@ def _bound_list(value: object, expected: tuple[object, ...], *, label: str) -> N
 
 
 def _certified_rendering_surfaces(kit: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return the exact evidence surface allocated to each fill-in unit."""
+    """Return the exact evidence surface allocated to each contextual unit."""
     units = kit.get("certified_units")
     if not isinstance(units, list):  # guarded by ``_certified_forms``
         raise ValueError("v3 type-kit has no certified units.")
@@ -316,9 +559,89 @@ def _certified_rendering_surfaces(kit: Mapping[str, Any]) -> tuple[str, ...]:
     for unit in units:
         surface = unit.get("rendering_surface") if isinstance(unit, Mapping) else None
         if not isinstance(surface, str) or not surface:
-            raise ValueError("v3 fill-in unit has no certified rendering surface.")
+            raise ValueError("v3 contextual unit has no certified rendering surface.")
         surfaces.append(surface)
     return tuple(surfaces)
+
+
+def _certified_choice_banks(kit: Mapping[str, Any]) -> tuple[tuple[str, ...], ...]:
+    """Return each closed unit's exact VESUM-certified option bank."""
+    units = kit.get("certified_units")
+    if not isinstance(units, list):
+        raise ValueError("v3 type-kit has no certified units.")
+    banks: list[tuple[str, ...]] = []
+    for unit in units:
+        distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+        raw_bank = distinctness.get("choice_bank") if isinstance(distinctness, Mapping) else None
+        if raw_bank is None:
+            banks.append(())
+            continue
+        if not isinstance(raw_bank, list) or len(raw_bank) < 3:
+            raise ValueError("v3 contextual unit has no certified choice bank.")
+        bank = tuple(item for item in raw_bank if isinstance(item, str) and item)
+        if len(bank) != len(raw_bank) or len(bank) != len(set(bank)):
+            raise ValueError("v3 contextual unit has an invalid certified choice bank.")
+        banks.append(bank)
+    return tuple(banks)
+
+
+def _certified_gapped_surfaces(
+    kit: Mapping[str, Any], answers: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Return and independently verify each serialized learner gap surface."""
+    units = kit.get("certified_units")
+    if not isinstance(units, list) or len(units) != len(answers):
+        raise ValueError("v3 type-kit has no certified gapped units.")
+    gapped_surfaces: list[str] = []
+    for unit, answer in zip(units, answers, strict=True):
+        if not isinstance(unit, Mapping):
+            raise ValueError("v3 type-kit has a malformed gapped unit.")
+        surface = unit.get("rendering_surface")
+        serialized = unit.get("gapped_rendering_surface")
+        distinctness = unit.get("distinctness")
+        gap = distinctness.get("gap") if isinstance(distinctness, Mapping) else None
+        start = gap.get("start_offset") if isinstance(gap, Mapping) else None
+        end = gap.get("end_offset") if isinstance(gap, Mapping) else None
+        if (
+            not isinstance(surface, str)
+            or not isinstance(serialized, str)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or start < 0
+            or end <= start
+            or surface[start:end] != answer
+        ):
+            raise ValueError("v3 gapped surface is detached from its certified source span.")
+        expected = surface[:start] + "___" + surface[end:]
+        if serialized != expected:
+            raise ValueError("v3 serialized gap is detached from its certified source span.")
+        gapped_surfaces.append(serialized)
+    return tuple(gapped_surfaces)
+
+
+def _options_match_bank(options: object, bank: tuple[str, ...]) -> bool:
+    return (
+        isinstance(options, list)
+        and len(options) == len(bank)
+        and len(options) == len(set(options))
+        and set(options) == set(bank)
+    )
+
+
+def _normalized_surface(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _reconstructs_surface(
+    learner_surface: object, certified_surface: str, answer: str, *, marker: str
+) -> bool:
+    """Return whether one marker restores the exact certified source surface."""
+    return (
+        isinstance(learner_surface, str)
+        and learner_surface.count(marker) == 1
+        and _normalized_surface(learner_surface.replace(marker, answer))
+        == _normalized_surface(certified_surface)
+    )
 
 
 def _expected_truth_value(expected: str) -> bool:
@@ -344,6 +667,9 @@ def _bind_learner_payload_to_certified_units(
     expected_keys = _expected_keys(kit)
 
     if activity_type == "quiz":
+        surfaces = _certified_rendering_surfaces(kit)
+        gapped_surfaces = _certified_gapped_surfaces(kit, primary)
+        banks = _certified_choice_banks(kit)
         items = payload.get("items")
         key_items = answer_key.get("items")
         if (
@@ -353,16 +679,23 @@ def _bind_learner_payload_to_certified_units(
             or len(key_items) != len(primary)
         ):
             raise ValueError("v3 quiz payload/answer_key count is detached from certified units.")
-        for index, (item, form) in enumerate(zip(items, primary, strict=True)):
+        for index, (item, form, surface, gapped_surface, bank) in enumerate(
+            zip(items, primary, surfaces, gapped_surfaces, banks, strict=True)
+        ):
             if not isinstance(item, Mapping) or not isinstance(item.get("options"), list):
                 raise ValueError("v3 quiz payload is detached from certified units.")
+            if bank and not _options_match_bank(item["options"], bank):
+                raise ValueError("v3 quiz options are detached from certified choice bank.")
+            if item.get("question") != gapped_surface:
+                raise ValueError("v3 quiz question is detached from certified gapped surface.")
+            if not _reconstructs_surface(item.get("question"), surface, form, marker="___"):
+                raise ValueError("v3 quiz question is detached from certified rendering surface.")
             key_entry = key_items[index]
             if not isinstance(key_entry, Mapping):
                 raise ValueError("v3 quiz answer key entry is malformed.")
             declared_correct = key_entry.get("correct")
-            if (
-                not isinstance(declared_correct, int)
-                or not (0 <= declared_correct < len(item["options"]))
+            if not isinstance(declared_correct, int) or not (
+                0 <= declared_correct < len(item["options"])
             ):
                 raise ValueError("v3 quiz answer key correct index is invalid.")
             if item["options"][declared_correct] != form:
@@ -372,6 +705,8 @@ def _bind_learner_payload_to_certified_units(
         return
 
     if activity_type == "cloze":
+        surfaces = _certified_rendering_surfaces(kit)
+        banks = _certified_choice_banks(kit)
         blanks = payload.get("blanks")
         key_blanks = answer_key.get("blanks")
         if (
@@ -381,9 +716,13 @@ def _bind_learner_payload_to_certified_units(
             or len(key_blanks) != len(primary)
         ):
             raise ValueError("v3 cloze payload/answer_key count is detached from certified units.")
-        for index, (blank, form) in enumerate(zip(blanks, primary, strict=True), start=1):
+        for index, (blank, form, bank) in enumerate(
+            zip(blanks, primary, banks, strict=True), start=1
+        ):
             if not isinstance(blank, Mapping) or not isinstance(blank.get("options"), list):
                 raise ValueError("v3 cloze payload is detached from certified units.")
+            if bank and not _options_match_bank(blank["options"], bank):
+                raise ValueError("v3 cloze options are detached from certified choice bank.")
             if blank.get("id") != index:
                 raise ValueError("v3 cloze blank id is detached from certified units.")
             key_blank = key_blanks[index - 1]
@@ -393,9 +732,50 @@ def _bind_learner_payload_to_certified_units(
                 raise ValueError("v3 cloze answer_key does not bind the certified form.")
             if form not in blank["options"]:
                 raise ValueError("v3 cloze options do not contain the certified form.")
+        text = payload.get("text")
+        if not isinstance(text, str):
+            raise ValueError("v3 cloze text is detached from certified rendering surfaces.")
+        marked_surface = kit.get("marked_rendering_surface")
+        if not isinstance(marked_surface, str) or text != marked_surface:
+            raise ValueError("v3 cloze text does not copy its certified marked passage.")
+        carrier_passage = " ".join(dict.fromkeys(surfaces))
+        span_rows: list[tuple[int, int, int, str]] = []
+        units = kit.get("certified_units")
+        if not isinstance(units, list):
+            raise ValueError("v3 cloze kit is detached from certified rendering surfaces.")
+        for index, (unit, form) in enumerate(zip(units, primary, strict=True), start=1):
+            distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+            gap = distinctness.get("gap") if isinstance(distinctness, Mapping) else None
+            start = gap.get("start_offset") if isinstance(gap, Mapping) else None
+            end = gap.get("end_offset") if isinstance(gap, Mapping) else None
+            if not isinstance(start, int) or not isinstance(end, int):
+                raise ValueError("v3 cloze gap span is detached from certified units.")
+            if carrier_passage[start:end] != form:
+                raise ValueError("v3 cloze gap span is detached from certified units.")
+            span_rows.append((start, end, index, form))
+        expected_text = carrier_passage
+        for start, end, index, _form in reversed(span_rows):
+            expected_text = expected_text[:start] + f"{{{index}}}" + expected_text[end:]
+        if marked_surface != expected_text:
+            raise ValueError(
+                "v3 cloze kit marked passage is detached from certified gap positions."
+            )
+        if _normalized_surface(text) != _normalized_surface(expected_text):
+            raise ValueError("v3 cloze markers are detached from certified gap positions.")
+        reconstructed = text
+        for index, form in enumerate(primary, start=1):
+            marker = f"{{{index}}}"
+            if reconstructed.count(marker) != 1:
+                raise ValueError("v3 cloze text is detached from certified rendering surfaces.")
+            reconstructed = reconstructed.replace(marker, form)
+        if _normalized_surface(reconstructed) != _normalized_surface(carrier_passage):
+            raise ValueError("v3 cloze text is detached from certified rendering surfaces.")
         return
 
     if activity_type == "fill-in":
+        surfaces = _certified_rendering_surfaces(kit)
+        gapped_surfaces = _certified_gapped_surfaces(kit, primary)
+        banks = _certified_choice_banks(kit)
         items = payload.get("items")
         key_forms = answer_key.get("items")
         if (
@@ -407,9 +787,19 @@ def _bind_learner_payload_to_certified_units(
             raise ValueError(
                 "v3 fill-in payload/answer_key count is detached from certified units."
             )
-        for item, form, key_form in zip(items, primary, key_forms, strict=True):
+        for item, form, key_form, surface, gapped_surface, bank in zip(
+            items, primary, key_forms, surfaces, gapped_surfaces, banks, strict=True
+        ):
             if not isinstance(item, Mapping) or not isinstance(item.get("options"), list):
                 raise ValueError("v3 fill-in payload is detached from certified units.")
+            if bank and not _options_match_bank(item["options"], bank):
+                raise ValueError("v3 fill-in options are detached from certified choice bank.")
+            if item.get("sentence") != gapped_surface:
+                raise ValueError("v3 fill-in sentence is detached from certified gapped surface.")
+            if not _reconstructs_surface(item.get("sentence"), surface, form, marker="___"):
+                raise ValueError(
+                    "v3 fill-in sentence is detached from certified rendering surface."
+                )
             if key_form != form:
                 raise ValueError("v3 fill-in answer_key does not bind the certified form.")
             if form not in item["options"]:
@@ -428,9 +818,13 @@ def _bind_learner_payload_to_certified_units(
             raise ValueError(
                 "v3 true-false payload/answer_key count is detached from certified units."
             )
-        for index, (item, expected) in enumerate(zip(items, expected_keys, strict=True)):
+        for index, (item, expected, statement) in enumerate(
+            zip(items, expected_keys, primary, strict=True)
+        ):
             if not isinstance(item, Mapping) or not isinstance(item.get("correct"), bool):
                 raise ValueError("v3 true-false payload is detached from certified units.")
+            if item.get("statement") != statement:
+                raise ValueError("v3 true-false statement is detached from certified units.")
             key_entry = key_items[index]
             if not isinstance(key_entry, Mapping) or not isinstance(key_entry.get("correct"), bool):
                 raise ValueError("v3 true-false answer_key entry is malformed.")
@@ -469,6 +863,17 @@ def _bind_learner_payload_to_certified_units(
         )
         return
 
+    if activity_type == "mark-the-words":
+        target_words = payload.get("target_words")
+        key_targets = answer_key.get("target_words")
+        rendering_surfaces = _certified_rendering_surfaces(kit)
+        merged_text = "\n".join(dict.fromkeys(rendering_surfaces))
+        if payload.get("text") != merged_text:
+            raise ValueError("v3 mark-the-words text is detached from certified units.")
+        _bound_list(target_words, primary, label="mark-the-words target words")
+        _bound_list(key_targets, primary, label="answer key")
+        return
+
     if activity_type == "error-correction":
         items = payload.get("items")
         key_items = answer_key.get("items")
@@ -483,6 +888,7 @@ def _bind_learner_payload_to_certified_units(
             )
         if not all(isinstance(item, str) and item.strip() for item in items):
             raise ValueError("v3 error-correction items must be non-empty strings.")
+        _bound_list(items, primary, label="error-correction source items")
         _bound_list(key_items, expected_keys, label="answer key")
         return
 
@@ -492,6 +898,36 @@ def _bind_learner_payload_to_certified_units(
             raise ValueError("v3 text-questions payload count is detached from certified units.")
         if not all(isinstance(item, str) and item.strip() for item in items):
             raise ValueError("v3 text-questions items must be non-empty strings.")
+        units = kit.get("certified_units")
+        if not isinstance(units, list) or len(units) != len(items):
+            raise ValueError("v3 text-questions kit is detached from certified units.")
+        for item, unit in zip(items, units, strict=True):
+            distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+            frame = (
+                distinctness.get("question_frame")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
+            normalized = item.strip().casefold()
+            if (
+                not isinstance(prefixes, list)
+                or not prefixes
+                or not any(
+                    isinstance(prefix, str)
+                    and (
+                        normalized.startswith(prefix.strip().casefold())
+                        and (
+                            len(normalized) == len(prefix.strip())
+                            or not normalized[len(prefix.strip())].isalnum()
+                        )
+                    )
+                    for prefix in prefixes
+                )
+            ):
+                raise ValueError(
+                    "v3 text-question is detached from certified question frame."
+                )
         return
 
     if activity_type == "short-writing":
@@ -503,14 +939,9 @@ def _bind_learner_payload_to_certified_units(
                 "v3 short-writing payload/answer_key is detached from certified constraints."
             )
         for fragment in prompt_fragments:
-            if not _contains_form(guidance, fragment):
+            if not _contains_form(prompt, fragment):
                 raise ValueError(
-                    f"v3 short-writing answer_key.guidance is missing certified form {fragment!r}."
-                )
-            if _contains_form(prompt, fragment):
-                raise ValueError(
-                    f"v3 short-writing payload.prompt contains certified form {fragment!r} "
-                    "verbatim."
+                    f"v3 short-writing payload.prompt is missing certified constraint {fragment!r}."
                 )
         return
 
@@ -654,6 +1085,11 @@ class EngineLessonBaker:
             raw = generator(prompt)
             model_id = self._generator_model_id(generator)
             parsed = _parse_payload(raw)
+            canonicalization_events = _canonicalize_redundant_payload_fields(parsed)
+            context = telemetry_ctx.get()
+            if context is not None:
+                for event in canonicalization_events:
+                    context.record_event(event)
             self._inject_model_provenance(parsed, model_id)
             assert isinstance(raw, str)  # enforced by _parse_payload
             return parsed, raw, attempt, model_id
@@ -680,16 +1116,13 @@ class EngineLessonBaker:
         repair_round: int | None,
         prior_errors: tuple[SlotError, ...],
     ) -> str:
-        """Annotate a one-slot callback without changing the v3.2 pack body."""
+        """Render a repair request containing only the immutable failed slot."""
         prior_errors_section = ""
         if prior_errors:
             prior_errors_section = (
                 "=== V3 PRIOR REJECTION ERRORS (fix these) ===\n```json\n"
                 + json.dumps(
-                    [
-                        {"message": error.cause, "slot_id": error.slot_id}
-                        for error in prior_errors
-                    ],
+                    [{"message": error.cause, "slot_id": error.slot_id} for error in prior_errors],
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -700,7 +1133,7 @@ class EngineLessonBaker:
             tuple(
                 item
                 for item in (
-                    render_phase_prompt(context),
+                    render_phase_prompt(one_slot_context(context, slot_id=slot_id)),
                     prior_errors_section,
                     "=== V3 REPAIR REQUEST (metadata) ===\n```json\n"
                     + json.dumps(
@@ -732,7 +1165,6 @@ class EngineLessonBaker:
         return matches[0]
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
-        del focus
         job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
         context = TelemetryContext(
             job_id=job_id if isinstance(job_id, str) else None,
@@ -749,11 +1181,15 @@ class EngineLessonBaker:
         try:
             try:
                 anchor_text = _anchor_text(anchor)
-                slots = _lesson_slots(duration)
+                slots = _lesson_slots(duration, focus)
                 bundle = self.resolve_data_bundle()
                 with data.use_bundle(bundle):
                     inventory = inventory_from_anchor(
-                        anchor_text, scheduled_types=tuple(slot.requested_type for slot in slots)
+                        anchor_text,
+                        scheduled_types=_inventory_candidate_types(slots),
+                        replacement_types=_inventory_replacement_types(slots),
+                        duration_minutes=duration,
+                        focus=focus,
                     )
                     preflight = preflight_lesson(
                         AnchorWindow(
@@ -773,6 +1209,14 @@ class EngineLessonBaker:
                             "Bake failed: insufficient_anchor_capacity before generation.",
                             blames_source=False,
                         )
+                    try:
+                        validate_degree_lesson_plan(preflight.allocation)
+                    except ValueError as error:
+                        raise FloorUnmetError(
+                            "Bake failed: certified lesson plan did not meet "
+                            "activity quality rules.",
+                            blames_source=False,
+                        ) from error
                     blocks: list[dict[str, Any]] = []
                     rejected: list[dict[str, Any]] = []
                     phase_evaluations: list[tuple[Any, str, int]] = []
@@ -782,7 +1226,9 @@ class EngineLessonBaker:
                     for phase in sorted({slot.phase for slot in preflight.allocation.slots}):
                         context.update_progress_db(phase=phase, step="generation")
                         # The evaluator independently recreates and hashes this same context.
-                        phase_context = build_phase_context(preflight.allocation, phase=phase)
+                        phase_context = build_phase_context(
+                            preflight.allocation, phase=phase, focus=focus
+                        )
                         initial_payload, initial_raw, initial_attempt, _ = self._call_generator(
                             render_phase_prompt(phase_context),
                             raw_attempt_counter=raw_attempt_counter,
@@ -800,6 +1246,9 @@ class EngineLessonBaker:
                                 validate_elicitation_shape,
                                 validate_gap_construction,
                                 validate_distractor_adjacency,
+                                validate_non_revealing_sequence,
+                                validate_activity_purpose,
+                                validate_visible_writing_constraints,
                             ),
                             raw_contract_validator=_raw_activity_contract,
                             repair_renderer=lambda request: self._render_repair(
@@ -814,23 +1263,27 @@ class EngineLessonBaker:
                                 raw_out_root=raw_out_root,
                                 raw_bake_id=raw_bake_id,
                             ),
+                            focus=focus,
                         )
                         self._record_qualification_evaluation(phase, evaluated)
                         phase_evaluations.append((evaluated, initial_raw, initial_attempt))
                         for block in evaluated.blocks:
                             if block.accepted:
-                                blocks.append(self._block(block, len(blocks)))
+                                allocated = next(
+                                    slot
+                                    for slot in preflight.allocation.slots
+                                    if slot.slot_id == block.slot_id
+                                )
+                                blocks.append(
+                                    self._block(
+                                        block,
+                                        len(blocks),
+                                        plan=allocated.plan,
+                                        anchor_text=anchor_text,
+                                    )
+                                )
                                 continue
-                            # #402 flag-don't-drop: a failed slot ships in place,
-                            # engine-flagged, when its last shape-valid attempt
-                            # can legally render; otherwise the rejected tray
-                            # carries a contentless notice.  Never both, and the
-                            # engine-side disposition stays ``dropped``.
-                            flagged = self._flagged_block(block, len(blocks))
-                            if flagged is not None:
-                                blocks.append(flagged)
-                            else:
-                                rejected.append(self._flag_notice(block))
+                            rejected.append(self._flag_notice(block))
                     if any(
                         evaluated.disposition != "teacher_ready"
                         for evaluated, _initial_raw, _initial_attempt in phase_evaluations
@@ -844,16 +1297,13 @@ class EngineLessonBaker:
                                         artifact_dir,
                                         initial_attempt,
                                     )
-                        # #402: the lesson ships with visible flagged content
-                        # instead of failing.  Only a bake with nothing visible
-                        # at all still fails closed — an empty lesson would be
-                        # its own kind of silent drop.
-                        if not blocks:
-                            raise FloorUnmetError(
-                                "Bake failed: v3 serialization did not produce every "
-                                "certified slot.",
-                                blames_source=False,
-                            )
+                        # A teacher-ready lesson has no failed slots.  Shipping
+                        # a shape-valid but semantically rejected activity made
+                        # the product report success for unusable lessons.
+                        raise FloorUnmetError(
+                            "Bake failed: v3 serialization did not produce every certified slot.",
+                            blames_source=False,
+                        )
                     context.update_progress_db(step="assembly")
                     return {"blocks": blocks, "rejected": rejected}
             except (data.DataConfigError, data.DataDriftError) as error:
@@ -991,6 +1441,8 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
+        if request.activity_type == "quiz":
+            return _deterministic_quiz_replacement(request)
         payload, _raw, _attempt, _model_id = self._call_generator(
             self._repair_prompt(
                 request.prompt_context,
@@ -1006,13 +1458,34 @@ class EngineLessonBaker:
         return self._one_slot_record(payload, request.slot_id)
 
     @staticmethod
-    def _block(evaluation: Any, index: int) -> dict[str, Any]:
+    def _block(
+        evaluation: Any,
+        index: int,
+        *,
+        plan: Any | None = None,
+        anchor_text: str | None = None,
+    ) -> dict[str, Any]:
         activity = evaluation.activity
         assert isinstance(activity, Mapping)
         payload = activity["payload"]
         answer_key = activity["answer_key"]
         assert isinstance(payload, Mapping) and isinstance(answer_key, Mapping)
         activity_type = evaluation.activity_type
+        external_options = _has_external_options(payload, anchor_text)
+        rendered_answer_key = dict(answer_key)
+        if activity_type == "text-questions" and plan is not None:
+            source_guidance = tuple(
+                dict.fromkeys(
+                    unit.rendering_surface
+                    for unit in plan.units
+                    if isinstance(unit.rendering_surface, str) and unit.rendering_surface.strip()
+                )
+            )
+            if source_guidance:
+                rendered_answer_key["guidance"] = "Орієнтири для вчителя:\n" + "\n".join(
+                    f"{position}. {surface}"
+                    for position, surface in enumerate(source_guidance, start=1)
+                )
         # Truthful provenance only.  A missing generator identity is stamped as
         # "unknown" rather than the old silent GEMMA default that made every
         # block falsely claim google-ais/gemma-4-31b-it.
@@ -1023,24 +1496,65 @@ class EngineLessonBaker:
             "title": _TITLES[activity_type],
             "level": "b1",
             "payload": dict(payload),
-            "answer_key": dict(answer_key),
+            "answer_key": rendered_answer_key,
             "provenance": {"source": "generated", "generator": model, "gates": ["v3"]},
         }
+        outer_answer_key = dict(rendered_answer_key)
+        if activity_type == "error-correction" and plan is not None:
+            corrections: list[dict[str, str]] = []
+            for unit in plan.units:
+                wrong_sentence = unit.allowed_forms[0]
+                source_sentence = unit.rendering_surface
+                correction = unit.expected_key_or_rule.value
+                if not isinstance(source_sentence, str):
+                    continue
+                wrong_words = _UKRAINIAN_WORD_RE.findall(wrong_sentence)
+                source_words = _UKRAINIAN_WORD_RE.findall(source_sentence)
+                if len(wrong_words) != len(source_words):
+                    continue
+                changed = [
+                    position
+                    for position, (wrong, source) in enumerate(
+                        zip(wrong_words, source_words, strict=True)
+                    )
+                    if wrong.casefold() != source.casefold()
+                ]
+                if (
+                    len(changed) != 1
+                    or source_words[changed[0]].casefold() != correction.casefold()
+                ):
+                    continue
+                corrections.append(
+                    {
+                        "sentence": wrong_sentence,
+                        "error": wrong_words[changed[0]],
+                        "correction": correction,
+                    }
+                )
+            if len(corrections) != len(plan.units):
+                raise ValueError(
+                    "Certified error-correction plan could not produce its UI answer key."
+                )
+            outer_answer_key["corrections"] = corrections
         return {
             "id": f"block-{index + 1}",
             "phase": evaluation.phase,
             "type": activity_type,
             "mode": _mode(evaluation.phase, activity_type),
             "activity": envelope,
-            "answer_key": dict(answer_key),
-            "mark": "ok",
-            "note": "Згенеровано з опори; гейти v3 пройдено.",
+            "answer_key": outer_answer_key,
+            "mark": "warn" if external_options else "ok",
+            "note": (
+                "Є варіанти поза текстом опори — звірте вправу перед уроком."
+                if external_options
+                else "Згенеровано з опори; гейти v3 пройдено."
+            ),
             "edited": False,
             "provenance": {
                 "source": "generated",
                 "generator": model,
                 "gates": ["v3"],
-                "external_options": False,
+                "external_options": external_options,
             },
             "quality": "engine_ok",
             "flag_reason_uk": None,

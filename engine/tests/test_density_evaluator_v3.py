@@ -62,9 +62,9 @@ def _payload(allocation: LessonAllocation, *, unit_counts: dict[str, int] | None
                 "slot_id": kit["slot_id"],
                 "type": kit["type"],
                 "activity": {"type": kit["type"], "instruction": "fixture"},
-                "serialized_units": [
-                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-                ][: counts.get(kit["slot_id"])],
+                "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]][
+                    : counts.get(kit["slot_id"])
+                ],
             }
             for kit in context["type_kits"]
         ]
@@ -105,6 +105,11 @@ def test_cause_vocabulary_covers_every_bake_path_rejection_stage() -> None:
         "gap_construction": "gap_construction",
         "distractor_adjacency": "distractor_adjacency: vesum_adjacent_distractors",
         "distractor_repeated_token": "distractor_adjacency: error_correction_no_repeated_tokens",
+        "non_revealing_sequence": "non_revealing_sequence: distinct_learner_stems",
+        "activity_purpose": "activity_purpose: source_grounded_meaning",
+        "short_writing_visible_constraints": (
+            "short_writing_visible_constraints: learner_facing_requirements"
+        ),
         "serialization_exactness": "serialization_exactness: scheduled_unit_references",
         "raw_contract": "raw_contract: pilot_activity_schema",
         "repair_renderer": "repair_renderer: slot_response_unavailable",
@@ -120,6 +125,7 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
     prompt = render_phase_prompt(context)
     kit = context["type_kits"][0]
     forms = [unit["allowed_forms"][0] for unit in kit["certified_units"]]
+    units = kit["certified_units"]
     response = {
         "slots": [
             {
@@ -131,22 +137,26 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
                         "instruction": "Оберіть правильний варіант.",
                         "items": [
                             {
-                                "question": form,
-                                "options": [form, "альтернатива"],
-                                "correct": 0,
+                                "question": unit["gapped_rendering_surface"],
+                                "options": unit["distinctness"]["choice_bank"],
+                                "correct": unit["distinctness"]["choice_bank"].index(form),
                             }
-                            for form in forms
+                            for form, unit in zip(forms, units, strict=True)
                         ],
                     },
                     "answer_key": {
                         "items": [
-                            {"index": index, "correct": 0} for index in range(len(forms))
+                            {
+                                "index": index,
+                                "correct": units[index]["distinctness"]["choice_bank"].index(
+                                    form
+                                ),
+                            }
+                            for index, form in enumerate(forms)
                         ]
                     },
                 },
-                "serialized_units": [
-                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-                ],
+                "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]],
             }
         ]
     }
@@ -160,10 +170,10 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
     )
 
     assert "serialized_units is an ordered reference list" in prompt
-    assert "the slots array is an exact one-to-one cover" in prompt
-    assert "activity is an object, never a type string or an ID" in prompt
-    assert "CLOZE_CONTEXT_VISIBLE_MAJORITY" in prompt
-    assert "FILL_IN_DISTINCT_CARRIER_SENTENCES" in prompt
+    assert "exact one-to-one cover" in prompt
+    assert 'activity contains exactly {"payload":{...},"answer_key":{...}}' in prompt
+    assert "gapped_rendering_surface" in prompt
+    assert "eight questions reveal successive words" in prompt
     assert [(block.disposition, block.observed_units) for block in evaluated.blocks] == [
         ("ready", 8)
     ]
@@ -334,10 +344,10 @@ def test_gate_dropped_cloze_names_the_gap_construction_rule_for_repair() -> None
         max_repair_rounds=1,
     )
 
-    assert repair_causes == [("gap_construction: cloze_context_visible_majority",)]
+    assert repair_causes == [("gap_construction: cloze_local_context",)]
     assert evaluated.blocks[0].disposition == "dropped"
     assert [error.cause for error in evaluated.blocks[0].errors] == [
-        "gap_construction: cloze_context_visible_majority",
+        "gap_construction: cloze_local_context",
         "repair_exhausted: no certified replacement serialized successfully",
     ]
 
@@ -413,9 +423,7 @@ def test_ready_tray_does_not_block_repair_for_another_slot() -> None:
 def test_missing_scheduled_slots_repair_only_the_missing_ids() -> None:
     allocation = _allocation("quiz", "cloze", "fill-in")
     subset = _payload(allocation)
-    subset["slots"] = [
-        record for record in subset["slots"] if record["slot_id"] == "P1-A1"
-    ]
+    subset["slots"] = [record for record in subset["slots"] if record["slot_id"] == "P1-A1"]
     repair_calls: list[tuple[int, str]] = []
 
     def repair(request: object) -> dict:
@@ -445,9 +453,7 @@ def test_missing_scheduled_slots_repair_only_the_missing_ids() -> None:
 def test_missing_scheduled_slot_exhausts_both_repairs_then_fails_closed() -> None:
     allocation = _allocation("quiz", "cloze")
     subset = _payload(allocation)
-    subset["slots"] = [
-        record for record in subset["slots"] if record["slot_id"] == "P1-A1"
-    ]
+    subset["slots"] = [record for record in subset["slots"] if record["slot_id"] == "P1-A1"]
     repair_calls: list[tuple[int, str]] = []
 
     def repair(request: object) -> dict:

@@ -3,25 +3,849 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import sqlite3
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
-from dataclasses import replace
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+from typing import Final
+from urllib.parse import quote
 
+from . import data
 from .gates import vesum_tags
+from .linguistics import verify_lemma
 from .short_writing_constraints_v3 import ConstraintSpec, VesumToken
+from .teacher_ready_density_v3 import COGNITIVE_OPERATION, phase_shape_for
 from .unit_builders_v3 import (
     AnchorSentence,
     AnchorToken,
     AtlasPassPair,
     CertificationInventory,
     EvidenceCandidate,
+    MarkTheWordsRequest,
     ShortWritingTask,
     TrueFalseFact,
 )
 
-_SENTENCE_RE = re.compile(r"[^.!?…]+[.!?…]?")
+# The inventory owns this closed semantic layer because VESUM can certify an
+# inflected degree form but cannot decide whether drilling that adjective is
+# pedagogically meaningful. Unknown lemmas stay source-bound or unavailable.
+DEGREE_CATALOG_VERSION: Final = "degree-quality.v3"
+
+
+@dataclass(frozen=True)
+class DegreeLadder:
+    positive: str
+    comparative: str
+    superlative: str
+    context_surface: str
+
+
+@dataclass(frozen=True)
+class DegreeErrorFrame:
+    rule_id: str
+    source_lemma: str
+    correct_surface: str
+    learner_surface: str
+    correction: str
+    frame_family: str
+    semantic_warrant: str
+    degree_specific: bool
+
+
+@dataclass(frozen=True)
+class DegreePracticeFrame:
+    answer_lemma: str
+    answer: str
+    rendering_surface: str
+    degree_class: str
+    frame_family: str
+    semantic_warrant: str
+    morphology_class: str = "regular"
+    choice_bank: tuple[str, ...] = ()
+    exclusion_warrants: tuple[tuple[str, str], ...] = ()
+
+
+DENIED_DEGREE_LEMMAS: Final[frozenset[str]] = frozenset(
+    {
+        "ідеальний",
+        "єдиний",
+        "цегляний",
+        "панельний",
+        "дерев'яний",
+        "дерев’яний",
+        "металевий",
+        "перший",
+        "другий",
+        "третій",
+        "рожевий",
+        "червоний",
+        "синій",
+        "зелений",
+    }
+)
+DENIED_DEGREE_SURFACES: Final[frozenset[str]] = frozenset({"найважливіше"})
+# Safe only when already present in the source.  These lemmas may support
+# recognition/cloze, but never the generated degree ladders or catalog frames.
+SOURCE_ONLY_DEGREE_LEMMAS: Final[frozenset[str]] = frozenset({"потрібний"})
+
+_DEGREE_LADDER_ROWS: Final = (
+    ("простий", "простіший", "найпростіший", "Цей план простіший, ніж попередній."),
+    ("тихий", "тихіший", "найтихіший", "Увечері цей район тихіший за центр."),
+    ("темний", "темніший", "найтемніший", "Коридор без вікон темніший, ніж кухня."),
+    (
+        "світлий",
+        "світліший",
+        "найсвітліший",
+        "Кабінет із двома вікнами світліший за коридор.",
+    ),
+    (
+        "холодний",
+        "холодніший",
+        "найхолодніший",
+        "Сьогоднішній ранок холодніший, ніж учорашній.",
+    ),
+    (
+        "новий",
+        "новіший",
+        "найновіший",
+        "Будинок біля парку новіший за будинок у центрі.",
+    ),
+    (
+        "старий",
+        "старіший",
+        "найстаріший",
+        "Гуртожиток старіший, ніж сусідній офісний центр.",
+    ),
+    (
+        "корисний",
+        "корисніший",
+        "найкорисніший",
+        "Окремий кабінет корисніший для роботи, ніж місце на кухні.",
+    ),
+    (
+        "красивий",
+        "красивіший",
+        "найкрасивіший",
+        "Район біля парку красивіший, ніж промислова околиця.",
+    ),
+    ("дорогий", "дорожчий", "найдорожчий", "Просторий варіант дорожчий за маленький."),
+    (
+        "дешевий",
+        "дешевший",
+        "найдешевший",
+        "Будинок без ліфта дешевший за будинок з ліфтом.",
+    ),
+    ("дивний", "дивніший", "найдивніший", "Опис двору дивніший, ніж фотографії."),
+    (
+        "привітний",
+        "привітніший",
+        "найпривітніший",
+        "Цей сусід привітніший за попереднього.",
+    ),
+    ("теплий", "тепліший", "найтепліший", "Цегляний будинок тепліший, ніж панельний."),
+    ("молодий", "молодший", "наймолодший", "Цей власник молодший за попереднього."),
+    ("малий", "менший", "найменший", "Цей кабінет менший за спальню."),
+    (
+        "близький",
+        "ближчий",
+        "найближчий",
+        "Цей район ближчий до центру, ніж попередній.",
+    ),
+    ("низький", "нижчий", "найнижчий", "Четвертий поверх нижчий за шостий."),
+    ("добрий", "кращий", "найкращий", "Варіант із кабінетом кращий за однокімнатний."),
+    ("поганий", "гірший", "найгірший", "З усіх варіантів цей найгірший."),
+    ("великий", "більший", "найбільший", "Серед трьох будинків цей найбільший."),
+    ("високий", "вищий", "найвищий", "Цей поверх вищий за попередній."),
+    ("широкий", "ширший", "найширший", "Новий коридор ширший за старий."),
+    ("вузький", "вужчий", "найвужчий", "Цей прохід вужчий, ніж коридор."),
+    ("короткий", "коротший", "найкоротший", "Цей маршрут так само короткий, як перший."),
+    ("легкий", "легший", "найлегший", "Цей підручник так само легкий, як перший."),
+    ("довгий", "довший", "найдовший", "Південний маршрут довший, ніж північний."),
+    ("важкий", "важчий", "найважчий", "Сьогоднішній шлях важчий, ніж учорашній."),
+    ("безпечний", "безпечніший", "найбезпечніший", "З усіх маршрутів цей найбезпечніший."),
+    ("чистий", "чистіший", "найчистіший", "Після ремонту кабінет став ще чистіший."),
+    ("швидкий", "швидший", "найшвидший", "Експрес ще швидший за звичайний автобус."),
+    ("повільний", "повільніший", "найповільніший", "Старий ліфт ще повільніший за новий."),
+    ("зручний", "зручніший", "найзручніший", "Новий розклад ще зручніший для родини."),
+    ("просторий", "просторіший", "найпросторіший", "Кабінет після ремонту ще просторіший."),
+    ("спокійний", "спокійніший", "найспокійніший", "Серед усіх районів цей найспокійніший."),
+    ("глибокий", "глибший", "найглибший", "З усіх басейнів цей найглибший."),
+    ("важливий", "важливіший", "найважливіший", "Серед усіх критеріїв цей найважливіший."),
+    ("складний", "складніший", "найскладніший", "Цей план складніший, ніж попередній."),
+    ("галасливий", "галасливіший", "найгаласливіший", "Центр галасливіший за передмістя."),
+    ("звичайний", "звичайніший", "найзвичайніший", "Перший опис звичайніший за другий."),
+    ("далекий", "дальший", "найдальший", "Цей будинок дальший від центру, ніж попередній."),
+)
+_DEGREE_LADDERS: Final = tuple(DegreeLadder(*row) for row in _DEGREE_LADDER_ROWS)
+DEGREE_LADDERS: Final = MappingProxyType({row.positive: row for row in _DEGREE_LADDERS})
+DEGREE_LEMMA_INDEX: Final = MappingProxyType(
+    {
+        lemma: row
+        for row in _DEGREE_LADDERS
+        for lemma in (row.positive, row.comparative, row.superlative)
+    }
+)
+
+
+def _practice_frame(
+    answer_lemma: str,
+    degree_class: str,
+    rendering_surface: str,
+    *,
+    frame_family: str,
+    semantic_warrant: str,
+    morphology_class: str = "regular",
+    answer_surface: str | None = None,
+    choice_bank: tuple[str, ...] = (),
+) -> DegreePracticeFrame:
+    ladder = DEGREE_LADDERS[answer_lemma]
+    answer = (
+        answer_surface
+        or {
+            "positive": ladder.positive,
+            "comparative": ladder.comparative,
+            "superlative": ladder.superlative,
+        }[degree_class]
+    )
+    if rendering_surface.count(answer) != 1:
+        raise RuntimeError("Degree practice frame must contain its answer exactly once.")
+    bank = choice_bank or (ladder.positive, ladder.comparative, ladder.superlative)
+    return DegreePracticeFrame(
+        answer_lemma=answer_lemma,
+        answer=answer,
+        rendering_surface=rendering_surface,
+        degree_class=degree_class,
+        frame_family=frame_family,
+        semantic_warrant=semantic_warrant,
+        morphology_class=morphology_class,
+        choice_bank=bank,
+        exclusion_warrants=tuple(
+            (
+                option,
+                f"{semantic_warrant}; {option} conflicts with the certified degree cue",
+            )
+            for option in bank
+            if option != answer
+        ),
+    )
+
+
+def _certify_six_form_banks(
+    frames: tuple[DegreePracticeFrame, ...],
+    omitted_by_row: tuple[tuple[str, str], ...],
+) -> tuple[DegreePracticeFrame, ...]:
+    """Bind one explicit, auditable semantic bank to every closed frame."""
+    answers = tuple(frame.answer for frame in frames)
+    answer_lemmas = {frame.answer: frame.answer_lemma for frame in frames}
+    if len(frames) != 8 or len(answers) != len(set(answers)) or len(omitted_by_row) != 8:
+        raise RuntimeError("Degree semantic-bank catalogs require eight unique rows.")
+    certified: list[DegreePracticeFrame] = []
+    for frame, omitted in zip(frames, omitted_by_row, strict=True):
+        if len(omitted) != 2 or len(set(omitted)) != 2 or frame.answer in omitted:
+            raise RuntimeError("Degree semantic-bank exclusions must omit two other answers.")
+        bank = tuple(answer for answer in answers if answer not in set(omitted))
+        if len(bank) != 6 or frame.answer not in bank:
+            raise RuntimeError("Degree semantic-bank catalog did not produce a six-form bank.")
+        exclusions = tuple(
+            (
+                option,
+                f"{frame.semantic_warrant}; carrier supplies no warrant for "
+                f"{answer_lemmas[option]}",
+            )
+            for option in bank
+            if option != frame.answer
+        )
+        certified.append(
+            replace(
+                frame,
+                choice_bank=bank,
+                exclusion_warrants=exclusions,
+            )
+        )
+    return tuple(certified)
+
+
+DEGREE_RECOGNITION_FRAMES: Final = (
+    _practice_frame(
+        "простий",
+        "positive",
+        "Цей план так само простий, як попередній.",
+        frame_family="equative-similarity.v1",
+        semantic_warrant="так само ... як licenses the positive degree",
+    ),
+    _practice_frame(
+        "тихий",
+        "positive",
+        "Цей район так само тихий, як центр.",
+        frame_family="equative-similarity.v1",
+        semantic_warrant="так само ... як licenses the positive degree",
+    ),
+    _practice_frame(
+        "темний",
+        "comparative",
+        DEGREE_LADDERS["темний"].context_surface,
+        frame_family="explicit-nizh-contrast.v1",
+        semantic_warrant="ніж introduces a two-way comparison",
+    ),
+    _practice_frame(
+        "світлий",
+        "comparative",
+        DEGREE_LADDERS["світлий"].context_surface,
+        frame_family="explicit-za-contrast.v1",
+        semantic_warrant="за introduces a two-way comparison",
+    ),
+    _practice_frame(
+        "холодний",
+        "comparative",
+        DEGREE_LADDERS["холодний"].context_surface,
+        frame_family="temporal-nizh-contrast.v1",
+        semantic_warrant="ніж contrasts two mornings",
+    ),
+    _practice_frame(
+        "новий",
+        "comparative",
+        DEGREE_LADDERS["новий"].context_surface,
+        frame_family="locative-za-contrast.v1",
+        semantic_warrant="за contrasts two buildings",
+    ),
+    _practice_frame(
+        "старий",
+        "comparative",
+        "За роком будівництва цей гуртожиток старіший за два сусідні будинки.",
+        frame_family="ordinal-za-contrast.v2",
+        semantic_warrant="за introduces an explicit age comparison",
+    ),
+    _practice_frame(
+        "корисний",
+        "comparative",
+        "Для роботи з дому окремий кабінет корисніший за місце на кухні.",
+        frame_family="purpose-za-contrast.v2",
+        semantic_warrant="за introduces an explicit usefulness comparison",
+    ),
+)
+
+DEGREE_CLOZE_PASSAGE: Final = (
+    "Ми обирали між трьома квартирами. "
+    "Перша була така сама красива, як на фотографіях. "
+    "Район біля неї був такий самий тихий, як район біля другої квартири. "
+    "Проте оренда першої квартири була дорожча, ніж ми планували. "
+    "Друга була дешевша за першу. "
+    "Проте її кухня виявилася меншою, ніж у першій квартирі. "
+    "Третя квартира була тепліша за дві інші. "
+    "З усіх трьох вона була найсвітліша завдяки трьом великим вікнам. "
+    "Водночас до парку ця квартира була найближча з усіх. "
+    "Після огляду ми обрали третю квартиру."
+)
+DEGREE_CLOZE_FRAMES: Final = (
+    _practice_frame(
+        "красивий",
+        "positive",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="красива",
+        choice_bank=("красива", "красивіша", "найкрасивіша"),
+        frame_family="coherent-equative-description.v1",
+        semantic_warrant="така сама ... як licenses the positive degree",
+    ),
+    _practice_frame(
+        "тихий",
+        "positive",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="тихий",
+        choice_bank=("тихий", "тихіший", "найтихіший"),
+        frame_family="coherent-equative-description.v1",
+        semantic_warrant="такий самий ... як licenses the positive degree",
+    ),
+    _practice_frame(
+        "дорогий",
+        "comparative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="дорожча",
+        choice_bank=("дорога", "дорожча", "найдорожча"),
+        frame_family="coherent-budget-contrast.v1",
+        semantic_warrant="ніж ми планували licenses a comparative",
+    ),
+    _practice_frame(
+        "дешевий",
+        "comparative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="дешевша",
+        choice_bank=("дешева", "дешевша", "найдешевша"),
+        frame_family="coherent-budget-contrast.v1",
+        semantic_warrant="за першу licenses a comparative",
+    ),
+    _practice_frame(
+        "малий",
+        "comparative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="меншою",
+        choice_bank=("малою", "меншою", "найменшою"),
+        frame_family="coherent-feature-contrast.v1",
+        semantic_warrant="ніж у першій квартирі licenses a comparative",
+    ),
+    _practice_frame(
+        "теплий",
+        "comparative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="тепліша",
+        choice_bank=("тепла", "тепліша", "найтепліша"),
+        frame_family="coherent-feature-contrast.v1",
+        semantic_warrant="за дві інші licenses a comparative",
+    ),
+    _practice_frame(
+        "світлий",
+        "superlative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="найсвітліша",
+        choice_bank=("світла", "світліша", "найсвітліша"),
+        frame_family="coherent-choice-ranking.v1",
+        semantic_warrant="the third option is ranked across all three",
+    ),
+    _practice_frame(
+        "близький",
+        "superlative",
+        DEGREE_CLOZE_PASSAGE,
+        answer_surface="найближча",
+        choice_bank=("близька", "ближча", "найближча"),
+        frame_family="coherent-choice-ranking.v1",
+        semantic_warrant="the third option is ranked across all three",
+    ),
+)
+
+_DEGREE_FORMATION_FRAMES: Final = (
+    _practice_frame(
+        "складний",
+        "comparative",
+        "Після третього невдалого огляду почався ще складніший етап пошуку. (складний)",
+        frame_family="guided-state-change.v2",
+        semantic_warrant="ще after a state change licenses складніший",
+    ),
+    _practice_frame(
+        "галасливий",
+        "comparative",
+        "Після тихого передмістя ми відразу помітили, що центр ще галасливіший. "
+        "(галасливий)",
+        frame_family="guided-perception-change.v2",
+        semantic_warrant="ще after a perceived contrast licenses галасливіший",
+    ),
+    _practice_frame(
+        "дорогий",
+        "comparative",
+        "Із двох подібних оголошень варіант у центрі дорожчий за варіант біля парку. "
+        "(дорогий)",
+        frame_family="guided-listing-contrast.v2",
+        semantic_warrant="за introduces the requested price comparison",
+        morphology_class="alternation",
+    ),
+    _practice_frame(
+        "близький",
+        "comparative",
+        "Для щоденних поїздок будинок біля трамвая ближчий до центру, ніж будинок "
+        "на околиці. (близький)",
+        frame_family="guided-commute-contrast.v2",
+        semantic_warrant="ніж introduces the requested distance comparison",
+        morphology_class="alternation",
+    ),
+    _practice_frame(
+        "високий",
+        "comparative",
+        "Шостий поверх вищий за четвертий; родина врахувала це під час вибору. "
+        "(високий)",
+        frame_family="guided-floor-contrast.v2",
+        semantic_warrant="за introduces the requested floor comparison",
+        morphology_class="alternation",
+    ),
+    _practice_frame(
+        "добрий",
+        "comparative",
+        "Після обговорення ми вирішили, що варіант пані Оксани кращий за решту. "
+        "(добрий)",
+        frame_family="guided-decision-contrast.v2",
+        semantic_warrant="за решту licenses the suppletive comparative кращий",
+        morphology_class="suppletive",
+    ),
+    _practice_frame(
+        "поганий",
+        "superlative",
+        "Через холод і темряву другий варіант — найгірший з усіх. (поганий)",
+        frame_family="guided-evidence-ranking.v2",
+        semantic_warrant="з усіх plus the stated defects licenses найгірший",
+        morphology_class="suppletive",
+    ),
+    _practice_frame(
+        "великий",
+        "superlative",
+        "Серед трьох оглянутих будинків третій був найбільший за площею. (великий)",
+        frame_family="guided-set-ranking.v2",
+        semantic_warrant="серед трьох licenses the suppletive superlative найбільший",
+        morphology_class="suppletive",
+    ),
+)
+DEGREE_FORMATION_FRAMES: Final = _certify_six_form_banks(
+    _DEGREE_FORMATION_FRAMES,
+    (
+        ("галасливіший", "дорожчий"),
+        ("дорожчий", "ближчий"),
+        ("ближчий", "вищий"),
+        ("вищий", "кращий"),
+        ("кращий", "найгірший"),
+        ("найгірший", "складніший"),
+        ("найбільший", "складніший"),
+        ("складніший", "галасливіший"),
+    ),
+)
+
+DEGREE_SYNTAX_FRAMES: Final = (
+    _practice_frame(
+        "короткий",
+        "positive",
+        "Після зміни розкладу новий маршрут так само короткий, як попередній.",
+        frame_family="discourse-equivalence.v2",
+        semantic_warrant="так само ... як licenses the positive form",
+    ),
+    _practice_frame(
+        "легкий",
+        "positive",
+        "Після редагування цей текст так само легкий для читання, як попередній.",
+        frame_family="discourse-equivalence.v2",
+        semantic_warrant="так само ... як licenses the positive form",
+    ),
+    _practice_frame(
+        "довгий",
+        "comparative",
+        "Що довший був пошук, то простішими ставали наші вимоги.",
+        frame_family="correlative-change.v2",
+        semantic_warrant="що ... то licenses the comparative form",
+    ),
+    _practice_frame(
+        "важливий",
+        "comparative",
+        "З кожним оглядом цей критерій дедалі важливіший.",
+        frame_family="progressive-change.v2",
+        semantic_warrant="дедалі licenses the comparative form",
+    ),
+    _practice_frame(
+        "теплий",
+        "comparative",
+        "Після утеплення цей будинок ще тепліший.",
+        frame_family="resultative-change.v2",
+        semantic_warrant="ще after a resultative change licenses a comparative",
+    ),
+    _practice_frame(
+        "важкий",
+        "comparative",
+        "Підйом на шостий поверх важчий за підйом на другий.",
+        frame_family="za-effort-contrast.v2",
+        semantic_warrant="за licenses the comparative form",
+    ),
+    _practice_frame(
+        "просторий",
+        "comparative",
+        "Після перепланування цей кабінет значно просторіший, ніж був раніше.",
+        frame_family="before-after-nizh.v2",
+        semantic_warrant="ніж був раніше licenses the comparative form",
+    ),
+    _practice_frame(
+        "дорогий",
+        "comparative",
+        "Чим ближче до центру розташований будинок, тим дорожчий він зазвичай.",
+        frame_family="correlative-location-cost.v2",
+        semantic_warrant="чим ... тим licenses the comparative form",
+    ),
+)
+
+_DEGREE_CONTEXT_FRAMES: Final = (
+    _practice_frame(
+        "чистий",
+        "comparative",
+        "Після генерального прибирання перший під'їзд тепер ще чистіший за другий.",
+        frame_family="result-context.v2",
+        semantic_warrant="прибирання and ще warrant чистіший",
+    ),
+    _practice_frame(
+        "швидкий",
+        "comparative",
+        "— Чому ти обираєш експрес? — Він швидший за звичайний автобус: їде без "
+        "пересадок і майже не стоїть у заторах.",
+        frame_family="dialogue-justification.v2",
+        semantic_warrant="direct travel without delays warrants швидший",
+    ),
+    _practice_frame(
+        "повільний",
+        "comparative",
+        "Старий ліфт часто зупиняється між поверхами, тому він повільніший за новий.",
+        frame_family="causal-service-contrast.v2",
+        semantic_warrant="frequent stops warrant повільніший",
+    ),
+    _practice_frame(
+        "зручний",
+        "comparative",
+        "Для родини з дитячим візком маршрут без сходів зручніший за шлях через "
+        "підземний перехід.",
+        frame_family="user-priority-contrast.v2",
+        semantic_warrant="the stroller constraint warrants зручніший",
+    ),
+    _practice_frame(
+        "просторий",
+        "comparative",
+        "Для двох робочих столів кабінет на 28 м² просторіший за кімнату на 16 м².",
+        frame_family="goal-area-contrast.v2",
+        semantic_warrant="two desks and the stated areas warrant просторіший",
+    ),
+    _practice_frame(
+        "спокійний",
+        "superlative",
+        "У другому районі після десятої не чути транспорту; серед трьох він "
+        "найспокійніший.",
+        frame_family="quiet-hours-ranking.v2",
+        semantic_warrant="the absence of night traffic warrants найспокійніший",
+    ),
+    _practice_frame(
+        "безпечний",
+        "superlative",
+        "У третьому районі є освітлені переходи й нічний патруль; з усіх трьох він "
+        "найбезпечніший.",
+        frame_family="safety-feature-ranking.v2",
+        semantic_warrant="the stated safety features warrant найбезпечніший",
+    ),
+    _practice_frame(
+        "важливий",
+        "superlative",
+        "Більшість родин поставила розташування на перше місце, тому цей критерій "
+        "найважливіший серед усіх.",
+        frame_family="declared-priority-ranking.v2",
+        semantic_warrant="first place in the stated priority warrants найважливіший",
+    ),
+)
+DEGREE_CONTEXT_FRAMES: Final = _certify_six_form_banks(
+    _DEGREE_CONTEXT_FRAMES,
+    (
+        ("швидший", "повільніший"),
+        ("повільніший", "зручніший"),
+        ("зручніший", "просторіший"),
+        ("просторіший", "найспокійніший"),
+        ("найспокійніший", "найбезпечніший"),
+        ("найбезпечніший", "найважливіший"),
+        ("найважливіший", "чистіший"),
+        ("чистіший", "швидший"),
+    ),
+)
+
+DEGREE_PARAPHRASE_PAIRS: Final[tuple[tuple[str, str], ...]] = (
+    ("Перша квартира дешевша за другу.", "За другу квартиру доведеться платити більше."),
+    (
+        "Кімната з двома вікнами світліша.",
+        "До кімнати з одним вікном потрапляє менше денного освітлення.",
+    ),
+    (
+        "Будинок біля трамвая ближчий до центру.",
+        "Від будинку на околиці дорога до центру довша.",
+    ),
+    ("Уночі центр галасливіший за передмістя.", "У передмісті вночі легше знайти тишу."),
+    (
+        "Цегляний будинок тепліший за панельний.",
+        "У панельному будинку взимку важче зберігати тепло.",
+    ),
+    (
+        "Будинок із ліфтом зручніший для родини з візком.",
+        "У будинку без ліфта родині з візком складніше пересуватися.",
+    ),
+    ("Кабінет менший за спальню.", "У спальні більше місця."),
+    (
+        "Варіант із двома кімнатами кращий для роботи з дому.",
+        "Однокімнатний варіант гірше відповідає потребі мати окремий кабінет.",
+    ),
+)
+
+DEGREE_PRIORITY_PAIRS: Final[tuple[tuple[str, str], ...]] = (
+    (
+        "Родина з немовлям шукає тиші. У першому районі вночі чути трамваї, "
+        "у другому після десятої немає вуличного шуму.",
+        "Краще підійде другий район, бо він тихіший.",
+    ),
+    (
+        "Для щоденних поїздок важливо швидко діставатися центру. Від першого будинку трамвай "
+        "іде 15 хвилин, від другого — 35.",
+        "Краще підійде перший будинок, бо шлях із нього коротший.",
+    ),
+    (
+        "Родині потрібне місце для двох робочих столів. Кімнати мають 12, 24 і 18 м².",
+        "Краще підійде друга кімната, бо вона найбільша.",
+    ),
+    (
+        "Людині, яка постійно мерзне, потрібна спальня з комфортною температурою. "
+        "У першій кімнаті 17 °C, у другій — 20 °C.",
+        "Краще підійде друга кімната, бо вона тепліша.",
+    ),
+    (
+        "Студент може витрачати на оренду не більше 16 тисяч гривень. Три варіанти "
+        "коштують 12, 18 і 25 тисяч.",
+        "Краще підійде перший варіант, бо він найдешевший.",
+    ),
+    (
+        "Фотографові потрібне денне світло. Перша кімната має два південні вікна, "
+        "друга — одне північне.",
+        "Краще підійде перша кімната, бо вона світліша.",
+    ),
+    (
+        "Літній людині важко ходити сходами. У першому будинку є ліфт, у другому — немає.",
+        "Краще підійде перший будинок, бо він зручніший.",
+    ),
+    (
+        "Покупець хоче сучасні комунікації й не хоче робити капітальний ремонт. "
+        "Будинки зведено 1980, 1995 і 2025 року; третій уже готовий до заселення.",
+        "Краще підійде третій будинок, бо він найновіший і готовий до заселення.",
+    ),
+)
+DEGREE_WRITING_LEMMAS: Final[tuple[str, ...]] = (
+    "малий",
+    "світлий",
+    "теплий",
+    "близький",
+)
+DEGREE_WRITING_SCENARIO: Final = (
+    "Пара, що працює з дому, обирає між двома квартирами. У квартирі А — 42 м², "
+    "два південні вікна, 21 °C і 15 хвилин до центру. У квартирі Б — 58 м², "
+    "одне північне вікно, 18 °C і 35 хвилин до центру. Для них важливі денне "
+    "світло й коротка дорога, але також потрібне місце для двох робочих столів. "
+    "Словникові форми опорних прикметників: малий, світлий, теплий, близький."
+)
+DEGREE_WRITING_WARRANTS: Final[tuple[tuple[str, str], ...]] = (
+    ("малий", "42 м² versus 58 м² warrants a size comparison"),
+    ("світлий", "two windows versus one window warrants a light comparison"),
+    ("теплий", "21 °C versus 18 °C warrants a temperature comparison"),
+    ("близький", "15 minutes versus 35 minutes warrants a distance comparison"),
+)
+DEGREE_BOARD_LEMMAS: Final[tuple[str, ...]] = (
+    "простий",
+    "тихий",
+    "темний",
+    "світлий",
+    "холодний",
+    "новий",
+    "старий",
+    "корисний",
+)
+
+_DEGREE_ERROR_ROWS: Final = (
+    (
+        "agreement-gender.v1",
+        "малий",
+        "Після перепланування нова квартира стала ще менша.",
+        "Після перепланування нова квартира стала ще менший.",
+        "менша",
+        "agreement-gender.v1",
+        "нова квартира requires feminine agreement",
+        False,
+    ),
+    (
+        "agreement-gender.v1",
+        "світлий",
+        "Ця кімната світліша, ніж коридор.",
+        "Ця кімната світліший, ніж коридор.",
+        "світліша",
+        "agreement-gender.v1",
+        "ця кімната requires feminine agreement",
+        False,
+    ),
+    (
+        "comparative-required.v1",
+        "тихий",
+        "Уранці цей район ще тихіший.",
+        "Уранці цей район ще найтихіший.",
+        "тихіший",
+        "comparative-cue.v1",
+        "ще licenses a comparative, not a superlative",
+        True,
+    ),
+    (
+        "superlative-required.v1",
+        "простий",
+        "Це найпростіший варіант з усіх.",
+        "Це простіший варіант з усіх.",
+        "найпростіший",
+        "superlative-set.v1",
+        "з усіх licenses a superlative",
+        True,
+    ),
+    (
+        "comparative-required.v1",
+        "дешевий",
+        "Друга квартира дешевша за першу.",
+        "Друга квартира найдешевша за першу.",
+        "дешевша",
+        "comparative-pair.v1",
+        "за першу licenses a two-way comparative",
+        True,
+    ),
+    (
+        "agreement-predicative.v1",
+        "теплий",
+        "Сонячна спальня тепліша, ніж кухня.",
+        "Сонячна спальня тепліше, ніж кухня.",
+        "тепліша",
+        "predicate-agreement.v1",
+        "спальня requires an agreeing adjective rather than an adverb",
+        True,
+    ),
+    (
+        "comparative-required.v1",
+        "новий",
+        "Новий будинок помітно новіший за сусідній.",
+        "Новий будинок помітно найновіший за сусідній.",
+        "новіший",
+        "comparative-pair.v1",
+        "за сусідній licenses a two-way comparative",
+        True,
+    ),
+    (
+        "comparative-required.v1",
+        "близький",
+        "Цей маршрут удвічі ближчий до центру.",
+        "Цей маршрут удвічі найближчий до центру.",
+        "ближчий",
+        "comparative-scale.v1",
+        "удвічі licenses a comparative scale",
+        True,
+    ),
+)
+DEGREE_ERROR_FRAMES: Final = tuple(DegreeErrorFrame(*row) for row in _DEGREE_ERROR_ROWS)
+
+DEGREE_60_SCHEDULE: Final[tuple[tuple[str, str, str], ...]] = (
+    ("P1-A1", "text-questions", "anchor-comprehension"),
+    ("P1-A2", "quiz", "degree-recognition"),
+    ("P1-A3", "cloze", "degree-cloze"),
+    ("P2-A1", "fill-in", "degree-formation"),
+    ("P2-A2", "match-up", "degree-positive-comparative"),
+    ("P2-A3", "error-correction", "degree-error-correction"),
+    ("P2-A4", "quiz", "degree-comparison-syntax"),
+    ("P2-A5", "fill-in", "degree-context"),
+    ("P3-A1", "match-up", "degree-comparative-superlative"),
+    ("P3-A2", "short-writing", "degree-writing"),
+)
+
+
+def degree_role(slot_id: str, activity_type: str) -> str | None:
+    return next(
+        (
+            role
+            for candidate_slot, candidate_type, role in DEGREE_60_SCHEDULE
+            if candidate_slot == slot_id and candidate_type == activity_type
+        ),
+        None,
+    )
+
+
+def ladder_for_lemma(lemma: str) -> DegreeLadder | None:
+    return DEGREE_LEMMA_INDEX.get(lemma.casefold())
+
+
+_SENTENCE_RE = re.compile(r"[^\n.!?…]+[.!?…]?")
 _TOKEN_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
+_CONTENT_POS = frozenset({"noun", "verb", "adj", "adv"})
+_CLOSED_CLASS_POS = frozenset({"prep", "part", "conj", "intj"})
 _LIST_TYPES = frozenset(
     {
         "true-false",
@@ -31,6 +855,7 @@ _LIST_TYPES = frozenset(
         "error-correction",
         "fill-in",
         "text-questions",
+        "mark-the-words",
     }
 )
 _TEXT_QUESTION_CATEGORIES = (
@@ -43,21 +868,93 @@ _TEXT_QUESTION_CATEGORIES = (
     "anchored_application",
     "anchored_application",
 )
+_TEXT_QUESTION_INTENTS = (
+    "fact-recovery",
+    "fact-recovery",
+    "fact-recovery",
+    "explicit-causal",
+    "explicit-causal",
+    "explicit-causal",
+    "realistic-transfer",
+    "realistic-transfer",
+)
+_EXPLICIT_CAUSAL_RE = re.compile(
+    r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b"
+)
+_ANAPHORIC_WRITING_OPENING_RE = re.compile(
+    r"^(?:так(?:ий|а|е|і)|це|цей|ця|ці|також|тому)\b",
+    re.IGNORECASE,
+)
+_FOCUS_PRIMARY = "degree-primary"
+_FOCUS_REINFORCEMENT = "degree-reinforcement"
+_FOCUS_WRITING = "degree-writing"
+_DEGREE_LIST_ROLES = frozenset(
+    {
+        "degree-recognition",
+        "degree-cloze",
+        "degree-formation",
+        "degree-comparison-syntax",
+        "degree-context",
+        "degree-error-correction",
+    }
+)
+_UNSAFE_TAG_MARKERS = (
+    ":arch",
+    ":rare",
+    ":xp",
+    ":coll",
+    ":obsc",
+    ":long",
+    ":short",
+    ":prop",
+)
+_UNSAFE_ATLAS_ANTONYM_PAIRS = frozenset(
+    {
+        ("ідеальний", "дійсний"),
+        ("маленький", "великий"),
+        ("наступний", "колишній"),
+        ("піти", "стати"),
+    }
+)
+# Atlas synonym lists are sense-aggregated, so a generic "first synonym" can
+# be wrong for the source sense (for example, artillery terminology for a home
+# heating battery).  Admit only relations independently judged safe as
+# context-free B1 match pairs; antonyms remain the preferred relation.
+_SAFE_ATLAS_SYNONYM_PAIRS = frozenset({("квартира", "помешкання")})
 
 
 def _source_id(anchor: str) -> str:
     return f"teacher-anchor:{hashlib.sha256(anchor.encode('utf-8')).hexdigest()}"
 
 
+def _token_parses(surface: str, *, sentence_initial: bool) -> tuple[dict[str, object], ...]:
+    """Resolve ordinary sentence-initial words before capitalized-name homonyms."""
+    variants = (
+        (surface.casefold(), surface) if sentence_initial and surface[:1].isupper() else (surface,)
+    )
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[object, object, object]] = set()
+    for variant in variants:
+        for parse in vesum_tags.parse_word(variant):
+            key = (parse.get("lemma"), parse.get("pos"), parse.get("raw"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(dict(parse))
+    return tuple(rows)
+
+
 def _sentences(anchor: str) -> tuple[AnchorSentence, ...]:
     rows: list[AnchorSentence] = []
-    for sentence_number, text in enumerate(_SENTENCE_RE.findall(anchor), start=1):
-        if not text.strip():
+    for text in _SENTENCE_RE.findall(anchor):
+        text = text.strip()
+        if not text:
             continue
+        sentence_number = len(rows) + 1
         tokens: list[AnchorToken] = []
         for token_match in _TOKEN_RE.finditer(text):
             surface = token_match.group(0)
-            parses = tuple(vesum_tags.parse_word(surface))
+            parses = _token_parses(surface, sentence_initial=not tokens)
             tokens.append(
                 AnchorToken(
                     sentence_id=f"s-{sentence_number}",
@@ -74,25 +971,1149 @@ def _sentences(anchor: str) -> tuple[AnchorSentence, ...]:
     return tuple(rows)
 
 
-def _token_groups(sentences: Iterable[AnchorSentence]) -> tuple[tuple[AnchorToken, ...], ...]:
-    """Return one eight-token resource group per usable source sentence.
+def _lemma_for(token: AnchorToken) -> str | None:
+    def priority(parse: dict[str, object]) -> tuple[int, str]:
+        raw = str(parse.get("raw", ""))
+        if ":nv" in raw:
+            return (0, raw)
+        if ":prop:" not in raw:
+            return (1, raw)
+        if ":geo" in raw:
+            return (2, raw)
+        return (3, raw)
 
-    A group stays within one sentence.  This makes its evidence claim explicit
-    to the exact-cover allocator instead of allowing two activity builders to
-    quietly borrow a shared sentence's tokens.
+    candidates = []
+    for parse in token.vesum_parses:
+        raw = str(parse.get("raw", ""))
+        lemma = parse.get("lemma")
+        if not isinstance(lemma, str) or not lemma.strip() or parse.get("pos") not in _CONTENT_POS:
+            continue
+        if ":pron" in raw or any(
+            marker in raw for marker in (":fname", ":lname", ":patr", ":arch", ":rare", ":xp")
+        ):
+            continue
+        candidates.append(dict(parse))
+    if not candidates:
+        return None
+    lemma = min(candidates, key=priority).get("lemma")
+    if not isinstance(lemma, str) or lemma.casefold() == token.surface.casefold():
+        return None
+    return lemma
+
+
+def _degree_focus_requested(focus: str | None) -> bool:
+    if not isinstance(focus, str):
+        return False
+    normalized = focus.casefold()
+    return (
+        "компаратив" in normalized
+        or "суперлатив" in normalized
+        or ("ступен" in normalized and "порівнян" in normalized)
+    )
+
+
+def _focus_rank(token: AnchorToken, focus: str | None) -> int:
+    """Prefer source-attested focus forms without excluding other capacity."""
+    if not _degree_focus_requested(focus):
+        return 0
+    raws = tuple(str(parse.get("raw", "")) for parse in token.vesum_parses)
+    if any("compc" in raw or "comps" in raw for raw in raws):
+        return 0
+    if any(
+        parse.get("pos") == "adj" and "compb" in str(parse.get("raw", ""))
+        for parse in token.vesum_parses
+    ):
+        return 1
+    return 2
+
+
+def _is_predicative_adverb_token(token: AnchorToken) -> bool:
+    return any(
+        parse.get("pos") == "adv" and ":predic" in f":{parse.get('raw', '')}"
+        for parse in token.vesum_parses
+    )
+
+
+def _degree_ladder_for_token(token: AnchorToken) -> DegreeLadder | None:
+    """Resolve an attested adjective token to a closed catalog ladder."""
+    for parse in token.vesum_parses:
+        lemma = parse.get("lemma")
+        if parse.get("pos") != "adj" or not isinstance(lemma, str):
+            continue
+        ladder = ladder_for_lemma(lemma)
+        if ladder is not None:
+            return ladder
+    return None
+
+
+def _ladder_is_vesum_certified(ladder: DegreeLadder) -> bool:
+    """Require all three catalog surfaces to retain their declared degree."""
+    expected = (
+        (ladder.positive, "compb"),
+        (ladder.comparative, "compc"),
+        (ladder.superlative, "comps"),
+    )
+    return all(
+        any(
+            parse.get("pos") == "adj" and marker in str(parse.get("raw", ""))
+            for parse in _token_parses(surface, sentence_initial=False)
+        )
+        for surface, marker in expected
+    )
+
+
+def _safe_item_carrier(sentence: AnchorSentence) -> bool:
+    """Exclude title/fragment rows while retaining complete nominal clauses."""
+    text = sentence.text.strip()
+    return (
+        bool(text)
+        and text[-1:] in {".", "!", "?", "…"}
+        and text.count("«") == text.count("»")
+        and text.count("(") == text.count(")")
+        and text.count("[") == text.count("]")
+    )
+
+
+def _is_degree_token(token: AnchorToken) -> bool:
+    """Return whether the token is an adjective in the degree paradigm."""
+    has_adjective_degree_parse = any(
+        parse.get("pos") == "adj"
+        and any(marker in str(parse.get("raw", "")) for marker in ("compb", "compc", "comps"))
+        for parse in token.vesum_parses
+    )
+    # Without contextual disambiguation, an adv:predic homonym is unsafe as an
+    # adjective-focus target (e.g. "в ньому тепліше").
+    raw_lemmas = {
+        str(parse["lemma"]).casefold()
+        for parse in token.vesum_parses
+        if parse.get("pos") == "adj" and isinstance(parse.get("lemma"), str)
+    }
+    ladder = _degree_ladder_for_token(token)
+    semantic_lemma = ladder.positive if ladder is not None else None
+    source_only = bool(raw_lemmas & SOURCE_ONLY_DEGREE_LEMMAS)
+    return (
+        has_adjective_degree_parse
+        and (ladder is not None or source_only)
+        and not _is_predicative_adverb_token(token)
+        and token.surface.casefold() not in DENIED_DEGREE_SURFACES
+        and not bool(raw_lemmas & DENIED_DEGREE_LEMMAS)
+        and (semantic_lemma is None or semantic_lemma not in DENIED_DEGREE_LEMMAS)
+    )
+
+
+def _is_comparison_form(token: AnchorToken) -> bool:
+    """Return whether the token is an actual comparative or superlative adjective."""
+    return _is_degree_token(token) and any(
+        parse.get("pos") == "adj"
+        and any(marker in str(parse.get("raw", "")) for marker in ("compc", "comps"))
+        for parse in token.vesum_parses
+    )
+
+
+def _morphology_change_class(source_tags: set[str], replacement_tags: set[str]) -> str:
+    """Name the grammatical contrast in one certified erroneous form."""
+    changed = source_tags.symmetric_difference(replacement_tags)
+    feature_families = (
+        ("case", {"v_naz", "v_rod", "v_dav", "v_zna", "v_oru", "v_mis", "v_kly"}),
+        ("number", {"s", "p"}),
+        ("gender", {"m", "f", "n"}),
+        ("person", {"1", "2", "3"}),
+        ("tense", {"past", "pres", "futr"}),
+        ("degree", {"compb", "compc", "comps"}),
+    )
+    return next(
+        (name for name, markers in feature_families if changed & markers),
+        "inflection",
+    )
+
+
+def _error_replacement(token: AnchorToken) -> tuple[str, str] | None:
+    """Return one real same-lemma/POS form and its grammatical error class."""
+    identity = _unambiguous_content_lemma_pos(token)
+    if identity is None:
+        return None
+    lemma, source_pos = identity
+    source_parses = tuple(
+        parse
+        for parse in token.vesum_parses
+        if str(parse.get("lemma", "")).casefold() == lemma
+        and parse.get("pos") == source_pos
+        and isinstance(parse.get("raw"), str)
+    )
+    candidates: list[tuple[int, int, str, str]] = []
+    for row in verify_lemma(lemma, db_path=data.active_bundle().vesum_db):
+        form = row.get("word_form")
+        tags = row.get("tags")
+        if (
+            not isinstance(form, str)
+            or not form.strip()
+            or form.casefold() == token.surface.casefold()
+            or not isinstance(tags, str)
+            or "v_kly" in tags.split(":")
+            or any(marker in f":{tags}" for marker in _UNSAFE_TAG_MARKERS)
+            or row.get("pos") != source_pos
+        ):
+            continue
+        row_features = set(tags.split(":"))
+        source_features = min(
+            (set(str(parse["raw"]).split(":")) for parse in source_parses),
+            key=lambda features: len(row_features.symmetric_difference(features)),
+        )
+        distance = len(row_features.symmetric_difference(source_features))
+        replacement = form[:1].upper() + form[1:] if token.surface[:1].isupper() else form
+        candidates.append(
+            (
+                distance,
+                abs(len(form) - len(token.surface)),
+                replacement,
+                _morphology_change_class(source_features, row_features),
+            )
+        )
+    if not candidates:
+        return None
+    selected = min(candidates, key=lambda row: (row[0], row[1], row[2].casefold(), row[3]))
+    return selected[2], selected[3]
+
+
+def _unambiguous_content_lemma_pos(token: AnchorToken) -> tuple[str, str] | None:
+    if any(parse.get("pos") in _CLOSED_CLASS_POS for parse in token.vesum_parses):
+        return None
+    candidates = {
+        (str(parse["lemma"]).casefold(), str(parse["pos"]))
+        for parse in token.vesum_parses
+        if isinstance(parse.get("lemma"), str)
+        and str(parse["lemma"]).strip()
+        and parse.get("pos") in _CONTENT_POS
+        and ":pron" not in str(parse.get("raw", ""))
+        and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
+    }
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _atlas_semantic_pairs(
+    sentences: Sequence[AnchorSentence],
+) -> dict[str, tuple[str, str, str]]:
+    """Bind source tokens to unambiguous Atlas antonym/synonym lemma pairs."""
+    token_records = {
+        token.token_id: record
+        for sentence in sentences
+        for token in sentence.tokens
+        if (record := _unambiguous_content_lemma_pos(token)) is not None
+    }
+    needed = sorted({lemma for lemma, _pos in token_records.values()})
+    if not needed:
+        return {}
+    connection = sqlite3.connect(
+        f"file:{quote(str(data.active_bundle().atlas_db))}?mode=ro&immutable=1", uri=True
+    )
+    try:
+        placeholders = ",".join("?" for _ in needed)
+        rows = connection.execute(
+            f"SELECT slug, payload_json FROM article_payloads "  # noqa: S608 - placeholders only
+            f"WHERE is_public_route=1 AND slug IN ({placeholders})",
+            needed,
+        )
+        by_lemma: dict[str, dict[str, tuple[str, ...]]] = {}
+        for slug, payload_json in rows:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                continue
+            sections = payload.get("sections")
+            if not isinstance(sections, dict):
+                continue
+            record: dict[str, tuple[str, ...]] = {}
+            for section_name in ("antonyms", "synonyms"):
+                section = sections.get(section_name)
+                items = section.get("items") if isinstance(section, dict) else None
+                if isinstance(items, list):
+                    record[section_name] = tuple(
+                        item.strip()
+                        for item in items
+                        if isinstance(item, str) and re.fullmatch(_TOKEN_RE, item.strip())
+                    )
+            if record:
+                by_lemma[str(slug).casefold()] = record
+    finally:
+        connection.close()
+
+    def collect(section_name: str, relation: str) -> dict[str, tuple[str, str, str]]:
+        pairs: dict[str, tuple[str, str, str]] = {}
+        for token_id, (lemma, source_pos) in token_records.items():
+            for related in by_lemma.get(lemma, {}).get(section_name, ()):
+                pair = (lemma, related.casefold())
+                if section_name == "antonyms" and pair in _UNSAFE_ATLAS_ANTONYM_PAIRS:
+                    continue
+                if section_name == "synonyms" and pair not in _SAFE_ATLAS_SYNONYM_PAIRS:
+                    continue
+                parses = _token_parses(related, sentence_initial=False)
+                if not any(
+                    parse.get("pos") == source_pos
+                    and not any(
+                        marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS
+                    )
+                    for parse in parses
+                ):
+                    continue
+                if related.casefold() != lemma:
+                    pairs[token_id] = (lemma, related, relation)
+                    break
+        return pairs
+
+    antonyms = collect("antonyms", "atlas_antonym.v1")
+    synonyms = collect("synonyms", "atlas_synonym.v1")
+    # Prefer an antonym for any source token that has both relations, while a
+    # narrowly approved synonym can supply otherwise missing semantic capacity.
+    return {**synonyms, **antonyms}
+
+
+def _attested_degree_ladders(
+    sentences: Sequence[AnchorSentence],
+    *,
+    preferred: Sequence[str] = (),
+    excluded: frozenset[str] = frozenset(),
+) -> tuple[tuple[AnchorSentence, AnchorToken, DegreeLadder], ...]:
+    """Return unique, safe, VESUM-certified source lemma ladders."""
+    rows: list[tuple[AnchorSentence, AnchorToken, DegreeLadder]] = []
+    seen: set[str] = set()
+    for sentence in sentences:
+        if not _safe_item_carrier(sentence):
+            continue
+        for token in sentence.tokens:
+            ladder = _degree_ladder_for_token(token)
+            if (
+                ladder is None
+                or ladder.positive in seen
+                or ladder.positive in excluded
+                or ladder.positive in DENIED_DEGREE_LEMMAS
+                or not _is_degree_token(token)
+                or not _ladder_is_vesum_certified(ladder)
+            ):
+                continue
+            seen.add(ladder.positive)
+            rows.append((sentence, token, ladder))
+    preferred_index = {lemma: index for index, lemma in enumerate(preferred)}
+    return tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                preferred_index.get(row[2].positive, len(preferred_index)),
+                int(row[0].sentence_id.removeprefix("s-")),
+                row[1].start_offset,
+            ),
+        )
+    )
+
+
+def _degree_match_pairs(
+    sentences: Sequence[AnchorSentence], role: str
+) -> dict[str, tuple[str, str, str]]:
+    """Build the two closed cross-root semantic degree boards."""
+    if role not in {"degree-positive-comparative", "degree-comparative-superlative"}:
+        return {}
+    rows = _attested_degree_ladders(sentences, preferred=DEGREE_BOARD_LEMMAS)
+    if len(rows) < 8:
+        return {}
+    pairs = (
+        DEGREE_PARAPHRASE_PAIRS
+        if role == "degree-positive-comparative"
+        else DEGREE_PRIORITY_PAIRS
+    )
+    relation = (
+        "degree-comparison-paraphrase.v1"
+        if role == "degree-positive-comparative"
+        else "degree-priority-recommendation.v2"
+    )
+    return {
+        token.token_id: (left, right, relation)
+        for (_sentence, token, _ladder), (left, right) in zip(rows[:8], pairs, strict=True)
+    }
+
+
+def _degree_kit_candidates(
+    sentences: Sequence[AnchorSentence], *, activity_type: str, role: str, group_number: int
+) -> tuple[EvidenceCandidate, ...]:
+    """Build exact lemma-bound units for degree roles that are not carriers."""
+    rows = _attested_degree_ladders(sentences, preferred=DEGREE_BOARD_LEMMAS)
+    by_lemma = {ladder.positive: (sentence, token, ladder) for sentence, token, ladder in rows}
+
+    if role == "degree-error-correction":
+        candidates: list[EvidenceCandidate] = []
+        for index, frame in enumerate(DEGREE_ERROR_FRAMES, start=1):
+            bound = by_lemma.get(frame.source_lemma)
+            if bound is None:
+                continue
+            sentence, token, _ladder = bound
+            candidates.append(
+                EvidenceCandidate(
+                    activity_type=activity_type,
+                    candidate_id=f"{activity_type}:{group_number}:{index}",
+                    sentence_id=sentence.sentence_id,
+                    token_id=token.token_id,
+                    literal_evidence=sentence.text,
+                    expected_key=frame.correction,
+                    semantic_target=f"{role}:{frame.rule_id}:{frame.source_lemma}",
+                    certified_error_count=1,
+                    derived_surface=frame.learner_surface,
+                    focus_alignment=role,
+                    source_lemma=frame.source_lemma,
+                    kit_rule_id=f"{DEGREE_CATALOG_VERSION}:{frame.rule_id}",
+                    rendering_surface=frame.correct_surface,
+                    frame_family=frame.frame_family,
+                    semantic_warrant=frame.semantic_warrant,
+                    question_intent=(
+                        "degree-specific" if frame.degree_specific else "agreement-support"
+                    ),
+                )
+            )
+        return tuple(candidates) if len(candidates) >= 8 else ()
+
+    frames_by_role = {
+        "degree-recognition": DEGREE_RECOGNITION_FRAMES,
+        "degree-cloze": DEGREE_CLOZE_FRAMES,
+        "degree-formation": DEGREE_FORMATION_FRAMES,
+        "degree-comparison-syntax": DEGREE_SYNTAX_FRAMES,
+        "degree-context": DEGREE_CONTEXT_FRAMES,
+    }
+    frames = frames_by_role.get(role)
+    if frames is None:
+        return ()
+    if len(frames) != 8 or len(rows) < 8:
+        return ()
+    source_bound = role in {"degree-recognition", "degree-cloze"}
+    if source_bound and any(frame.answer_lemma not in by_lemma for frame in frames):
+        return ()
+    result: list[EvidenceCandidate] = []
+    for index, frame in enumerate(frames, start=1):
+        sentence, token, _ladder = by_lemma[frame.answer_lemma] if source_bound else rows[index - 1]
+        start_offset = frame.rendering_surface.index(frame.answer)
+        end_offset = start_offset + len(frame.answer)
+        result.append(
+            EvidenceCandidate(
+                activity_type=activity_type,
+                candidate_id=f"{activity_type}:{group_number}:{index}",
+                sentence_id=sentence.sentence_id,
+                token_id=token.token_id,
+                literal_evidence=sentence.text,
+                expected_key=frame.answer,
+                semantic_target=f"{role}:{frame.answer_lemma}",
+                focus_alignment=role,
+                source_lemma=frame.answer_lemma,
+                kit_rule_id=f"{DEGREE_CATALOG_VERSION}:{role}",
+                rendering_surface=frame.rendering_surface,
+                target_start_offset=start_offset,
+                target_end_offset=end_offset,
+                degree_class=frame.degree_class,
+                morphology_class=frame.morphology_class,
+                choice_bank=frame.choice_bank,
+                frame_family=frame.frame_family,
+                semantic_warrant=frame.semantic_warrant,
+                exclusion_warrants=frame.exclusion_warrants,
+            )
+        )
+    return tuple(result)
+
+
+def _certified_choice_bank(
+    token: AnchorToken, *, minimum_distractors: int = 2
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]] | None:
+    """Return one closed VESUM bank with an exclusion proof per distractor.
+
+    Alternative forms come from one attested content lemma/POS analysis of the
+    source token and must realize a different safe tag bundle.  Spelling
+    variants with the same analysis are not graded as distractors.
     """
-    return tuple(sentence.tokens[:8] for sentence in sentences if len(sentence.tokens) >= 8)
+    if any(parse.get("pos") in _CLOSED_CLASS_POS for parse in token.vesum_parses) or any(
+        ":impr" in str(parse.get("raw", "")) for parse in token.vesum_parses
+    ):
+        return None
+    identities = sorted(
+        {
+            (str(parse["lemma"]).casefold(), str(parse["pos"]))
+            for parse in token.vesum_parses
+            if isinstance(parse.get("lemma"), str)
+            and str(parse["lemma"]).strip()
+            and parse.get("pos") in _CONTENT_POS
+            and ":pron" not in str(parse.get("raw", ""))
+            and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
+        }
+    )
+    for lemma, pos in identities:
+        source_tags = tuple(
+            frozenset(str(parse["raw"]).split(":"))
+            for parse in token.vesum_parses
+            if str(parse.get("lemma", "")).casefold() == lemma
+            and parse.get("pos") == pos
+            and isinstance(parse.get("raw"), str)
+        )
+        if not source_tags:
+            continue
+        candidates: list[tuple[int, int, str, str]] = []
+        for row in verify_lemma(lemma, db_path=data.active_bundle().vesum_db):
+            form = row.get("word_form")
+            tags = row.get("tags")
+            if (
+                not isinstance(form, str)
+                or not form.strip()
+                or not re.fullmatch(_TOKEN_RE, form.strip())
+                or form.casefold() == token.surface.casefold()
+                or row.get("pos") != pos
+                or not isinstance(tags, str)
+                or "v_kly" in tags.split(":")
+                or any(marker in f":{tags}" for marker in _UNSAFE_TAG_MARKERS)
+            ):
+                continue
+            feature_set = frozenset(tags.split(":"))
+            if feature_set in source_tags:
+                continue
+            rendered = form[:1].upper() + form[1:] if token.surface[:1].isupper() else form
+            distance = min(len(feature_set.symmetric_difference(source)) for source in source_tags)
+            candidates.append((distance, abs(len(form) - len(token.surface)), rendered, tags))
+        selected: list[tuple[str, str]] = []
+        seen = {token.surface.casefold()}
+        for _distance, _length_delta, form, tags in sorted(
+            candidates, key=lambda row: (row[0], row[1], row[2].casefold(), row[3])
+        ):
+            if form.casefold() in seen:
+                continue
+            seen.add(form.casefold())
+            selected.append((form, tags))
+            if len(selected) == minimum_distractors:
+                break
+        if len(selected) != minimum_distractors:
+            continue
+        source_label = " / ".join(":".join(sorted(tags)) for tags in source_tags)
+        bank = (token.surface, *(form for form, _tags in selected))
+        warrants = tuple(
+            (
+                form,
+                f"VESUM analysis {tags} differs from certified source analysis {source_label}",
+            )
+            for form, tags in selected
+        )
+        return bank, warrants
+    return None
 
 
-def _replacement_surface(group: Sequence[AnchorToken], index: int, fallback: AnchorToken) -> str:
-    for offset in range(1, len(group)):
-        candidate = group[(index + offset) % len(group)]
-        if candidate.surface != fallback.surface:
-            return candidate.surface
-    return fallback.surface
+def _has_distractor_capacity(token: AnchorToken, *, minimum: int = 2) -> bool:
+    """Return whether a closed, exclusion-warranted VESUM bank is available."""
+    return _certified_choice_bank(token, minimum_distractors=minimum) is not None
 
 
-def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> CertificationInventory:
+def _negatable_predicate(sentence: AnchorSentence) -> AnchorToken | None:
+    words = [token.surface.casefold() for token in sentence.tokens]
+    for index, token in enumerate(sentence.tokens):
+        if not any(parse.get("pos") == "verb" for parse in token.vesum_parses):
+            continue
+        if index and words[index - 1] in {"не", "ні"}:
+            continue
+        return token
+    return None
+
+
+def _eligible_tokens(
+    activity_type: str,
+    sentence: AnchorSentence,
+    *,
+    focus_mode: str | None = None,
+    match_pairs: dict[str, tuple[str, str, str]] | None = None,
+) -> tuple[AnchorToken, ...]:
+    if activity_type != "mark-the-words" and not _safe_item_carrier(sentence):
+        return ()
+    tokens = tuple(token for token in sentence.tokens if token.vesum_parses)
+
+    def focused(rows: tuple[AnchorToken, ...]) -> tuple[AnchorToken, ...]:
+        if focus_mode == _FOCUS_PRIMARY or focus_mode in {
+            "degree-recognition",
+            "degree-cloze",
+            "degree-context",
+        }:
+            return tuple(
+                token
+                for token in rows
+                if (
+                    _is_comparison_form(token)
+                    if activity_type == "mark-the-words"
+                    else _is_degree_token(token)
+                )
+            )
+        if focus_mode == _FOCUS_REINFORCEMENT:
+            return tuple(token for token in rows if not _is_predicative_adverb_token(token))
+        return rows
+
+    if activity_type == "cloze":
+        interior = tokens[2:-2] if len(tokens) >= 5 else ()
+        return focused(
+            tuple(
+                token
+                for token in interior
+                if any(parse.get("pos") in _CONTENT_POS for parse in token.vesum_parses)
+                and _has_distractor_capacity(token)
+            )
+        )
+    if activity_type in {"quiz", "fill-in"}:
+        return focused(
+            tuple(
+                token
+                for token in tokens
+                if any(parse.get("pos") in _CONTENT_POS for parse in token.vesum_parses)
+                and _has_distractor_capacity(token)
+            )
+        )
+    if activity_type == "match-up":
+        return tuple(token for token in tokens if token.token_id in (match_pairs or {}))
+    if activity_type == "error-correction":
+        return focused(tuple(token for token in tokens if _error_replacement(token) is not None))
+    if activity_type == "short-writing":
+        return focused(
+            tuple(
+                token
+                for token in tokens
+                if (
+                    _is_degree_token(token)
+                    if focus_mode in {_FOCUS_WRITING, "degree-writing"}
+                    else _unambiguous_content_lemma_pos(token) is not None
+                )
+            )
+        )
+    if activity_type == "mark-the-words":
+        return focused(tokens)
+    if activity_type == "true-false":
+        # Generic predicate negation produces formally different but
+        # pedagogically trivial statements. Keep the closed mutation catalog
+        # for explicit inventories, but do not schedule it in production.
+        return ()
+    return tokens
+
+
+def _diverse_group(
+    sentences: Sequence[AnchorSentence],
+    *,
+    activity_type: str,
+    used_token_ids: set[str],
+    sentence_group_uses: Counter[str],
+    sentence_operation_uses: dict[str, set[str]],
+    sentence_phase_uses: dict[str, set[int]],
+    phase: int | None,
+    remaining_groups: int,
+    focus: str | None,
+    focus_mode: str | None = None,
+    match_pairs: dict[str, tuple[str, str, str]] | None = None,
+    prefer_reuse: bool = False,
+    used_match_left: set[str] | None = None,
+    used_match_right: set[str] | None = None,
+) -> tuple[AnchorToken, ...] | None:
+    """Choose eight unused tokens without repeating row carriers.
+
+    One-row-per-item activities use each source sentence once.  Cloze may carry
+    two well-separated gaps in one rendered sentence, Atlas/degree match-up may
+    take three independently certified kit pairs, and mark-the-words may retain
+    four real targets from one excerpt.  A source supports at most two blocks
+    per lesson under different cognitive operations. Same-phase reuse is
+    reserved for the advisor-approved degree schedule; generic schedules keep
+    the existing phase-separation rule.
+    """
+    pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
+    operation = focus_mode or COGNITIVE_OPERATION.get(activity_type, activity_type)
+    consumes_evidence_capacity = activity_type != "match-up"
+
+    def cloze_capacity_after(
+        sentence: AnchorSentence, *, excluded_token_id: str | None = None
+    ) -> int:
+        """Preserve scarce, well-separated cloze targets during recognition."""
+        targets = tuple(
+            token
+            for token in _eligible_tokens("cloze", sentence, focus_mode="degree-cloze")
+            if token.token_id not in used_token_ids and token.token_id != excluded_token_id
+        )
+        if not targets:
+            return 0
+        indexes = {token.token_id: index for index, token in enumerate(sentence.tokens)}
+        return (
+            2
+            if any(
+                abs(indexes[left.token_id] - indexes[right.token_id]) >= 4
+                for left_index, left in enumerate(targets)
+                for right in targets[left_index + 1 :]
+            )
+            else 1
+        )
+
+    for sentence in sentences:
+        if consumes_evidence_capacity:
+            if sentence_group_uses[
+                sentence.sentence_id
+            ] >= 2 or operation in sentence_operation_uses.get(sentence.sentence_id, set()):
+                continue
+            if (
+                phase is not None
+                and phase in sentence_phase_uses.get(sentence.sentence_id, set())
+                and not (operation.startswith("degree-") or operation == "anchor-comprehension")
+            ):
+                continue
+        available = tuple(
+            sorted(
+                (
+                    token
+                    for token in _eligible_tokens(
+                        activity_type,
+                        sentence,
+                        focus_mode=focus_mode,
+                        match_pairs=match_pairs,
+                    )
+                    if token.token_id not in used_token_ids
+                ),
+                key=lambda token: (
+                    token.start_offset == 0 if activity_type == "error-correction" else False,
+                    -cloze_capacity_after(sentence, excluded_token_id=token.token_id)
+                    if focus_mode == "degree-recognition"
+                    else 0,
+                    -int(_is_comparison_form(token)) if activity_type == "text-questions" else 0,
+                    _focus_rank(token, focus),
+                ),
+            )
+        )
+        if available:
+            pools.append((sentence, available))
+    if len(pools) < 4:
+        return None
+    # Prefer low-use sources, then sources able to supply both permitted units.
+    # Python's sort remains stable for equal capacity, preserving document order.
+    pools.sort(
+        key=lambda row: (
+            (
+                0
+                if activity_type == "text-questions"
+                and focus_mode == "anchor-comprehension"
+                and any(_is_comparison_form(token) for token in row[1])
+                else 1
+            ),
+            (
+                max(
+                    (
+                        cloze_capacity_after(row[0], excluded_token_id=token.token_id)
+                        for token in row[1]
+                    ),
+                    default=0,
+                )
+                if focus_mode == "degree-recognition"
+                else 0
+            ),
+            (
+                -sentence_group_uses[row[0].sentence_id]
+                if prefer_reuse
+                else sentence_group_uses[row[0].sentence_id]
+            ),
+            (
+                0
+                if focus_mode == _FOCUS_REINFORCEMENT
+                and any(_is_degree_token(token) for token in row[1])
+                else 1
+                if focus_mode == _FOCUS_REINFORCEMENT
+                else 0
+            ),
+            (
+                sum(_is_degree_token(token) for token in row[1])
+                if focus_mode == _FOCUS_REINFORCEMENT and activity_type == "error-correction"
+                else 0
+            ),
+            min(_focus_rank(token, focus) for token in row[1]),
+            -min(2, len(row[1])),
+        )
+    )
+
+    if activity_type == "text-questions":
+        comprehension_pools = (
+            [row for row in pools if any(_is_comparison_form(token) for token in row[1])]
+            if focus_mode == "anchor-comprehension"
+            else pools
+        )
+        causal_pools = [row for row in pools if _EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())]
+        chosen_question_pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
+
+        def append_distinct(
+            candidates: Sequence[tuple[AnchorSentence, tuple[AnchorToken, ...]]], count: int
+        ) -> None:
+            for row in candidates:
+                if row in chosen_question_pools:
+                    continue
+                chosen_question_pools.append(row)
+                if len(chosen_question_pools) >= count:
+                    return
+
+        # Preserve explicit causal carriers for the explanation lane.  The
+        # first three rows are facts, the next three carry a real causal
+        # connective, and the final two anchor transfer/application prompts.
+        append_distinct(
+            sorted(
+                comprehension_pools,
+                key=lambda row: (
+                    bool(_EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())),
+                    int(row[0].sentence_id.removeprefix("s-")),
+                ),
+            ),
+            3,
+        )
+        if len(chosen_question_pools) != 3:
+            return None
+        append_distinct(causal_pools, 6)
+        if len(chosen_question_pools) != 6:
+            return None
+        append_distinct(pools, 8)
+        if len(chosen_question_pools) != 8:
+            return None
+        pools = chosen_question_pools
+
+    per_source_limit = (
+        4
+        if activity_type == "mark-the-words"
+        else 3
+        if activity_type == "match-up"
+        else 2
+        if activity_type == "cloze"
+        else 1
+    )
+
+    def source_capacity(sentence: AnchorSentence, tokens: tuple[AnchorToken, ...]) -> int:
+        """Return the usable per-source capacity for this activity shape."""
+        if activity_type != "cloze":
+            return min(per_source_limit, len(tokens))
+        token_indexes = {token.token_id: index for index, token in enumerate(sentence.tokens)}
+        has_separated_pair = any(
+            abs(token_indexes[left.token_id] - token_indexes[right.token_id]) >= 4
+            for left_index, left in enumerate(tokens)
+            for right in tokens[left_index + 1 :]
+        )
+        return 2 if has_separated_pair else 1
+
+    distinct_target = 4 if activity_type in {"cloze", "match-up", "mark-the-words"} else 8
+    # Match pairs additionally require unique left and right surfaces.  A
+    # source pool can therefore become unusable after an earlier pair is
+    # selected; keep later pools available instead of failing the whole group
+    # merely because one of the first eight pools collides semantically.
+    if activity_type == "match-up" or (
+        activity_type == "fill-in" and focus_mode == _FOCUS_REINFORCEMENT
+    ):
+        chosen_pools = pools
+    else:
+        chosen_rows: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
+        chosen_capacity = 0
+        for pool in pools:
+            chosen_rows.append(pool)
+            # Source reuse counts slots, not constituent units: once this
+            # source is eligible for another slot, that slot retains its own
+            # per-source unit allowance.
+            chosen_capacity += source_capacity(*pool)
+            if len(chosen_rows) >= distinct_target and chosen_capacity >= 8:
+                break
+        chosen_pools = chosen_rows
+    selected: list[AnchorToken] = []
+    selected_per_source: Counter[str] = Counter()
+    selected_degree_count = 0
+    selected_error_classes: set[str] = set()
+    selected_initial_errors = 0
+    match_left = set(used_match_left or ())
+    match_right = set(used_match_right or ())
+
+    def usable(token: AnchorToken) -> bool:
+        if activity_type == "cloze":
+            prior = next(
+                (item for item in selected if item.sentence_id == token.sentence_id),
+                None,
+            )
+            if prior is None:
+                return True
+            sentence = next(
+                item for item, _tokens in chosen_pools if item.sentence_id == token.sentence_id
+            )
+            token_indexes = {item.token_id: index for index, item in enumerate(sentence.tokens)}
+            # Preserve at least three visible words between cloze markers,
+            # matching the deterministic learner-context gate.
+            return abs(token_indexes[prior.token_id] - token_indexes[token.token_id]) >= 4
+        if activity_type != "match-up":
+            return True
+        pair = (match_pairs or {}).get(token.token_id)
+        return (
+            pair is not None
+            and pair[0].casefold() not in match_left
+            and pair[1].casefold() not in match_right
+        )
+
+    rounds = 1 if activity_type == "true-false" else per_source_limit
+    for _round in range(rounds):
+        for sentence, tokens in chosen_pools:
+            if selected_per_source[sentence.sentence_id] > _round:
+                continue
+            available_candidates = tuple(
+                candidate for candidate in tokens if candidate not in selected and usable(candidate)
+            )
+            if focus_mode == _FOCUS_REINFORCEMENT:
+                preferred_degree = selected_degree_count < 2
+                token = next(
+                    (
+                        candidate
+                        for candidate in available_candidates
+                        if _is_comparison_form(candidate) == preferred_degree
+                    ),
+                    next(iter(available_candidates), None),
+                )
+            elif focus_mode == "degree-recognition":
+                token = max(
+                    available_candidates,
+                    key=lambda candidate: (
+                        cloze_capacity_after(
+                            sentence,
+                            excluded_token_id=candidate.token_id,
+                        ),
+                        _focus_rank(candidate, focus),
+                    ),
+                    default=None,
+                )
+            elif activity_type == "text-questions" and focus_mode == "anchor-comprehension":
+                preferred_degree = selected_degree_count < 3
+                token = next(
+                    (
+                        candidate
+                        for candidate in available_candidates
+                        if _is_degree_token(candidate) == preferred_degree
+                    ),
+                    next(iter(available_candidates), None),
+                )
+            elif activity_type == "error-correction":
+                token = next(
+                    (
+                        candidate
+                        for candidate in available_candidates
+                        if candidate.start_offset > 0
+                        and (row := _error_replacement(candidate)) is not None
+                        and row[1] not in selected_error_classes
+                    ),
+                    next(
+                        (
+                            candidate
+                            for candidate in available_candidates
+                            if candidate.start_offset > 0
+                            or selected_initial_errors < 4
+                        ),
+                        None,
+                    ),
+                )
+            else:
+                token = next(iter(available_candidates), None)
+            if token is None:
+                continue
+            selected.append(token)
+            selected_degree_count += int(
+                _is_comparison_form(token)
+                if activity_type == "text-questions"
+                else _is_degree_token(token)
+            )
+            selected_per_source[sentence.sentence_id] += 1
+            if activity_type == "error-correction":
+                replacement = _error_replacement(token)
+                assert replacement is not None
+                selected_error_classes.add(replacement[1])
+                selected_initial_errors += int(token.start_offset == 0)
+            if activity_type == "match-up":
+                pair = (match_pairs or {}).get(token.token_id)
+                assert pair is not None
+                match_left.add(pair[0].casefold())
+                match_right.add(pair[1].casefold())
+            if len(selected) == 8:
+                break
+        if len(selected) == 8:
+            break
+    if focus_mode == _FOCUS_REINFORCEMENT and selected_degree_count < 2:
+        for sentence, tokens in chosen_pools:
+            if selected_per_source[sentence.sentence_id] >= per_source_limit:
+                continue
+            replacement = next(
+                (
+                    candidate
+                    for candidate in tokens
+                    if candidate not in selected
+                    and usable(candidate)
+                    and _is_degree_token(candidate)
+                ),
+                None,
+            )
+            if replacement is None:
+                continue
+            distinct_sources = {token.sentence_id for token in selected}
+            removable = next(
+                (
+                    candidate
+                    for candidate in reversed(selected)
+                    if not _is_degree_token(candidate)
+                    and (
+                        selected_per_source[candidate.sentence_id] > 1 or len(distinct_sources) > 4
+                    )
+                ),
+                None,
+            )
+            if removable is None:
+                continue
+            selected.remove(removable)
+            selected_per_source[removable.sentence_id] -= 1
+            selected.append(replacement)
+            selected_per_source[replacement.sentence_id] += 1
+            selected_degree_count += 1
+            if selected_degree_count >= 2:
+                break
+    minimum_sources = 4 if activity_type in {"cloze", "match-up", "mark-the-words"} else 8
+    if len(selected) != 8 or len({token.sentence_id for token in selected}) < minimum_sources:
+        return None
+    if activity_type in {"cloze", "mark-the-words"}:
+        selected.sort(
+            key=lambda token: (
+                int(token.sentence_id.removeprefix("s-")),
+                token.start_offset,
+            )
+        )
+    if focus_mode == _FOCUS_REINFORCEMENT and sum(map(_is_degree_token, selected)) < 2:
+        return None
+    if activity_type == "error-correction" and (
+        len(selected_error_classes) < 3 or selected_initial_errors > 4
+    ):
+        return None
+    if (
+        activity_type == "text-questions"
+        and focus_mode == "anchor-comprehension"
+        and sum(map(_is_comparison_form, selected)) < 3
+    ):
+        return None
+    if activity_type == "match-up":
+        if used_match_left is not None:
+            used_match_left.update(match_left)
+        if used_match_right is not None:
+            used_match_right.update(match_right)
+    used_token_ids.update(token.token_id for token in selected)
+    selected_sentence_ids = {token.sentence_id for token in selected}
+    # Atlas pairs are kit-anchored; their source sentence is citation
+    # provenance, not evidence capacity. This mirrors `_source_evidence_ids`
+    # in the exact-cover allocator instead of rejecting lessons that the
+    # certified plans can safely allocate.
+    if consumes_evidence_capacity:
+        sentence_group_uses.update({sentence_id: 1 for sentence_id in selected_sentence_ids})
+        for sentence_id in selected_sentence_ids:
+            sentence_operation_uses.setdefault(sentence_id, set()).add(operation)
+            if phase is not None:
+                sentence_phase_uses.setdefault(sentence_id, set()).add(phase)
+    return tuple(selected)
+
+
+def _writing_group(
+    sentences: Sequence[AnchorSentence],
+    *,
+    used_token_ids: set[str],
+    sentence_group_uses: Counter[str],
+    sentence_operation_uses: dict[str, set[str]],
+    sentence_phase_uses: dict[str, set[int]],
+    phase: int | None,
+    focus: str | None,
+) -> tuple[AnchorToken, ...] | None:
+    """Reserve the single source unit that short-writing actually certifies."""
+    operation = COGNITIVE_OPERATION.get("short-writing", "short-writing")
+    if _degree_focus_requested(focus):
+        degree_candidates: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
+        for sentence in sentences:
+            if sentence_group_uses[
+                sentence.sentence_id
+            ] >= 2 or operation in sentence_operation_uses.get(sentence.sentence_id, set()):
+                continue
+            tokens = tuple(
+                token
+                for token in _eligible_tokens(
+                    "short-writing",
+                    sentence,
+                    focus_mode=_FOCUS_PRIMARY,
+                )
+                if token.token_id not in used_token_ids
+            )
+            unique_lemmas = {
+                ladder.positive
+                for token in tokens
+                if (ladder := _degree_ladder_for_token(token)) is not None
+            }
+            if set(DEGREE_WRITING_LEMMAS) <= unique_lemmas:
+                degree_candidates.append((sentence, tokens))
+        if not degree_candidates:
+            return None
+        degree_candidates.sort(
+            key=lambda row: (
+                sentence_group_uses[row[0].sentence_id],
+                int(row[0].sentence_id.removeprefix("s-")),
+            )
+        )
+        sentence, tokens = degree_candidates[0]
+        by_lemma = {
+            ladder.positive: token
+            for token in tokens
+            if (ladder := _degree_ladder_for_token(token)) is not None
+        }
+        selected = [by_lemma[lemma] for lemma in DEGREE_WRITING_LEMMAS]
+        used_token_ids.update(token.token_id for token in selected)
+        sentence_group_uses[sentence.sentence_id] += 1
+        sentence_operation_uses.setdefault(sentence.sentence_id, set()).add(operation)
+        if phase is not None:
+            sentence_phase_uses.setdefault(sentence.sentence_id, set()).add(phase)
+        return tuple(selected)
+    candidates: list[tuple[AnchorSentence, AnchorToken]] = []
+    for sentence in sentences:
+        if sentence_group_uses[
+            sentence.sentence_id
+        ] >= 2 or operation in sentence_operation_uses.get(sentence.sentence_id, set()):
+            continue
+        if (
+            _ANAPHORIC_WRITING_OPENING_RE.search(sentence.text)
+            or len(sentence.tokens) < 6
+            or sentence.text.endswith("!")
+        ):
+            continue
+        token = next(
+            iter(
+                sorted(
+                    (
+                        item
+                        for item in _eligible_tokens(
+                            "short-writing",
+                            sentence,
+                            focus_mode=(_FOCUS_PRIMARY if _degree_focus_requested(focus) else None),
+                        )
+                        if item.token_id not in used_token_ids
+                    ),
+                    key=lambda item: _focus_rank(item, focus),
+                )
+            ),
+            None,
+        )
+        if token is not None:
+            candidates.append((sentence, token))
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda row: (
+            sentence_group_uses[row[0].sentence_id],
+            _focus_rank(row[1], focus),
+        )
+    )
+    sentence, token = candidates[0]
+    used_token_ids.add(token.token_id)
+    sentence_group_uses[sentence.sentence_id] += 1
+    sentence_operation_uses.setdefault(sentence.sentence_id, set()).add(operation)
+    if phase is not None:
+        sentence_phase_uses.setdefault(sentence.sentence_id, set()).add(phase)
+    return (token,)
+
+
+def inventory_from_anchor(
+    anchor: str,
+    *,
+    scheduled_types: Sequence[str],
+    replacement_types: Sequence[str] = (),
+    duration_minutes: int = 45,
+    focus: str | None = None,
+) -> CertificationInventory:
     """Build only literal-evidence candidates required by one v3 lesson shape.
 
     The result may be incomplete.  That is an expected preflight outcome: the
@@ -100,39 +2121,311 @@ def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> Cer
     call rather than lowering a type's floor or inventing source material.
     """
     sentences = _sentences(anchor)
+    writing_ranges = {45: (60, 80), 60: (80, 110), 90: (120, 160)}
+    if duration_minutes not in writing_ranges:
+        raise ValueError("v3 anchor inventory needs a supported lesson duration.")
     by_id = {sentence.sentence_id: sentence for sentence in sentences}
-    groups = _token_groups(sentences)
-    required = Counter(scheduled_types)
-    group_index = 0
-
+    match_pairs = _atlas_semantic_pairs(sentences)
+    required = Counter((*scheduled_types, *replacement_types))
+    shape = phase_shape_for(duration_minutes)
+    primary_slots = tuple(
+        (phase, f"P{phase}-A{position}")
+        for phase, count in sorted(shape.phase_slots.items())
+        for position in range(1, count + 1)
+    )
+    scheduled_lane = (
+        tuple(
+            (activity_type, phase, slot_id)
+            for activity_type, (phase, slot_id) in zip(scheduled_types, primary_slots, strict=True)
+        )
+        if len(primary_slots) == len(scheduled_types)
+        else tuple((activity_type, None, None) for activity_type in scheduled_types)
+    )
     groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
-    for activity_type in scheduled_types:
-        if activity_type == "short-writing" and groups_by_type[activity_type]:
-            continue
-        if not groups:
-            break
-        groups_by_type[activity_type].append(groups[group_index % len(groups)])
-        group_index += 1
+    group_numbers_by_type: dict[str, list[int]] = defaultdict(list)
+    group_focus_modes: dict[str, list[str | None]] = defaultdict(list)
+    prebuilt_candidates: dict[tuple[str, int], tuple[EvidenceCandidate, ...]] = {}
+    primary_occurrences = Counter(
+        activity_type for activity_type, _phase, _slot_id in scheduled_lane
+    )
+    lanes = (
+        scheduled_lane,
+        # The current replacement-bearing semantic slots all live in phase 2;
+        # retain that phase while building fallback evidence so exact-cover
+        # cannot discover a same-phase source collision only after inventory.
+        tuple((activity_type, 2, None) for activity_type in replacement_types),
+    )
+    primary_state: (
+        tuple[set[str], Counter[str], dict[str, set[str]], dict[str, set[int]]] | None
+    ) = None
+    for lane_index, lane in enumerate(lanes):
+        if lane_index == 0 or primary_state is None:
+            used_token_ids: set[str] = set()
+            sentence_group_uses: Counter[str] = Counter()
+            sentence_operation_uses: dict[str, set[str]] = {}
+            sentence_phase_uses: dict[str, set[int]] = {}
+        else:
+            used_token_ids = set(primary_state[0])
+            sentence_group_uses = Counter(primary_state[1])
+            # A replacement is mutually exclusive only with its own primary;
+            # it still has to coexist with every other scheduled slot.  Keep
+            # the primary lane's operation reservations so inventory cannot
+            # certify a fallback that exact cover must reject later.
+            sentence_operation_uses = {key: set(value) for key, value in primary_state[2].items()}
+            sentence_phase_uses = {key: set(value) for key, value in primary_state[3].items()}
+        occurrences = Counter(activity_type for activity_type, _phase, _slot_id in lane)
+        semantic_token_ids: set[str] = set()
+        semantic_left: set[str] = set()
+        semantic_right: set[str] = set()
+        # Reserve repeated and source-scarce activity groups before broad
+        # token-selection types consume their eligible sentences.  Group IDs
+        # remain per-type and the lesson slot order is unchanged.
+        annotated_lane: list[tuple[str, int | None, int, str | None]] = []
+        type_occurrences: Counter[str] = Counter()
+        for activity_type, phase, slot_id in lane:
+            type_occurrences[activity_type] += 1
+            annotated_lane.append((activity_type, phase, type_occurrences[activity_type], slot_id))
+
+        def planning_priority(
+            activity_type: str,
+            occurrence: int,
+            slot_id: str | None,
+            _lane_index: int = lane_index,
+        ) -> int:
+            if _lane_index == 0 and _degree_focus_requested(focus):
+                role = degree_role(slot_id, activity_type) if slot_id is not None else None
+                if role in {
+                    "degree-formation",
+                    "degree-comparison-syntax",
+                    "degree-context",
+                    "degree-error-correction",
+                    "degree-positive-comparative",
+                    "degree-comparative-superlative",
+                }:
+                    return 0
+                if role == "degree-recognition":
+                    return 1
+                if role == "degree-cloze":
+                    return 2
+                if activity_type == "short-writing":
+                    return 4
+                if occurrence == 1 and activity_type in {"quiz", "cloze"}:
+                    return 1
+                if activity_type == "fill-in" and occurrence > 1:
+                    return 3
+            return {
+                # Cloze needs non-adjacent target positions within each source
+                # sentence, so reserve its scarcer carrier capacity before the
+                # broad token-selection activities.
+                "cloze": 2,
+                "mark-the-words": 3,
+                # Preserve the scarce explicit-causal carriers before the
+                # broadly eligible error-correction lane chooses sentences.
+                "text-questions": 4,
+                "error-correction": 5,
+                "quiz": 6,
+                "fill-in": 7,
+                "match-up": 8,
+                "true-false": 9,
+            }.get(activity_type, 10)
+
+        planning_lane = tuple(
+            (activity_type, phase, occurrence, slot_id)
+            for original_index, (activity_type, phase, occurrence, slot_id) in sorted(
+                enumerate(annotated_lane),
+                key=lambda row: (
+                    planning_priority(row[1][0], row[1][2], row[1][3]),
+                    sum(
+                        bool(_eligible_tokens(row[1][0], sentence, match_pairs=match_pairs))
+                        for sentence in sentences
+                    ),
+                    -occurrences[row[1][0]],
+                    row[0],
+                ),
+            )
+        )
+        for index, (activity_type, phase, occurrence, slot_id) in enumerate(planning_lane):
+            if activity_type == "short-writing" and groups_by_type[activity_type]:
+                continue
+            focus_mode = None
+            if lane_index == 0 and _degree_focus_requested(focus):
+                focus_mode = degree_role(slot_id, activity_type) if slot_id is not None else None
+                if focus_mode is not None:
+                    pass
+                elif activity_type in {"quiz", "cloze", "mark-the-words"} and occurrence == 1:
+                    focus_mode = _FOCUS_PRIMARY
+                elif activity_type == "fill-in" and occurrence > 1:
+                    focus_mode = _FOCUS_REINFORCEMENT
+                elif activity_type == "short-writing":
+                    focus_mode = _FOCUS_WRITING
+            group_number = (
+                occurrence if lane_index == 0 else primary_occurrences[activity_type] + occurrence
+            )
+            kit_candidates = (
+                _degree_kit_candidates(
+                    sentences,
+                    activity_type=activity_type,
+                    role=focus_mode,
+                    group_number=group_number,
+                )
+                if focus_mode
+                in {
+                    "degree-recognition",
+                    "degree-cloze",
+                    "degree-formation",
+                    "degree-comparison-syntax",
+                    "degree-context",
+                    "degree-error-correction",
+                }
+                else ()
+            )
+            selection_token_ids = (
+                set()
+                if activity_type in {"mark-the-words", "text-questions"}
+                or focus_mode in {"degree-positive-comparative", "degree-comparative-superlative"}
+                else semantic_token_ids
+                if activity_type == "match-up"
+                else used_token_ids
+            )
+            active_match_pairs = (
+                _degree_match_pairs(sentences, focus_mode)
+                if focus_mode in {"degree-positive-comparative", "degree-comparative-superlative"}
+                else match_pairs
+            )
+            match_left = (
+                set()
+                if focus_mode in {"degree-positive-comparative", "degree-comparative-superlative"}
+                else semantic_left
+            )
+            match_right = (
+                set()
+                if focus_mode in {"degree-positive-comparative", "degree-comparative-superlative"}
+                else semantic_right
+            )
+            group = (
+                tuple(
+                    next(
+                        token
+                        for sentence in sentences
+                        for token in sentence.tokens
+                        if token.token_id == candidate.token_id
+                    )
+                    for candidate in kit_candidates
+                )
+                if kit_candidates
+                else _writing_group(
+                    sentences,
+                    used_token_ids=selection_token_ids,
+                    sentence_group_uses=sentence_group_uses,
+                    sentence_operation_uses=sentence_operation_uses,
+                    sentence_phase_uses=sentence_phase_uses,
+                    phase=phase,
+                    focus=focus,
+                )
+                if activity_type == "short-writing"
+                else _diverse_group(
+                    sentences,
+                    activity_type=activity_type,
+                    used_token_ids=selection_token_ids,
+                    sentence_group_uses=sentence_group_uses,
+                    sentence_operation_uses=sentence_operation_uses,
+                    sentence_phase_uses=sentence_phase_uses,
+                    phase=phase,
+                    remaining_groups=len(planning_lane) - index,
+                    focus=focus,
+                    focus_mode=focus_mode,
+                    match_pairs=active_match_pairs,
+                    prefer_reuse=(
+                        focus_mode == _FOCUS_REINFORCEMENT
+                        or (
+                            phase == 2
+                            and occurrences[activity_type] == 1
+                            and activity_type in {"error-correction", "text-questions"}
+                        )
+                    ),
+                    used_match_left=match_left,
+                    used_match_right=match_right,
+                )
+            )
+            if group is not None:
+                groups_by_type[activity_type].append(group)
+                group_numbers_by_type[activity_type].append(group_number)
+                group_focus_modes[activity_type].append(focus_mode)
+                if kit_candidates:
+                    prebuilt_candidates[(activity_type, group_number)] = kit_candidates
+        if lane_index == 0:
+            primary_state = (
+                set(used_token_ids),
+                Counter(sentence_group_uses),
+                {key: set(value) for key, value in sentence_operation_uses.items()},
+                {key: set(value) for key, value in sentence_phase_uses.items()},
+            )
 
     candidates: list[EvidenceCandidate] = []
     true_false_facts: list[TrueFalseFact] = []
     atlas_pairs: list[AtlasPassPair] = []
+    mark_requests: list[MarkTheWordsRequest] = []
     writing_tasks: list[ShortWritingTask] = []
     for activity_type, _count in sorted(required.items()):
         if activity_type not in _LIST_TYPES | {"short-writing"}:
             continue
         type_groups = groups_by_type.get(activity_type, ())
-        for group_number, group in enumerate(type_groups, start=1):
-            sentence = by_id[group[0].sentence_id]
+        group_rows = sorted(
+            zip(
+                group_numbers_by_type.get(activity_type, ()),
+                type_groups,
+                group_focus_modes.get(activity_type, ()),
+                strict=True,
+            ),
+            key=lambda row: row[0],
+        )
+        for group_number, group, focus_mode in group_rows:
+            ready_candidates = prebuilt_candidates.get((activity_type, group_number))
+            if ready_candidates is not None:
+                candidates.extend(ready_candidates)
+                continue
+            cloze_passage = None
+            cloze_sentence_starts: dict[str, int] = {}
+            if activity_type == "cloze" and group:
+                sentence_numbers = sorted(
+                    int(token.sentence_id.removeprefix("s-")) for token in group
+                )
+                cloze_sentences = tuple(
+                    by_id[f"s-{index}"]
+                    for index in range(sentence_numbers[0], sentence_numbers[-1] + 1)
+                )
+                cursor = 0
+                for passage_sentence in cloze_sentences:
+                    cloze_sentence_starts[passage_sentence.sentence_id] = cursor
+                    cursor += len(passage_sentence.text) + 1
+                cloze_passage = " ".join(sentence.text for sentence in cloze_sentences)
+                if (
+                    cloze_passage.count("«") != cloze_passage.count("»")
+                    or cloze_passage.count("(") != cloze_passage.count(")")
+                    or cloze_passage.count("[") != cloze_passage.count("]")
+                ):
+                    continue
             for token_number, token in enumerate(group, start=1):
+                sentence = by_id[token.sentence_id]
                 candidate_id = f"{activity_type}:{group_number}:{token_number}"
-                replacement = _replacement_surface(group, token_number - 1, token)
                 if activity_type in {"quiz", "cloze", "fill-in", "error-correction"}:
+                    bank_row = (
+                        _certified_choice_bank(token)
+                        if activity_type in {"quiz", "cloze", "fill-in"}
+                        else None
+                    )
+                    replacement_row = (
+                        _error_replacement(token) if activity_type == "error-correction" else None
+                    )
+                    replacement = replacement_row[0] if replacement_row is not None else None
+                    morphology_class = (
+                        replacement_row[1] if replacement_row is not None else None
+                    )
                     derived = (
                         sentence.text[: token.start_offset]
                         + replacement
                         + sentence.text[token.end_offset :]
-                        if activity_type == "error-correction" and replacement != token.surface
+                        if replacement is not None and replacement != token.surface
                         else None
                     )
                     candidates.append(
@@ -146,9 +2439,39 @@ def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> Cer
                             semantic_target=f"{activity_type}:{token.token_id}",
                             certified_error_count=1 if derived is not None else 0,
                             derived_surface=derived,
+                            focus_alignment=(
+                                focus_mode
+                                if focus_mode in _DEGREE_LIST_ROLES
+                                or focus_mode == _FOCUS_PRIMARY
+                                or (focus_mode == _FOCUS_REINFORCEMENT and _is_degree_token(token))
+                                else None
+                            ),
+                            rendering_surface=cloze_passage,
+                            target_start_offset=(
+                                (
+                                    cloze_sentence_starts[sentence.sentence_id]
+                                    + token.start_offset
+                                )
+                                if activity_type == "cloze" and cloze_passage is not None
+                                else token.start_offset
+                                if activity_type in {"quiz", "fill-in", "error-correction"}
+                                else None
+                            ),
+                            target_end_offset=(
+                                cloze_sentence_starts[sentence.sentence_id] + token.end_offset
+                                if activity_type == "cloze" and cloze_passage is not None
+                                else token.end_offset
+                                if activity_type in {"quiz", "fill-in", "error-correction"}
+                                else None
+                            ),
+                            morphology_class=morphology_class,
+                            choice_bank=bank_row[0] if bank_row is not None else (),
+                            exclusion_warrants=bank_row[1] if bank_row is not None else (),
                         )
                     )
                 elif activity_type == "text-questions":
+                    category = _TEXT_QUESTION_CATEGORIES[token_number - 1]
+                    intent = _TEXT_QUESTION_INTENTS[token_number - 1]
                     candidates.append(
                         EvidenceCandidate(
                             activity_type=activity_type,
@@ -156,52 +2479,90 @@ def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> Cer
                             sentence_id=sentence.sentence_id,
                             token_id=token.token_id,
                             literal_evidence=sentence.text,
-                            expected_key=token.surface,
-                            semantic_target=f"{activity_type}:{token.token_id}",
-                            category=_TEXT_QUESTION_CATEGORIES[token_number - 1],
+                            expected_key=sentence.text,
+                            semantic_target=(
+                                f"{activity_type}:{category}:{sentence.sentence_id}"
+                            ),
+                            category=category,
+                            question_intent=intent,
+                            semantic_warrant=(
+                                "source carrier contains an explicit causal connective"
+                                if intent == "explicit-causal"
+                                else "source carrier states the fact to recover"
+                                if intent == "fact-recovery"
+                                else "source carrier anchors one realistic transfer prompt"
+                            ),
+                            focus_alignment=(
+                                "anchor-comprehension"
+                                if focus_mode == "anchor-comprehension"
+                                else None
+                            ),
                         )
                     )
-                elif activity_type == "true-false" and replacement != token.surface:
-                    true_false_facts.append(
-                        TrueFalseFact(
-                            fact_id=candidate_id,
-                            sentence_id=sentence.sentence_id,
-                            literal_evidence=sentence.text,
-                            source_surface=token.surface,
-                            replacement_surface=replacement,
-                            truth_value=token_number % 2 == 0,
-                        )
+                elif activity_type == "true-false":
+                    # Generic predicate negation is not a meaningful comprehension
+                    # task. Production true/false remains unavailable until a
+                    # source-backed semantic mutation catalog exists.
+                    continue
+                elif activity_type == "match-up":
+                    pair_source = (
+                        _degree_match_pairs(sentences, focus_mode)
+                        if focus_mode
+                        in {"degree-positive-comparative", "degree-comparative-superlative"}
+                        else match_pairs
                     )
-                elif activity_type == "match-up" and replacement != token.surface:
+                    pair = pair_source.get(token.token_id)
+                    if pair is None:
+                        continue
                     atlas_pairs.append(
                         AtlasPassPair(
                             pair_id=candidate_id,
                             sentence_id=sentence.sentence_id,
-                            left=token.surface,
-                            right=replacement,
+                            left=pair[0],
+                            right=pair[1],
                             literal_evidence=sentence.text,
                             atlas_pass=True,
+                            relation=pair[2],
                         )
                     )
             if activity_type == "short-writing":
-                lemma = next(
-                    (
-                        str(parse["lemma"])
-                        for token in group
-                        for parse in token.vesum_parses
-                        if isinstance(parse.get("lemma"), str) and parse["lemma"].strip()
-                    ),
-                    None,
-                )
-                if lemma is not None:
+                task_sentence = by_id[group[0].sentence_id]
+                lemmas: list[str] = []
+                for token in group:
+                    ladder = _degree_ladder_for_token(token)
+                    identity = _unambiguous_content_lemma_pos(token)
+                    lemma = (
+                        ladder.positive
+                        if ladder is not None
+                        else identity[0]
+                        if identity is not None
+                        else None
+                    )
+                    if lemma is not None and lemma not in lemmas:
+                        lemmas.append(lemma)
+                if lemmas:
+                    minimum, maximum = writing_ranges[duration_minutes]
+                    degree_writing = focus_mode in {_FOCUS_WRITING, "degree-writing"}
                     writing_tasks.append(
                         ShortWritingTask(
                             task_id=f"short-writing:{group_number}",
-                            sentence_id=sentence.sentence_id,
-                            prompt=sentence.text,
+                            sentence_id=task_sentence.sentence_id,
+                            prompt=(
+                                DEGREE_WRITING_SCENARIO if degree_writing else task_sentence.text
+                            ),
                             constraints=(
-                                ConstraintSpec("contains_lemma_set", {"lemmas": (lemma,)}),
-                                ConstraintSpec("word_count_range", {"minimum": 1, "maximum": 200}),
+                                ConstraintSpec(
+                                    "contains_lemma_set",
+                                    {
+                                        "lemmas": tuple(
+                                            DEGREE_WRITING_LEMMAS if degree_writing else lemmas[:1]
+                                        )
+                                    },
+                                ),
+                                ConstraintSpec(
+                                    "word_count_range",
+                                    {"minimum": minimum, "maximum": maximum},
+                                ),
                             ),
                             sample_tokens=tuple(
                                 VesumToken(
@@ -212,14 +2573,32 @@ def inventory_from_anchor(anchor: str, *, scheduled_types: Sequence[str]) -> Cer
                                 )
                                 for token in group
                             ),
+                            focus_alignment=(_FOCUS_WRITING if degree_writing else None),
+                            attribute_warrants=(DEGREE_WRITING_WARRANTS if degree_writing else ()),
                         )
                     )
+            elif activity_type == "mark-the-words":
+                sentence_indexes = sorted(
+                    int(token.sentence_id.removeprefix("s-")) for token in group
+                )
+                mark_requests.append(
+                    MarkTheWordsRequest(
+                        request_id=f"mark-the-words:{group_number}",
+                        sentence_ids=tuple(
+                            f"s-{index}"
+                            for index in range(sentence_indexes[0], sentence_indexes[-1] + 1)
+                        ),
+                        criterion="degree=comparison",
+                        target_token_ids=tuple(token.token_id for token in group),
+                    )
+                )
     return CertificationInventory(
         source_id=_source_id(anchor),
         sentences=sentences,
         candidates=tuple(candidates),
         true_false_facts=tuple(true_false_facts),
         atlas_pairs=tuple(atlas_pairs),
+        mark_requests=tuple(mark_requests),
         writing_tasks=tuple(writing_tasks),
     )
 
@@ -251,6 +2630,11 @@ def inventory_for_group(
             pair
             for pair in inventory.atlas_pairs
             if activity_type != "match-up" or pair.pair_id.startswith(prefix)
+        ),
+        mark_requests=tuple(
+            request
+            for request in inventory.mark_requests
+            if activity_type != "mark-the-words" or request.request_id == task_id
         ),
         writing_tasks=tuple(
             task

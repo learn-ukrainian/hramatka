@@ -6,17 +6,17 @@
     {
       "id": "b1-narrative",
       "source_identity": "synthetic-runtime-fixture/b1-narrative",
-      "sha256": "ea0f3520e9a0e4cc1344fc54f25a1d358937b9bb5de8fefa670951e19cf24b0c"
+      "sha256": "a6c865c59dd80761e116c99a8dd3a9b225988d17d85facae711867d1bc9a0a6a"
     },
     {
       "id": "b1-dialogue",
       "source_identity": "synthetic-runtime-fixture/b1-dialogue",
-      "sha256": "05a78f843365aec9ca7ed6569e42b351ca18825e7193d3dca1100ff6b8f31b84"
+      "sha256": "b464ad47e425bc7d80ce65ce1e256d72b5c3832e3f4c440f75c0eba9c6089491"
     },
     {
       "id": "b1-morphology",
       "source_identity": "synthetic-runtime-fixture/b1-morphology",
-      "sha256": "f4694df5bbb2d36fbb98085652c2ca22a3294e8d2c28d9f131aedf2877cfefb5"
+      "sha256": "31ea53f4039315d34f1d3ee651cd6d56ba698395023ac65d0e1dc835028e58e4"
     }
   ]
 }

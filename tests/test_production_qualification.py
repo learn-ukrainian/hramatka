@@ -72,8 +72,8 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.delivery.provenance_continuous
         assert cell.receipt.outcome == "passed"
         assert cell.receipt.semantic_gate == "not_run"
-        assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.2"
-        assert cell.receipt.template_version == "gemma-phase-pack.v3.6"
+        assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.3"
+        assert cell.receipt.template_version == "gemma-phase-pack.v3.11"
         assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
         assert cell.receipt.density.lesson_units == 57
         assert cell.receipt.density.slot_count == 8
@@ -390,8 +390,8 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     )
     assert block.count("    QualificationReceipt(\n") == 3
     assert block.count("passed_anchors=frozenset({") == 3
-    assert 'prompt_pack_version="PromptPackInput.v3.2"' in block
-    assert 'template_version="gemma-phase-pack.v3.6"' in block
+    assert 'prompt_pack_version="PromptPackInput.v3.3"' in block
+    assert 'template_version="gemma-phase-pack.v3.11"' in block
     assert 'density_contract_version="TeacherReadyDensity.v3"' in block
     assert "passed=True," in block
     emitted: dict[str, object] = {"Final": Final, "QualificationReceipt": QualificationReceipt}

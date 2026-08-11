@@ -78,8 +78,8 @@ def _kit(activity_type: str = "quiz", target_form: str = "На") -> dict:
 
 def test_version_bump_identifiers() -> None:
     """Verify version string bumps for the #381 amendment contract."""
-    assert PROMPT_PACK_VERSION == "PromptPackInput.v3.2"
-    assert TEMPLATE_VERSION == "gemma-phase-pack.v3.6"
+    assert PROMPT_PACK_VERSION == "PromptPackInput.v3.3"
+    assert TEMPLATE_VERSION == "gemma-phase-pack.v3.11"
     assert TYPE_KIT_IDENTITY == "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 
@@ -93,7 +93,16 @@ def test_type_kit_contains_seed_pairs() -> None:
             allowed_forms=("добріший",),
             expected_key_or_rule=ExpectedKeyRule("key", "добріший"),
             citation_plan=(Citation("src", f"s-{i}"),),
-            distinctness={"stem": f"s{i}"},
+            distinctness={
+                "stem": f"s{i}",
+                "gap": {
+                    "sentence_id": f"s-{i}",
+                    "token_id": f"s-{i}:t-1",
+                    "start_offset": len("Цей план "),
+                    "end_offset": len("Цей план добріший"),
+                },
+            },
+            rendering_surface="Цей план добріший.",
         )
         for i in range(1, 9)
     )

@@ -46,6 +46,11 @@ CAUSE_VOCABULARY: dict[str, str] = {
     "gap_construction": "gap_construction",
     "distractor_adjacency": "distractor_adjacency: vesum_adjacent_distractors",
     "distractor_repeated_token": "distractor_adjacency: error_correction_no_repeated_tokens",
+    "non_revealing_sequence": "non_revealing_sequence: distinct_learner_stems",
+    "activity_purpose": "activity_purpose: source_grounded_meaning",
+    "short_writing_visible_constraints": (
+        "short_writing_visible_constraints: learner_facing_requirements"
+    ),
     "serialization_exactness": "serialization_exactness: scheduled_unit_references",
     "raw_contract": "raw_contract: pilot_activity_schema",
     "repair_renderer": "repair_renderer: slot_response_unavailable",
@@ -64,6 +69,9 @@ _REPAIRABLE_CAUSE_KEYS = frozenset(
         "gap_construction",
         "distractor_adjacency",
         "distractor_repeated_token",
+        "non_revealing_sequence",
+        "activity_purpose",
+        "short_writing_visible_constraints",
         "serialization_exactness",
         "raw_contract",
     }
@@ -204,8 +212,7 @@ class BlockEvaluation:
         bundle, and context failures remain outside this slot-level loop.
         """
         return self.disposition == "density_shortfall" or any(
-            error.cause.startswith(_REPAIRABLE_CAUSE_PREFIXES)
-            for error in self.errors
+            error.cause.startswith(_REPAIRABLE_CAUSE_PREFIXES) for error in self.errors
         )
 
 
@@ -317,16 +324,15 @@ class RepairEvaluation:
     @property
     def receipts(self) -> tuple[BlockDensityReceipt, ...]:
         attempted = tuple(receipt for attempt in self.attempts for receipt in attempt.receipts)
-        dropped = tuple(
-            block.receipt for block in self.blocks if block.disposition == "dropped"
-        )
+        dropped = tuple(block.receipt for block in self.blocks if block.disposition == "dropped")
         return (*attempted, *dropped)
 
     @property
     def errors(self) -> tuple[SlotError, ...]:
-        return (*(
-            error for attempt in self.attempts for error in attempt.errors
-        ), *(error for block in self.blocks for error in block.errors))
+        return (
+            *(error for attempt in self.attempts for error in attempt.errors),
+            *(error for block in self.blocks for error in block.errors),
+        )
 
 
 def evaluate_phase_response(
@@ -337,6 +343,7 @@ def evaluate_phase_response(
     deterministic_gates: Sequence[DeterministicGate],
     raw_contract_validator: RawContractValidator,
     tray_slot_ids: Sequence[str] = (),
+    focus: str | None = None,
 ) -> PhaseEvaluation:
     """Grade every ready/tray candidate independently after the gate stage.
 
@@ -345,7 +352,7 @@ def evaluate_phase_response(
     ready or claim teacher-review tray credit, even when another block passes.
     """
     slots = _phase_slots(allocation, phase)
-    context = build_phase_context(allocation, phase=phase)
+    context = build_phase_context(allocation, phase=phase, focus=focus)
     return _evaluate_payload(
         payload,
         context=context,
@@ -367,6 +374,7 @@ def evaluate_phase_with_repair(
     replacement_renderer: ReplacementRenderer | None = None,
     tray_slot_ids: Sequence[str] = (),
     max_repair_rounds: int = MAX_REPAIR_ROUNDS,
+    focus: str | None = None,
 ) -> RepairEvaluation:
     """Run at most max_repair_rounds same-plan repairs, then use only certified replacements.
 
@@ -380,7 +388,7 @@ def evaluate_phase_with_repair(
         raise ValueError("Slice-5 repair requires a renderer for both bounded repair rounds.")
     slots = _phase_slots(allocation, phase)
     slot_by_id = {slot.slot_id: slot for slot in slots}
-    context = build_phase_context(allocation, phase=phase)
+    context = build_phase_context(allocation, phase=phase, focus=focus)
     frozen_context = _freeze_context(context)
     initial = _evaluate_payload(
         payload,
@@ -451,6 +459,7 @@ def evaluate_phase_with_repair(
             raw_contract_validator=raw_contract_validator,
             replacement_renderer=replacement_renderer,
             tray_slot_ids=tray_slot_ids,
+            focus=focus,
         )
         attempts.extend(replacement_attempts)
         if replacement is not None:
@@ -662,38 +671,30 @@ def _records_for_slots(
     errors: dict[str, list[SlotError]] = {}
     unassigned: list[SlotError] = []
     duplicate_ids: set[str] = set()
-    if not isinstance(payload, Mapping) or set(payload) != {"slots"} or not isinstance(
-        payload.get("slots"), list
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != {"slots"}
+        or not isinstance(payload.get("slots"), list)
     ):
         for slot_id in expected_ids:
-            errors[slot_id] = [
-                _rule_error(slot_id, "response_shape")
-            ]
+            errors[slot_id] = [_rule_error(slot_id, "response_shape")]
         return records, errors, unassigned
     for record in payload["slots"]:
         reported = record.get("slot_id") if isinstance(record, Mapping) else None
         if isinstance(reported, str) and reported in expected_ids:
             if reported in records:
-                errors.setdefault(reported, []).append(
-                    _rule_error(reported, "response_shape")
-                )
+                errors.setdefault(reported, []).append(_rule_error(reported, "response_shape"))
                 records.pop(reported, None)
                 duplicate_ids.add(reported)
             elif reported in duplicate_ids:
-                errors.setdefault(reported, []).append(
-                    _rule_error(reported, "response_shape")
-                )
+                errors.setdefault(reported, []).append(_rule_error(reported, "response_shape"))
             else:
                 records[reported] = record
             continue
         if isinstance(reported, str) and reported.strip():
-            unassigned.append(
-                _rule_error("unassigned", "response_shape")
-            )
+            unassigned.append(_rule_error("unassigned", "response_shape"))
         else:
-            unassigned.append(
-                _rule_error("unassigned", "response_shape")
-            )
+            unassigned.append(_rule_error("unassigned", "response_shape"))
     for slot_id in expected_ids:
         if slot_id not in records and slot_id not in errors:
             errors[slot_id] = [_rule_error(slot_id, "response_shape")]
@@ -805,6 +806,7 @@ def _try_replacements(
     raw_contract_validator: RawContractValidator,
     replacement_renderer: ReplacementRenderer | None,
     tray_slot_ids: Sequence[str],
+    focus: str | None,
 ) -> tuple[BlockEvaluation | None, tuple[PhaseEvaluation, ...]]:
     attempts: list[PhaseEvaluation] = []
     if replacement_renderer is None:
@@ -814,7 +816,7 @@ def _try_replacements(
         replacement_allocation = LessonAllocation(
             paragraph_ids=allocation.paragraph_ids, slots=(replacement_slot,)
         )
-        context = build_phase_context(replacement_allocation, phase=slot.phase)
+        context = build_phase_context(replacement_allocation, phase=slot.phase, focus=focus)
         request = ReplacementRequest(
             slot_id=slot.slot_id,
             phase=slot.phase,
