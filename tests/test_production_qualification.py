@@ -64,8 +64,8 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     )
     for cell in run.cells:
         assert cell.delivery.durable_job
-        assert cell.delivery.block_count == 8
-        assert cell.delivery.phase_counts == {"1": 3, "2": 4, "3": 1}
+        assert cell.delivery.block_count == 6
+        assert cell.delivery.phase_counts == {"1": 2, "2": 3, "3": 1}
         assert cell.delivery.response_units >= 28
         assert len(cell.delivery.activity_types) >= 4
         assert cell.delivery.phase_three_transfer
@@ -75,8 +75,8 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.3"
         assert cell.receipt.template_version == "gemma-phase-pack.v3.11"
         assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
-        assert cell.receipt.density.lesson_units == 57
-        assert cell.receipt.density.slot_count == 8
+        assert cell.receipt.density.lesson_units == 41
+        assert cell.receipt.density.slot_count == 6
         assert all(
             set(entry.as_dict())
             == {

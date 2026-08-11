@@ -209,8 +209,6 @@ def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]
         45: (
             "quiz",
             "cloze",
-            "fill-in",
-            "quiz",
             "match-up",
             "error-correction",
             "text-questions",

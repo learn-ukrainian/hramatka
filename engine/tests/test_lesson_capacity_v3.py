@@ -96,7 +96,7 @@ def _full_45_slots(*, first_replacements: tuple[str, ...] = ()) -> tuple[LessonS
             requested_type="quiz",
             replacement_types=first_replacements if (phase, position) == (1, 1) else (),
         )
-        for phase, count in ((1, 3), (2, 4), (3, 1))
+        for phase, count in ((1, 2), (2, 3), (3, 1))
         for position in range(1, count + 1)
     )
 

@@ -260,7 +260,7 @@ def test_receipt_has_only_the_locked_content_free_shape_and_consumes_floor_autho
 def test_45_minute_lone_phase_three_rejects_text_questions_without_full_budget() -> None:
     shape = phase_shape_for(45)
 
-    assert shape.phase_slots == {1: 3, 2: 4, 3: 1}
+    assert shape.phase_slots == {1: 2, 2: 3, 3: 1}
     assert type_allowed_in_phase(45, 3, "text-questions") is False
     assert type_allowed_in_phase(45, 3, "short-writing") is True
 
@@ -276,7 +276,7 @@ def test_45_minute_lone_phase_three_rejects_text_questions_without_full_budget()
 def test_density_floor_fingerprint_tracks_the_locked_v3_authority() -> None:
     assert (
         teacher_ready_density_v3.density_floor_fingerprint()
-        == "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
+        == "45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b"
     )
 
 

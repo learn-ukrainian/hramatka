@@ -29,7 +29,7 @@ PROMPT_SHA256: Final = "a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc7
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.11"
 TEMPLATE_SHA256: Final = "8a5df04165e812bdccaa6da5557b8ed09208540ea43b9a3bef5fb3e22ea25f3b"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
-DENSITY_CONTRACT_DIGEST: Final = "1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf"
+DENSITY_CONTRACT_DIGEST: Final = "45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
 

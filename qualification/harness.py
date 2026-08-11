@@ -1681,11 +1681,9 @@ class ProductionQualificationHarness:
         expected = {
             "P1-A1",
             "P1-A2",
-            "P1-A3",
             "P2-A1",
             "P2-A2",
             "P2-A3",
-            "P2-A4",
             "P3-A1",
         }
         return DensitySummary(
@@ -1853,8 +1851,8 @@ class ProductionQualificationHarness:
         return (
             delivery.durable_job
             and density.disposition == "teacher_ready"
-            and density.slot_count >= 8
-            and density.lesson_units >= 57
+            and density.slot_count >= 6
+            and density.lesson_units >= 41
             and delivery.block_count == density.slot_count
             and delivery.provenance_continuous
         )

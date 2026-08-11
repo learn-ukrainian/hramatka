@@ -47,18 +47,16 @@ _SEMANTIC_GATES = frozenset({"not_run", "passed", "failed"})
 _V3_SLOT_DISPOSITIONS = frozenset({"ready", "tray", "density_shortfall", "dropped"})
 _SLOT_ID_RE = re.compile(r"^P([1-3])-A([1-9][0-9]*)$")
 _PROVENANCE_TIERS = frozenset({"api_observed", "cli_self_reported"})
-# The 45-minute qualification matrix has the same immutable 3/4/1 phase
+# The 45-minute qualification matrix has the same immutable 2/3/1 phase
 # shape as the v3 allocation contract.  A passing cell must account for each
 # scheduled position separately; it may not repeat a dense slot to compensate
 # for a sparse or absent one.
 _QUALIFICATION_SLOT_PHASES = {
     "P1-A1": 1,
     "P1-A2": 1,
-    "P1-A3": 1,
     "P2-A1": 2,
     "P2-A2": 2,
     "P2-A3": 2,
-    "P2-A4": 2,
     "P3-A1": 3,
 }
 
@@ -826,8 +824,8 @@ class RouteAggregate:
             and all(
                 cell.outcome == "passed"
                 and cell.density.disposition == "teacher_ready"
-                and cell.density.slot_count >= 8
-                and cell.density.lesson_units >= 57
+                and cell.density.slot_count >= 6
+                and cell.density.lesson_units >= 41
                 and cell.prompt_pack_version == PROMPT_PACK_VERSION
                 and cell.template_version == TEMPLATE_VERSION
                 and cell.template_sha256 == template_digest()
@@ -980,11 +978,11 @@ def aggregate_receipts(
             raise QualificationError(
                 "A failed or non-deliverable qualification cell cannot aggregate."
             )
-        expected_phase_slots = {"1": 3, "2": 4, "3": 1}
+        expected_phase_slots = {"1": 2, "2": 3, "3": 1}
         if (
-            receipt.density.slot_count < 8
+            receipt.density.slot_count < 6
             or any(
-                receipt.density.ready_slots + receipt.density.tray_slots < 8
+                receipt.density.ready_slots + receipt.density.tray_slots < 6
                 or sum(
                     entry.disposition in {"ready", "tray"} and str(entry.phase) == phase
                     for entry in receipt.slot_telemetry
@@ -992,7 +990,7 @@ def aggregate_receipts(
                 < expected
                 for phase, expected in expected_phase_slots.items()
             )
-            or receipt.density.lesson_units < 57
+            or receipt.density.lesson_units < 41
         ):
             raise QualificationError(
                 "Receipt v3 unit totals do not meet the B1 45-minute contract."

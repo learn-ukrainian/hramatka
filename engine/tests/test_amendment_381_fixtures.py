@@ -328,12 +328,10 @@ def test_closed_class_target_on_forbidden_shape_fails_preflight() -> None:
 
     slots = (
         LessonSlot(slot_id="P1-A1", phase=1, requested_type="true-false"),
-        LessonSlot(slot_id="P1-A2", phase=1, requested_type="quiz"),
-        LessonSlot(slot_id="P1-A3", phase=1, requested_type="cloze"),
-        LessonSlot(slot_id="P2-A1", phase=2, requested_type="true-false"),
-        LessonSlot(slot_id="P2-A2", phase=2, requested_type="match-up"),
-        LessonSlot(slot_id="P2-A3", phase=2, requested_type="error-correction"),
-        LessonSlot(slot_id="P2-A4", phase=2, requested_type="text-questions"),
+        LessonSlot(slot_id="P1-A2", phase=1, requested_type="cloze"),
+        LessonSlot(slot_id="P2-A1", phase=2, requested_type="match-up"),
+        LessonSlot(slot_id="P2-A2", phase=2, requested_type="error-correction"),
+        LessonSlot(slot_id="P2-A3", phase=2, requested_type="text-questions"),
         LessonSlot(slot_id="P3-A1", phase=3, requested_type="short-writing"),
     )
 
