@@ -26,13 +26,13 @@ from .linguistics import verify_lemma, verify_words
 from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
-PROMPT_PACK_VERSION = "PromptPackInput.v3.3"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.12"
-TEMPLATE_SHA256: Final[str] = "4a2e029f5e744a88a59f4381936580a61ccc5e4d44b3dbdf3e3b15072956fcdb"
+PROMPT_PACK_VERSION = "PromptPackInput.v3.4"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.13"
+TEMPLATE_SHA256: Final[str] = "f78ea917f779f9e04bcf93846a353807bf0b0a04bd16f0a8e2e2bb010eaa3b22"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.12.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.13.md"
 
 # Literal strings that appear only in the compact synthetic schema shapes.  Their
 # presence in a model response means the serializer copied the exemplar instead
@@ -129,6 +129,14 @@ _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+")
 _EXPLICIT_CAUSAL_SURFACE_RE = re.compile(
     r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b",
     re.IGNORECASE,
+)
+_SOURCE_RELATION_INTENTS: Final[frozenset[str]] = frozenset(
+    {
+        "causal-clause.v1",
+        "purpose-clause.v1",
+        "temporal-clause.v1",
+        "licensed-vid-cause.v1",
+    }
 )
 _UNRESOLVED_QUESTION_DEIXIS_RE = re.compile(
     r"\b(?:цих|цьому|цього)\b",
@@ -364,6 +372,39 @@ def _type_kit(slot: object) -> dict[str, Any]:
                 raise PromptPackV3Error(
                     "Text-question explanation unit lacks an explicit causal source warrant."
                 )
+            answer_span = distinctness.get("answer_span")
+            question_topic = distinctness.get("question_topic")
+            if answer_span is not None or question_topic is not None:
+                surface = unit.get("rendering_surface")
+                forms = unit.get("allowed_forms")
+                start = (
+                    answer_span.get("start_offset")
+                    if isinstance(answer_span, Mapping)
+                    else None
+                )
+                end = answer_span.get("end_offset") if isinstance(answer_span, Mapping) else None
+                text = answer_span.get("text") if isinstance(answer_span, Mapping) else None
+                allowed_intents = {
+                    "comprehension": {"fact-recovery"},
+                    "explanation_inference": set(_SOURCE_RELATION_INTENTS),
+                    "anchored_application": {"anchored-application.v1"},
+                }.get(category, set())
+                if (
+                    not isinstance(surface, str)
+                    or not isinstance(start, int)
+                    or not isinstance(end, int)
+                    or start < 0
+                    or end <= start
+                    or surface[start:end] != text
+                    or forms != [text]
+                    or intent not in allowed_intents
+                    or not isinstance(question_topic, Mapping)
+                    or not isinstance(question_topic.get("token_id"), str)
+                    or not isinstance(question_topic.get("lemma"), str)
+                ):
+                    raise PromptPackV3Error(
+                        "Text-question source proposition proof is detached from its unit."
+                    )
     return kit
 
 
@@ -1703,7 +1744,9 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             r"\b(?:що|хто|де|коли|скільки|який|яка|які|яке)\b", re.IGNORECASE
         ),
         "explanation_inference": re.compile(
-            r"\b(?:чому|навіщо)\b|з\s+якої\s+причини|"
+            r"\b(?:чому|навіщо|коли)\b|з\s+якої\s+причини|"
+            r"з\s+якою\s+метою|до\s+якого\s+моменту|"
+            r"від\s+чого|через\s+що|"
             r"що\s+(?:це\s+)?(?:пояснює|показує|свідчить)|"
             r"який\s+висновок|як\s+(?:ви|можна)\s+(?:пояснити|поясните|зрозуміти)",
             re.IGNORECASE,
@@ -1763,16 +1806,16 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question ignores its certified question category at items[{index}]"
             )
-        expected_intent = {
-            "comprehension": "fact-recovery",
-            "explanation_inference": "explicit-causal",
-            "anchored_application": "realistic-transfer",
-        }.get(category)
-        if intent is not None and intent != expected_intent:
+        allowed_intents = {
+            "comprehension": {"fact-recovery"},
+            "explanation_inference": {"explicit-causal", *_SOURCE_RELATION_INTENTS},
+            "anchored_application": {"realistic-transfer", "anchored-application.v1"},
+        }.get(category, set())
+        if intent is not None and intent not in allowed_intents:
             raise PromptPackV3Error(
                 f"text question ignores its certified purpose intent at items[{index}]"
             )
-        if intent == "realistic-transfer" and re.search(
+        if intent in {"realistic-transfer", "anchored-application.v1"} and re.search(
             r"через\s+те,?\s+що[^?!.]{0,180}\bале\b",
             item,
             re.IGNORECASE,
@@ -1803,6 +1846,22 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             if match.get("pos") in {"noun", "verb", "adj", "adv"}
             and isinstance((lemma := match.get("lemma")), str)
         }
+        certified_topic = (
+            distinctness.get("question_topic")
+            if isinstance(distinctness, Mapping)
+            else None
+        )
+        certified_topic_lemma = (
+            certified_topic.get("lemma") if isinstance(certified_topic, Mapping) else None
+        )
+        if (
+            isinstance(certified_topic_lemma, str)
+            and certified_topic_lemma.casefold()
+            not in {lemma.casefold() for lemma in question_lemmas}
+        ):
+            raise PromptPackV3Error(
+                f"text question is detached from its certified topic at items[{index}]"
+            )
         # One naturally reused content lemma plus a locked cognitive category
         # grounds the question without forcing awkward two-word parroting of
         # the source sentence.  Distinct-stem and token-retrieval gates still
@@ -1812,7 +1871,14 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question is detached from its rendering surface at items[{index}]"
             )
-        overlap = source_lemmas & question_lemmas
+        prefix_lemmas = {
+            lemma
+            for word in _UKRAINIAN_WORD_RE.findall(matched_prefix)
+            for match in _vesum_matches(word, db_path)
+            if match.get("pos") in {"noun", "verb", "adj", "adv"}
+            and isinstance((lemma := match.get("lemma")), str)
+        }
+        overlap = (source_lemmas & question_lemmas) - prefix_lemmas
         if len(overlap) > 2 or len(source_lemmas - question_lemmas) < 2:
             raise PromptPackV3Error(
                 f"text question consumes its source answer at items[{index}]"
@@ -1831,7 +1897,16 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             for word in _UKRAINIAN_WORD_RE.findall(item)
             if (lemma := _catalog_positive_lemma(word)) is not None
         }
-        if source_degree_lemmas and not source_degree_lemmas & question_degree_lemmas:
+        focus_alignment = (
+            distinctness.get("focus_alignment")
+            if isinstance(distinctness, Mapping)
+            else None
+        )
+        if (
+            focus_alignment == "anchor-comprehension"
+            and source_degree_lemmas
+            and not source_degree_lemmas & question_degree_lemmas
+        ):
             raise PromptPackV3Error(
                 f"text question omits its certified comparison at items[{index}]"
             )

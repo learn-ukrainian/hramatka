@@ -1,4 +1,4 @@
-"""Deterministic contracts for the v3.3 binding-contract redesign (#375)."""
+"""Deterministic contracts for the current v3 binding and pedagogy pack."""
 
 from __future__ import annotations
 
@@ -89,11 +89,11 @@ def _validate(payload: dict, context: dict, **overrides: object) -> list[dict]:
     )
 
 
-def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
+def test_v34_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
-    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.3"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.12"
+    assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.4"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.13"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -113,23 +113,16 @@ def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
         if item["slot_id"] == "P1-A2" and item["type"] == "cloze"
     )
     units = kit["certified_units"]
-    carrier = " ".join(dict.fromkeys(unit["rendering_surface"] for unit in units))
-    assert carrier.count("читання") == 5
-    assert carrier.count("українців") == 2
+    carrier = units[0]["rendering_surface"]
+    assert all(unit["rendering_surface"] == carrier for unit in units)
 
     spans: list[tuple[int, int, int]] = []
-    repeated_answer_occurrences: dict[str, list[int]] = {}
     for index, unit in enumerate(units, start=1):
         answer = unit["allowed_forms"][0]
         gap = unit["distinctness"]["gap"]
         start, end = gap["start_offset"], gap["end_offset"]
         assert carrier[start:end] == answer
         spans.append((start, end, index))
-        if answer in {"читання", "українців"}:
-            repeated_answer_occurrences.setdefault(answer, []).append(
-                carrier[:start].count(answer) + 1
-            )
-    assert repeated_answer_occurrences == {"читання": [1, 2, 5], "українців": [2]}
 
     independently_rendered = carrier
     for start, end, index in reversed(sorted(spans)):
@@ -193,7 +186,7 @@ def test_compact_exemplars_are_requested_type_only_and_keep_exact_count() -> Non
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.12" in prompt
+    assert "v3.13" in prompt
     assert "APPLICABLE TYPE PURPOSE CONTRACTS" in prompt
     assert "CONTRASTIVE PEDAGOGY FAILURES" in prompt
 
@@ -292,7 +285,7 @@ def test_failed_exact_count_in_any_slot_never_reaches_raw_contract_validation() 
     assert calls == []
 
 
-def test_v33_validation_requires_bound_always_on_and_raw_contract_gates() -> None:
+def test_v34_validation_requires_bound_always_on_and_raw_contract_gates() -> None:
     context = _context()
     payload = _payload(context)
 
@@ -1082,6 +1075,29 @@ def test_natural_text_question_categories_need_one_source_content_lemma() -> Non
             validate_activity_purpose(activity, single)
 
 
+def test_licensed_cause_question_accepts_correct_ukrainian_case() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "explanation_inference"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
+    unit["distinctness"]["question_intent"] = "licensed-vid-cause.v1"
+    unit["distinctness"]["question_frame"]["allowed_prefixes"] = ["Через що"]
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Через що корисне читання?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    validate_activity_purpose(activity, kit)
+
+
 def test_text_question_must_leave_source_content_for_the_answer() -> None:
     kit = _context("text-questions")["type_kits"][0]
     unit = next(
@@ -1172,6 +1188,90 @@ def test_anchored_application_rejects_contrast_as_one_causal_reason() -> None:
 
     with pytest.raises(PromptPackV3Error, match="turns a contrast into one causal reason"):
         validate_activity_purpose(activity, kit)
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "До якого наслідку відбувається читання?",
+        "Що відбувається одночасно з читанням?",
+    ),
+)
+def test_text_questions_reject_removed_unsupported_relation_prompts(question: str) -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "explanation_inference"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
+    unit["distinctness"]["question_intent"] = "explicit-causal"
+    unit["distinctness"]["question_prefixes"] = [question.split(" читання", 1)[0]]
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": [question],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="question category"):
+        validate_activity_purpose(activity, kit)
+
+
+def test_degree_comprehension_question_must_keep_its_certified_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyses = {
+        "старша": [{"lemma": "старий", "tags": "adj:f:nom:compc", "pos": "adj"}],
+        "сестра": [{"lemma": "сестра", "tags": "noun:f:nom", "pos": "noun"}],
+        "читає": [{"lemma": "читати", "tags": "verb:imperf:pres", "pos": "verb"}],
+        "книжку": [{"lemma": "книжка", "tags": "noun:f:acc", "pos": "noun"}],
+        "щовечора": [{"lemma": "щовечора", "tags": "adv", "pos": "adv"}],
+        "повідомляє": [
+            {"lemma": "повідомляти", "tags": "verb:imperf:pres", "pos": "verb"}
+        ],
+        "уривок": [{"lemma": "уривок", "tags": "noun:m:nom", "pos": "noun"}],
+    }
+    monkeypatch.setattr(
+        prompt_pack_v3,
+        "_vesum_matches",
+        lambda word, _db_path: analyses.get(word.casefold(), []),
+    )
+    monkeypatch.setattr(
+        prompt_pack_v3,
+        "_catalog_positive_lemma",
+        lambda word: "старий" if word.casefold() == "старша" else None,
+    )
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = "Старша сестра читає книжку щовечора."
+    unit["distinctness"]["focus_alignment"] = "anchor-comprehension"
+    unit["distinctness"]["question_topic"] = {"surface": "книжку", "lemma": "книжка"}
+    unit["distinctness"]["question_frame"] = {
+        "allowed_prefixes": ["Що повідомляє уривок про"]
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Що повідомляє уривок про книжку?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="omits its certified comparison"):
+        validate_activity_purpose(activity, kit)
+
+    unit["distinctness"].pop("focus_alignment")
+    validate_activity_purpose(activity, kit)
 
 
 def test_degree_cue_accepts_only_normative_correlative_pairs() -> None:
@@ -1351,11 +1451,11 @@ def test_degree_reinforcement_fill_requires_a_real_degree_contrast(
         validate_distractor_adjacency(activity, kit)
 
 
-def test_pack_v39_no_options_zero_mandate_and_enforces_varied_placement() -> None:
-    """Pack v3.12 contains no options[0] mandate and enforces varied answer placement."""
+def test_pack_v313_no_options_zero_mandate_and_enforces_varied_placement() -> None:
+    """Pack v3.13 contains no options[0] mandate and enforces varied answer placement."""
     from pathlib import Path
 
-    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.12.md"
+    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.13.md"
     content = template_path.read_text(encoding="utf-8")
     assert "first option (`options[0]`)" not in content
     assert "options[0]" not in content

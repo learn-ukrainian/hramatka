@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-MUTATION_CATALOG_VERSION: Final = "true-false-mutations.v1"
+MUTATION_CATALOG_VERSION: Final = "true-false-mutations.v2"
 _WORD_CHAR: Final = r"А-Яа-яІіЇїЄєҐґ'’"
 
 
@@ -20,6 +20,8 @@ class MutationBinding:
     literal_evidence: str
     source_surface: str
     replacement_surface: str
+    source_start_offset: int | None = None
+    source_end_offset: int | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -32,6 +34,16 @@ class MutationBinding:
             )
         ):
             raise ValueError("A mutation binding needs literal evidence and non-blank surfaces.")
+        if (self.source_start_offset is None) != (self.source_end_offset is None):
+            raise ValueError("Mutation offsets must be supplied together.")
+        if self.source_start_offset is not None and (
+            self.source_start_offset < 0
+            or self.source_end_offset is None
+            or self.source_end_offset <= self.source_start_offset
+            or self.literal_evidence[self.source_start_offset : self.source_end_offset]
+            != self.source_surface
+        ):
+            raise ValueError("Mutation offsets must bind the exact source surface.")
 
 
 MutationConstructor = Callable[[MutationBinding], str | None]
@@ -61,6 +73,39 @@ def _replace_one_surface(binding: MutationBinding) -> str | None:
     )
 
 
+def _negate_asserted_predicate(binding: MutationBinding) -> str | None:
+    """Insert scoped ``не`` at one certified finite-predicate offset.
+
+    The inventory, not this constructor, proves assertedness and scope.  This
+    closed constructor only performs the exact reversible edit.  At sentence
+    start it transfers capitalization from the predicate to ``Не`` so the
+    result remains ordinary Ukrainian rather than ``не Ночуватимуть``.
+    """
+    start = binding.source_start_offset
+    end = binding.source_end_offset
+    if start is None or end is None:
+        return None
+    source = binding.literal_evidence
+    predicate = source[start:end]
+    if not predicate or source[max(0, start - 3) : start].casefold().strip().endswith("не"):
+        return None
+    prefix = source[:start]
+    if predicate[:1].isupper():
+        predicate = predicate[:1].lower() + predicate[1:]
+        last_alpha = max(
+            (index for index, character in enumerate(prefix) if character.isalpha()),
+            default=-1,
+        )
+        last_clause_boundary = max(
+            (prefix.rfind(boundary) for boundary in (".", "!", "?", ":", ";", "\n", "—", "–")),
+            default=-1,
+        )
+        clause_initial = last_alpha == -1 or last_alpha < last_clause_boundary
+        negation = "Не" if clause_initial else "не"
+        return prefix + negation + " " + predicate + source[end:]
+    return prefix + "не " + predicate + source[end:]
+
+
 @dataclass(frozen=True)
 class MutationRule:
     """A versioned deterministic constructor and its literal verifier."""
@@ -82,7 +127,10 @@ MUTATION_CATALOG: Final[Mapping[str, MutationRule]] = MappingProxyType(
     {
         "replace-one-surface.v1": MutationRule(
             rule_id="replace-one-surface.v1", constructor=_replace_one_surface
-        )
+        ),
+        "negate-asserted-predicate.v1": MutationRule(
+            rule_id="negate-asserted-predicate.v1", constructor=_negate_asserted_predicate
+        ),
     }
 )
 

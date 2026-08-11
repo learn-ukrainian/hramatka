@@ -73,7 +73,6 @@ from hramatka.engine.prompt_pack_v3 import (
 from hramatka.engine.providers import telemetry_ctx
 from hramatka.engine.serializer_policy import serializer_temperature
 from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint
-from hramatka.engine.tests.fixtures.density_v3_regression_fixture import DENSITY_V3_ANCHOR
 
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
@@ -169,23 +168,84 @@ def _flag_digest() -> str:
 
 
 def deterministic_runtime_anchors() -> dict[str, RuntimeAnchor]:
-    """Return runtime-only synthetic inputs for the no-cost path test.
-
-    The source body remains in the pre-existing engine fixture.  This package
-    commits only identifiers and hashes in its manifest, never those bytes.
-    """
-    source = DENSITY_V3_ANCHOR
+    """Return representative, redistributable anchors for the no-cost path test."""
+    path = Path(__file__).with_name("assets") / "b1-45m.anchors.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))["anchors"]
     return {
-        "b1-narrative": RuntimeAnchor(
-            "b1-narrative", "synthetic-runtime-fixture/b1-narrative", source
-        ),
-        "b1-dialogue": RuntimeAnchor(
-            "b1-dialogue", "synthetic-runtime-fixture/b1-dialogue", source + "\n"
-        ),
-        "b1-morphology": RuntimeAnchor(
-            "b1-morphology", "synthetic-runtime-fixture/b1-morphology", source + "\n\n"
-        ),
+        row["id"]: RuntimeAnchor(row["id"], row["source_identity"], row["text"])
+        for row in rows
     }
+
+
+def _qualification_fixture_bundle(root: Path) -> data.DataBundle:
+    """Build an isolated offline bundle without widening every engine test's lexicon."""
+    bundle = fixtures._bundle_with_matchup_vocabulary(root)
+    asset_path = Path(__file__).with_name("assets") / "b1-45m.linguistics.json"
+    asset_bytes = asset_path.read_bytes()
+    asset = json.loads(asset_bytes)
+    vesum_rows = asset.get("vesum_forms")
+    atlas_rows = asset.get("atlas_rows")
+    if not isinstance(vesum_rows, list) or not isinstance(atlas_rows, list):
+        raise QualificationError("Qualification linguistic fixture is malformed.")
+    connection = sqlite3.connect(root / "vesum.db")
+    try:
+        connection.executemany(
+            "INSERT INTO forms (word_form, lemma, tags, pos) VALUES (?, ?, ?, ?)",
+            [
+                (row["word_form"], row["lemma"], row["tags"], row["pos"])
+                for row in vesum_rows
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    connection = sqlite3.connect(root / "atlas.db")
+    try:
+        route_order = connection.execute(
+            "SELECT COALESCE(MAX(route_order), -1) + 1 FROM article_payloads"
+        ).fetchone()[0]
+        connection.executemany(
+            "INSERT INTO article_payloads "
+            "(slug, route_order, payload_json, is_public_route) VALUES (?, ?, ?, 1)",
+            [
+                (
+                    row.get("slug") or row["lemma"],
+                    route_order + index,
+                    json.dumps(row, ensure_ascii=False),
+                )
+                for index, row in enumerate(atlas_rows)
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    manifest = copy.deepcopy(bundle.manifest)
+    manifest["qualification_linguistics_sha256"] = hashlib.sha256(asset_bytes).hexdigest()
+    for name in ("vesum.db", "atlas.db"):
+        sha256, size = fixtures._sha_size(root / name)
+        manifest["inputs"][name].update({"sha256": sha256, "size": size})
+    return data.resolve_bundle(data_dir=root, manifest=manifest, verify=True)
+
+
+def _runtime_qualification_bundle(
+    bundle: data.DataBundle,
+) -> data.DataBundle:
+    """Supply representative-anchor rows only when an offline test bundle was injected."""
+    if bundle.manifest.get("version") != "test":
+        return bundle
+    asset_path = Path(__file__).with_name("assets") / "b1-45m.linguistics.json"
+    asset_digest = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+    if bundle.manifest.get("qualification_linguistics_sha256") == asset_digest:
+        return bundle
+    root = bundle.root / "qualification-data"
+    if not root.exists():
+        return _qualification_fixture_bundle(root)
+    manifest = copy.deepcopy(bundle.manifest)
+    manifest["qualification_linguistics_sha256"] = asset_digest
+    for name in ("vesum.db", "atlas.db"):
+        sha256, size = fixtures._sha_size(root / name)
+        manifest["inputs"][name].update({"sha256": sha256, "size": size})
+    return data.resolve_bundle(data_dir=root, manifest=manifest, verify=True)
 
 
 def _certified_activity(activity: dict[str, Any], kit: Mapping[str, Any]) -> dict[str, Any]:
@@ -241,23 +301,26 @@ def _certified_activity(activity: dict[str, Any], kit: Mapping[str, Any]) -> dic
 
 def _v3_qualification_allocation() -> LessonAllocation:
     """Return a deterministic allocation through the live inventory/preflight path."""
+    source = deterministic_runtime_anchors()["b1-narrative"].text
     slots = _lesson_slots(45)
-    inventory = inventory_from_anchor(
-        DENSITY_V3_ANCHOR,
-        scheduled_types=_inventory_candidate_types(slots),
-        replacement_types=_inventory_replacement_types(slots),
-        duration_minutes=45,
-    )
-    result = preflight_lesson(
-        AnchorWindow(
-            paragraphs=(AnchorParagraph("qualification-fixture", inventory),),
-            initial_start=0,
-            initial_end=0,
-        ),
-        duration_minutes=45,
-        slots=slots,
-        builders=_slot_builders(slots),
-    )
+    bundle = _runtime_qualification_bundle(data.active_bundle())
+    with data.use_bundle(bundle):
+        inventory = inventory_from_anchor(
+            source,
+            scheduled_types=_inventory_candidate_types(slots),
+            replacement_types=_inventory_replacement_types(slots),
+            duration_minutes=45,
+        )
+        result = preflight_lesson(
+            AnchorWindow(
+                paragraphs=(AnchorParagraph("qualification-fixture", inventory),),
+                initial_start=0,
+                initial_end=0,
+            ),
+            duration_minutes=45,
+            slots=slots,
+            builders=_slot_builders(slots),
+        )
     if result.allocation is None:
         raise QualificationError("v3 production inventory fixture did not preflight.")
     return result.allocation
@@ -635,6 +698,7 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
     category = distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
     intent = distinctness.get("question_intent") if isinstance(distinctness, Mapping) else None
     frame = distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
+    topic = distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
     prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
     if not isinstance(surface, str) or not isinstance(category, str):
         raise QualificationError("Qualification text-question kit is malformed.")
@@ -674,12 +738,34 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
         ),
         terms[0],
     )
+    certified_topic = topic.get("surface") if isinstance(topic, Mapping) else None
+    named_topic = certified_topic if isinstance(certified_topic, str) else first
+    relation_intents = {
+        "causal-clause.v1",
+        "purpose-clause.v1",
+        "temporal-clause.v1",
+        "licensed-vid-cause.v1",
+    }
     if category == "comprehension" and intent == "fact-recovery":
-        return f"{prefixes[0]} «{first}» ({index + 1})?"
-    if category == "explanation_inference" and intent == "explicit-causal":
-        return f"{prefixes[0]} в уривку згадано «{first}» ({index + 1})?"
-    if category == "anchored_application" and intent == "realistic-transfer":
-        return f"{prefixes[0]} ідею про «{first}» у подібній ситуації ({index + 1})?"
+        return f"{prefixes[0]} «{named_topic}» ({index + 1})?"
+    if category == "explanation_inference" and intent in {
+        "explicit-causal",
+        *relation_intents,
+    }:
+        topic_lemma = topic.get("lemma") if isinstance(topic, Mapping) else None
+        proper_name = isinstance(topic_lemma, str) and topic_lemma[:1].isupper()
+        natural_topic = (
+            named_topic if proper_name else named_topic[:1].lower() + named_topic[1:]
+        )
+        return f"{prefixes[0]} в уривку {natural_topic} ({index + 1})?"
+    if category == "anchored_application" and intent in {
+        "realistic-transfer",
+        "anchored-application.v1",
+    }:
+        return (
+            f"{prefixes[0]} ідею про «{named_topic}» у подібній ситуації "
+            f"({index + 1})?"
+        )
     raise QualificationError("Qualification text-question purpose is unknown.")
 
 
@@ -790,6 +876,12 @@ def _v3_live_record_from_kit(
             unit.get("distinctness", {}).get("pair", {}).get("relation") for unit in certified_units
         }
         instruction = {
+            frozenset({"atlas_antonym.v1"}): (
+                "З'єднайте слова з протилежним значенням (антоніми)."
+            ),
+            frozenset({"atlas_synonym.v1"}): (
+                "З'єднайте слова з близьким значенням (синоніми)."
+            ),
             frozenset({"degree-comparison-paraphrase.v1"}): (
                 "З'єднайте кожне порівняльне твердження з рівнозначним перефразуванням."
             ),
@@ -1129,14 +1221,15 @@ class ProductionQualificationHarness:
         runtime_anchors = self._manifest.validate_runtime_anchors(anchors)
         self._last_anchor_hashes = {anchor.id: _sha(anchor.text) for anchor in runtime_anchors}
         self._last_prompt_hashes = {}
-        bundle = fixtures._bundle_with_matchup_vocabulary(self._root / "fixture-data")
+        bundle = _qualification_fixture_bundle(self._root / "fixture-data")
         return self._run_cells(
             runtime_anchors,
             bundle=bundle,
             provider_factory=lambda anchor, _logical_model_id, route: _DeterministicRouteProvider(
                 route,
                 force_initial_shortfall=(
-                    anchor.id == "b1-morphology" and route.route_id == "gemini-flash-subscription"
+                    anchor.id == "b1-informational"
+                    and route.route_id == "gemini-flash-subscription"
                 ),
             ),
             scratch_root=self._root,
@@ -1168,9 +1261,10 @@ class ProductionQualificationHarness:
         runtime_anchors = self._manifest.validate_runtime_anchors(anchors)
         self._root.mkdir(parents=True, exist_ok=True)
         scratch_root.mkdir(parents=True, exist_ok=True)
+        runtime_bundle = _runtime_qualification_bundle(bundle)
         return self._run_cells(
             runtime_anchors,
-            bundle=bundle,
+            bundle=runtime_bundle,
             provider_factory=provider_factory,
             scratch_root=scratch_root,
             temporary_cells=True,
@@ -1202,19 +1296,20 @@ class ProductionQualificationHarness:
         acknowledgement.  This narrow method deliberately does not aggregate
         or qualify a model.
         """
+        runtime_bundle = _runtime_qualification_bundle(bundle)
         self._root.mkdir(parents=True, exist_ok=True)
         scratch_root.mkdir(parents=True, exist_ok=True)
         raw_cell_root = Path(
             tempfile.mkdtemp(dir=scratch_root, prefix=f"{anchor.id}-{route.route_id}-")
         )
         previous_bundle = data._active  # noqa: SLF001 - mirror normal worker scope.
-        data.set_active_bundle(bundle)
+        data.set_active_bundle(runtime_bundle)
         try:
             cell = self._run_cell(
                 anchor,
                 logical_model_id,
                 route,
-                bundle,
+                runtime_bundle,
                 provider=provider,
                 cell_root=raw_cell_root,
                 bake_hard_timeout_seconds=bake_hard_timeout_seconds,
@@ -1441,6 +1536,8 @@ class ProductionQualificationHarness:
         allow_failed_diagnostic: bool = False,
         engine_out_dir: Path | None = None,
     ) -> QualificationCellResult:
+        bundle = _runtime_qualification_bundle(bundle)
+
         def logical_generator_factory(requested_logical_model_id: str):
             if requested_logical_model_id != logical_model_id:
                 raise ValueError("Qualification provider received the wrong logical model.")

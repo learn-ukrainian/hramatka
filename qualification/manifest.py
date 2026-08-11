@@ -11,7 +11,7 @@ from importlib.resources import files
 from typing import Final
 
 _SHA256_RE: Final = re.compile(r"^[a-f0-9]{64}$")
-_ANCHOR_IDS: Final = ("b1-narrative", "b1-dialogue", "b1-morphology")
+_ANCHOR_IDS: Final = ("b1-narrative", "b1-dialogue", "b1-informational")
 _MANIFEST_NAME: Final = "b1-45m.manifest.json"
 
 
@@ -81,7 +81,7 @@ def load_manifest() -> QualificationManifest:
     if not isinstance(value, dict):
         raise ManifestError("Qualification manifest must be a JSON object.")
     _require_exact_keys(value, {"anchors", "duration_minutes", "level", "version"}, "manifest")
-    if value["version"] != "ProductionQualificationManifest.v1":
+    if value["version"] != "ProductionQualificationManifest.v2":
         raise ManifestError("Qualification manifest version is unsupported.")
     if value["level"] != "B1" or value["duration_minutes"] != 45:
         raise ManifestError("Qualification manifest must describe B1 at 45 minutes.")

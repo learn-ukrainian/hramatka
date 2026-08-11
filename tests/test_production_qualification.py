@@ -14,6 +14,7 @@ import pytest
 from hramatka.api import qualified_models
 from hramatka.api.qualified_models import QualificationReceipt
 from hramatka.engine import fixtures
+from hramatka.engine.tests.fixtures._build_fixtures import _trim_payload
 from hramatka.qualification import (
     CellReceipt,
     ProductionQualificationHarness,
@@ -32,6 +33,22 @@ from hramatka.qualification.receipts import (
 from hramatka.qualification.transcribe import _assert_registry_literals, transcribe
 
 
+def test_atlas_fixture_trimming_keeps_normal_regeneration_stable() -> None:
+    payload = {
+        "lemma": "тихий",
+        "pos": "adj",
+        "sections": {
+            "antonyms": {"items": ["гучний"]},
+            "synonyms": {"items": ["спокійний"]},
+        },
+    }
+
+    assert _trim_payload(payload)["sections"] == {
+        "synonyms": {"items": ["спокійний"]}
+    }
+    assert _trim_payload(payload, include_antonyms=True)["sections"] == payload["sections"]
+
+
 def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs(tmp_path) -> None:
     """Every cell retains v3 slot receipts; aggregates remain secondary evidence."""
     harness = ProductionQualificationHarness(tmp_path / "qualification")
@@ -42,7 +59,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     assert {cell.receipt.anchor_id for cell in run.cells} == {
         "b1-narrative",
         "b1-dialogue",
-        "b1-morphology",
+        "b1-informational",
     }
     assert {cell.receipt.expected_route.route_id for cell in run.cells} == {
         "gemini-pro-subscription",
@@ -52,7 +69,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     forced_cell = next(
         cell
         for cell in run.cells
-        if cell.receipt.anchor_id == "b1-morphology"
+        if cell.receipt.anchor_id == "b1-informational"
         and cell.receipt.expected_route.route_id == "gemini-flash-subscription"
     )
     assert any(trace.mode == "repair" for trace in forced_cell.receipt.repair_trace)
@@ -72,8 +89,8 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.delivery.provenance_continuous
         assert cell.receipt.outcome == "passed"
         assert cell.receipt.semantic_gate == "not_run"
-        assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.3"
-        assert cell.receipt.template_version == "gemma-phase-pack.v3.12"
+        assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.4"
+        assert cell.receipt.template_version == "gemma-phase-pack.v3.13"
         assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
         assert cell.receipt.density.lesson_units == 41
         assert cell.receipt.density.slot_count == 6
@@ -103,7 +120,8 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     aggregates = harness.aggregates(run)
     assert len(aggregates) == 3
     assert all(
-        aggregate.passed_anchors == frozenset({"b1-narrative", "b1-dialogue", "b1-morphology"})
+        aggregate.passed_anchors
+        == frozenset({"b1-narrative", "b1-dialogue", "b1-informational"})
         for aggregate in aggregates
     )
     assert all(aggregate.as_model_receipt().passed for aggregate in aggregates)
@@ -205,6 +223,26 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         harness.aggregate_cells(forged_floor)
 
 
+def test_qualification_linguistics_records_its_pinned_public_bundle() -> None:
+    asset_path = (
+        Path(__file__).parents[1]
+        / "hramatka"
+        / "qualification"
+        / "assets"
+        / "b1-45m.linguistics.json"
+    )
+    asset = json.loads(asset_path.read_text(encoding="utf-8"))
+
+    assert asset["schema_version"] == "QualificationLinguistics.v1"
+    assert asset["source_bundle"] == {
+        "version": "2026-07-27-acd39159abbd",
+        "content_sha256": "acd39159abbdd493bf1261cc52d66cfca0e6b623d1f22da918a696360b4ab9da",
+        "manifest_sha256": "45a65816331bdf00d7f38b10b47606656e4dc39129676adf960f3a5df0a1803a",
+        "vesum_sha256": "3ed0fda490c576046c67c65b1b463ab9c7d2948749cc28768f4e83559b541462",
+        "atlas_sha256": "fbf85f3ecb5f3786d0d44878a243db4c0c2f6dcb0b6d0fdbdaf6f7e0eabe3954",
+    }
+
+
 def test_aggregate_refuses_api_observed_provenance_for_subscription_cell(tmp_path) -> None:
     harness = ProductionQualificationHarness(tmp_path / "qualification")
     run = harness.run(deterministic_runtime_anchors())
@@ -241,7 +279,7 @@ def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_crede
     aggregates = harness.aggregates(run)
     assert len(aggregates) == 1
     assert aggregates[0].passed_anchors == frozenset(
-        {"b1-narrative", "b1-dialogue", "b1-morphology"}
+        {"b1-narrative", "b1-dialogue", "b1-informational"}
     )
     assert aggregates[0].as_model_receipt().passed
     assert json.loads((runtime_root / "aggregation-targets.json").read_text(encoding="utf-8")) == {
@@ -280,7 +318,7 @@ def test_manifest_and_receipt_schema_are_content_free_and_fail_closed() -> None:
     assert [anchor.id for anchor in manifest.anchors] == [
         "b1-narrative",
         "b1-dialogue",
-        "b1-morphology",
+        "b1-informational",
     ]
     assert all(anchor.source_identity and len(anchor.sha256) == 64 for anchor in manifest.anchors)
 
@@ -390,8 +428,8 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     )
     assert block.count("    QualificationReceipt(\n") == 3
     assert block.count("passed_anchors=frozenset({") == 3
-    assert 'prompt_pack_version="PromptPackInput.v3.3"' in block
-    assert 'template_version="gemma-phase-pack.v3.12"' in block
+    assert 'prompt_pack_version="PromptPackInput.v3.4"' in block
+    assert 'template_version="gemma-phase-pack.v3.13"' in block
     assert 'density_contract_version="TeacherReadyDensity.v3"' in block
     assert "passed=True," in block
     emitted: dict[str, object] = {"Final": Final, "QualificationReceipt": QualificationReceipt}

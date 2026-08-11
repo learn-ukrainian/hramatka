@@ -1,22 +1,22 @@
 {
-  "version": "ProductionQualificationManifest.v1",
+  "version": "ProductionQualificationManifest.v2",
   "level": "B1",
   "duration_minutes": 45,
   "anchors": [
     {
       "id": "b1-narrative",
-      "source_identity": "synthetic-runtime-fixture/b1-narrative",
-      "sha256": "a6c865c59dd80761e116c99a8dd3a9b225988d17d85facae711867d1bc9a0a6a"
+      "source_identity": "public-domain/kotsiubynsky/tini-zabutykh-predkiv/25ea8a3b-c0010-c0012",
+      "sha256": "f985bf674c8904acaf15dc157ab9b49e84092b385b5b5ab2c240a844f7b8d800"
     },
     {
       "id": "b1-dialogue",
-      "source_identity": "synthetic-runtime-fixture/b1-dialogue",
-      "sha256": "b464ad47e425bc7d80ce65ce1e256d72b5c3832e3f4c440f75c0eba9c6089491"
+      "source_identity": "advisor-authored/fable/b1-reading-club-dialogue/2026-08-11",
+      "sha256": "b5df2b0ec36e42537da8f007e135855fe33d7ea33cccf4fd4cef4a0c46485d4d"
     },
     {
-      "id": "b1-morphology",
-      "source_identity": "synthetic-runtime-fixture/b1-morphology",
-      "sha256": "31ea53f4039315d34f1d3ee651cd6d56ba698395023ac65d0e1dc835028e58e4"
+      "id": "b1-informational",
+      "source_identity": "cc-by-sa-4.0/uk-wikipedia/munchkin-game/2026-04-11",
+      "sha256": "4a5c83aa4515d7914a60814916df8d3aa84ec1b1923997cc934f76ab2faed47a"
     }
   ]
 }

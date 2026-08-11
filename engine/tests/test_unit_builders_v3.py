@@ -12,6 +12,7 @@ from hramatka.engine.anchor_inventory_v3 import (
     DEGREE_WRITING_LEMMAS,
     DEGREE_WRITING_SCENARIO,
     DEGREE_WRITING_WARRANTS,
+    _break_trivial_truth_pattern,
     _certified_choice_bank,
     _contextual_error_replacements,
     _eligible_tokens,
@@ -47,6 +48,7 @@ from hramatka.engine.unit_builders_v3 import (
     AnchorToken,
     CertificationInventory,
     MarkTheWordsRequest,
+    TrueFalseFact,
     build_mark_the_words,
     build_short_writing,
 )
@@ -540,11 +542,90 @@ def test_true_false_catalog_is_versioned_closed_and_literal_evidence_bound() -> 
 
     statement = construct_false_statement("replace-one-surface.v1", binding)
 
-    assert MUTATION_CATALOG_VERSION == "true-false-mutations.v1"
+    assert MUTATION_CATALOG_VERSION == "true-false-mutations.v2"
     assert statement is not None
     assert verify_false_statement("replace-one-surface.v1", binding, statement)
     assert construct_false_statement("free-form", binding) is None
     assert not verify_false_statement("free-form", binding, statement)
+
+
+@pytest.mark.parametrize(
+    ("literal", "surface", "start", "expected"),
+    (
+        (
+            "Ночуватимуть тут же на березі, у наметі.",
+            "Ночуватимуть",
+            0,
+            "Не ночуватимуть тут же на березі, у наметі.",
+        ),
+        (
+            "Вона працює щодня до восьмої години вечора.",
+            "працює",
+            5,
+            "Вона не працює щодня до восьмої години вечора.",
+        ),
+        (
+            "— Ночуватимуть тут же на березі, у наметі.",
+            "Ночуватимуть",
+            2,
+            "— Не ночуватимуть тут же на березі, у наметі.",
+        ),
+        (
+            "А він сказав: — Ночуватимуть тут же.",
+            "Ночуватимуть",
+            16,
+            "А він сказав: — Не ночуватимуть тут же.",
+        ),
+    ),
+)
+def test_true_false_negation_binds_one_exact_predicate_offset(
+    literal: str, surface: str, start: int, expected: str
+) -> None:
+    binding = MutationBinding(
+        sentence_id="s-1",
+        literal_evidence=literal,
+        source_surface=surface,
+        replacement_surface=f"не {surface.casefold()}",
+        source_start_offset=start,
+        source_end_offset=start + len(surface),
+    )
+
+    statement = construct_false_statement("negate-asserted-predicate.v1", binding)
+
+    assert statement == expected
+    assert verify_false_statement("negate-asserted-predicate.v1", binding, statement)
+
+
+@pytest.mark.parametrize(
+    "truth_pattern",
+    (
+        (True, False) * 4,
+        (False, True) * 4,
+        (True,) * 4 + (False,) * 4,
+        (False,) * 4 + (True,) * 4,
+    ),
+)
+def test_true_false_answer_key_breaks_every_trivial_balanced_pattern(
+    truth_pattern: tuple[bool, ...],
+) -> None:
+    facts = [
+        TrueFalseFact(
+            fact_id=f"tf-{index}",
+            sentence_id=f"s-{index}",
+            literal_evidence=f"Речення {index}.",
+            source_surface="Речення",
+            replacement_surface="Не речення",
+            truth_value=truth_value,
+            mutation_rule_id="negate-asserted-predicate.v1",
+        )
+        for index, truth_value in enumerate(truth_pattern, start=1)
+    ]
+
+    _break_trivial_truth_pattern(facts)
+
+    resulting_pattern = tuple(fact.truth_value for fact in facts)
+    assert resulting_pattern != truth_pattern
+    assert Counter(resulting_pattern) == Counter(truth_pattern)
 
 
 def test_short_writing_registry_is_closed_and_uses_regex_and_vesum_evidence() -> None:

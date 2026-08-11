@@ -878,6 +878,78 @@ _TEXT_QUESTION_INTENTS = (
     "realistic-transfer",
     "realistic-transfer",
 )
+_SOURCE_COMPREHENSION_45 = (
+    "quiz",
+    "cloze",
+    "match-up",
+    "true-false",
+    "text-questions",
+    "short-writing",
+)
+_RELATION_PRIORITY = (
+    "temporal-clause.v1",
+    "purpose-clause.v1",
+    "licensed-vid-cause.v1",
+    "causal-clause.v1",
+)
+_NEGATION_SCOPE_EXCLUSIONS = frozenset(
+    {
+        "лише",
+        "тільки",
+        "навіть",
+        "теж",
+        "також",
+        "майже",
+        "ось",
+        "он",
+        "от",
+        "онде",
+        "вже",
+        "ще",
+        "усі",
+        "всі",
+        "кожен",
+        "кожна",
+        "кожне",
+        "кожні",
+        "завжди",
+        "зрідка",
+        "рідко",
+        "часто",
+        "іноді",
+        "інколи",
+        "щоразу",
+        "якийсь",
+        "якась",
+        "якесь",
+        "якісь",
+        "хтось",
+        "щось",
+    }
+)
+_SUBORDINATE_MARKERS = frozenset(
+    {"бо", "адже", "оскільки", "аби", "щоб", "поки", "коли", "доки", "якби", "що"}
+)
+_MODAL_LEMMAS = frozenset({"мати", "могти", "мусити", "хотіти"})
+_EXISTENTIAL_LEMMAS = frozenset({"бути", "бувати", "існувати", "траплятися"})
+_LICENSED_VID_CAUSE_LEMMAS = frozenset({"щулитися"})
+
+
+@dataclass(frozen=True)
+class _PredicateSpan:
+    token: AnchorToken
+    clause_start: int
+    clause_end: int
+
+
+@dataclass(frozen=True)
+class _RelationSpan:
+    rule_id: str
+    sentence: AnchorSentence
+    answer_start: int
+    answer_end: int
+    topic_token: AnchorToken
+    topic_lemma: str
 _EXPLICIT_CAUSAL_RE = re.compile(
     r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b"
 )
@@ -1071,6 +1143,25 @@ def _safe_item_carrier(sentence: AnchorSentence) -> bool:
         and text.count("«") == text.count("»")
         and text.count("(") == text.count(")")
         and text.count("[") == text.count("]")
+    )
+
+
+def _safe_true_fact_carrier(sentence: AnchorSentence) -> bool:
+    """Admit only declarative source sentences as literal true/false statements."""
+    return _safe_item_carrier(sentence) and sentence.text.rstrip().endswith(".")
+
+
+def _safe_source_proposition_carrier(sentence: AnchorSentence) -> bool:
+    """Require a declarative proposition with room for a non-revealing question."""
+    content_lemmas = {
+        lemma
+        for token in sentence.tokens
+        if (lemma := _content_lemma(token)) is not None
+    }
+    return (
+        _safe_item_carrier(sentence)
+        and sentence.text.rstrip()[-1:] in {".", "!"}
+        and len(content_lemmas) >= 3
     )
 
 
@@ -1407,6 +1498,8 @@ def _contextual_error_replacements(
     # person; personal pronouns also contribute their attested person.
     if any(parse.get("pos") == "verb" for parse in token.vesum_parses):
         subject_frames = _subject_frames_before(sentence, token_index)
+        if len(subject_frames) != 1:
+            subject_frames = set()
         for form, pos, source_tags, replacement_tags in safe_rows:
             if pos != "verb":
                 continue
@@ -1893,15 +1986,521 @@ def _cross_gap_choice_banks(
     return result
 
 
-def _negatable_predicate(sentence: AnchorSentence) -> AnchorToken | None:
+def _raw_tags(token: AnchorToken) -> tuple[str, ...]:
+    return tuple(str(parse.get("raw", "")) for parse in token.vesum_parses)
+
+
+def _finite_predicate(token: AnchorToken) -> bool:
+    identity = _unambiguous_content_lemma_pos(token)
+    if identity is None or identity[1] != "verb":
+        return False
+    lemma = identity[0]
+    return any(
+        parse.get("pos") == "verb"
+        and str(parse.get("lemma", "")).casefold() == lemma
+        and any(marker in raw for marker in (":pres:", ":futr:", ":past:"))
+        and ":impr:" not in raw
+        for parse in token.vesum_parses
+        if (raw := str(parse.get("raw", "")))
+    )
+
+
+def _content_lemma(token: AnchorToken) -> str | None:
+    if any(
+        parse.get("pos") in _CLOSED_CLASS_POS | {"numr"}
+        for parse in token.vesum_parses
+    ):
+        return None
+    rows = [
+        parse
+        for parse in token.vesum_parses
+        if parse.get("pos") in _CONTENT_POS
+        and isinstance(parse.get("lemma"), str)
+        and not any(
+            marker in str(parse.get("raw", ""))
+            for marker in _UNSAFE_TAG_MARKERS
+        )
+    ]
+    if not rows:
+        return None
+    ordinary = [parse for parse in rows if ":pron" not in str(parse.get("raw", ""))]
+    if not ordinary:
+        return None
+    lemmas = {
+        str(parse["lemma"]).casefold()
+        for parse in ordinary
+        if isinstance(parse.get("lemma"), str) and str(parse["lemma"]).strip()
+    }
+    return next(iter(lemmas)) if len(lemmas) == 1 else None
+
+
+def _clause_bounds(sentence: AnchorSentence, token: AnchorToken) -> tuple[int, int]:
+    delimiters = tuple(re.finditer(r"[,;—–]", sentence.text))
+    start = max(
+        (match.end() for match in delimiters if match.end() <= token.start_offset),
+        default=0,
+    )
+    end = min(
+        (match.start() for match in delimiters if match.start() >= token.end_offset),
+        default=len(sentence.text),
+    )
+    while start < end and sentence.text[start].isspace():
+        start += 1
+    while end > start and sentence.text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _safe_asserted_predicates(sentence: AnchorSentence) -> tuple[_PredicateSpan, ...]:
+    """Return only finite predicates that admit one unambiguous scoped negation."""
+    if any(marker in sentence.text for marker in ("?", ":", "«", "»", '"')):
+        return ()
     words = [token.surface.casefold() for token in sentence.tokens]
-    for index, token in enumerate(sentence.tokens):
-        if not any(parse.get("pos") == "verb" for parse in token.vesum_parses):
-            continue
+    finite = [token for token in sentence.tokens if _finite_predicate(token)]
+    result: list[_PredicateSpan] = []
+    for token in finite:
+        index = sentence.tokens.index(token)
         if index and words[index - 1] in {"не", "ні"}:
             continue
-        return token
+        start, end = _clause_bounds(sentence, token)
+        clause_tokens = tuple(
+            item
+            for item in sentence.tokens
+            if item.start_offset >= start and item.end_offset <= end
+        )
+        clause_words = [item.surface.casefold() for item in clause_tokens]
+        token_position = clause_tokens.index(token)
+        if _NEGATION_SCOPE_EXCLUSIONS & set(clause_words):
+            continue
+        if _SUBORDINATE_MARKERS & set(clause_words[:token_position]):
+            continue
+        clause_finite = [item for item in clause_tokens if _finite_predicate(item)]
+        if len(clause_finite) > 1 and any(word in {"і", "й", "та"} for word in clause_words):
+            continue
+        lemma = _content_lemma(token)
+        if lemma in _EXISTENTIAL_LEMMAS:
+            continue
+        if lemma in _MODAL_LEMMAS and any(
+            ":inf" in raw
+            for later in clause_tokens[token_position + 1 :]
+            for raw in _raw_tags(later)
+        ):
+            continue
+        result.append(_PredicateSpan(token=token, clause_start=start, clause_end=end))
+    return tuple(result)
+
+
+def _negatable_predicate(sentence: AnchorSentence) -> AnchorToken | None:
+    """Compatibility helper returning the first proof-grade predicate."""
+    candidate = next(iter(_safe_asserted_predicates(sentence)), None)
+    return None if candidate is None else candidate.token
+
+
+def _topic_token(
+    sentence: AnchorSentence,
+    *,
+    before_offset: int | None = None,
+    prefer_nearest_verb: bool = False,
+) -> tuple[AnchorToken, str] | None:
+    tokens = tuple(
+        token
+        for token in sentence.tokens
+        if before_offset is None or token.end_offset <= before_offset
+    )
+    if prefer_nearest_verb:
+        ordered = (
+            *reversed(
+                tuple(
+                    token
+                    for token in tokens
+                    if any(parse.get("pos") == "verb" for parse in token.vesum_parses)
+                )
+            ),
+            *tokens,
+        )
+    else:
+        nominative_nouns = tuple(
+            token
+            for token in tokens
+            if any(
+                parse.get("pos") == "noun"
+                and ":v_naz" in str(parse.get("raw", ""))
+                and ":pron" not in str(parse.get("raw", ""))
+                and _content_lemma(token) is not None
+                for parse in token.vesum_parses
+            )
+        )
+        finite_verbs = tuple(token for token in tokens if _finite_predicate(token))
+        content = tuple(token for token in tokens if _content_lemma(token) is not None)
+        ordered = (*nominative_nouns, *finite_verbs, *content)
+    seen: set[str] = set()
+    for token in ordered:
+        if token.token_id in seen:
+            continue
+        seen.add(token.token_id)
+        lemma = _content_lemma(token)
+        if lemma is not None:
+            return token, lemma
     return None
+
+
+def _relation_spans(sentence: AnchorSentence) -> tuple[_RelationSpan, ...]:
+    """Extract only the closed, explicit source relations admitted by #424."""
+    if not _safe_source_proposition_carrier(sentence):
+        return ()
+    tokens = sentence.tokens
+    words = [token.surface.casefold() for token in tokens]
+    rows: list[_RelationSpan] = []
+
+    def append(
+        rule_id: str,
+        connector_index: int,
+        *,
+        answer_start: int | None = None,
+        topic_before: int | None = None,
+        topic_token: AnchorToken | None = None,
+    ) -> None:
+        start = tokens[connector_index].start_offset if answer_start is None else answer_start
+        topic_row = (
+            (topic_token, _content_lemma(topic_token))
+            if topic_token is not None
+            else _topic_token(
+                sentence,
+                before_offset=topic_before or tokens[connector_index].start_offset,
+                prefer_nearest_verb=True,
+            )
+        )
+        if (
+            topic_row is None
+            or topic_row[0] is None
+            or not isinstance(topic_row[1], str)
+            or not topic_row[1]
+            or start < 0
+            or start >= len(sentence.text)
+        ):
+            return
+        rows.append(
+            _RelationSpan(
+                rule_id=rule_id,
+                sentence=sentence,
+                answer_start=start,
+                answer_end=len(sentence.text),
+                topic_token=topic_row[0],
+                topic_lemma=topic_row[1],
+            )
+        )
+
+    for index, word in enumerate(words):
+        prior_punctuation = (
+            sentence.text[tokens[index - 1].end_offset : tokens[index].start_offset]
+            if index
+            else ""
+        )
+        if word in {"бо", "оскільки"} or (word == "адже" and index > 0):
+            if (index > 0 and _finite_predicate(tokens[index - 1])) or any(
+                _finite_predicate(token) for token in tokens[:index]
+            ):
+                append("causal-clause.v1", index)
+        if word == "тому" and index + 1 < len(words) and words[index + 1] == "що":
+            append("causal-clause.v1", index)
+        if (
+            word == "через"
+            and words[index : index + 3] == ["через", "те", "що"]
+        ):
+            append("causal-clause.v1", index)
+        if word in {"аби", "щоб"}:
+            append("purpose-clause.v1", index)
+        if word in {"поки", "доки", "коли"}:
+            if word == "поки" and index + 1 < len(words) and words[index + 1] == "що":
+                continue
+            if not re.search(r"[,;—–]", prior_punctuation):
+                continue
+            if any(_finite_predicate(token) for token in tokens[index + 1 :]):
+                append("temporal-clause.v1", index)
+        if (
+            words[index : index + 3] in (["після", "того", "як"], ["до", "того", "як"])
+            and any(_finite_predicate(token) for token in tokens[index + 3 :])
+        ):
+            append("temporal-clause.v1", index)
+
+    for predicate in (token for token in tokens if _finite_predicate(token)):
+        lemma = _content_lemma(predicate)
+        if lemma not in _LICENSED_VID_CAUSE_LEMMAS:
+            continue
+        for index, word in enumerate(words):
+            if word != "від" or tokens[index].start_offset <= predicate.end_offset:
+                continue
+            if any(
+                parse.get("pos") == "noun" and ":v_rod" in str(parse.get("raw", ""))
+                for token in tokens[index + 1 :]
+                for parse in token.vesum_parses
+            ):
+                append(
+                    "licensed-vid-cause.v1",
+                    index,
+                    topic_before=tokens[index].start_offset,
+                    topic_token=predicate,
+                )
+                break
+
+    unique: dict[tuple[str, int, int], _RelationSpan] = {}
+    for row in rows:
+        unique.setdefault((row.rule_id, row.answer_start, row.answer_end), row)
+    return tuple(unique.values())
+
+
+def _source_question_candidate(
+    sentence: AnchorSentence,
+    *,
+    candidate_number: int,
+    category: str,
+    intent: str,
+    answer_start: int,
+    answer_end: int,
+    topic_token: AnchorToken,
+    topic_lemma: str,
+) -> EvidenceCandidate:
+    answer = sentence.text[answer_start:answer_end]
+    return EvidenceCandidate(
+        activity_type="text-questions",
+        candidate_id=f"text-questions:1:{candidate_number}",
+        sentence_id=sentence.sentence_id,
+        token_id=topic_token.token_id,
+        literal_evidence=sentence.text,
+        expected_key=answer,
+        semantic_target=(
+            f"source-proposition:{sentence.sentence_id}:{category}:"
+            f"{answer_start}:{answer_end}:{intent}"
+        ),
+        category=category,
+        question_intent=intent,
+        semantic_warrant=(
+            "exact source proposition span states the recoverable fact"
+            if category == "comprehension"
+            else f"exact source proposition span realizes {intent}"
+            if category == "explanation_inference"
+            else "exact source proposition anchors one realistic application criterion"
+        ),
+        answer_start_offset=answer_start,
+        answer_end_offset=answer_end,
+        topic_token_id=topic_token.token_id,
+        topic_lemma=topic_lemma,
+    )
+
+
+def _joint_source_comprehension(
+    sentences: Sequence[AnchorSentence],
+    *,
+    sentence_group_uses: Counter[str],
+    sentence_phase_uses: dict[str, set[int]],
+) -> tuple[tuple[EvidenceCandidate, ...], tuple[TrueFalseFact, ...]] | None:
+    """Allocate the complete 8+8 Phase-2 source-comprehension substrate.
+
+    Selection is joint because independent greedy builders can consume the
+    same scarce relation or safely-negatable sentence and discover the
+    conflict only in exact cover.  Match-up citations do not consume source
+    capacity and therefore are intentionally absent here.
+    """
+    eligible = tuple(
+        sentence
+        for sentence in sentences
+        if sentence.tokens
+        and sentence_group_uses[sentence.sentence_id] < 2
+        and 2 not in sentence_phase_uses.get(sentence.sentence_id, set())
+        and _safe_item_carrier(sentence)
+    )
+    if len(eligible) < 16:
+        return None
+
+    relations = {
+        rule_id: tuple(
+            row
+            for sentence in eligible
+            for row in _relation_spans(sentence)
+            if row.rule_id == rule_id
+        )
+        for rule_id in _RELATION_PRIORITY
+    }
+    selected_relations: list[_RelationSpan] = []
+    relation_sentence_ids: set[str] = set()
+    for rule_id in _RELATION_PRIORITY:
+        row = next(
+            (
+                candidate
+                for candidate in relations[rule_id]
+                if candidate.sentence.sentence_id not in relation_sentence_ids
+            ),
+            None,
+        )
+        if row is None:
+            continue
+        selected_relations.append(row)
+        relation_sentence_ids.add(row.sentence.sentence_id)
+        if len(selected_relations) == 3:
+            break
+    if len(selected_relations) < 3:
+        for rule_id in _RELATION_PRIORITY:
+            for row in relations[rule_id]:
+                if row.sentence.sentence_id in relation_sentence_ids:
+                    continue
+                selected_relations.append(row)
+                relation_sentence_ids.add(row.sentence.sentence_id)
+                if len(selected_relations) == 3:
+                    break
+            if len(selected_relations) == 3:
+                break
+    if len(selected_relations) != 3:
+        return None
+
+    false_candidates: list[tuple[AnchorSentence, _PredicateSpan]] = []
+    for sentence in eligible:
+        if sentence.sentence_id in relation_sentence_ids:
+            continue
+        predicate = next(iter(_safe_asserted_predicates(sentence)), None)
+        if predicate is not None:
+            false_candidates.append((sentence, predicate))
+    false_rows = sorted(
+        false_candidates,
+        key=lambda row: (
+            _safe_source_proposition_carrier(row[0]),
+            int(row[0].sentence_id.removeprefix("s-")),
+        ),
+    )[:4]
+    if len(false_rows) != 4:
+        return None
+    false_sentence_ids = {sentence.sentence_id for sentence, _predicate in false_rows}
+
+    remaining = tuple(
+        sentence
+        for sentence in eligible
+        if sentence.sentence_id not in relation_sentence_ids | false_sentence_ids
+        and _safe_source_proposition_carrier(sentence)
+        and _topic_token(sentence) is not None
+    )
+    # Preserve remaining safely-negatable sentences for literal-true rows only
+    # when no non-negatable fact/application carrier is available.
+    ranked = sorted(
+        remaining,
+        key=lambda sentence: (
+            _safe_true_fact_carrier(sentence),
+            bool(_safe_asserted_predicates(sentence)),
+            int(sentence.sentence_id.removeprefix("s-")),
+        ),
+    )
+    question_carriers = ranked[:5]
+    if len(question_carriers) != 5:
+        return None
+    question_sentence_ids = {sentence.sentence_id for sentence in question_carriers}
+    true_sentences = [
+        sentence
+        for sentence in eligible
+        if sentence.sentence_id
+        not in relation_sentence_ids | false_sentence_ids | question_sentence_ids
+        and _safe_true_fact_carrier(sentence)
+    ][:4]
+    if len(true_sentences) != 4:
+        return None
+
+    questions: list[EvidenceCandidate] = []
+    for sentence in question_carriers[:3]:
+        topic = _topic_token(sentence)
+        if topic is None:
+            return None
+        questions.append(
+            _source_question_candidate(
+                sentence,
+                candidate_number=len(questions) + 1,
+                category="comprehension",
+                intent="fact-recovery",
+                answer_start=0,
+                answer_end=len(sentence.text),
+                topic_token=topic[0],
+                topic_lemma=topic[1],
+            )
+        )
+    for relation in selected_relations:
+        questions.append(
+            _source_question_candidate(
+                relation.sentence,
+                candidate_number=len(questions) + 1,
+                category="explanation_inference",
+                intent=relation.rule_id,
+                answer_start=relation.answer_start,
+                answer_end=relation.answer_end,
+                topic_token=relation.topic_token,
+                topic_lemma=relation.topic_lemma,
+            )
+        )
+    for sentence in question_carriers[3:]:
+        topic = _topic_token(sentence)
+        if topic is None:
+            return None
+        questions.append(
+            _source_question_candidate(
+                sentence,
+                candidate_number=len(questions) + 1,
+                category="anchored_application",
+                intent="anchored-application.v1",
+                answer_start=0,
+                answer_end=len(sentence.text),
+                topic_token=topic[0],
+                topic_lemma=topic[1],
+            )
+        )
+
+    false_facts = [
+        TrueFalseFact(
+            fact_id=f"true-false:1:false-{index}",
+            sentence_id=sentence.sentence_id,
+            literal_evidence=sentence.text,
+            source_surface=predicate.token.surface,
+            replacement_surface=f"не {predicate.token.surface}",
+            truth_value=False,
+            mutation_rule_id="negate-asserted-predicate.v1",
+            source_start_offset=predicate.token.start_offset,
+            source_end_offset=predicate.token.end_offset,
+        )
+        for index, (sentence, predicate) in enumerate(false_rows, start=1)
+    ]
+    true_facts = [
+        TrueFalseFact(
+            fact_id=f"true-false:1:true-{index}",
+            sentence_id=sentence.sentence_id,
+            literal_evidence=sentence.text,
+            source_surface=sentence.tokens[0].surface,
+            replacement_surface=sentence.tokens[0].surface,
+            truth_value=True,
+            mutation_rule_id="negate-asserted-predicate.v1",
+        )
+        for index, sentence in enumerate(true_sentences, start=1)
+    ]
+    order_seed = hashlib.sha256(
+        "\n".join(sentence.text for sentence in eligible).encode("utf-8")
+    ).hexdigest()
+    facts = list(
+        sorted(
+            (*true_facts, *false_facts),
+            key=lambda fact: hashlib.sha256(
+                f"{order_seed}:{fact.sentence_id}:{fact.truth_value}".encode()
+            ).hexdigest(),
+        )
+    )
+    _break_trivial_truth_pattern(facts)
+    if len(questions) != 8 or len(facts) != 8:
+        return None
+    return tuple(questions), tuple(facts)
+
+
+def _break_trivial_truth_pattern(facts: list[TrueFalseFact]) -> None:
+    """Keep balanced answer keys from teaching a positional shortcut."""
+    pattern = tuple(fact.truth_value for fact in facts)
+    if pattern in {(True, False) * 4, (False, True) * 4}:
+        facts[1], facts[2] = facts[2], facts[1]
+    elif pattern in {
+        (True,) * 4 + (False,) * 4,
+        (False,) * 4 + (True,) * 4,
+    }:
+        facts[3], facts[4] = facts[4], facts[3]
 
 
 def _eligible_tokens(
@@ -2559,10 +3158,16 @@ def inventory_from_anchor(
         if len(primary_slots) == len(scheduled_types)
         else tuple((activity_type, None, None) for activity_type in scheduled_types)
     )
+    source_comprehension_45 = (
+        duration_minutes == 45
+        and focus is None
+        and tuple(scheduled_types) == _SOURCE_COMPREHENSION_45
+    )
     groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
     group_numbers_by_type: dict[str, list[int]] = defaultdict(list)
     group_focus_modes: dict[str, list[str | None]] = defaultdict(list)
     prebuilt_candidates: dict[tuple[str, int], tuple[EvidenceCandidate, ...]] = {}
+    prebuilt_true_false_facts: tuple[TrueFalseFact, ...] = ()
     primary_occurrences = Counter(
         activity_type for activity_type, _phase, _slot_id in scheduled_lane
     )
@@ -2664,6 +3269,15 @@ def inventory_from_anchor(
         )
         for index, (activity_type, phase, occurrence, slot_id) in enumerate(planning_lane):
             if activity_type == "short-writing" and groups_by_type[activity_type]:
+                continue
+            if (
+                source_comprehension_45
+                and lane_index == 0
+                and activity_type in {"true-false", "text-questions"}
+            ):
+                # These two blocks share one 16-sentence Phase-2 capacity
+                # problem and are allocated jointly after every other primary
+                # slot has made its source claims.
                 continue
             focus_mode = None
             if lane_index == 0 and _degree_focus_requested(focus):
@@ -2778,6 +3392,39 @@ def inventory_from_anchor(
                 {key: set(value) for key, value in sentence_operation_uses.items()},
                 {key: set(value) for key, value in sentence_phase_uses.items()},
             )
+
+    if source_comprehension_45 and primary_state is not None:
+        joint = _joint_source_comprehension(
+            sentences,
+            sentence_group_uses=primary_state[1],
+            sentence_phase_uses=primary_state[3],
+        )
+        if joint is not None:
+            question_candidates, prebuilt_true_false_facts = joint
+            question_tokens = tuple(
+                next(
+                    token
+                    for sentence in sentences
+                    for token in sentence.tokens
+                    if token.token_id == candidate.token_id
+                )
+                for candidate in question_candidates
+            )
+            true_false_tokens = tuple(
+                next(
+                    sentence.tokens[0]
+                    for sentence in sentences
+                    if sentence.sentence_id == fact.sentence_id
+                )
+                for fact in prebuilt_true_false_facts
+            )
+            groups_by_type["text-questions"].append(question_tokens)
+            group_numbers_by_type["text-questions"].append(1)
+            group_focus_modes["text-questions"].append(None)
+            prebuilt_candidates[("text-questions", 1)] = question_candidates
+            groups_by_type["true-false"].append(true_false_tokens)
+            group_numbers_by_type["true-false"].append(1)
+            group_focus_modes["true-false"].append(None)
 
     candidates: list[EvidenceCandidate] = []
     true_false_facts: list[TrueFalseFact] = []
@@ -3038,6 +3685,7 @@ def inventory_from_anchor(
                         target_token_ids=tuple(token.token_id for token in group),
                     )
                 )
+    true_false_facts.extend(prebuilt_true_false_facts)
     return CertificationInventory(
         source_id=_source_id(anchor),
         sentences=sentences,

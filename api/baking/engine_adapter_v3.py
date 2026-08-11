@@ -87,6 +87,12 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
+_TEXT_QUESTION_GUIDANCE_LABELS = {
+    "causal-clause.v1": "Причина",
+    "purpose-clause.v1": "Мета",
+    "temporal-clause.v1": "Часова умова",
+    "licensed-vid-cause.v1": "Причина стану",
+}
 
 
 def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -210,7 +216,7 @@ def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]
             "quiz",
             "cloze",
             "match-up",
-            "error-correction",
+            "true-false",
             "text-questions",
             "short-writing",
         ),
@@ -252,7 +258,6 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
     slots: list[LessonSlot] = []
     replacement_policy = {
         "match-up": ("quiz", "fill-in"),
-        "true-false": ("quiz",),
     }
     index = 0
     for phase, count in sorted(shape.phase_slots.items()):
@@ -926,6 +931,42 @@ def _bind_learner_payload_to_certified_units(
                 raise ValueError(
                     "v3 text-question is detached from certified question frame."
                 )
+            answer_span = (
+                distinctness.get("answer_span")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            topic = (
+                distinctness.get("question_topic")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            if answer_span is not None or topic is not None:
+                surface = unit.get("rendering_surface")
+                allowed = unit.get("allowed_forms")
+                start = (
+                    answer_span.get("start_offset")
+                    if isinstance(answer_span, Mapping)
+                    else None
+                )
+                end = answer_span.get("end_offset") if isinstance(answer_span, Mapping) else None
+                text = answer_span.get("text") if isinstance(answer_span, Mapping) else None
+                if (
+                    not isinstance(surface, str)
+                    or not isinstance(start, int)
+                    or not isinstance(end, int)
+                    or start < 0
+                    or end <= start
+                    or surface[start:end] != text
+                    or not isinstance(allowed, list)
+                    or allowed != [text]
+                    or not isinstance(topic, Mapping)
+                    or not isinstance(topic.get("token_id"), str)
+                    or not isinstance(topic.get("lemma"), str)
+                ):
+                    raise ValueError(
+                        "v3 text-question answer span is detached from its certified source."
+                    )
         return
 
     if activity_type == "short-writing":
@@ -1472,14 +1513,28 @@ class EngineLessonBaker:
         external_options = _has_external_options(payload, anchor_text)
         rendered_answer_key = dict(answer_key)
         if activity_type == "text-questions" and plan is not None:
-            source_guidance = tuple(
-                dict.fromkeys(
-                    unit.rendering_surface
-                    for unit in plan.units
-                    if isinstance(unit.rendering_surface, str) and unit.rendering_surface.strip()
+            source_guidance: list[str] = []
+            for unit in plan.units:
+                answer_span = unit.distinctness.get("answer_span")
+                answer = (
+                    answer_span.get("text") if isinstance(answer_span, Mapping) else None
                 )
-            )
+                if not isinstance(answer, str) or not answer.strip():
+                    answer = unit.rendering_surface
+                if not isinstance(answer, str) or not answer.strip():
+                    continue
+                category = unit.distinctness.get("question_category")
+                intent = unit.distinctness.get("question_intent")
+                label = (
+                    "Факт за текстом"
+                    if category == "comprehension"
+                    else _TEXT_QUESTION_GUIDANCE_LABELS.get(intent, "Явний зв'язок")
+                    if category == "explanation_inference"
+                    else "Критерій: реалістичне застосування думки"
+                )
+                source_guidance.append(f"{label}: {answer}")
             if source_guidance:
+                source_guidance = list(dict.fromkeys(source_guidance))
                 rendered_answer_key["guidance"] = "Орієнтири для вчителя:\n" + "\n".join(
                     f"{position}. {surface}"
                     for position, surface in enumerate(source_guidance, start=1)

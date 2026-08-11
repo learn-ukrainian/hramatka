@@ -62,6 +62,14 @@ _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingP
         ),
     }
 )
+_TEXT_QUESTION_RELATION_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "causal-clause.v1": ("Чому", "З якої причини"),
+        "purpose-clause.v1": ("З якою метою", "Навіщо"),
+        "temporal-clause.v1": ("Коли", "До якого моменту"),
+        "licensed-vid-cause.v1": ("Від чого", "Через що"),
+    }
+)
 _UKRAINIAN_CASE_FORMS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "nom": "називному",
@@ -134,6 +142,10 @@ class EvidenceCandidate:
     semantic_warrant: str | None = None
     exclusion_warrants: tuple[tuple[str, str], ...] = ()
     question_intent: str | None = None
+    answer_start_offset: int | None = None
+    answer_end_offset: int | None = None
+    topic_token_id: str | None = None
+    topic_lemma: str | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,8 @@ class TrueFalseFact:
     replacement_surface: str
     truth_value: bool
     mutation_rule_id: str = "replace-one-surface.v1"
+    source_start_offset: int | None = None
+    source_end_offset: int | None = None
 
 
 @dataclass(frozen=True)
@@ -308,9 +322,62 @@ def _candidate_unit(
             )
         if candidate.activity_type == "text-questions":
             distinctness["question_category"] = candidate.category
-            prefixes = _TEXT_QUESTION_ALLOWED_PREFIXES.get(candidate.category or "")
+            prefixes = _TEXT_QUESTION_RELATION_PREFIXES.get(
+                candidate.question_intent or ""
+            ) or _TEXT_QUESTION_ALLOWED_PREFIXES.get(candidate.category or "")
             if prefixes is None:
                 raise ValueError("Text-question category has no certified question frame.")
+            if (
+                candidate.answer_start_offset is not None
+                or candidate.answer_end_offset is not None
+                or candidate.topic_token_id is not None
+                or candidate.topic_lemma is not None
+            ):
+                sentence = next(
+                    (
+                        item
+                        for item in inventory.sentences
+                        if item.sentence_id == candidate.sentence_id
+                    ),
+                    None,
+                )
+                topic = next(
+                    (
+                        token
+                        for token in sentence.tokens
+                        if token.token_id == candidate.topic_token_id
+                    ),
+                    None,
+                ) if sentence is not None else None
+                if (
+                    sentence is None
+                    or candidate.answer_start_offset is None
+                    or candidate.answer_end_offset is None
+                    or candidate.answer_start_offset < 0
+                    or candidate.answer_end_offset <= candidate.answer_start_offset
+                    or sentence.text[
+                        candidate.answer_start_offset : candidate.answer_end_offset
+                    ]
+                    != candidate.expected_key
+                    or topic is None
+                    or not isinstance(candidate.topic_lemma, str)
+                    or not candidate.topic_lemma.strip()
+                ):
+                    raise ValueError(
+                        "Text-question answer span and named topic must bind one "
+                        "source proposition."
+                    )
+                distinctness["answer_span"] = {
+                    "sentence_id": candidate.sentence_id,
+                    "start_offset": candidate.answer_start_offset,
+                    "end_offset": candidate.answer_end_offset,
+                    "text": candidate.expected_key,
+                }
+                distinctness["question_topic"] = {
+                    "token_id": topic.token_id,
+                    "surface": topic.surface,
+                    "lemma": candidate.topic_lemma,
+                }
             distinctness["question_frame"] = {
                 "allowed_prefixes": list(prefixes),
                 "category": candidate.category,
@@ -528,6 +595,8 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
                 literal_evidence=fact.literal_evidence,
                 source_surface=fact.source_surface,
                 replacement_surface=fact.replacement_surface,
+                source_start_offset=fact.source_start_offset,
+                source_end_offset=fact.source_end_offset,
             )
             statement = construct_false_statement(rule_id, binding)
             if statement is None or not verify_false_statement(rule_id, binding, statement):
@@ -550,11 +619,22 @@ def _build_true_false(inventory: CertificationInventory, *, slot_id: str, phase:
                     "semantic_target": f"true-false:{fact.fact_id}",
                     "literal_evidence": fact.literal_evidence,
                     "mutation_rule_id": rule_id,
+                    "proposition_edge": {
+                        "sentence_id": fact.sentence_id,
+                        "predicate_start_offset": fact.source_start_offset,
+                        "predicate_end_offset": fact.source_end_offset,
+                        "truth_value": fact.truth_value,
+                    },
                 },
             )
         )
     fact_source_ids = tuple(fact.sentence_id for fact in inventory.true_false_facts)
-    if units and not _source_diverse(fact_source_ids):
+    if units and (
+        len(units) != 8
+        or len(set(fact_source_ids)) != 8
+        or sum(fact.truth_value for fact in inventory.true_false_facts) != 4
+        or not _source_diverse(fact_source_ids, maximum_per_source=1)
+    ):
         units = []
     normalized_statements = [" ".join(unit.allowed_forms[0].casefold().split()) for unit in units]
     if len(normalized_statements) != len(set(normalized_statements)):
