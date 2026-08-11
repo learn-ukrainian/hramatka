@@ -95,7 +95,11 @@ def _sentences_and_tokens() -> tuple[tuple[AnchorSentence, ...], tuple[AnchorTok
 
 def complete_inventory() -> CertificationInventory:
     """Return one deterministic, all-type inventory derived from the density anchor."""
-    from hramatka.engine.anchor_inventory_v3 import _certified_choice_bank
+    from hramatka.engine.anchor_inventory_v3 import (
+        _certified_choice_bank,
+        inventory_for_group,
+        inventory_from_anchor,
+    )
 
     sentences, tokens = _sentences_and_tokens()
     usable_tokens = tuple(
@@ -125,12 +129,6 @@ def complete_inventory() -> CertificationInventory:
     )
     if len(bank_selected) != 8:
         raise RuntimeError("density v3 fixture needs one banked token from eight sentences")
-    cloze_passage = " ".join(sentence.text for sentence in sentences[:8])
-    cloze_sentence_starts: dict[str, int] = {}
-    cursor = 0
-    for sentence in sentences[:8]:
-        cloze_sentence_starts[sentence.sentence_id] = cursor
-        cursor += len(sentence.text) + 1
     match_selected = tuple(
         token
         for sentence in sentences[:4]
@@ -149,36 +147,13 @@ def complete_inventory() -> CertificationInventory:
         raise RuntimeError("density v3 fixture needs diverse form-to-lemma pairs")
 
     generic_candidates = []
-    for activity_type in ("quiz", "cloze", "fill-in", "error-correction"):
-        activity_tokens = (
-            bank_selected if activity_type in {"quiz", "cloze", "fill-in"} else selected
-        )
-        if activity_type == "error-correction":
-            activity_tokens = tuple(
-                next(
-                    token
-                    for token in usable_tokens
-                    if token.sentence_id == sentence.sentence_id and token.start_offset > 0
-                )
-                for sentence in sentences[:8]
-            )
+    for activity_type in ("quiz", "fill-in"):
+        activity_tokens = bank_selected
         for index, token in enumerate(activity_tokens, start=1):
             sentence = sentence_by_id[token.sentence_id]
-            bank_row = (
-                _certified_choice_bank(token)
-                if activity_type in {"quiz", "cloze", "fill-in"}
-                else None
-            )
-            if activity_type in {"quiz", "cloze", "fill-in"} and bank_row is None:
+            bank_row = _certified_choice_bank(token)
+            if bank_row is None:
                 raise RuntimeError("density v3 fixture needs a certified choice bank")
-            replacement = usable_tokens[(index + 8) % len(usable_tokens)]
-            derived_surface = (
-                sentence.text[: token.start_offset]
-                + replacement.surface
-                + sentence.text[token.end_offset :]
-                if activity_type == "error-correction"
-                else None
-            )
             generic_candidates.append(
                 EvidenceCandidate(
                     activity_type=activity_type,
@@ -187,34 +162,33 @@ def complete_inventory() -> CertificationInventory:
                     token_id=token.token_id,
                     literal_evidence=sentence.text,
                     expected_key=token.surface,
-                    semantic_target=derived_surface
-                    or f"{activity_type}:{token.sentence_id}:{token.token_id}",
-                    certified_error_count=1 if activity_type == "error-correction" else 0,
-                    derived_surface=derived_surface,
-                    rendering_surface=cloze_passage if activity_type == "cloze" else None,
-                    target_start_offset=(
-                        cloze_sentence_starts[token.sentence_id] + token.start_offset
-                        if activity_type == "cloze"
-                        else token.start_offset
-                        if activity_type in {"quiz", "fill-in", "error-correction"}
-                        else None
-                    ),
-                    target_end_offset=(
-                        cloze_sentence_starts[token.sentence_id] + token.end_offset
-                        if activity_type == "cloze"
-                        else token.end_offset
-                        if activity_type in {"quiz", "fill-in", "error-correction"}
-                        else None
-                    ),
-                    morphology_class=(
-                        ("case", "number", "gender", "person")[index % 4]
-                        if activity_type == "error-correction"
-                        else None
-                    ),
+                    semantic_target=f"{activity_type}:{token.sentence_id}:{token.token_id}",
+                    target_start_offset=token.start_offset,
+                    target_end_offset=token.end_offset,
                     choice_bank=bank_row[0] if bank_row is not None else (),
                     exclusion_warrants=bank_row[1] if bank_row is not None else (),
                 )
             )
+
+    for activity_type in ("cloze", "error-correction"):
+        generated = inventory_from_anchor(
+            DENSITY_V3_ANCHOR,
+            scheduled_types=(activity_type,),
+            duration_minutes=45,
+        )
+        selected_group = inventory_for_group(
+            generated,
+            activity_type=activity_type,
+            group_number=1,
+        )
+        activity_candidates = tuple(
+            candidate
+            for candidate in selected_group.candidates
+            if candidate.activity_type == activity_type
+        )
+        if len(activity_candidates) != floor_for(activity_type).minimum_units:
+            raise RuntimeError(f"density v3 fixture needs a certified {activity_type} group")
+        generic_candidates.extend(activity_candidates)
 
     categories = (
         ("comprehension",) * 3 + ("explanation_inference",) * 3 + ("anchored_application",) * 2
@@ -307,16 +281,14 @@ def complete_inventory() -> CertificationInventory:
             end_offset=token.end_offset,
             parses=token.vesum_parses,
         )
-        for token in usable_tokens
+        for token in sentences[0].tokens
     )
     writing_task = ShortWritingTask(
         task_id="writing-1",
         sentence_id=sentences[0].sentence_id,
         prompt=sentences[0].text,
         constraints=(
-            ConstraintSpec(
-                "contains_lemma_set", {"lemmas": (writing_tokens[0].parses[0]["lemma"],)}
-            ),
+            ConstraintSpec("source_proposition", {"text": sentences[0].text}),
             ConstraintSpec("min_verb_count", {"minimum": 1}),
             ConstraintSpec("word_count_range", {"minimum": 60, "maximum": 80}),
         ),

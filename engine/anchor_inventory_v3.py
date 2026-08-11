@@ -1110,28 +1110,13 @@ def _is_comparison_form(token: AnchorToken) -> bool:
     )
 
 
-def _morphology_change_class(source_tags: set[str], replacement_tags: set[str]) -> str:
-    """Name the grammatical contrast in one certified erroneous form."""
-    changed = source_tags.symmetric_difference(replacement_tags)
-    feature_families = (
-        ("case", {"v_naz", "v_rod", "v_dav", "v_zna", "v_oru", "v_mis", "v_kly"}),
-        ("number", {"s", "p"}),
-        ("gender", {"m", "f", "n"}),
-        ("person", {"1", "2", "3"}),
-        ("tense", {"past", "pres", "futr"}),
-        ("degree", {"compb", "compc", "comps"}),
-    )
-    return next(
-        (name for name, markers in feature_families if changed & markers),
-        "inflection",
-    )
-
-
-def _error_replacement(token: AnchorToken) -> tuple[str, str] | None:
-    """Return one real same-lemma/POS form and its grammatical error class."""
+def _safe_inflection_rows(
+    token: AnchorToken,
+) -> tuple[tuple[str, str, set[str], set[str]], ...]:
+    """Return safe same-lemma/POS alternatives with source and replacement tags."""
     identity = _unambiguous_content_lemma_pos(token)
     if identity is None:
-        return None
+        return ()
     lemma, source_pos = identity
     source_parses = tuple(
         parse
@@ -1140,7 +1125,7 @@ def _error_replacement(token: AnchorToken) -> tuple[str, str] | None:
         and parse.get("pos") == source_pos
         and isinstance(parse.get("raw"), str)
     )
-    candidates: list[tuple[int, int, str, str]] = []
+    candidates: list[tuple[int, int, str, set[str], set[str]]] = []
     for row in verify_lemma(lemma, db_path=data.active_bundle().vesum_db):
         form = row.get("word_form")
         tags = row.get("tags")
@@ -1166,13 +1151,360 @@ def _error_replacement(token: AnchorToken) -> tuple[str, str] | None:
                 distance,
                 abs(len(form) - len(token.surface)),
                 replacement,
-                _morphology_change_class(source_features, row_features),
+                source_features,
+                row_features,
             )
         )
-    if not candidates:
-        return None
-    selected = min(candidates, key=lambda row: (row[0], row[1], row[2].casefold(), row[3]))
-    return selected[2], selected[3]
+    return tuple(
+        (form, source_pos, source_features, replacement_features)
+        for _distance, _length_delta, form, source_features, replacement_features in sorted(
+            candidates,
+            key=lambda row: (row[0], row[1], row[2].casefold()),
+        )
+    )
+
+
+_CASE_TAGS: Final[frozenset[str]] = frozenset(
+    {"v_naz", "v_rod", "v_dav", "v_zna", "v_oru", "v_mis", "v_kly"}
+)
+_NUMBER_TAGS: Final[frozenset[str]] = frozenset({"s", "p"})
+_GENDER_TAGS: Final[frozenset[str]] = frozenset({"m", "f", "n"})
+_PERSON_TAGS: Final[frozenset[str]] = frozenset({"1", "2", "3"})
+_UNAMBIGUOUS_PREPOSITION_CASES: Final[dict[str, frozenset[str]]] = {
+    "без": frozenset({"v_rod"}),
+    "біля": frozenset({"v_rod"}),
+    "від": frozenset({"v_rod"}),
+    "для": frozenset({"v_rod"}),
+    "до": frozenset({"v_rod"}),
+    "завдяки": frozenset({"v_dav"}),
+    "коло": frozenset({"v_rod"}),
+    "перед": frozenset({"v_oru"}),
+    "після": frozenset({"v_rod"}),
+    "попри": frozenset({"v_zna"}),
+    "проти": frozenset({"v_rod"}),
+    "серед": frozenset({"v_rod"}),
+    "усупереч": frozenset({"v_dav"}),
+    "через": frozenset({"v_zna"}),
+}
+
+
+def _feature(tags: set[str], family: frozenset[str]) -> str | None:
+    values = tags & family
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _agreement_frame(tags: set[str]) -> tuple[str, str, str] | None:
+    case = _feature(tags, _CASE_TAGS)
+    number = _feature(tags, _NUMBER_TAGS) or ("s" if tags & _GENDER_TAGS else None)
+    gender = _feature(tags, _GENDER_TAGS) if number == "s" else ""
+    return (case, number, gender) if case and number and gender is not None else None
+
+
+def _token_tag_sets(token: AnchorToken, *, pos: str) -> tuple[set[str], ...]:
+    return tuple(
+        set(str(parse["raw"]).split(":"))
+        for parse in token.vesum_parses
+        if parse.get("pos") == pos
+        and isinstance(parse.get("raw"), str)
+        and not any(marker in f":{parse['raw']}" for marker in _UNSAFE_TAG_MARKERS)
+    )
+
+
+def _replacement_tag_sets(
+    token: AnchorToken, form: str, *, pos: str
+) -> tuple[set[str], ...]:
+    """Return every safe same-lemma/POS analysis licensed by one surface."""
+    identity = _unambiguous_content_lemma_pos(token)
+    if identity is None or identity[1] != pos:
+        return ()
+    lemma = identity[0]
+    return tuple(
+        set(str(row["tags"]).split(":"))
+        for row in verify_lemma(lemma, db_path=data.active_bundle().vesum_db)
+        if isinstance(row.get("word_form"), str)
+        and str(row["word_form"]).casefold() == form.casefold()
+        and row.get("pos") == pos
+        and isinstance(row.get("tags"), str)
+        and not any(marker in f":{row['tags']}" for marker in _UNSAFE_TAG_MARKERS)
+    )
+
+
+_SUBORDINATORS: Final[frozenset[str]] = frozenset(
+    {
+        "аби",
+        "адже",
+        "бо",
+        "де",
+        "коли",
+        "оскільки",
+        "поки",
+        "тому",
+        "хоч",
+        "хоча",
+        "що",
+        "щоб",
+        "яка",
+        "який",
+        "які",
+        "яке",
+    }
+)
+_CLAUSE_BOUNDARY_RE: Final = re.compile(r"[,;:—–]")
+
+
+def _is_finite_verb(token: AnchorToken) -> bool:
+    return any(
+        parse.get("pos") == "verb"
+        and ":inf" not in f":{parse.get('raw', '')}"
+        for parse in token.vesum_parses
+    )
+
+
+def _case_ambiguous_nominative(tags_rows: Sequence[set[str]]) -> bool:
+    cases = {
+        case
+        for tags in tags_rows
+        for case in tags & (_CASE_TAGS - {"v_kly"})
+    }
+    return "v_naz" in cases and bool(cases - {"v_naz"})
+
+
+def _same_local_clause(
+    sentence: AnchorSentence, first_index: int, second_index: int
+) -> bool:
+    """Return whether two nearby tokens have no visible clause boundary between them."""
+    left_index, right_index = sorted((first_index, second_index))
+    left = sentence.tokens[left_index]
+    right = sentence.tokens[right_index]
+    between = sentence.text[left.end_offset : right.start_offset]
+    if _CLAUSE_BOUNDARY_RE.search(between):
+        return False
+    return not any(
+        token.surface.casefold() in _SUBORDINATORS
+        for token in sentence.tokens[left_index + 1 : right_index]
+    )
+
+
+def _subject_frames_before(
+    sentence: AnchorSentence, token_index: int
+) -> set[tuple[str, str]]:
+    """Return every unambiguous subject frame in the same local clause."""
+    frames: set[tuple[str, str]] = set()
+    verb = sentence.tokens[token_index]
+    right_boundary = verb.start_offset
+    for subject in reversed(sentence.tokens[:token_index]):
+        between = sentence.text[subject.end_offset:right_boundary]
+        if _CLAUSE_BOUNDARY_RE.search(between):
+            break
+        if subject.surface.casefold() in _SUBORDINATORS or _is_finite_verb(subject):
+            break
+        nominal_rows = (
+            *_token_tag_sets(subject, pos="noun"),
+            *_token_tag_sets(subject, pos="pron"),
+        )
+        if nominal_rows and not _case_ambiguous_nominative(nominal_rows):
+            for parse in subject.vesum_parses:
+                raw = str(parse.get("raw", ""))
+                tags = set(raw.split(":"))
+                if (
+                    "v_naz" not in tags
+                    or any(marker in f":{raw}" for marker in _UNSAFE_TAG_MARKERS)
+                ):
+                    continue
+                number = _feature(tags, _NUMBER_TAGS) or (
+                    "s" if tags & _GENDER_TAGS else None
+                )
+                if number is None:
+                    continue
+                person = _feature(tags, _PERSON_TAGS) if ":pers:" in f":{raw}:" else "3"
+                if person is not None:
+                    frames.add((person, number))
+        right_boundary = subject.start_offset
+    return frames
+
+
+def _contextual_error_replacements(
+    sentence: AnchorSentence, token: AnchorToken
+) -> tuple[tuple[str, str, str], ...]:
+    """Certify only a one-token error whose local dependency proves it wrong.
+
+    The previous generic policy chose the nearest real form in a paradigm.  A
+    real form can remain grammatical in the sentence (for example ``буде`` in
+    place of ``є``), so formhood alone is not an error warrant.  These closed
+    rules mutate a dependent while keeping its visible head in place.
+    """
+    try:
+        token_index = next(
+            index
+            for index, candidate in enumerate(sentence.tokens)
+            if candidate.token_id == token.token_id
+        )
+    except StopIteration:
+        return ()
+    rows: list[tuple[str, str, str]] = []
+    safe_rows = _safe_inflection_rows(token)
+    all_noun_frames = {
+        frame
+        for candidate in sentence.tokens
+        for tags in _token_tag_sets(candidate, pos="noun")
+        if (frame := _agreement_frame(tags)) is not None
+    }
+
+    # Adjective--noun agreement: change exactly one agreement feature on the
+    # adjective while the agreeing source noun remains visible.
+    if any(parse.get("pos") == "adj" for parse in token.vesum_parses):
+        neighbour_indexes = (
+            *range(max(0, token_index - 2), token_index),
+            *range(token_index + 1, min(len(sentence.tokens), token_index + 3)),
+        )
+        neighbours = tuple(
+            sentence.tokens[index]
+            for index in neighbour_indexes
+            if _same_local_clause(sentence, token_index, index)
+        )
+        head_frames = {
+            frame
+            for neighbour in neighbours
+            for tags in _token_tag_sets(neighbour, pos="noun")
+            if (frame := _agreement_frame(tags)) is not None
+        }
+        for form, pos, source_tags, replacement_tags in safe_rows:
+            if pos != "adj":
+                continue
+            source_frame = _agreement_frame(source_tags)
+            replacement_frame = _agreement_frame(replacement_tags)
+            if source_frame is None or source_frame not in head_frames or replacement_frame is None:
+                continue
+            replacement_frames = {
+                frame
+                for tags in _replacement_tag_sets(token, form, pos="adj")
+                if (frame := _agreement_frame(tags)) is not None
+            }
+            changes = tuple(
+                name
+                for name, source_value, replacement_value in zip(
+                    ("case", "number", "gender"), source_frame, replacement_frame, strict=True
+                )
+                if source_value != replacement_value
+            )
+            if (
+                changes
+                and replacement_frames
+                and replacement_frames.isdisjoint(all_noun_frames)
+            ):
+                mismatch_class = next(
+                    name for name in ("number", "case", "gender") if name in changes
+                )
+                rows.append(
+                    (
+                        form,
+                        f"agreement-{mismatch_class}",
+                        "the mutated adjective no longer agrees with its visible source noun",
+                    )
+                )
+
+    # Explicit subject--finite-verb agreement.  Noun subjects license third
+    # person; personal pronouns also contribute their attested person.
+    if any(parse.get("pos") == "verb" for parse in token.vesum_parses):
+        subject_frames = _subject_frames_before(sentence, token_index)
+        for form, pos, source_tags, replacement_tags in safe_rows:
+            if pos != "verb":
+                continue
+            source_frame = (
+                _feature(source_tags, _PERSON_TAGS),
+                _feature(source_tags, _NUMBER_TAGS),
+            )
+            replacement_frame = (
+                _feature(replacement_tags, _PERSON_TAGS),
+                _feature(replacement_tags, _NUMBER_TAGS),
+            )
+            replacement_frames = {
+                (
+                    _feature(tags, _PERSON_TAGS),
+                    _feature(tags, _NUMBER_TAGS),
+                )
+                for tags in _replacement_tag_sets(token, form, pos="verb")
+            }
+            replacement_frames = {
+                frame for frame in replacement_frames if None not in frame
+            }
+            if (
+                None in source_frame
+                or source_frame not in subject_frames
+                or None in replacement_frame
+            ):
+                continue
+            changes = tuple(
+                name
+                for name, source_value, replacement_value in zip(
+                    ("person", "number"), source_frame, replacement_frame, strict=True
+                )
+                if source_value != replacement_value
+            )
+            if (
+                len(changes) == 1
+                and replacement_frames
+                and replacement_frames.isdisjoint(subject_frames)
+            ):
+                rows.append(
+                    (
+                        form,
+                        f"subject-verb-{changes[0]}",
+                        "the mutated finite verb no longer agrees with its visible source subject",
+                    )
+                )
+
+    # Closed, single-case prepositions only.  Ambiguous government such as
+    # ``в``, ``на``, ``за`` and ``під`` is deliberately excluded.
+    if token_index > 0:
+        preposition = sentence.tokens[token_index - 1].surface.casefold()
+        governed_cases = _UNAMBIGUOUS_PREPOSITION_CASES.get(preposition)
+        if governed_cases:
+            for form, pos, source_tags, replacement_tags in safe_rows:
+                if pos not in {"noun", "adj"}:
+                    continue
+                source_case = _feature(source_tags, _CASE_TAGS)
+                replacement_case = _feature(replacement_tags, _CASE_TAGS)
+                replacement_cases = {
+                    case
+                    for tags in _replacement_tag_sets(token, form, pos=pos)
+                    if (case := _feature(tags, _CASE_TAGS)) is not None
+                }
+                if (
+                    source_case in governed_cases
+                    and replacement_case not in governed_cases
+                    and replacement_cases
+                    and replacement_cases.isdisjoint(governed_cases)
+                ):
+                    rows.append(
+                        (
+                            form,
+                            "government-case",
+                            "the mutated nominal violates the visible preposition's "
+                            "closed case government",
+                        )
+                    )
+
+    # Keep one best surface per independently named mismatch class, then rotate
+    # deterministically across tokens so an eight-item board can exercise
+    # several constructions instead of eight case errors.
+    best_by_class: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        best_by_class.setdefault(row[1], row)
+    ordered = sorted(best_by_class.values(), key=lambda row: (row[1], row[0].casefold()))
+    if not ordered:
+        return ()
+    numeric_id = sum(int(value) for value in re.findall(r"\d+", token.token_id))
+    offset = numeric_id % len(ordered)
+    return tuple((*ordered[offset:], *ordered[:offset]))
+
+
+def _error_replacement(
+    sentence: AnchorSentence, token: AnchorToken
+) -> tuple[str, str, str] | None:
+    """Return one locally provable dependency mismatch, never an arbitrary form."""
+    rows = _contextual_error_replacements(sentence, token)
+    return rows[0] if rows else None
 
 
 def _unambiguous_content_lemma_pos(token: AnchorToken) -> tuple[str, str] | None:
@@ -1500,6 +1832,67 @@ def _has_distractor_capacity(token: AnchorToken, *, minimum: int = 2) -> bool:
     return _certified_choice_bank(token, minimum_distractors=minimum) is not None
 
 
+def _cross_gap_choice_banks(
+    tokens: Sequence[AnchorToken],
+) -> dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] | None:
+    """Build lexical cloze banks exclusively from other certified gap answers.
+
+    A same-lemma paradigm lets a learner solve eight gaps by comparing endings.
+    This board instead makes every distractor the correct answer to a different
+    gap, with distinct lemmas and at least one same-POS alternative per row.
+    """
+    identities = [_unambiguous_content_lemma_pos(token) for token in tokens]
+    if len(tokens) < 3 or any(identity is None for identity in identities):
+        return None
+    typed = tuple(
+        (token, identity[0], identity[1])
+        for token, identity in zip(tokens, identities, strict=True)
+        if identity is not None
+    )
+    result: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
+    for index, (token, lemma, pos) in enumerate(typed):
+        rotated = (*typed[index + 1 :], *typed[:index])
+        same_pos = next(
+            (
+                row
+                for row in rotated
+                if row[2] == pos
+                and row[1] != lemma
+                and row[0].surface.casefold() != token.surface.casefold()
+            ),
+            None,
+        )
+        if same_pos is None:
+            return None
+        second = next(
+            (
+                row
+                for row in rotated
+                if row[0].token_id != same_pos[0].token_id
+                and row[1] not in {lemma, same_pos[1]}
+                and row[0].surface.casefold()
+                not in {token.surface.casefold(), same_pos[0].surface.casefold()}
+            ),
+            None,
+        )
+        if second is None:
+            return None
+        distractors = (same_pos, second)
+        bank = (token.surface, *(row[0].surface for row in distractors))
+        warrants = tuple(
+            (
+                row[0].surface,
+                (
+                    f"certified answer for another cloze gap ({row[0].token_id}); "
+                    f"distinct source lemma {row[1]}"
+                ),
+            )
+            for row in distractors
+        )
+        result[token.token_id] = (bank, warrants)
+    return result
+
+
 def _negatable_predicate(sentence: AnchorSentence) -> AnchorToken | None:
     words = [token.surface.casefold() for token in sentence.tokens]
     for index, token in enumerate(sentence.tokens):
@@ -1547,8 +1940,8 @@ def _eligible_tokens(
             tuple(
                 token
                 for token in interior
-                if any(parse.get("pos") in _CONTENT_POS for parse in token.vesum_parses)
-                and _has_distractor_capacity(token)
+                if (identity := _unambiguous_content_lemma_pos(token)) is not None
+                and identity[1] in {"noun", "verb"}
             )
         )
     if activity_type in {"quiz", "fill-in"}:
@@ -1563,7 +1956,13 @@ def _eligible_tokens(
     if activity_type == "match-up":
         return tuple(token for token in tokens if token.token_id in (match_pairs or {}))
     if activity_type == "error-correction":
-        return focused(tuple(token for token in tokens if _error_replacement(token) is not None))
+        return focused(
+            tuple(
+                token
+                for token in tokens
+                if _error_replacement(sentence, token) is not None
+            )
+        )
     if activity_type == "short-writing":
         return focused(
             tuple(
@@ -1681,6 +2080,25 @@ def _diverse_group(
     # Python's sort remains stable for equal capacity, preserving document order.
     pools.sort(
         key=lambda row: (
+            (
+                min(
+                    (
+                        {
+                            "agreement-number": 0,
+                            "agreement-case": 1,
+                            "agreement-gender": 2,
+                            "government-case": 3,
+                            "subject-verb-person": 4,
+                            "subject-verb-number": 5,
+                        }.get(replacement[1], 9)
+                        for token in row[1]
+                        if (replacement := _error_replacement(row[0], token)) is not None
+                    ),
+                    default=9,
+                )
+                if activity_type == "error-correction"
+                else 0
+            ),
             (
                 0
                 if activity_type == "text-questions"
@@ -1885,7 +2303,7 @@ def _diverse_group(
                         candidate
                         for candidate in available_candidates
                         if candidate.start_offset > 0
-                        and (row := _error_replacement(candidate)) is not None
+                        and (row := _error_replacement(sentence, candidate)) is not None
                         and row[1] not in selected_error_classes
                     ),
                     next(
@@ -1910,7 +2328,7 @@ def _diverse_group(
             )
             selected_per_source[sentence.sentence_id] += 1
             if activity_type == "error-correction":
-                replacement = _error_replacement(token)
+                replacement = _error_replacement(sentence, token)
                 assert replacement is not None
                 selected_error_classes.add(replacement[1])
                 selected_initial_errors += int(token.start_offset == 0)
@@ -2386,7 +2804,11 @@ def inventory_from_anchor(
                 continue
             cloze_passage = None
             cloze_sentence_starts: dict[str, int] = {}
+            cloze_banks = None
             if activity_type == "cloze" and group:
+                cloze_banks = _cross_gap_choice_banks(group)
+                if cloze_banks is None:
+                    continue
                 sentence_numbers = sorted(
                     int(token.sentence_id.removeprefix("s-")) for token in group
                 )
@@ -2410,16 +2832,23 @@ def inventory_from_anchor(
                 candidate_id = f"{activity_type}:{group_number}:{token_number}"
                 if activity_type in {"quiz", "cloze", "fill-in", "error-correction"}:
                     bank_row = (
-                        _certified_choice_bank(token)
-                        if activity_type in {"quiz", "cloze", "fill-in"}
+                        cloze_banks.get(token.token_id)
+                        if activity_type == "cloze" and cloze_banks is not None
+                        else _certified_choice_bank(token)
+                        if activity_type in {"quiz", "fill-in"}
                         else None
                     )
                     replacement_row = (
-                        _error_replacement(token) if activity_type == "error-correction" else None
+                        _error_replacement(sentence, token)
+                        if activity_type == "error-correction"
+                        else None
                     )
                     replacement = replacement_row[0] if replacement_row is not None else None
                     morphology_class = (
                         replacement_row[1] if replacement_row is not None else None
+                    )
+                    semantic_warrant = (
+                        replacement_row[2] if replacement_row is not None else None
                     )
                     derived = (
                         sentence.text[: token.start_offset]
@@ -2465,6 +2894,14 @@ def inventory_from_anchor(
                                 else None
                             ),
                             morphology_class=morphology_class,
+                            frame_family=(
+                                "contextual-mismatch.v1"
+                                if activity_type == "error-correction"
+                                else "cross-gap-lexical.v1"
+                                if activity_type == "cloze"
+                                else None
+                            ),
+                            semantic_warrant=semantic_warrant,
                             choice_bank=bank_row[0] if bank_row is not None else (),
                             exclusion_warrants=bank_row[1] if bank_row is not None else (),
                         )
@@ -2540,9 +2977,10 @@ def inventory_from_anchor(
                     )
                     if lemma is not None and lemma not in lemmas:
                         lemmas.append(lemma)
-                if lemmas:
+                degree_writing = focus_mode in {_FOCUS_WRITING, "degree-writing"}
+                if (degree_writing and lemmas) or (not degree_writing and task_sentence.tokens):
                     minimum, maximum = writing_ranges[duration_minutes]
-                    degree_writing = focus_mode in {_FOCUS_WRITING, "degree-writing"}
+                    writing_sample = group if degree_writing else task_sentence.tokens
                     writing_tasks.append(
                         ShortWritingTask(
                             task_id=f"short-writing:{group_number}",
@@ -2551,18 +2989,26 @@ def inventory_from_anchor(
                                 DEGREE_WRITING_SCENARIO if degree_writing else task_sentence.text
                             ),
                             constraints=(
-                                ConstraintSpec(
-                                    "contains_lemma_set",
-                                    {
-                                        "lemmas": tuple(
-                                            DEGREE_WRITING_LEMMAS if degree_writing else lemmas[:1]
-                                        )
-                                    },
-                                ),
-                                ConstraintSpec(
-                                    "word_count_range",
-                                    {"minimum": minimum, "maximum": maximum},
-                                ),
+                                (
+                                    ConstraintSpec(
+                                        "contains_lemma_set",
+                                        {"lemmas": tuple(DEGREE_WRITING_LEMMAS)},
+                                    ),
+                                    ConstraintSpec(
+                                        "word_count_range",
+                                        {"minimum": minimum, "maximum": maximum},
+                                    ),
+                                )
+                                if degree_writing
+                                else (
+                                    ConstraintSpec(
+                                        "source_proposition", {"text": task_sentence.text}
+                                    ),
+                                    ConstraintSpec(
+                                        "word_count_range",
+                                        {"minimum": minimum, "maximum": maximum},
+                                    ),
+                                )
                             ),
                             sample_tokens=tuple(
                                 VesumToken(
@@ -2571,7 +3017,7 @@ def inventory_from_anchor(
                                     end_offset=token.end_offset,
                                     parses=token.vesum_parses,
                                 )
-                                for token in group
+                                for token in writing_sample
                             ),
                             focus_alignment=(_FOCUS_WRITING if degree_writing else None),
                             attribute_warrants=(DEGREE_WRITING_WARRANTS if degree_writing else ()),

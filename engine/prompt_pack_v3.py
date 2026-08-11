@@ -27,12 +27,12 @@ from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3.3"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.11"
-TEMPLATE_SHA256: Final[str] = "8a5df04165e812bdccaa6da5557b8ed09208540ea43b9a3bef5fb3e22ea25f3b"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.12"
+TEMPLATE_SHA256: Final[str] = "4a2e029f5e744a88a59f4381936580a61ccc5e4d44b3dbdf3e3b15072956fcdb"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.11.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.12.md"
 
 # Literal strings that appear only in the compact synthetic schema shapes.  Their
 # presence in a model response means the serializer copied the exemplar instead
@@ -102,6 +102,7 @@ _ACTIVITY_PURPOSE_SAFE_PREFIXES: Final[dict[str, str]] = {
     "text question omits its certified comparison": "degree_comparison_missing",
     "text question turns a contrast into one causal reason": "contrast_causality_malformed",
     "text question restates its expected answer": "answer_leak",
+    "text question consumes its source answer": "answer_restatement",
     "text question uses unresolved source deixis": "unresolved_reference",
 }
 
@@ -174,8 +175,8 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
     "text-questions": {
         "purpose": "check comprehension, inference, and anchored application",
         "required": (
-            "one certified question_frame prefix and one naturally reused content lemma from "
-            "rendering_surface"
+            "one certified question_frame prefix, one short source topic, and at least two "
+            "source content lemmas left for the answer"
         ),
         "reject": "asking only for a token, preposition, conjunction, or part of speech",
     },
@@ -185,9 +186,9 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
         "reject": "isolated word lists, invented targets, or a grammar-label question",
     },
     "short-writing": {
-        "purpose": "produce a focused response under visible constraints",
-        "required": "payload.prompt contains every certified constraint marker verbatim",
-        "reject": "requirements present only in hidden guidance",
+        "purpose": "produce a source-grounded communicative response",
+        "required": "the exact source-proposition marker and numeric range appear in the prompt",
+        "reject": "hidden range/source, linguistic-jargon topic, or copied answer form",
     },
 }
 
@@ -199,7 +200,7 @@ _CONTRASTIVE_NEGATIVES: Final[dict[str, str]] = {
     "error-correction": "REJECT: all items mutate the same sentence or contain several errors.",
     "text-questions": "REJECT: questions merely ask which token or part of speech occurs.",
     "mark-the-words": "REJECT: targets are copied into a detached word list.",
-    "short-writing": "REJECT: word range and required lemma appear only in answer guidance.",
+    "short-writing": "REJECT: word range and source proposition appear only in answer guidance.",
 }
 
 
@@ -1779,7 +1780,8 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question turns a contrast into one causal reason at items[{index}]"
             )
-        if len(_UKRAINIAN_WORD_RE.findall(question_topic)) > 9:
+        topic_limit = 9 if category == "anchored_application" else 4
+        if len(_UKRAINIAN_WORD_RE.findall(question_topic)) > topic_limit:
             raise PromptPackV3Error(
                 f"text question restates its expected answer at items[{index}]"
             )
@@ -1809,6 +1811,11 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         if required_overlap == 0 or len(source_lemmas & question_lemmas) < required_overlap:
             raise PromptPackV3Error(
                 f"text question is detached from its rendering surface at items[{index}]"
+            )
+        overlap = source_lemmas & question_lemmas
+        if len(overlap) > 2 or len(source_lemmas - question_lemmas) < 2:
+            raise PromptPackV3Error(
+                f"text question consumes its source answer at items[{index}]"
             )
         source_degree_lemmas = {
             lemma
@@ -1850,6 +1857,23 @@ def validate_visible_writing_constraints(
     for marker in markers:
         if not _contains_form(prompt, marker):
             raise PromptPackV3Error("short-writing prompt omits a certified constraint")
+    if kit.get("focus_alignment") != "degree-writing":
+        normalized = prompt.casefold()
+        if re.search(
+            r"\b(?:лем(?:а|и|у|ою|і)|лексем\w*|морфолог\w*|інфінітив\w*|"
+            r"відмін(?:ок|ка|ку|ком|ки)|частин\w*\s+мови)\b",
+            normalized,
+        ):
+            raise PromptPackV3Error("short-writing prompt exposes linguistic jargon")
+        if not re.search(
+            r"\b(?:поясн\w*|порівн\w*|обґрунт\w*|опиш\w*|розкаж\w*|"
+            r"уяв\w*|оцін\w*|вислов\w*|напиш\w*)\b",
+            normalized,
+        ):
+            raise PromptPackV3Error(
+                "short-writing prompt does not ask for communicative source use"
+            )
+        return
     if kit.get("focus_alignment") == "degree-writing":
         normalized = prompt.casefold()
         if "ступен" in normalized and "порівнян" in normalized:
@@ -2309,6 +2333,11 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
         choice_bank = (
             unit_distinctness.get("choice_bank") if isinstance(unit_distinctness, Mapping) else None
         )
+        frame_family = (
+            unit_distinctness.get("frame_family")
+            if isinstance(unit_distinctness, Mapping)
+            else None
+        )
         shared_degree_bank = (
             unit_alignment in {"degree-formation", "degree-context"}
             and isinstance(choice_bank, list)
@@ -2323,6 +2352,36 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             len(options) != len(choice_bank) or set(options) != set(choice_bank)
         ):
             raise PromptPackV3Error(f"{label} does not preserve its exact certified choice bank")
+        if frame_family == "cross-gap-lexical.v1":
+            if not isinstance(choice_bank, list) or set(options) != set(choice_bank):
+                raise PromptPackV3Error(
+                    f"{label} does not preserve its exact cross-gap lexical bank"
+                )
+            all_units = kit.get("certified_units", ())
+            other_gap_answers = {
+                forms[0]
+                for other_index, other_unit in enumerate(all_units)
+                if other_index != unit_index
+                and isinstance(other_unit, Mapping)
+                and isinstance((forms := other_unit.get("allowed_forms")), list)
+                and forms
+                and isinstance(forms[0], str)
+            }
+            distractors = [option for option in options if option != answer]
+            if not distractors or not set(distractors) <= other_gap_answers:
+                raise PromptPackV3Error(
+                    f"{label} contains a distractor that is not another certified gap answer"
+                )
+            if any(answer_lemmas & _lemma_set(option, db_path) for option in distractors):
+                raise PromptPackV3Error(
+                    f"{label} cross-gap bank repeats the answer lemma"
+                )
+            answer_pos = _pos_set(answer, db_path)
+            if not any(answer_pos & _pos_set(option, db_path) for option in distractors):
+                raise PromptPackV3Error(
+                    f"{label} cross-gap bank lacks a same-POS lexical distractor"
+                )
+            return
         if shared_degree_bank:
             degree_classes: set[int] = set()
             positive_lemmas: set[str] = set()

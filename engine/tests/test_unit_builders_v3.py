@@ -13,11 +13,14 @@ from hramatka.engine.anchor_inventory_v3 import (
     DEGREE_WRITING_SCENARIO,
     DEGREE_WRITING_WARRANTS,
     _certified_choice_bank,
+    _contextual_error_replacements,
     _eligible_tokens,
+    _error_replacement,
     _focus_rank,
     _is_degree_token,
     _lemma_for,
     _sentences,
+    _unambiguous_content_lemma_pos,
     inventory_for_group,
     inventory_from_anchor,
 )
@@ -167,6 +170,41 @@ def test_production_closed_units_certify_exact_spans_banks_and_exclusions(
         assert len(bank) == len(set(bank))
         assert answer in bank
         assert set(exclusions) == set(bank) - {answer}
+
+
+def test_generic_cloze_uses_other_gap_answers_as_lexical_distractors() -> None:
+    inventory = inventory_from_anchor(
+        _PRODUCTION_ANCHOR,
+        scheduled_types=("cloze",),
+        duration_minutes=45,
+    )
+    selected = inventory_for_group(inventory, activity_type="cloze", group_number=1)
+    plan = BUILDERS["cloze"](selected, slot_id="P1-A1", phase=1)
+    token_by_id = {
+        token.token_id: token for sentence in selected.sentences for token in sentence.tokens
+    }
+    answers = {unit.allowed_forms[0] for unit in plan.units}
+
+    assert plan.disposition == "certified"
+    for unit in plan.units:
+        answer = unit.allowed_forms[0]
+        bank = unit.distinctness["choice_bank"]
+        answer_token = token_by_id[unit.distinctness["gap"]["token_id"]]
+        answer_identity = _unambiguous_content_lemma_pos(answer_token)
+        distractor_tokens = [
+            token
+            for token in token_by_id.values()
+            if token.surface in set(bank) - {answer}
+        ]
+        distractor_identities = [
+            _unambiguous_content_lemma_pos(token) for token in distractor_tokens
+        ]
+        assert unit.distinctness["frame_family"] == "cross-gap-lexical.v1"
+        assert set(bank) - {answer} <= answers - {answer}
+        assert answer_identity is not None
+        assert all(identity is not None for identity in distractor_identities)
+        assert all(identity[0] != answer_identity[0] for identity in distractor_identities)
+        assert any(identity[1] == answer_identity[1] for identity in distractor_identities)
 
 
 def test_production_text_question_explanations_have_real_causal_warrants() -> None:
@@ -356,6 +394,8 @@ def test_production_error_correction_changes_exactly_one_word_per_item() -> None
         unit.distinctness["error_position"] == "sentence-initial" for unit in plan.units
     ) <= 4
     for unit in plan.units:
+        assert unit.distinctness["frame_family"] == "contextual-mismatch.v1"
+        assert unit.distinctness["semantic_warrant"]
         wrong_words = _WORD_RE.findall(unit.allowed_forms[0])
         source_words = _WORD_RE.findall(unit.rendering_surface or "")
         assert len(wrong_words) == len(source_words)
@@ -369,6 +409,45 @@ def test_production_error_correction_changes_exactly_one_word_per_item() -> None
         assert unit.expected_key_or_rule.certified_error_count == 1
 
 
+@pytest.mark.parametrize(
+    ("text", "target"),
+    (
+        ("Українці читають книги, бо працюють.", "працюють"),
+        ("Українці читають і працюють.", "працюють"),
+        ("Пристрій прочитає книги.", "прочитає"),
+        ("Ми і студенти працюють.", "працюють"),
+    ),
+)
+def test_contextual_error_correction_rejects_ambiguous_subject_licensers(
+    text: str, target: str
+) -> None:
+    sentence = _sentences(text)[0]
+    token = next(token for token in sentence.tokens if token.surface.casefold() == target)
+
+    assert _error_replacement(sentence, token) is None
+
+
+def test_contextual_error_correction_rejects_syncretic_alternative_forms() -> None:
+    adjective_sentence = _sentences("Регулярне читання розвиває мозок.")[0]
+    adjective = next(
+        token for token in adjective_sentence.tokens if token.surface == "Регулярне"
+    )
+    adjective_rows = _contextual_error_replacements(adjective_sentence, adjective)
+    assert all(form.casefold() != "регулярні" for form, _class, _warrant in adjective_rows)
+
+    government_sentence = _sentences("Без книг читання допомагає мозку.")[0]
+    governed = next(token for token in government_sentence.tokens if token.surface == "книг")
+    government_rows = _contextual_error_replacements(government_sentence, governed)
+    assert all(form.casefold() != "книги" for form, _class, _warrant in government_rows)
+
+
+def test_contextual_error_correction_rejects_cross_clause_adjective_head() -> None:
+    sentence = _sentences("Регулярне розвиває, читання допомагає.")[0]
+    adjective = next(token for token in sentence.tokens if token.surface == "Регулярне")
+
+    assert _contextual_error_replacements(sentence, adjective) == ()
+
+
 def test_production_short_writing_uses_a_self_contained_source_prompt() -> None:
     plan = _production_plan("short-writing")
     prompt = plan.units[0].rendering_surface or ""
@@ -380,6 +459,10 @@ def test_production_short_writing_uses_a_self_contained_source_prompt() -> None:
         re.IGNORECASE,
     )
     assert not prompt.endswith("!")
+    assert plan.units[0].allowed_forms[0] == (
+        f"Спирайтеся на цю думку з тексту: «{prompt}»"
+    )
+    assert all("лем" not in marker.casefold() for marker in plan.units[0].allowed_forms)
 
 
 def test_degree_writing_still_validates_non_lemma_source_constraints() -> None:
@@ -484,6 +567,7 @@ def test_short_writing_registry_is_closed_and_uses_regex_and_vesum_evidence() ->
     assert set(CONSTRAINT_REGISTRY) == {
         "contains_lemma_set",
         "min_verb_count",
+        "source_proposition",
         "target_case_usage",
         "word_count_range",
     }
@@ -495,13 +579,12 @@ def test_short_writing_registry_is_closed_and_uses_regex_and_vesum_evidence() ->
 
 def test_short_writing_plan_carries_exact_learner_facing_constraint_fragments() -> None:
     task = complete_inventory().writing_tasks[0]
-    lemma = task.constraints[0].params["lemmas"][0]
 
     plan = build_short_writing(complete_inventory(), slot_id="P3-A1", phase=3)
 
     assert plan.disposition == "certified"
     assert plan.units[0].allowed_forms == (
-        f"«{lemma}»",
+        f"Спирайтеся на цю думку з тексту: «{task.prompt}»",
         "мінімум 1 дієслово",
         "від 60 до 80 слів",
     )

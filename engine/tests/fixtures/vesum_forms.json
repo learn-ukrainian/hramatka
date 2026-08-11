@@ -1560,6 +1560,18 @@
     "pos": "adj"
   },
   {
+    "word_form": "регулярний",
+    "lemma": "регулярний",
+    "tags": "adj:m:v_naz:compb",
+    "pos": "adj"
+  },
+  {
+    "word_form": "регулярні",
+    "lemma": "регулярний",
+    "tags": "adj:p:v_naz:compb",
+    "pos": "adj"
+  },
+  {
     "word_form": "ризик",
     "lemma": "ризик",
     "tags": "noun:inanim:m:v_naz",
@@ -2578,5 +2590,35 @@
     "lemma": "прочитати",
     "tags": "verb:perf:futr:p:3",
     "pos": "verb"
+  },
+  {
+    "word_form": "роблять",
+    "lemma": "робити",
+    "tags": "verb:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "нотатки",
+    "lemma": "нотатка",
+    "tags": "noun:inanim:p:v_zna",
+    "pos": "noun"
+  },
+  {
+    "word_form": "повертаються",
+    "lemma": "повертатися",
+    "tags": "verb:rev:imperf:pres:p:3",
+    "pos": "verb"
+  },
+  {
+    "word_form": "уривків",
+    "lemma": "уривок",
+    "tags": "noun:inanim:p:v_rod",
+    "pos": "noun"
+  },
+  {
+    "word_form": "ми",
+    "lemma": "ми",
+    "tags": "noun:anim:p:v_naz:pron:pers:1",
+    "pos": "noun"
   }
 ]

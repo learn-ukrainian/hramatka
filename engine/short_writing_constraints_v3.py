@@ -129,10 +129,23 @@ def _word_count_range(spec: ConstraintSpec, tokens: Sequence[VesumToken]) -> boo
     return minimum <= word_count <= maximum
 
 
+def _source_proposition(spec: ConstraintSpec, tokens: Sequence[VesumToken]) -> bool:
+    """Bind a communicative writing task to one exact visible source claim."""
+    if set(spec.params) != {"text"}:
+        return False
+    text = spec.params.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    proposition_words = tuple(word.casefold() for word in _WORD_RE.findall(text))
+    token_words = tuple(token.surface.casefold() for token in tokens)
+    return len(proposition_words) >= 4 and proposition_words == token_words
+
+
 CONSTRAINT_REGISTRY: Final[Mapping[str, ConstraintValidator]] = MappingProxyType(
     {
         "contains_lemma_set": _contains_lemma_set,
         "min_verb_count": _min_verb_count,
+        "source_proposition": _source_proposition,
         "target_case_usage": _target_case_usage,
         "word_count_range": _word_count_range,
     }

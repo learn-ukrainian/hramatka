@@ -271,6 +271,12 @@ def _candidate_unit(
             or not all(warrant.strip() for _option, warrant in candidate.exclusion_warrants)
         ):
             raise ValueError("Closed activity options need a complete exclusion-warranted bank.")
+        if (
+            candidate.activity_type == "cloze"
+            and candidate.kit_rule_id is None
+            and candidate.frame_family != "cross-gap-lexical.v1"
+        ):
+            raise ValueError("Generic cloze needs a certified cross-gap lexical bank.")
         distinctness = {
             "gap": {
                 "sentence_id": candidate.sentence_id,
@@ -288,8 +294,15 @@ def _candidate_unit(
             "semantic_target": candidate.semantic_target,
         }
         if candidate.activity_type == "error-correction" and candidate.kit_rule_id is None:
-            if candidate.target_start_offset is None or candidate.morphology_class is None:
-                raise ValueError("Error-correction needs a classified target position.")
+            if (
+                candidate.target_start_offset is None
+                or candidate.morphology_class is None
+                or candidate.frame_family != "contextual-mismatch.v1"
+                or not candidate.semantic_warrant
+            ):
+                raise ValueError(
+                    "Error-correction needs a locally warranted contextual mismatch."
+                )
             distinctness["error_position"] = (
                 "sentence-initial" if candidate.target_start_offset == 0 else "within-sentence"
             )
@@ -749,6 +762,12 @@ def _short_writing_prompt_markers(
             markers.append(
                 f"до {maximum} слів" if minimum == 1 else f"від {minimum} до {maximum} слів"
             )
+            continue
+        if spec.kind == "source_proposition":
+            text = spec.params.get("text")
+            if set(spec.params) != {"text"} or not isinstance(text, str) or not text.strip():
+                return None
+            markers.append(f"Спирайтеся на цю думку з тексту: «{text}»")
             continue
         if spec.kind == "min_verb_count":
             minimum = spec.params.get("minimum")

@@ -93,7 +93,7 @@ def test_v33_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
     assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.3"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.11"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.12"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -129,7 +129,7 @@ def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
             repeated_answer_occurrences.setdefault(answer, []).append(
                 carrier[:start].count(answer) + 1
             )
-    assert repeated_answer_occurrences == {"читання": [2, 5], "українців": [2]}
+    assert repeated_answer_occurrences == {"читання": [1, 2, 5], "українців": [2]}
 
     independently_rendered = carrier
     for start, end, index in reversed(sorted(spans)):
@@ -193,7 +193,7 @@ def test_compact_exemplars_are_requested_type_only_and_keep_exact_count() -> Non
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.11" in prompt
+    assert "v3.12" in prompt
     assert "APPLICABLE TYPE PURPOSE CONTRACTS" in prompt
     assert "CONTRASTIVE PEDAGOGY FAILURES" in prompt
 
@@ -880,6 +880,23 @@ def test_short_writing_prompt_missing_one_constraint_fails() -> None:
         _activity_gate(activity, kit)
 
 
+def test_generic_short_writing_rejects_linguistic_jargon_as_the_topic() -> None:
+    kit = _context("short-writing")["type_kits"][0]
+    target_forms = [
+        fragment for unit in kit["certified_units"] for fragment in unit["allowed_forms"]
+    ]
+    activity = {
+        "payload": {
+            "type": "short-writing",
+            "prompt": "Напишіть про лему й морфологію: " + ", ".join(target_forms) + ".",
+        },
+        "answer_key": {"guidance": "Перевірте виконання умов."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="linguistic jargon"):
+        validate_visible_writing_constraints(activity, kit)
+
+
 def test_short_writing_constraints_hidden_only_in_guidance_fail() -> None:
     """Hidden guidance cannot substitute for learner-visible constraints."""
     from hramatka.api.baking.engine_adapter_v3 import _activity_gate
@@ -1065,6 +1082,28 @@ def test_natural_text_question_categories_need_one_source_content_lemma() -> Non
             validate_activity_purpose(activity, single)
 
 
+def test_text_question_must_leave_source_content_for_the_answer() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок людини."
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Що повідомляє уривок про читання, мозок і людину?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="consumes its source answer"):
+        validate_activity_purpose(activity, kit)
+
+
 def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
     kit = _context("text-questions")["type_kits"][0]
     unit = next(
@@ -1072,13 +1111,13 @@ def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
         for unit in kit["certified_units"]
         if unit["distinctness"]["question_category"] == "anchored_application"
     )
-    unit["rendering_surface"] = "Четвертий поверх без ліфта може бути мінусом."
+    unit["rendering_surface"] = "Українці читають книги про розвиток мозку щодня."
     kit["certified_units"] = [unit]
     activity = {
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["З вашого досвіду, для кого четвертий поверх без ліфта може бути мінусом?"],
+            "items": ["З вашого досвіду, де допомагають книги?"],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1086,21 +1125,21 @@ def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
     validate_activity_purpose(activity, kit)
 
 
-def test_anchored_application_accepts_taki_with_explicit_noun_topic() -> None:
-    """`такі` is not detached when the question explicitly names its referent."""
+def test_anchored_application_accepts_an_explicit_source_noun_topic() -> None:
+    """A short source noun topic leaves the source proposition for the answer."""
     kit = _context("text-questions")["type_kits"][0]
     unit = next(
         unit
         for unit in kit["certified_units"]
         if unit["distinctness"]["question_category"] == "anchored_application"
     )
-    unit["rendering_surface"] = "Такі зв'язки виникають у мозку дитини."
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
     kit["certified_units"] = [unit]
     activity = {
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["У якій реальній ситуації важливі такі зв'язки в мозку?"],
+            "items": ["У якій реальній ситуації важливе читання?"],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1313,10 +1352,10 @@ def test_degree_reinforcement_fill_requires_a_real_degree_contrast(
 
 
 def test_pack_v39_no_options_zero_mandate_and_enforces_varied_placement() -> None:
-    """Pack v3.11 contains no options[0] mandate and enforces varied answer placement."""
+    """Pack v3.12 contains no options[0] mandate and enforces varied answer placement."""
     from pathlib import Path
 
-    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.11.md"
+    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.12.md"
     content = template_path.read_text(encoding="utf-8")
     assert "first option (`options[0]`)" not in content
     assert "options[0]" not in content
@@ -1324,24 +1363,24 @@ def test_pack_v39_no_options_zero_mandate_and_enforces_varied_placement() -> Non
 
     context = _context("cloze")
     kit = context["type_kits"][0]
+    units = kit["certified_units"][:3]
+    blanks = []
+    key_blanks = []
+    for index, unit in enumerate(units, start=1):
+        answer = unit["allowed_forms"][0]
+        options = list(unit["distinctness"]["choice_bank"])
+        options.remove(answer)
+        options.insert(0, answer)
+        blanks.append({"id": index, "answer": answer, "options": options})
+        key_blanks.append({"id": index, "answer": answer})
     fixed_placement_activity = {
         "payload": {
             "type": "cloze",
             "instruction": "Заповніть пропуски.",
             "text": "У мене є ___, ___ та ___.",
-            "blanks": [
-                {"id": 1, "answer": "книги", "options": ["книги", "книга", "книг"]},
-                {"id": 2, "answer": "книга", "options": ["книга", "книги", "книг"]},
-                {"id": 3, "answer": "книг", "options": ["книг", "книга", "книги"]},
-            ],
+            "blanks": blanks,
         },
-        "answer_key": {
-            "blanks": [
-                {"id": 1, "answer": "книги"},
-                {"id": 2, "answer": "книга"},
-                {"id": 3, "answer": "книг"},
-            ],
-        },
+        "answer_key": {"blanks": key_blanks},
     }
     with pytest.raises(PromptPackV3Error, match="must vary answer placement"):
         validate_distractor_adjacency(fixed_placement_activity, kit)
