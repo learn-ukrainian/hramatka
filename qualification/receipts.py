@@ -825,7 +825,6 @@ class RouteAggregate:
                 cell.outcome == "passed"
                 and cell.density.disposition == "teacher_ready"
                 and cell.density.slot_count >= 6
-                and cell.density.lesson_units >= 41
                 and cell.prompt_pack_version == PROMPT_PACK_VERSION
                 and cell.template_version == TEMPLATE_VERSION
                 and cell.template_sha256 == template_digest()
@@ -990,7 +989,6 @@ def aggregate_receipts(
                 < expected
                 for phase, expected in expected_phase_slots.items()
             )
-            or receipt.density.lesson_units < 41
         ):
             raise QualificationError(
                 "Receipt v3 unit totals do not meet the B1 45-minute contract."

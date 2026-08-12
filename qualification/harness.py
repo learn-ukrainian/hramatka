@@ -72,7 +72,7 @@ from hramatka.engine.prompt_pack_v3 import (
 )
 from hramatka.engine.providers import telemetry_ctx
 from hramatka.engine.serializer_policy import serializer_temperature
-from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint
+from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint, floor_for
 
 from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
 from .receipts import (
@@ -786,6 +786,8 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
         "realistic-transfer",
         "anchored-application.v1",
     }:
+        if index % 2 == 0 and "На вашу думку" in prefixes:
+            return f"На вашу думку, яка деталь опису «{named_topic}» важлива ({index + 1})?"
         return (
             f"{prefixes[0]} ідею про «{named_topic}» у подібній ситуації "
             f"({index + 1})?"
@@ -911,6 +913,9 @@ def _v3_live_record_from_kit(
             ),
             frozenset({"degree-priority-recommendation.v2"}): (
                 "З'єднайте опис потреб і пріоритетів з рекомендованим варіантом."
+            ),
+            frozenset({"atlas_gloss.v1"}): (
+                "З'єднайте кожне слово з його тлумаченням."
             ),
         }.get(frozenset(relations), "Знайдіть пару.")
         payload = {
@@ -1093,7 +1098,11 @@ class _DeterministicRouteProvider:
                     "slots": [
                         _v3_live_record_from_kit(
                             kit,
-                            unit_limit=6 if shortfall and kit.get("slot_id") == "P2-A1" else None,
+                            unit_limit=(
+                                floor_for(str(kit["type"])).minimum_units - 1
+                                if shortfall and kit.get("slot_id") == "P2-A1"
+                                else None
+                            ),
                         )
                         for kit in kits
                     ]
@@ -1969,11 +1978,18 @@ class ProductionQualificationHarness:
 
     @staticmethod
     def _delivery_ready(delivery: DeliverySummary, density: DensitySummary) -> bool:
+        minimum_lesson_units = sum(
+            min(
+                floor_for(activity_type).minimum_units
+                for activity_type in (slot.requested_type, *slot.replacement_types)
+            )
+            for slot in _lesson_slots(45)
+        )
         return (
             delivery.durable_job
             and density.disposition == "teacher_ready"
             and density.slot_count >= 6
-            and density.lesson_units >= 41
+            and density.lesson_units >= minimum_lesson_units
             and delivery.block_count == density.slot_count
             and delivery.provenance_continuous
         )

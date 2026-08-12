@@ -30,6 +30,7 @@ from hramatka.engine.prompt_pack_v3 import (
     validate_verbatim_answer_ban,
     validate_visible_writing_constraints,
 )
+from hramatka.engine.teacher_ready_density_v3 import floor_for
 from hramatka.engine.tests.fixtures.density_v3_regression_fixture import complete_inventory
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
@@ -183,7 +184,7 @@ def test_compact_exemplars_are_requested_type_only_and_keep_exact_count() -> Non
     assert len(shape["activity"]["payload"]["items"]) == 1
     assert len(shape["serialized_units"]) == 1
     negative = six_item_negative_exemplar()
-    assert len(negative["serialized_units"]) == 6
+    assert len(negative["serialized_units"]) == 4
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
     assert "v3.15" in prompt
@@ -220,7 +221,7 @@ def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None
 def test_full_density_exemplar_rejects_any_count_below_the_locked_floor() -> None:
     context = _context()
     underfilled_kit = deepcopy(context["type_kits"][0])
-    underfilled_kit["scheduled_unit_count"] = 6
+    underfilled_kit["scheduled_unit_count"] = floor_for("quiz").minimum_units - 1
 
     with pytest.raises(PromptPackV3Error, match="locked v3 type floor"):
         compact_schema_exemplars([underfilled_kit])
@@ -749,6 +750,51 @@ def test_distractor_adjacency_rejects_identical_uninflectable_distractor() -> No
         validate_distractor_adjacency(activity, kit)
 
 
+def test_contextual_cloze_rejects_cross_lemma_semantic_distractors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kit = {
+        "certified_units": [
+            {
+                "allowed_forms": ["наметі"],
+                "distinctness": {
+                    "choice_bank": ["наметі", "наметом", "намети"],
+                    "frame_family": "contextual-morphology-cloze.v3",
+                },
+            },
+        ]
+    }
+    activity = {
+        "payload": {
+            "type": "cloze",
+            "instruction": "Заповніть пропуск.",
+            "text": "Друзі зупинилися у {1} біля тихої річки.",
+            "blanks": [
+                {
+                    "id": 1,
+                    "answer": "наметі",
+                    "options": ["наметі", "наметом", "намети"],
+                }
+            ],
+        },
+        "answer_key": {"blanks": [{"id": 1, "answer": "наметі"}]},
+    }
+    lemmas = {
+        "наметі": {"намет"},
+        "наметом": {"намет"},
+        "намети": {"намет"},
+        "юшці": {"юшка"},
+    }
+    monkeypatch.setattr(prompt_pack_v3, "_lemma_set", lambda form, _db: lemmas[form])
+
+    validate_distractor_adjacency(activity, kit)
+
+    activity["payload"]["blanks"][0]["options"][-1] = "юшці"
+    kit["certified_units"][0]["distinctness"]["choice_bank"][-1] = "юшці"
+    with pytest.raises(PromptPackV3Error, match="cross-lemma semantic distractor"):
+        validate_distractor_adjacency(activity, kit)
+
+
 def test_error_correction_valid_adjacent_error_passes() -> None:
     """Valid adjacent-error item (same lemma inflectable wrong form) passes."""
     context = _context("error-correction")
@@ -1200,13 +1246,39 @@ def test_text_question_must_leave_source_content_for_the_answer() -> None:
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["Чи читання розвиває мозок людини?"],
+            "items": ["Чи регулярне читання розвиває мозок людини?"],
         },
         "answer_key": {"guidance": "Відповідайте за текстом."},
     }
 
     with pytest.raises(PromptPackV3Error, match="consumes its source answer"):
         validate_activity_purpose(activity, kit)
+
+
+def test_text_question_accepts_natural_context_for_a_one_word_answer() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
+    unit["distinctness"]["question_topic"] = {
+        "token_id": "s-1:t-1",
+        "surface": "читання",
+        "lemma": "читання",
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Що розвиває регулярне читання?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    validate_activity_purpose(activity, kit)
 
 
 @pytest.mark.parametrize(
@@ -1291,6 +1363,58 @@ def test_text_question_overlap_counts_each_ambiguous_surface_once(
     validate_activity_purpose(activity, kit)
 
 
+def test_temporal_preposition_does_not_consume_a_source_answer_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ordinary phrase ``за кілька хвилин`` leaves the event to recover."""
+    analyses = {
+        "за": [
+            {"lemma": "за", "pos": "adv"},
+            {"lemma": "за", "pos": "part"},
+            {"lemma": "за", "pos": "prep"},
+        ],
+        "кілька": [{"lemma": "кілька", "pos": "noun"}],
+        "хвилин": [{"lemma": "хвилина", "pos": "noun"}],
+        "станеться": [{"lemma": "статися", "pos": "verb"}],
+        "сонце": [{"lemma": "сонце", "pos": "noun"}],
+        "розжене": [{"lemma": "розігнати", "pos": "verb"}],
+        "туман": [{"lemma": "туман", "pos": "noun"}],
+        "мандрівники": [{"lemma": "мандрівник", "pos": "noun"}],
+        "замружаться": [{"lemma": "замружитися", "pos": "verb"}],
+    }
+    monkeypatch.setattr(
+        prompt_pack_v3,
+        "_vesum_matches",
+        lambda word, _db_path: analyses.get(word.casefold(), []),
+    )
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = (
+        "За кілька хвилин сонце розжене туман, і мандрівники замружаться."
+    )
+    unit["distinctness"]["question_topic"] = {
+        "token_id": "s-1:t-3",
+        "surface": "хвилин",
+        "lemma": "хвилина",
+    }
+    unit["distinctness"]["question_frame"] = {"allowed_prefixes": ["Що"]}
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Що станеться за кілька хвилин?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    validate_activity_purpose(activity, kit)
+
+
 def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
     kit = _context("text-questions")["type_kits"][0]
     unit = next(
@@ -1332,6 +1456,132 @@ def test_anchored_application_accepts_an_explicit_source_noun_topic() -> None:
     }
 
     validate_activity_purpose(activity, kit)
+
+
+def test_application_block_requires_one_text_supported_interpretive_question() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    units = [
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    ][:2]
+    assert len(units) == 2
+    for unit in units:
+        unit["rendering_surface"] = "Українці читають книги перед подорожжю."
+        unit["distinctness"]["question_topic"] = {
+            "surface": "книги",
+            "lemma": "книга",
+        }
+    kit["certified_units"] = units
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": [
+                "З вашого досвіду, як вам допомагають книги?",
+                "Як можна застосувати ідею про книги у подорожі?",
+            ],
+        },
+        "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="evidence-based interpretive"):
+        validate_activity_purpose(activity, kit)
+
+    activity["payload"]["items"][1] = (
+        "На вашу думку, яка деталь опису книги важлива?"
+    )
+    validate_activity_purpose(activity, kit)
+
+
+def test_application_question_accepts_a_grounded_reference_to_the_visible_description() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
+    unit["distinctness"]["question_topic"] = {
+        "surface": "читання",
+        "lemma": "читання",
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": [
+                "На вашу думку, як читання впливає на мозок у цьому описі?"
+            ],
+        },
+        "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+    }
+
+    validate_activity_purpose(activity, kit)
+
+
+def test_application_block_repair_receives_the_specific_evidence_code() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    units = [
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    ][:2]
+    assert len(units) == 2
+    for unit in units:
+        unit["rendering_surface"] = "Українці читають книги перед подорожжю."
+        unit["distinctness"]["question_topic"] = {
+            "surface": "книги",
+            "lemma": "книга",
+        }
+    kit["certified_units"] = units
+    record = {
+        "activity": {
+            "payload": {
+                "type": "text-questions",
+                "instruction": "Дайте відповідь.",
+                "items": [
+                    "З вашого досвіду, як вам допомагають книги?",
+                    "Як можна застосувати ідею про книги у подорожі?",
+                ],
+            },
+            "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+        }
+    }
+
+    with pytest.raises(RuleNamedRejection) as rejected:
+        validate_slot_deterministic_gates(
+            record,
+            kit,
+            deterministic_gates=(validate_activity_purpose,),
+        )
+
+    assert rejected.value.suffix == "evidence_based_application_missing"
+
+
+def test_application_question_must_not_reduce_to_yes_no() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    )
+    unit["rendering_surface"] = "Українці читають книги перед подорожжю."
+    unit["distinctness"]["question_topic"] = {"surface": "книги", "lemma": "книга"}
+    unit["distinctness"]["question_frame"]["allowed_prefixes"].append("Чи доводилося вам")
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Чи доводилося вам обирати книги для подорожі?"],
+        },
+        "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="yes-no"):
+        validate_activity_purpose(activity, kit)
 
 
 def test_anchored_application_rejects_recall_disguised_as_a_situation() -> None:
@@ -1393,10 +1643,11 @@ def test_anchored_application_rejects_contrast_as_one_causal_reason() -> None:
     activity = {
         "payload": {
             "type": "text-questions",
-            "instruction": "Дайте відповідь.",
-            "items": [
-                "Чи доводилося вам відмовлятися від квартири через те, що вона красива, але дорога?"
-            ],
+                "instruction": "Дайте відповідь.",
+                "items": [
+                    "З вашого досвіду, як ви відмовлялися від квартири "
+                    "через те, що вона красива, але дорога?"
+                ],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1578,7 +1829,7 @@ def test_degree_writing_rejects_literal_base_word_requirement() -> None:
         ("Куди веде подорож?", "source_lemma_overlap_missing"),
         (
             "Що регулярне читання щодня розвиває у мозку дорослої людини вдома?",
-            "answer_leak",
+            "answer_restatement",
         ),
         ("Що розвиває читання цих книжок?", "unresolved_reference"),
     ),
@@ -1666,6 +1917,10 @@ def test_observed_tetiana_question_defects_receive_item_local_repairs(
             "category": category,
             "intent": intent,
         }
+    elif question.startswith("Чи доводилося вам"):
+        unit["distinctness"]["question_frame"]["allowed_prefixes"].append(
+            "Чи доводилося вам"
+        )
     kit["certified_units"] = [unit]
     record = {
         "activity": {

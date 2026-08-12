@@ -32,6 +32,7 @@ from hramatka.engine.providers import (
 )
 
 from .agent_monitor import router as agent_monitor_router
+from .anchor_preparation import AnchorPreparationError, prepare_anchor_text
 from .baking.artifacts import configured_engine_out_dir
 from .baking.engine_adapter_v3 import EngineLessonBaker
 from .baking.port import LessonBaker
@@ -822,7 +823,22 @@ def create_app(
                 error.message,
                 retryable=error.retryable,
             ) from error
-        return {"text": result.text, "source_url": result.source_url}
+        try:
+            prepared_text = prepare_anchor_text(result.text)
+        except AnchorPreparationError as error:
+            message = (
+                "Виправте можливі помилки OCR у тексті: "
+                + ", ".join(f"«{token}»" for token in error.suspicious_tokens)
+                + "."
+                if error.suspicious_tokens
+                else "На сторінці не знайдено достатньо зв’язного українського тексту."
+            )
+            raise PilotError(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "anchor_unusable",
+                message,
+            ) from error
+        return {"text": prepared_text, "source_url": result.source_url}
 
     @app.post("/api/lessons", status_code=status.HTTP_202_ACCEPTED)
     def create_lesson(
@@ -831,6 +847,21 @@ def create_app(
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
         lesson_id = _lesson_id(request_body.id)
+        try:
+            prepared_anchor_text = prepare_anchor_text(request_body.anchor.text)
+        except AnchorPreparationError as error:
+            message = (
+                "Виправте можливі помилки OCR у тексті: "
+                + ", ".join(f"«{token}»" for token in error.suspicious_tokens)
+                + "."
+                if error.suspicious_tokens
+                else "У тексті не знайдено придатного українського уривка для уроку."
+            )
+            raise PilotError(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "anchor_unusable",
+                message,
+            ) from error
         logical_model_id = request_body.logical_model_id
         if logical_model_id is None and production_routing_required:
             raise PilotError(
@@ -859,7 +890,7 @@ def create_app(
             job, created = store.create_or_get(
                 session.teacher_id,
                 lesson_id,
-                anchor_text=request_body.anchor.text,
+                anchor_text=prepared_anchor_text,
                 anchor_source=request_body.anchor.source,
                 anchor_source_url=request_body.anchor.source_url,
                 level=request_body.level,

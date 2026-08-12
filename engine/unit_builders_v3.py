@@ -69,8 +69,8 @@ _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingP
         ),
         "anchored_application": (
             "Як можна застосувати",
-            "Чи доводилося вам",
             "З вашого досвіду",
+            "На вашу думку",
         ),
     }
 )
@@ -299,9 +299,13 @@ def _candidate_unit(
         if (
             candidate.activity_type == "cloze"
             and candidate.kit_rule_id is None
-            and candidate.frame_family != "cross-gap-lexical.v1"
+            and candidate.frame_family
+            not in {
+                "cross-gap-lexical.v1",
+                "contextual-morphology-cloze.v3",
+            }
         ):
-            raise ValueError("Generic cloze needs a certified cross-gap lexical bank.")
+            raise ValueError("Generic cloze needs a certified contextual option bank.")
         distinctness = {
             "gap": {
                 "sentence_id": candidate.sentence_id,
@@ -421,12 +425,31 @@ def _candidate_unit(
         )
         anchor = UnitAnchor("kit", f"{candidate.kit_rule_id}:{candidate.source_lemma}")
     else:
+        context_sentence_claims = (
+            tuple(
+                ResourceClaim("context_sentence", sentence.sentence_id)
+                for sentence in inventory.sentences
+                if candidate.activity_type == "cloze"
+                and isinstance(candidate.rendering_surface, str)
+                and sentence.text in candidate.rendering_surface
+            )
+            if candidate.activity_type == "cloze"
+            else ()
+        )
         resource_claims = (
             ResourceClaim("sentence", candidate.sentence_id),
+            *context_sentence_claims,
             *(
                 ()
                 if candidate.activity_type == "text-questions"
-                else (ResourceClaim("token", candidate.token_id),)
+                else (
+                    ResourceClaim(
+                        "correction_token"
+                        if candidate.activity_type == "error-correction"
+                        else "token",
+                        candidate.token_id,
+                    ),
+                )
             ),
             ResourceClaim("candidate", candidate.candidate_id),
         )
@@ -513,7 +536,11 @@ def _generic_builder(
         candidates = ()
     evidence_candidates = tuple(item for item in candidates if item.kit_rule_id is None)
     if evidence_candidates:
-        maximum_per_source = 2 if activity_type == "cloze" else 1
+        maximum_per_source = (
+            2
+            if activity_type in {"quiz", "cloze", "fill-in", "error-correction"}
+            else 1
+        )
         if not _source_diverse(
             tuple(item.sentence_id for item in evidence_candidates),
             maximum_per_source=maximum_per_source,
@@ -521,6 +548,16 @@ def _generic_builder(
             candidates = ()
     kit_lemmas = tuple(item.source_lemma for item in candidates if item.kit_rule_id is not None)
     if kit_lemmas and (None in kit_lemmas or len(kit_lemmas) != len(set(kit_lemmas))):
+        candidates = ()
+    source_lemmas = tuple(
+        item.source_lemma
+        for item in candidates
+        if item.kit_rule_id is None
+        and item.activity_type in {"quiz", "cloze", "fill-in"}
+    )
+    if any(lemma is not None for lemma in source_lemmas) and (
+        None in source_lemmas or len(source_lemmas) != len(set(source_lemmas))
+    ):
         candidates = ()
     return certify_unit_plan(
         slot_id=slot_id,
@@ -663,6 +700,7 @@ def _build_match_up(inventory: CertificationInventory, *, slot_id: str, phase: i
     allowed_relations = {
         "atlas_antonym.v1",
         "atlas_synonym.v1",
+        "atlas_gloss.v1",
         "vesum_degree_positive_comparative.v1",
         "vesum_degree_comparative_superlative.v1",
         "degree-comparison-paraphrase.v1",
@@ -715,7 +753,7 @@ def _build_match_up(inventory: CertificationInventory, *, slot_id: str, phase: i
     atlas_source_ids = tuple(
         pair.sentence_id
         for pair in inventory.atlas_pairs
-        if pair.relation in {"atlas_antonym.v1", "atlas_synonym.v1"}
+        if pair.relation in {"atlas_antonym.v1", "atlas_synonym.v1", "atlas_gloss.v1"}
     )
     if units and atlas_source_ids and not _source_diverse(atlas_source_ids, maximum_per_source=3):
         units = []

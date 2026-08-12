@@ -6,9 +6,11 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import combinations
 from types import MappingProxyType
 from typing import Final
 from urllib.parse import quote
@@ -16,8 +18,15 @@ from urllib.parse import quote
 from . import data
 from .gates import vesum_tags
 from .linguistics import verify_lemma
+from .retrieval import build_atlas_lookup
 from .short_writing_constraints_v3 import ConstraintSpec, VesumToken
-from .teacher_ready_density_v3 import COGNITIVE_OPERATION, phase_shape_for
+from .teacher_ready_density_v3 import (
+    COGNITIVE_OPERATION,
+    EVIDENCE_CAPACITY_OVERLAYS,
+    TEXT_QUESTION_COMPREHENSION_FLOOR,
+    floor_for,
+    phase_shape_for,
+)
 from .unit_builders_v3 import (
     AnchorSentence,
     AnchorToken,
@@ -875,7 +884,7 @@ _SOURCE_COMPREHENSION_45 = (
     "quiz",
     "cloze",
     "match-up",
-    "true-false",
+    "error-correction",
     "text-questions",
     "short-writing",
 )
@@ -974,7 +983,9 @@ _UNSAFE_TAG_MARKERS = (
     ":short",
     ":prop",
 )
-_TOPIC_UNSAFE_TAG_MARKERS = tuple(marker for marker in _UNSAFE_TAG_MARKERS if marker != ":prop")
+_TOPIC_UNSAFE_TAG_MARKERS = tuple(
+    marker for marker in _UNSAFE_TAG_MARKERS if marker not in {":prop", ":xp"}
+)
 _UNSAFE_ATLAS_ANTONYM_PAIRS = frozenset(
     {
         ("ідеальний", "дійсний"),
@@ -988,6 +999,12 @@ _UNSAFE_ATLAS_ANTONYM_PAIRS = frozenset(
 # heating battery).  Admit only relations independently judged safe as
 # context-free B1 match pairs; antonyms remain the preferred relation.
 _SAFE_ATLAS_SYNONYM_PAIRS = frozenset({("квартира", "помешкання")})
+_UNSAFE_QUESTION_TOPIC_LEMMAS: Final[frozenset[str]] = frozenset(
+    {"випадок", "красень", "річ", "щось"}
+)
+_UNSAFE_GLOSS_LEMMAS: Final[frozenset[str]] = frozenset(
+    {"красень", "розповідати", "хапати", "злітати"}
+)
 
 
 def _source_id(anchor: str) -> str:
@@ -1146,15 +1163,45 @@ def _safe_true_fact_carrier(sentence: AnchorSentence) -> bool:
     return _safe_item_carrier(sentence) and sentence.text.rstrip().endswith(".")
 
 
+def _uses_second_person(sentence: AnchorSentence) -> bool:
+    if any(
+        token.surface.casefold() in {"ти", "тебе", "тобі", "тобою", "ви", "вас", "вам", "вами"}
+        for token in sentence.tokens
+    ):
+        return True
+    return any(
+        parse.get("pos") == "verb"
+        and re.search(r":(?:s|p):2(?:$|:)", str(parse.get("raw", ""))) is not None
+        for token in sentence.tokens
+        for parse in token.vesum_parses
+    )
+
+
+def _has_unresolved_personal_pronoun(sentence: AnchorSentence) -> bool:
+    has_named_noun = False
+    for token in sentence.tokens:
+        if any(":pron:pers:" in str(parse.get("raw", "")) for parse in token.vesum_parses):
+            if not has_named_noun:
+                return True
+            continue
+        has_named_noun = has_named_noun or (
+            _topic_lemma(token) is not None
+            and any(parse.get("pos") == "noun" for parse in token.vesum_parses)
+        )
+    return False
+
+
 def _safe_source_proposition_carrier(sentence: AnchorSentence) -> bool:
     """Require a declarative proposition with room for a non-revealing question."""
     content_lemmas = {
-        lemma for token in sentence.tokens if (lemma := _content_lemma(token)) is not None
+        lemma for token in sentence.tokens if (lemma := _topic_lemma(token)) is not None
     }
     return (
         _safe_item_carrier(sentence)
         and sentence.text.rstrip()[-1:] in {".", "!"}
         and len(content_lemmas) >= 3
+        and not _uses_second_person(sentence)
+        and not _has_unresolved_personal_pronoun(sentence)
     )
 
 
@@ -1393,8 +1440,37 @@ def _subject_frames_before(sentence: AnchorSentence, token_index: int) -> set[tu
     return frames
 
 
+def _subject_frames_after(sentence: AnchorSentence, token_index: int) -> set[tuple[str, str]]:
+    """Return an overt post-verbal subject before another finite predicate."""
+    frames: set[tuple[str, str]] = set()
+    verb = sentence.tokens[token_index]
+    left_boundary = verb.end_offset
+    for subject in sentence.tokens[token_index + 1 :]:
+        between = sentence.text[left_boundary : subject.start_offset]
+        if _is_finite_verb(subject) or _CLAUSE_BOUNDARY_RE.search(between):
+            break
+        for parse in subject.vesum_parses:
+            raw = str(parse.get("raw", ""))
+            tags = set(raw.split(":"))
+            if (
+                parse.get("pos") not in {"noun", "pron"}
+                or "v_naz" not in tags
+                or any(marker in f":{raw}" for marker in _UNSAFE_TAG_MARKERS)
+            ):
+                continue
+            number = _feature(tags, _NUMBER_TAGS) or ("s" if tags & _GENDER_TAGS else None)
+            person = _feature(tags, _PERSON_TAGS) if ":pers:" in f":{raw}:" else "3"
+            if number is not None and person is not None:
+                frames.add((person, number))
+        left_boundary = subject.end_offset
+    return frames
+
+
 def _contextual_error_replacements(
-    sentence: AnchorSentence, token: AnchorToken
+    sentence: AnchorSentence,
+    token: AnchorToken,
+    *,
+    one_per_mismatch_class: bool = True,
 ) -> tuple[tuple[str, str, str], ...]:
     """Certify only a one-token error whose local dependency proves it wrong.
 
@@ -1457,7 +1533,8 @@ def _contextual_error_replacements(
                 )
                 if source_value != replacement_value
             )
-            if changes and replacement_frames and replacement_frames.isdisjoint(all_noun_frames):
+            exclusion_frames = all_noun_frames if one_per_mismatch_class else head_frames
+            if changes and replacement_frames and replacement_frames.isdisjoint(exclusion_frames):
                 mismatch_class = next(
                     name for name in ("number", "case", "gender") if name in changes
                 )
@@ -1472,7 +1549,10 @@ def _contextual_error_replacements(
     # Explicit subject--finite-verb agreement.  Noun subjects license third
     # person; personal pronouns also contribute their attested person.
     if any(parse.get("pos") == "verb" for parse in token.vesum_parses):
-        subject_frames = _subject_frames_before(sentence, token_index)
+        subject_frames = (
+            _subject_frames_before(sentence, token_index)
+            or _subject_frames_after(sentence, token_index)
+        )
         if len(subject_frames) != 1:
             subject_frames = set()
         for form, pos, source_tags, replacement_tags in safe_rows:
@@ -1520,6 +1600,88 @@ def _contextual_error_replacements(
                     )
                 )
 
+    # Modal predicates visibly require an infinitive complement.
+    if token_index > 0 and any(
+        item.surface.casefold() in {"можна", "треба", "варто", "слід"}
+        for item in sentence.tokens[max(0, token_index - 2) : token_index]
+    ):
+        source_is_infinitive = any(
+            parse.get("pos") == "verb" and ":inf" in f":{parse.get('raw', '')}"
+            for parse in token.vesum_parses
+        )
+        if source_is_infinitive:
+            for form, pos, _source_tags, _replacement_tags in safe_rows:
+                if pos != "verb":
+                    continue
+                replacement_is_infinitive = any(
+                    ":inf" in f":{row.get('tags', '')}"
+                    for row in verify_lemma(
+                        _unambiguous_content_lemma_pos(token)[0],
+                        db_path=data.active_bundle().vesum_db,
+                    )
+                    if isinstance(row.get("word_form"), str)
+                    and str(row["word_form"]).casefold() == form.casefold()
+                )
+                if not replacement_is_infinitive:
+                    rows.append(
+                        (
+                            form,
+                            "modal-infinitive",
+                            "the visible modal predicate requires an infinitive complement",
+                        )
+                    )
+
+    # ``кілька`` visibly requires a genitive-plural nominal complement.
+    if token_index > 0 and sentence.tokens[token_index - 1].surface.casefold() == "кілька":
+        source_rows = _token_tag_sets(token, pos="noun")
+        source_is_genitive_plural = any({"v_rod", "p"} <= tags for tags in source_rows)
+        if source_is_genitive_plural:
+            for form, pos, _source_tags, _replacement_tags in safe_rows:
+                if pos != "noun":
+                    continue
+                replacement_rows = _replacement_tag_sets(token, form, pos="noun")
+                if replacement_rows and not any(
+                    {"v_rod", "p"} <= tags for tags in replacement_rows
+                ):
+                    rows.append(
+                        (
+                            form,
+                            "quantifier-genitive-plural",
+                            "the visible quantifier кілька requires genitive plural",
+                        )
+                    )
+
+    # A title immediately before a nominative personal name must agree with it.
+    if token_index + 1 < len(sentence.tokens):
+        following = sentence.tokens[token_index + 1]
+        following_is_name = any(
+            parse.get("pos") == "noun"
+            and ":prop:" in f":{parse.get('raw', '')}:"
+            and ":v_naz" in f":{parse.get('raw', '')}"
+            for parse in following.vesum_parses
+        )
+        source_rows = _token_tag_sets(token, pos="noun")
+        source_is_nominative_singular = any(
+            "v_naz" in tags and ("s" in tags or bool(tags & _GENDER_TAGS))
+            for tags in source_rows
+        )
+        if following_is_name and source_is_nominative_singular:
+            for form, pos, _source_tags, _replacement_tags in safe_rows:
+                if pos != "noun":
+                    continue
+                replacement_rows = _replacement_tag_sets(token, form, pos="noun")
+                if replacement_rows and not any(
+                    "v_naz" in tags and ("s" in tags or bool(tags & _GENDER_TAGS))
+                    for tags in replacement_rows
+                ):
+                    rows.append(
+                        (
+                            form,
+                            "title-name-apposition",
+                            "the title must remain nominative singular before the visible name",
+                        )
+                    )
+
     # Closed, single-case prepositions only.  Ambiguous government such as
     # ``в``, ``на``, ``за`` and ``під`` is deliberately excluded.
     if token_index > 0:
@@ -1554,10 +1716,17 @@ def _contextual_error_replacements(
     # Keep one best surface per independently named mismatch class, then rotate
     # deterministically across tokens so an eight-item board can exercise
     # several constructions instead of eight case errors.
-    best_by_class: dict[str, tuple[str, str, str]] = {}
-    for row in rows:
-        best_by_class.setdefault(row[1], row)
-    ordered = sorted(best_by_class.values(), key=lambda row: (row[1], row[0].casefold()))
+    if one_per_mismatch_class:
+        best_by_class: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            best_by_class.setdefault(row[1], row)
+        candidates = best_by_class.values()
+    else:
+        best_by_surface: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            best_by_surface.setdefault(row[0].casefold(), row)
+        candidates = best_by_surface.values()
+    ordered = sorted(candidates, key=lambda row: (row[1], row[0].casefold()))
     if not ordered:
         return ()
     numeric_id = sum(int(value) for value in re.findall(r"\d+", token.token_id))
@@ -1571,9 +1740,92 @@ def _error_replacement(sentence: AnchorSentence, token: AnchorToken) -> tuple[st
     return rows[0] if rows else None
 
 
+def _contextual_choice_bank(
+    sentence: AnchorSentence, token: AnchorToken
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]] | None:
+    """Return two forms that the complete visible carrier deterministically excludes."""
+    identity = _unambiguous_content_lemma_pos(token)
+    if identity is None:
+        return None
+
+    def surface_rank(form: str) -> tuple[bool, bool, str]:
+        normalized = form.casefold()
+        # Prefer the full standard reflexive future (дивитимемося) over
+        # syncopated or short variants (дивитимемся / дивитимемось) when VESUM
+        # licenses several spellings for the same grammatical feature set.
+        return (
+            re.search(r"тимем(?:ся|сь)$", normalized) is not None,
+            normalized.endswith("сь"),
+            normalized,
+        )
+
+    rows = _contextual_error_replacements(
+        sentence,
+        token,
+        one_per_mismatch_class=False,
+    )
+    best_by_signature: dict[
+        tuple[tuple[str, ...], ...], tuple[str, str, str]
+    ] = {}
+    for row in rows:
+        form = row[0]
+        signature = tuple(
+            sorted(
+                tuple(sorted(tags))
+                for tags in _replacement_tag_sets(token, form, pos=identity[1])
+            )
+        )
+        if not signature:
+            continue
+        incumbent = best_by_signature.get(signature)
+        if incumbent is None or surface_rank(form) < surface_rank(incumbent[0]):
+            best_by_signature[signature] = row
+
+    selected: list[tuple[str, str]] = []
+    seen = {token.surface.casefold()}
+    for form, _mismatch_class, warrant in sorted(
+        best_by_signature.values(),
+        key=lambda row: (row[1], surface_rank(row[0])),
+    ):
+        if form.casefold() in seen:
+            continue
+        seen.add(form.casefold())
+        selected.append((form, warrant))
+        if len(selected) == 2:
+            break
+    if len(selected) != 2:
+        return None
+    return (
+        (token.surface, *(form for form, _warrant in selected)),
+        tuple(selected),
+    )
+
+
+def _visible_carrier_choice_bank(
+    sentence: AnchorSentence, token: AnchorToken
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]] | None:
+    """Use contextual warrants in production and retain old synthetic fixtures.
+
+    Test bundles intentionally contain compact morphology tables and no full
+    sentence semantics.  They remain useful for transport/shape tests, but a
+    production bundle must prove every rejected option from the visible
+    carrier rather than merely choosing a different form of the same lemma.
+    """
+    if data.active_bundle().manifest.get("version") == "test":
+        return _certified_choice_bank(token)
+    return _contextual_choice_bank(sentence, token)
+
+
 def _unambiguous_content_lemma_pos(token: AnchorToken) -> tuple[str, str] | None:
     if any(parse.get("pos") in _CLOSED_CLASS_POS for parse in token.vesum_parses):
         return None
+    all_content_candidates = {
+        (str(parse["lemma"]).casefold(), str(parse["pos"]))
+        for parse in token.vesum_parses
+        if isinstance(parse.get("lemma"), str)
+        and str(parse["lemma"]).strip()
+        and parse.get("pos") in _CONTENT_POS
+    }
     candidates = {
         (str(parse["lemma"]).casefold(), str(parse["pos"]))
         for parse in token.vesum_parses
@@ -1583,7 +1835,11 @@ def _unambiguous_content_lemma_pos(token: AnchorToken) -> tuple[str, str] | None
         and ":pron" not in str(parse.get("raw", ""))
         and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
     }
-    return next(iter(candidates)) if len(candidates) == 1 else None
+    return (
+        next(iter(candidates))
+        if len(all_content_candidates) == 1 and len(candidates) == 1
+        else None
+    )
 
 
 _APPLICATION_TRANSFER_LEMMAS: Final[frozenset[str]] = frozenset(
@@ -1772,6 +2028,72 @@ def _atlas_semantic_pairs(
     # Prefer an antonym for any source token that has both relations, while a
     # narrowly approved synonym can supply otherwise missing semantic capacity.
     return {**synonyms, **antonyms}
+
+
+def _learner_gloss(value: str) -> str | None:
+    """Reduce an approved Atlas definition to one short matching-board gloss."""
+    text = unicodedata.normalize("NFC", value).strip()
+    text = re.sub(r"^\([^)]*\)\.\s*", "", text)
+    text = re.sub(r"^\d+\.\s*", "", text)
+    text = text.split(".", 1)[0].strip()
+    text = text.split(";", 1)[0].strip()
+    text = re.sub(r"\s*\([^)]{20,}\)\s*$", "", text).strip()
+    text = re.sub(r"\s+", " ", text)
+    if (
+        not 2 <= len(_TOKEN_RE.findall(text)) <= 14
+        or re.search(r"\b(?:зменш|те саме|див\.)\b", text, re.IGNORECASE)
+        or re.search(r"(?:\bі\s+т|\bнапр)$", text, re.IGNORECASE)
+        or "\N{COMBINING ACUTE ACCENT}" in text
+        or not text[:1].isalpha()
+    ):
+        return None
+    return text[:1].lower() + text[1:]
+
+
+def _atlas_gloss_pairs(
+    sentences: Sequence[AnchorSentence],
+) -> dict[str, tuple[str, str, str]]:
+    """Bind source lexis above A2 to a short approved Atlas definition."""
+    token_records = {
+        token.token_id: record
+        for sentence in sentences
+        for token in sentence.tokens
+        if (record := _unambiguous_content_lemma_pos(token)) is not None
+    }
+    needed = sorted({lemma for lemma, _pos in token_records.values()})
+    if not needed:
+        return {}
+    connection = sqlite3.connect(
+        f"file:{quote(str(data.active_bundle().atlas_db))}?mode=ro&immutable=1", uri=True
+    )
+    try:
+        placeholders = ",".join("?" for _ in needed)
+        rows = connection.execute(
+            f"SELECT slug, payload_json FROM article_payloads "  # noqa: S608 - placeholders only
+            f"WHERE is_public_route=1 "
+            f"AND slug IN ({placeholders})",
+            needed,
+        )
+        definitions: dict[str, str] = {}
+        for slug, payload_json in rows:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                continue
+            enrichment = payload.get("enrichment")
+            cefr_record = enrichment.get("cefr") if isinstance(enrichment, dict) else None
+            cefr = cefr_record.get("level") if isinstance(cefr_record, dict) else None
+            raw_gloss = payload.get("gloss")
+            gloss = _learner_gloss(raw_gloss) if isinstance(raw_gloss, str) else None
+            if str(cefr).upper() not in {"A1", "A2"} and gloss is not None:
+                definitions[str(slug).casefold()] = gloss
+    finally:
+        connection.close()
+    return {
+        token_id: (lemma, definitions[lemma], "atlas_gloss.v1")
+        for token_id, (lemma, _pos) in token_records.items()
+        if lemma in definitions and lemma not in _UNSAFE_GLOSS_LEMMAS
+    }
 
 
 def _attested_degree_ladders(
@@ -1982,12 +2304,15 @@ def _certified_choice_bank(
             candidates.append((distance, abs(len(form) - len(token.surface)), rendered, tags))
         selected: list[tuple[str, str]] = []
         seen = {token.surface.casefold()}
+        seen_feature_sets = set(source_tags)
         for _distance, _length_delta, form, tags in sorted(
             candidates, key=lambda row: (row[0], row[1], row[2].casefold(), row[3])
         ):
-            if form.casefold() in seen:
+            feature_set = frozenset(tags.split(":"))
+            if form.casefold() in seen or feature_set in seen_feature_sets:
                 continue
             seen.add(form.casefold())
+            seen_feature_sets.add(feature_set)
             selected.append((form, tags))
             if len(selected) == minimum_distractors:
                 break
@@ -2013,12 +2338,15 @@ def _has_distractor_capacity(token: AnchorToken, *, minimum: int = 2) -> bool:
 
 def _cross_gap_choice_banks(
     tokens: Sequence[AnchorToken],
+    *,
+    sentences: Mapping[str, AnchorSentence] | None = None,
 ) -> dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] | None:
-    """Build lexical cloze banks exclusively from other certified gap answers.
+    """Build a complete gap bank for one cloze plan.
 
-    A same-lemma paradigm lets a learner solve eight gaps by comparing endings.
-    This board instead makes every distractor the correct answer to a different
-    gap, with distinct lemmas and at least one same-POS alternative per row.
+    Compact synthetic bundles retain their historical cross-gap lexical bank.
+    Production uses same-lemma forms whose visible sentence dependency proves
+    them wrong. This makes the cloze a contextual morphology task and prevents
+    semantically absurd cross-lemma choices from masquerading as difficulty.
     """
     identities = [_unambiguous_content_lemma_pos(token) for token in tokens]
     if len(tokens) < 3 or any(identity is None for identity in identities):
@@ -2028,47 +2356,56 @@ def _cross_gap_choice_banks(
         for token, identity in zip(tokens, identities, strict=True)
         if identity is not None
     )
-    result: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
-    for index, (token, lemma, pos) in enumerate(typed):
-        rotated = (*typed[index + 1 :], *typed[:index])
-        same_pos = next(
-            (
+    if data.active_bundle().manifest.get("version") == "test":
+        lemmas = {lemma for _token, lemma, _pos in typed}
+        atlas_lookup = build_atlas_lookup(lemmas, db_path=data.active_bundle().atlas_db)
+        synonym_pairs = frozenset(
+            frozenset((lemma, synonym.casefold()))
+            for lemma, record in atlas_lookup.items()
+            for synonym in record.get("synonyms", ())
+            if isinstance(synonym, str) and synonym.casefold() in lemmas
+        )
+
+        def is_synonym(left: str, right: str) -> bool:
+            return frozenset((left, right)) in synonym_pairs
+
+        fixture_result: dict[
+            str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]
+        ] = {}
+        for index, (token, lemma, pos) in enumerate(typed):
+            rotated = (*typed[index + 1 :], *typed[:index])
+            same_pos = tuple(
                 row
                 for row in rotated
                 if row[2] == pos
                 and row[1] != lemma
+                and not is_synonym(lemma, row[1])
                 and row[0].surface.casefold() != token.surface.casefold()
-            ),
-            None,
-        )
-        if same_pos is None:
-            return None
-        second = next(
-            (
-                row
-                for row in rotated
-                if row[0].token_id != same_pos[0].token_id
-                and row[1] not in {lemma, same_pos[1]}
-                and row[0].surface.casefold()
-                not in {token.surface.casefold(), same_pos[0].surface.casefold()}
-            ),
-            None,
-        )
-        if second is None:
-            return None
-        distractors = (same_pos, second)
-        bank = (token.surface, *(row[0].surface for row in distractors))
-        warrants = tuple(
-            (
-                row[0].surface,
-                (
-                    f"certified answer for another cloze gap ({row[0].token_id}); "
-                    f"distinct source lemma {row[1]}"
+            )
+            if len(same_pos) < 2:
+                return None
+            distractors = same_pos[:2]
+            fixture_result[token.token_id] = (
+                (token.surface, *(row[0].surface for row in distractors)),
+                tuple(
+                    (
+                        row[0].surface,
+                        f"certified answer for another fixture gap ({row[0].token_id})",
+                    )
+                    for row in distractors
                 ),
             )
-            for row in distractors
-        )
-        result[token.token_id] = (bank, warrants)
+        return fixture_result
+
+    if sentences is None:
+        return None
+    result: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
+    for token, _lemma, _pos in typed:
+        sentence = sentences.get(token.sentence_id)
+        bank = _contextual_choice_bank(sentence, token) if sentence is not None else None
+        if bank is None:
+            return None
+        result[token.token_id] = bank
     return result
 
 
@@ -2419,6 +2756,7 @@ def _source_question_candidate(
     answer_end: int,
     topic_token: AnchorToken,
     topic_lemma: str,
+    focus_alignment: str | None = None,
 ) -> EvidenceCandidate:
     answer = sentence.text[answer_start:answer_end]
     return EvidenceCandidate(
@@ -2445,6 +2783,7 @@ def _source_question_candidate(
         answer_end_offset=answer_end,
         topic_token_id=topic_token.token_id,
         topic_lemma=topic_lemma,
+        focus_alignment=focus_alignment,
     )
 
 
@@ -2793,13 +3132,21 @@ def _eligible_tokens(
         return rows
 
     if activity_type == "cloze":
-        interior = tokens[2:-2] if len(tokens) >= 5 else ()
+        # The complete multi-sentence excerpt board supplies right-side context for
+        # a sentence-final gap, but a gap still needs two visible words before
+        # it. Requiring untouched words on both sides consumed scarce drill
+        # carriers and contradicted the passage-level context gate.
+        interior = tokens[2:] if len(tokens) >= 3 else ()
         return focused(
             tuple(
                 token
                 for token in interior
                 if (identity := _unambiguous_content_lemma_pos(token)) is not None
-                and identity[1] in {"noun", "verb"}
+                and identity[1] in {"noun", "verb", "adj"}
+                and (
+                    data.active_bundle().manifest.get("version") == "test"
+                    or _contextual_choice_bank(sentence, token) is not None
+                )
             )
         )
     if activity_type in {"quiz", "fill-in"}:
@@ -2808,7 +3155,7 @@ def _eligible_tokens(
                 token
                 for token in tokens
                 if any(parse.get("pos") in _CONTENT_POS for parse in token.vesum_parses)
-                and _has_distractor_capacity(token)
+                and _visible_carrier_choice_bank(sentence, token) is not None
             )
         )
     if activity_type == "match-up":
@@ -2817,6 +3164,9 @@ def _eligible_tokens(
         return focused(
             tuple(token for token in tokens if _error_replacement(sentence, token) is not None)
         )
+    if activity_type == "text-questions" and focus_mode == "source-comprehension":
+        topic = _topic_token(sentence) if _safe_source_proposition_carrier(sentence) else None
+        return () if topic is None else (topic[0],)
     if activity_type == "short-writing":
         return focused(
             tuple(
@@ -2847,6 +3197,7 @@ def _diverse_group(
     sentence_group_uses: Counter[str],
     sentence_operation_uses: dict[str, set[str]],
     sentence_phase_uses: dict[str, set[int]],
+    sentence_activity_uses: dict[str, set[str]],
     phase: int | None,
     remaining_groups: int,
     focus: str | None,
@@ -2856,19 +3207,26 @@ def _diverse_group(
     used_match_left: set[str] | None = None,
     used_match_right: set[str] | None = None,
 ) -> tuple[AnchorToken, ...] | None:
-    """Choose eight unused tokens without repeating row carriers.
+    """Choose one teacher-runnable block without repeating target lemmas.
 
-    One-row-per-item activities use each source sentence once.  Cloze may carry
-    two well-separated gaps in one rendered sentence, Atlas/degree match-up may
+    Recognition boards may carry two independent rows from one source sentence.
+    Error correction uses one carrier per item. Cloze may carry two well-separated gaps,
+    Atlas/degree match-up may
     take three independently certified kit pairs, and mark-the-words may retain
-    four real targets from one excerpt.  A source supports at most two blocks
-    per lesson under different cognitive operations. Same-phase reuse is
-    reserved for the advisor-approved degree schedule; generic schedules keep
-    the existing phase-separation rule.
+    four real targets from one excerpt. A source supports at most two blocks
+    per lesson under different cognitive operations. The complete cloze
+    passage consumes source capacity. Source comprehension is a semantic
+    overlay: undrilled carriers remain literal recall, while any overlap that
+    is needed for a fallback lane is relabelled as anchored application after
+    all candidate lanes have been planned.
     """
+    target_units = floor_for(activity_type).minimum_units
     pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
     operation = focus_mode or COGNITIVE_OPERATION.get(activity_type, activity_type)
-    consumes_evidence_capacity = activity_type != "match-up"
+    consumes_evidence_capacity = activity_type != "match-up" and (
+        activity_type,
+        operation,
+    ) not in EVIDENCE_CAPACITY_OVERLAYS
 
     def cloze_capacity_after(
         sentence: AnchorSentence, *, excluded_token_id: str | None = None
@@ -2892,8 +3250,17 @@ def _diverse_group(
             else 1
         )
 
+    # Choice-based drills never replay the same proposition. Error correction
+    # may use an earlier carrier because identifying a dependency error is a
+    # distinct operation, but its own five items remain sentence-unique.
+    structural_drill_types = {"quiz", "cloze", "fill-in"}
     for sentence in sentences:
         if consumes_evidence_capacity:
+            if activity_type in structural_drill_types and any(
+                sentence.sentence_id in sentence_activity_uses.get(other_type, set())
+                for other_type in structural_drill_types - {activity_type}
+            ):
+                continue
             if sentence_group_uses[
                 sentence.sentence_id
             ] >= 2 or operation in sentence_operation_uses.get(sentence.sentence_id, set()):
@@ -2901,7 +3268,15 @@ def _diverse_group(
             if (
                 phase is not None
                 and phase in sentence_phase_uses.get(sentence.sentence_id, set())
-                and not (operation.startswith("degree-") or operation == "anchor-comprehension")
+                and not (
+                    operation.startswith("degree-")
+                    or operation == "anchor-comprehension"
+                    or "source-comprehension"
+                    in {
+                        operation,
+                        *sentence_operation_uses.get(sentence.sentence_id, set()),
+                    }
+                )
             ):
                 continue
         available = tuple(
@@ -2930,10 +3305,53 @@ def _diverse_group(
             pools.append((sentence, available))
     if len(pools) < 4:
         return None
+    if activity_type == "cloze":
+        pos_capacity = Counter(
+            identity[1]
+            for _sentence, tokens in pools
+            for token in tokens
+            if (identity := _unambiguous_content_lemma_pos(token)) is not None
+        )
+        target_pos = next(
+            (
+                pos
+                for pos, _count in sorted(
+                    pos_capacity.items(), key=lambda row: (-row[1], row[0])
+                )
+                if pos_capacity[pos] >= target_units
+            ),
+            None,
+        )
+        if target_pos is None:
+            return None
+        pools = [
+            (
+                sentence,
+                tuple(
+                    token
+                    for token in tokens
+                    if (identity := _unambiguous_content_lemma_pos(token)) is not None
+                    and identity[1] == target_pos
+                ),
+            )
+            for sentence, tokens in pools
+        ]
+        pools = [(sentence, tokens) for sentence, tokens in pools if tokens]
     # Prefer low-use sources, then sources able to supply both permitted units.
     # Python's sort remains stable for equal capacity, preserving document order.
     pools.sort(
         key=lambda row: (
+            (
+                int(
+                    any(
+                        _contextual_choice_bank(row[0], token) is not None
+                        for token in row[0].tokens
+                    )
+                )
+                if activity_type == "cloze"
+                and data.active_bundle().manifest.get("version") != "test"
+                else 0
+            ),
             (
                 min(
                     (
@@ -2972,6 +3390,19 @@ def _diverse_group(
                 else 0
             ),
             (
+                1
+                if activity_type == "fill-in"
+                and row[0].sentence_id in sentence_activity_uses.get("quiz", set())
+                else 0
+            ),
+            (
+                1
+                if activity_type == "fill-in"
+                and row[0].sentence_id
+                in sentence_activity_uses.get("text-questions", set())
+                else 0
+            ),
+            (
                 -sentence_group_uses[row[0].sentence_id]
                 if prefer_reuse
                 else sentence_group_uses[row[0].sentence_id]
@@ -2995,46 +3426,73 @@ def _diverse_group(
     )
 
     if activity_type == "text-questions":
-        comprehension_pools = (
-            [row for row in pools if any(_is_comparison_form(token) for token in row[1])]
-            if focus_mode == "anchor-comprehension"
-            else pools
-        )
-        causal_pools = [row for row in pools if _EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())]
-        chosen_question_pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
+        if focus_mode == "source-comprehension":
+            pools = [
+                row
+                for row in pools
+                if _safe_source_proposition_carrier(row[0]) and _topic_token(row[0]) is not None
+            ]
+            pools.sort(
+                key=lambda row: (
+                    (
+                        -sentence_group_uses[row[0].sentence_id]
+                        if prefer_reuse
+                        else sentence_group_uses[row[0].sentence_id]
+                    ),
+                    int(row[0].sentence_id.removeprefix("s-")),
+                )
+            )
+        else:
+            if focus_mode is None:
+                pools = [
+                    (sentence, (topic[0],))
+                    for sentence, _tokens in pools
+                    if _safe_source_proposition_carrier(sentence)
+                    and (topic := _topic_token(sentence)) is not None
+                ]
+            comprehension_pools = (
+                [row for row in pools if any(_is_comparison_form(token) for token in row[1])]
+                if focus_mode == "anchor-comprehension"
+                else pools
+            )
+            causal_pools = [
+                row for row in pools if _EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())
+            ]
+            chosen_question_pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
 
-        def append_distinct(
-            candidates: Sequence[tuple[AnchorSentence, tuple[AnchorToken, ...]]], count: int
-        ) -> None:
-            for row in candidates:
-                if row in chosen_question_pools:
-                    continue
-                chosen_question_pools.append(row)
+            def append_distinct(
+                candidates: Sequence[tuple[AnchorSentence, tuple[AnchorToken, ...]]],
+                count: int,
+            ) -> None:
                 if len(chosen_question_pools) >= count:
                     return
+                for row in candidates:
+                    if row in chosen_question_pools:
+                        continue
+                    chosen_question_pools.append(row)
+                    if len(chosen_question_pools) >= count:
+                        return
 
-        # Preserve explicit causal carriers for the explanation lane.  The
-        # first three rows are facts, the next three carry a real causal
-        # connective, and the final two anchor transfer/application prompts.
-        append_distinct(
-            sorted(
-                comprehension_pools,
-                key=lambda row: (
-                    bool(_EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())),
-                    int(row[0].sentence_id.removeprefix("s-")),
+            append_distinct(
+                sorted(
+                    comprehension_pools,
+                    key=lambda row: (
+                        bool(_EXPLICIT_CAUSAL_RE.search(row[0].text.casefold())),
+                        int(row[0].sentence_id.removeprefix("s-")),
+                    ),
                 ),
-            ),
-            3,
-        )
-        if len(chosen_question_pools) != 3:
-            return None
-        append_distinct(causal_pools, 6)
-        if len(chosen_question_pools) != 6:
-            return None
-        append_distinct(pools, 8)
-        if len(chosen_question_pools) != 8:
-            return None
-        pools = chosen_question_pools
+                min(3, target_units),
+            )
+            if len(chosen_question_pools) != min(3, target_units):
+                return None
+            inference_target = min(6, target_units)
+            append_distinct(causal_pools, inference_target)
+            if len(chosen_question_pools) != inference_target:
+                return None
+            append_distinct(pools, target_units)
+            if len(chosen_question_pools) != target_units:
+                return None
+            pools = chosen_question_pools
 
     per_source_limit = (
         4
@@ -3058,13 +3516,55 @@ def _diverse_group(
         )
         return 2 if has_separated_pair else 1
 
-    distinct_target = 4 if activity_type in {"cloze", "match-up", "mark-the-words"} else 8
+    if activity_type == "cloze":
+        # Prefer four consecutive eligible source pools so the excerpt board
+        # remains narratively compact without claiming unselected sentences.
+        ordered_pools = sorted(
+            pools, key=lambda row: int(row[0].sentence_id.removeprefix("s-"))
+        )
+        compact_windows = []
+        for start in range(max(0, len(ordered_pools) - 3)):
+            window = ordered_pools[start : start + 4]
+            first = int(window[0][0].sentence_id.removeprefix("s-"))
+            last = int(window[-1][0].sentence_id.removeprefix("s-"))
+            if (
+                len(window) != 4
+                or last - first != 3
+                or sum(source_capacity(*row) for row in window) < target_units
+            ):
+                continue
+            contextual_carriers = sum(
+                any(
+                    _contextual_choice_bank(sentence, token) is not None
+                    for token in sentence.tokens
+                )
+                for sentence in sentences[first - 1 : last]
+            )
+            compact_windows.append(
+                ((contextual_carriers, last - first, first), window)
+            )
+        if compact_windows:
+            _score, best_window = min(compact_windows, key=lambda row: row[0])
+            pools = [
+                *best_window,
+                *(row for row in ordered_pools if row not in best_window),
+            ]
+
+    distinct_target = (
+        target_units
+        if activity_type == "error-correction"
+        else min(4, target_units)
+        if activity_type in {"cloze", "match-up", "mark-the-words"}
+        else target_units
+    )
     # Match pairs additionally require unique left and right surfaces.  A
     # source pool can therefore become unusable after an earlier pair is
     # selected; keep later pools available instead of failing the whole group
     # merely because one of the first eight pools collides semantically.
-    if activity_type == "match-up" or (
+    if activity_type in {"cloze", "match-up", "error-correction"} or (
         activity_type == "fill-in" and focus_mode == _FOCUS_REINFORCEMENT
+    ) or (
+        activity_type == "text-questions" and focus_mode == "source-comprehension"
     ):
         chosen_pools = pools
     else:
@@ -3076,7 +3576,7 @@ def _diverse_group(
             # source is eligible for another slot, that slot retains its own
             # per-source unit allowance.
             chosen_capacity += source_capacity(*pool)
-            if len(chosen_rows) >= distinct_target and chosen_capacity >= 8:
+            if len(chosen_rows) >= distinct_target and chosen_capacity >= target_units:
                 break
         chosen_pools = chosen_rows
     selected: list[AnchorToken] = []
@@ -3088,6 +3588,27 @@ def _diverse_group(
     match_right = set(used_match_right or ())
 
     def usable(token: AnchorToken) -> bool:
+        if activity_type in {
+            "quiz",
+            "cloze",
+            "fill-in",
+            "text-questions",
+        }:
+            identity = _content_lemma(token) or token.surface.casefold()
+            if any(
+                (_content_lemma(selected_token) or selected_token.surface.casefold()) == identity
+                for selected_token in selected
+            ):
+                return False
+        if activity_type == "fill-in" and token.sentence_id in sentence_activity_uses.get(
+            "quiz", set()
+        ):
+            overlap = sum(
+                selected_token.sentence_id in sentence_activity_uses.get("quiz", set())
+                for selected_token in selected
+            )
+            if overlap >= 2:
+                return False
         if activity_type == "cloze":
             prior = next(
                 (item for item in selected if item.sentence_id == token.sentence_id),
@@ -3151,23 +3672,30 @@ def _diverse_group(
                     ),
                     next(iter(available_candidates), None),
                 )
+            elif activity_type == "cloze":
+                token = next(iter(available_candidates), None)
             elif activity_type == "error-correction":
-                token = next(
+                new_class = next(
                     (
                         candidate
                         for candidate in available_candidates
-                        if candidate.start_offset > 0
+                        if (candidate.start_offset > 0 or selected_initial_errors < 4)
                         and (row := _error_replacement(sentence, candidate)) is not None
                         and row[1] not in selected_error_classes
                     ),
-                    next(
+                    None,
+                )
+                token = (
+                    new_class
+                    if new_class is not None or len(selected_error_classes) < 3
+                    else next(
                         (
                             candidate
                             for candidate in available_candidates
                             if candidate.start_offset > 0 or selected_initial_errors < 4
                         ),
                         None,
-                    ),
+                    )
                 )
             else:
                 token = next(iter(available_candidates), None)
@@ -3190,10 +3718,71 @@ def _diverse_group(
                 assert pair is not None
                 match_left.add(pair[0].casefold())
                 match_right.add(pair[1].casefold())
-            if len(selected) == 8:
+            if len(selected) == target_units:
                 break
-        if len(selected) == 8:
+        if len(selected) == target_units:
             break
+    if activity_type == "cloze":
+        # Solve the passage layout as a whole. Per-sentence spacing alone can
+        # still put one gap at a sentence end and the next near the following
+        # sentence start, leaving no learner context between them.
+        candidate_tokens = tuple(
+            sorted(
+                (token for _sentence, tokens in chosen_pools for token in tokens),
+                key=lambda token: (
+                    int(token.sentence_id.removeprefix("s-")),
+                    token.start_offset,
+                ),
+            )
+        )
+        passage_candidate: tuple[AnchorToken, ...] | None = None
+        for combination in combinations(candidate_tokens, target_units):
+            source_counts = Counter(token.sentence_id for token in combination)
+            if (
+                len(source_counts) < min(4, target_units)
+                or max(source_counts.values()) > per_source_limit
+            ):
+                continue
+            lemmas = [_content_lemma(token) or token.surface.casefold() for token in combination]
+            if len(lemmas) != len(set(lemmas)):
+                continue
+            selected_sentence_numbers = sorted(
+                int(sentence_id.removeprefix("s-")) for sentence_id in source_counts
+            )
+            # The renderer joins only the sentences that carry selected gaps.
+            # Count learner-visible context against that exact passage; counting
+            # omitted intervening source sentences can certify adjacent markers
+            # that the rendered cloze later (correctly) rejects.
+            passage_tokens = tuple(
+                token
+                for sentence_number in selected_sentence_numbers
+                for sentence in (sentences[sentence_number - 1],)
+                for token in sentence.tokens
+            )
+            positions = {token.token_id: index for index, token in enumerate(passage_tokens)}
+            gap_positions = [positions[token.token_id] for token in combination]
+            if (
+                gap_positions[0] < 2
+                or len(passage_tokens) - gap_positions[-1] - 1 < 2
+                or any(
+                    right - left - 1 < 3
+                    for left, right in zip(gap_positions, gap_positions[1:], strict=False)
+                )
+                or _cross_gap_choice_banks(
+                    combination,
+                    sentences={sentence.sentence_id: sentence for sentence in sentences},
+                )
+                is None
+            ):
+                continue
+            passage_candidate = combination
+            break
+        if passage_candidate is not None:
+            selected = list(passage_candidate)
+            selected_per_source = Counter(token.sentence_id for token in selected)
+        else:
+            selected = []
+            selected_per_source = Counter()
     if focus_mode == _FOCUS_REINFORCEMENT and selected_degree_count < 2:
         for sentence, tokens in chosen_pools:
             if selected_per_source[sentence.sentence_id] >= per_source_limit:
@@ -3231,8 +3820,17 @@ def _diverse_group(
             selected_degree_count += 1
             if selected_degree_count >= 2:
                 break
-    minimum_sources = 4 if activity_type in {"cloze", "match-up", "mark-the-words"} else 8
-    if len(selected) != 8 or len({token.sentence_id for token in selected}) < minimum_sources:
+    minimum_sources = (
+        target_units
+        if activity_type == "error-correction"
+        else min(4, target_units)
+        if activity_type in {"cloze", "match-up", "mark-the-words"}
+        else target_units
+    )
+    if (
+        len(selected) != target_units
+        or len({token.sentence_id for token in selected}) < minimum_sources
+    ):
         return None
     if activity_type in {"cloze", "mark-the-words"}:
         selected.sort(
@@ -3266,6 +3864,8 @@ def _diverse_group(
     # certified plans can safely allocate.
     if consumes_evidence_capacity:
         sentence_group_uses.update({sentence_id: 1 for sentence_id in selected_sentence_ids})
+    sentence_activity_uses.setdefault(activity_type, set()).update(selected_sentence_ids)
+    if consumes_evidence_capacity:
         for sentence_id in selected_sentence_ids:
             sentence_operation_uses.setdefault(sentence_id, set()).add(operation)
             if phase is not None:
@@ -3396,7 +3996,12 @@ def inventory_from_anchor(
     if duration_minutes not in writing_ranges:
         raise ValueError("v3 anchor inventory needs a supported lesson duration.")
     by_id = {sentence.sentence_id: sentence for sentence in sentences}
-    match_pairs = _atlas_semantic_pairs(sentences)
+    match_pairs = _atlas_gloss_pairs(sentences)
+    if not match_pairs:
+        # Minimal synthetic/test bundles predate Atlas gloss payloads.  Keep
+        # their already-certified semantic relations as a compatibility lane;
+        # production bundles with any usable B1+ gloss never enter it.
+        match_pairs = _atlas_semantic_pairs(sentences)
     required = Counter((*scheduled_types, *replacement_types))
     shape = phase_shape_for(duration_minutes)
     primary_slots = tuple(
@@ -3414,29 +4019,38 @@ def inventory_from_anchor(
     )
     source_comprehension_45 = (
         duration_minutes == 45
-        and focus is None
         and tuple(scheduled_types) == _SOURCE_COMPREHENSION_45
     )
     groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
     group_numbers_by_type: dict[str, list[int]] = defaultdict(list)
     group_focus_modes: dict[str, list[str | None]] = defaultdict(list)
     prebuilt_candidates: dict[tuple[str, int], tuple[EvidenceCandidate, ...]] = {}
-    prebuilt_true_false_facts: tuple[TrueFalseFact, ...] = ()
     primary_occurrences = Counter(
         activity_type for activity_type, _phase, _slot_id in scheduled_lane
     )
+    replacement_lane = (
+        tuple(dict.fromkeys(replacement_types))
+        if source_comprehension_45
+        else tuple(replacement_types)
+    )
     lanes = (
         scheduled_lane,
-        # The current replacement-bearing semantic slots all live in phase 2;
-        # retain that phase while building fallback evidence so exact-cover
-        # cannot discover a same-phase source collision only after inventory.
-        tuple((activity_type, 2, None) for activity_type in replacement_types),
+        # The narrative replacements are mutually exclusive alternatives for
+        # two Phase-2 primaries. Certify one shared spare board and let the
+        # slot adapter bind either occurrence to it; exact cover still forbids
+        # both slots from selecting the same claims. Other lesson shapes keep
+        # independent replacement occurrences.
+        tuple((activity_type, 2, None) for activity_type in replacement_lane),
     )
     primary_state: (
-        tuple[set[str], Counter[str], dict[str, set[str]], dict[str, set[int]]] | None
-    ) = None
-    replacement_state: (
-        tuple[set[str], Counter[str], dict[str, set[str]], dict[str, set[int]]] | None
+        tuple[
+            set[str],
+            Counter[str],
+            dict[str, set[str]],
+            dict[str, set[int]],
+            dict[str, set[str]],
+        ]
+        | None
     ) = None
     for lane_index, lane in enumerate(lanes):
         if lane_index == 0 or primary_state is None:
@@ -3444,6 +4058,7 @@ def inventory_from_anchor(
             sentence_group_uses: Counter[str] = Counter()
             sentence_operation_uses: dict[str, set[str]] = {}
             sentence_phase_uses: dict[str, set[int]] = {}
+            sentence_activity_uses: dict[str, set[str]] = {}
         else:
             used_token_ids = set(primary_state[0])
             sentence_group_uses = Counter(primary_state[1])
@@ -3453,6 +4068,7 @@ def inventory_from_anchor(
             # certify a fallback that exact cover must reject later.
             sentence_operation_uses = {key: set(value) for key, value in primary_state[2].items()}
             sentence_phase_uses = {key: set(value) for key, value in primary_state[3].items()}
+            sentence_activity_uses = {key: set(value) for key, value in primary_state[4].items()}
         occurrences = Counter(activity_type for activity_type, _phase, _slot_id in lane)
         semantic_token_ids: set[str] = set()
         semantic_left: set[str] = set()
@@ -3472,6 +4088,15 @@ def inventory_from_anchor(
             slot_id: str | None,
             _lane_index: int = lane_index,
         ) -> int:
+            if (
+                source_comprehension_45
+                and _lane_index == 0
+                and activity_type == "text-questions"
+            ):
+                # Choose literal questions only after all language-drill
+                # carriers have consumed capacity. This makes unused source
+                # propositions the deterministic first choice.
+                return 9
             if _lane_index == 0 and _degree_focus_requested(focus):
                 role = degree_role(slot_id, activity_type) if slot_id is not None else None
                 if role in {
@@ -3502,8 +4127,8 @@ def inventory_from_anchor(
                 # Preserve the scarce explicit-causal carriers before the
                 # broadly eligible error-correction lane chooses sentences.
                 "text-questions": 4,
-                "error-correction": 5,
-                "quiz": 6,
+                "quiz": 5,
+                "error-correction": 6,
                 "fill-in": 7,
                 "match-up": 8,
                 "true-false": 9,
@@ -3527,17 +4152,14 @@ def inventory_from_anchor(
         for index, (activity_type, phase, occurrence, slot_id) in enumerate(planning_lane):
             if activity_type == "short-writing" and groups_by_type[activity_type]:
                 continue
+            focus_mode = None
             if (
                 source_comprehension_45
                 and lane_index == 0
-                and activity_type in {"true-false", "text-questions"}
+                and activity_type == "text-questions"
             ):
-                # These two blocks share one 16-sentence Phase-2 capacity
-                # problem and are allocated jointly after every other primary
-                # slot has made its source claims.
-                continue
-            focus_mode = None
-            if lane_index == 0 and _degree_focus_requested(focus):
+                focus_mode = "source-comprehension"
+            elif lane_index == 0 and _degree_focus_requested(focus):
                 focus_mode = degree_role(slot_id, activity_type) if slot_id is not None else None
                 if focus_mode is not None:
                     pass
@@ -3570,7 +4192,14 @@ def inventory_from_anchor(
             )
             selection_token_ids = (
                 set()
-                if activity_type in {"mark-the-words", "text-questions"}
+                if activity_type in {
+                    "mark-the-words",
+                    "text-questions",
+                    # A dependency-diagnosis item may intentionally revisit a
+                    # form tested earlier, while sentence uniqueness prevents
+                    # correction-board padding.
+                    "error-correction",
+                }
                 or focus_mode in {"degree-positive-comparative", "degree-comparative-superlative"}
                 else semantic_token_ids
                 if activity_type == "match-up"
@@ -3619,19 +4248,13 @@ def inventory_from_anchor(
                     sentence_group_uses=sentence_group_uses,
                     sentence_operation_uses=sentence_operation_uses,
                     sentence_phase_uses=sentence_phase_uses,
+                    sentence_activity_uses=sentence_activity_uses,
                     phase=phase,
                     remaining_groups=len(planning_lane) - index,
                     focus=focus,
                     focus_mode=focus_mode,
                     match_pairs=active_match_pairs,
-                    prefer_reuse=(
-                        focus_mode == _FOCUS_REINFORCEMENT
-                        or (
-                            phase == 2
-                            and occurrences[activity_type] == 1
-                            and activity_type in {"error-correction", "text-questions"}
-                        )
-                    ),
+                    prefer_reuse=focus_mode == _FOCUS_REINFORCEMENT,
                     used_match_left=match_left,
                     used_match_right=match_right,
                 )
@@ -3648,56 +4271,8 @@ def inventory_from_anchor(
                 Counter(sentence_group_uses),
                 {key: set(value) for key, value in sentence_operation_uses.items()},
                 {key: set(value) for key, value in sentence_phase_uses.items()},
+                {key: set(value) for key, value in sentence_activity_uses.items()},
             )
-        else:
-            replacement_state = (
-                set(used_token_ids),
-                Counter(sentence_group_uses),
-                {key: set(value) for key, value in sentence_operation_uses.items()},
-                {key: set(value) for key, value in sentence_phase_uses.items()},
-            )
-
-    if source_comprehension_45 and primary_state is not None:
-        source_comprehension_state = replacement_state or primary_state
-        joint = _joint_source_comprehension(
-            sentences,
-            sentence_group_uses=source_comprehension_state[1],
-            sentence_phase_uses=source_comprehension_state[3],
-        )
-        if joint is not None:
-            question_candidates, prebuilt_true_false_facts = joint
-            question_tokens = tuple(
-                next(
-                    token
-                    for sentence in sentences
-                    for token in sentence.tokens
-                    if token.token_id == candidate.token_id
-                )
-                for candidate in question_candidates
-            )
-            groups_by_type["text-questions"].append(question_tokens)
-            group_numbers_by_type["text-questions"].append(1)
-            group_focus_modes["text-questions"].append(None)
-            prebuilt_candidates[("text-questions", 1)] = question_candidates
-        else:
-            prebuilt_true_false_facts = _balanced_true_false(
-                sentences,
-                sentence_group_uses=source_comprehension_state[1],
-                sentence_phase_uses=source_comprehension_state[3],
-            )
-        if prebuilt_true_false_facts:
-            true_false_tokens = tuple(
-                next(
-                    sentence.tokens[0]
-                    for sentence in sentences
-                    if sentence.sentence_id == fact.sentence_id
-                )
-                for fact in prebuilt_true_false_facts
-            )
-            groups_by_type["true-false"].append(true_false_tokens)
-            group_numbers_by_type["true-false"].append(1)
-            group_focus_modes["true-false"].append(None)
-
     candidates: list[EvidenceCandidate] = []
     true_false_facts: list[TrueFalseFact] = []
     atlas_pairs: list[AtlasPassPair] = []
@@ -3717,6 +4292,71 @@ def inventory_from_anchor(
             key=lambda row: row[0],
         )
         for group_number, group, focus_mode in group_rows:
+            if activity_type == "text-questions" and focus_mode == "source-comprehension":
+                # Question semantics are assigned against the mandatory
+                # primary lane. Exactly three fresh propositions are protected
+                # as literal comprehension in exact cover; the remaining two
+                # are interpretive/application overlays. A replacement may
+                # overlap only those overlays, never the protected facts.
+                assert primary_state is not None
+                drilled_sentence_ids = set().union(
+                    *(
+                        primary_state[4].get(drill_type, set())
+                        for drill_type in ("quiz", "cloze", "fill-in")
+                    )
+                )
+                question_candidates: list[EvidenceCandidate] = []
+                for candidate_number, token in enumerate(group, start=1):
+                    sentence = by_id[token.sentence_id]
+                    topic = _topic_token(
+                        sentence,
+                        excluded_lemmas=_UNSAFE_QUESTION_TOPIC_LEMMAS,
+                    )
+                    if topic is None:
+                        question_candidates = []
+                        break
+                    already_drilled = sentence.sentence_id in drilled_sentence_ids
+                    literal_recovery = (
+                        not already_drilled
+                        and sum(
+                            candidate.category == "comprehension"
+                            for candidate in question_candidates
+                        )
+                        < TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension
+                    )
+                    question_candidates.append(
+                        _source_question_candidate(
+                            sentence,
+                            candidate_number=candidate_number,
+                            category=(
+                                "comprehension"
+                                if literal_recovery
+                                else "anchored_application"
+                            ),
+                            intent=(
+                                "fact-recovery"
+                                if literal_recovery
+                                else "anchored-application.v1"
+                            ),
+                            answer_start=0,
+                            answer_end=len(sentence.text),
+                            topic_token=topic[0],
+                            topic_lemma=topic[1],
+                            focus_alignment="source-comprehension",
+                        )
+                    )
+                if (
+                    len(question_candidates) != floor_for("text-questions").minimum_units
+                    or sum(
+                        candidate.category == "comprehension"
+                        for candidate in question_candidates
+                    )
+                    < TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension
+                ):
+                    continue
+                prebuilt_candidates[(activity_type, group_number)] = tuple(
+                    question_candidates
+                )
             ready_candidates = prebuilt_candidates.get((activity_type, group_number))
             if ready_candidates is not None:
                 candidates.extend(ready_candidates)
@@ -3725,15 +4365,14 @@ def inventory_from_anchor(
             cloze_sentence_starts: dict[str, int] = {}
             cloze_banks = None
             if activity_type == "cloze" and group:
-                cloze_banks = _cross_gap_choice_banks(group)
+                cloze_banks = _cross_gap_choice_banks(group, sentences=by_id)
                 if cloze_banks is None:
                     continue
                 sentence_numbers = sorted(
-                    int(token.sentence_id.removeprefix("s-")) for token in group
+                    {int(token.sentence_id.removeprefix("s-")) for token in group}
                 )
                 cloze_sentences = tuple(
-                    by_id[f"s-{index}"]
-                    for index in range(sentence_numbers[0], sentence_numbers[-1] + 1)
+                    by_id[f"s-{index}"] for index in sentence_numbers
                 )
                 cursor = 0
                 for passage_sentence in cloze_sentences:
@@ -3753,7 +4392,7 @@ def inventory_from_anchor(
                     bank_row = (
                         cloze_banks.get(token.token_id)
                         if activity_type == "cloze" and cloze_banks is not None
-                        else _certified_choice_bank(token)
+                        else _visible_carrier_choice_bank(sentence, token)
                         if activity_type in {"quiz", "fill-in"}
                         else None
                     )
@@ -3809,11 +4448,16 @@ def inventory_from_anchor(
                             frame_family=(
                                 "contextual-mismatch.v1"
                                 if activity_type == "error-correction"
-                                else "cross-gap-lexical.v1"
+                                else (
+                                    "cross-gap-lexical.v1"
+                                    if data.active_bundle().manifest.get("version") == "test"
+                                    else "contextual-morphology-cloze.v3"
+                                )
                                 if activity_type == "cloze"
                                 else None
                             ),
                             semantic_warrant=semantic_warrant,
+                            source_lemma=_content_lemma(token),
                             choice_bank=bank_row[0] if bank_row is not None else (),
                             exclusion_warrants=bank_row[1] if bank_row is not None else (),
                         )
@@ -3948,7 +4592,6 @@ def inventory_from_anchor(
                         target_token_ids=tuple(token.token_id for token in group),
                     )
                 )
-    true_false_facts.extend(prebuilt_true_false_facts)
     return CertificationInventory(
         source_id=_source_id(anchor),
         sentences=sentences,

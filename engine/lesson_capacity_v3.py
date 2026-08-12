@@ -17,17 +17,13 @@ from typing import Literal
 from .closed_class_policy import CLOSED_CLASS_ALLOWED_SHAPES, is_closed_class_target
 from .teacher_ready_density_v3 import (
     COGNITIVE_OPERATION,
+    EVIDENCE_CAPACITY_OVERLAYS,
     floor_for,
     phase_shape_for,
     type_allowed_in_phase,
 )
 from .unit_builders_v3 import BUILDERS, CertificationInventory
-from .unit_plan_v3 import (
-    CertifiedUnit,
-    UnitPlan,
-    certify_unit_plan,
-    normalize_distinctness_key,
-)
+from .unit_plan_v3 import CertifiedUnit, UnitPlan, certify_unit_plan, normalize_distinctness_key
 
 
 @dataclass(frozen=True)
@@ -333,7 +329,7 @@ def _non_evidence_claims(plan: UnitPlan) -> tuple[tuple[str, str], ...]:
         (claim.kind, claim.resource_id)
         for unit in plan.units
         for claim in unit.resource_claims
-        if claim.kind != "sentence"
+        if claim.kind not in {"sentence", "context_sentence"}
     )
     distinctness_kind = {
         "cloze": "gap",
@@ -349,7 +345,67 @@ def _non_evidence_claims(plan: UnitPlan) -> tuple[tuple[str, str], ...]:
 
 def _source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
     """Count an evidence source once per slot, never once per constituent unit."""
-    return frozenset(unit.anchor.anchor_id for unit in plan.units if unit.anchor.kind == "evidence")
+    if (plan.activity_type, _operation_for(plan)) in EVIDENCE_CAPACITY_OVERLAYS:
+        # Literal comprehension remains exclusive evidence. Only the two
+        # interpretive/application rows are true overlays and may reuse a
+        # source carrier already drilled elsewhere in the lesson.
+        return frozenset(
+            unit.anchor.anchor_id
+            for unit in plan.units
+            if unit.anchor.kind == "evidence"
+            and unit.distinctness.get("question_category") == "comprehension"
+        )
+    return frozenset(
+        (
+            *(
+                unit.anchor.anchor_id
+                for unit in plan.units
+                if unit.anchor.kind == "evidence"
+            ),
+            *(
+                f"{unit.anchor.anchor_id.rsplit(':', 1)[0]}:{claim.resource_id}"
+                for unit in plan.units
+                for claim in unit.resource_claims
+                if unit.anchor.kind == "evidence" and claim.kind == "context_sentence"
+            ),
+        )
+    )
+
+
+def _all_source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
+    """Return source carriers without applying the read/discuss overlay exemption."""
+    return frozenset(
+        (
+            *(
+                unit.anchor.anchor_id
+                for unit in plan.units
+                if unit.anchor.kind == "evidence"
+            ),
+            *(
+                f"{unit.anchor.anchor_id.rsplit(':', 1)[0]}:{claim.resource_id}"
+                for unit in plan.units
+                for claim in unit.resource_claims
+                if unit.anchor.kind == "evidence" and claim.kind == "context_sentence"
+            ),
+        )
+    )
+
+
+def _narrative_drill_overlap_ok(choices: Sequence[_Choice]) -> bool:
+    """Keep quiz/fill-in carriers distinct in the 45-minute narrative shape."""
+    if not any(
+        (choice.plan.activity_type, _operation_for(choice.plan))
+        in EVIDENCE_CAPACITY_OVERLAYS
+        for choice in choices
+    ):
+        return True
+    quiz_plans = [choice.plan for choice in choices if choice.plan.activity_type == "quiz"]
+    fill_plans = [choice.plan for choice in choices if choice.plan.activity_type == "fill-in"]
+    return all(
+        len(_all_source_evidence_ids(quiz) & _all_source_evidence_ids(fill)) <= 2
+        for quiz in quiz_plans
+        for fill in fill_plans
+    )
 
 
 def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
@@ -368,8 +424,14 @@ def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
         if any(
             use.phase == plan.phase
             and not (
-                (use.operation.startswith("degree-") or use.operation == "anchor-comprehension")
-                and (operation.startswith("degree-") or operation == "anchor-comprehension")
+                (
+                    use.operation.startswith("degree-")
+                    or use.operation == "anchor-comprehension"
+                )
+                and (
+                    operation.startswith("degree-")
+                    or operation == "anchor-comprehension"
+                )
             )
             for use in prior_uses
         ):
@@ -387,47 +449,56 @@ def _reserve(reservation: _Reservation, plan: UnitPlan) -> _Reservation:
 
 
 def _floor_subplans(plan: UnitPlan) -> Iterator[UnitPlan]:
-    """Choose deterministic floor-sized subsets from a complete certified plan."""
+    """Choose stable substrate while preserving complete composed eight-unit kits."""
     if not plan.floor_met:
         return
     minimum_units = floor_for(plan.activity_type).minimum_units
-    if len(plan.units) < minimum_units:
-        return
-    for selected_units in _unit_subsets(plan, minimum_units):
-        subplan = _subplan(plan, selected_units)
+    # The established composed kits are eight-unit progressions. New generic
+    # narrative builders certify exactly the type floor (five or six), so they
+    # remain compact while a surplus candidate inventory cannot inflate a block.
+    selected_units = 8 if len(plan.units) >= 8 else minimum_units
+    for units in _unit_subsets(plan, selected_units):
+        subplan = _subplan(plan, units)
         if subplan.floor_met:
             yield subplan
 
 
-def _unit_subsets(plan: UnitPlan, minimum_units: int) -> Iterator[tuple[CertifiedUnit, ...]]:
+def _unit_subsets(plan: UnitPlan, selected_units: int) -> Iterator[tuple[CertifiedUnit, ...]]:
     if plan.activity_type != "text-questions":
-        yield from combinations(plan.units, minimum_units)
+        yield from combinations(plan.units, selected_units)
         return
     minima = floor_for("text-questions").category_minima
     assert minima is not None
-    required = {
-        "comprehension": minima.comprehension,
-        "explanation_inference": minima.explanation_inference,
-        "anchored_application": minima.anchored_application,
+    preferred = {
+        "comprehension": 3,
+        "explanation_inference": 3,
+        "anchored_application": 2,
     }
-    indexed_categories = {category: [] for category in required}
+    indexed_categories = {category: [] for category in preferred}
     for index, unit in enumerate(plan.units):
         category = unit.distinctness.get("question_category")
         if not isinstance(category, str) or category not in indexed_categories:
             return
         indexed_categories[category].append(index)
-    if any(len(indexed_categories[category]) < count for category, count in required.items()):
-        return
-    comprehension = indexed_categories["comprehension"]
-    explanation = indexed_categories["explanation_inference"]
-    application = indexed_categories["anchored_application"]
-    for comprehension_indexes in combinations(comprehension, required["comprehension"]):
-        for explanation_indexes in combinations(explanation, required["explanation_inference"]):
-            for application_indexes in combinations(application, required["anchored_application"]):
-                indexes = sorted(
-                    (*comprehension_indexes, *explanation_indexes, *application_indexes)
-                )
-                yield tuple(plan.units[index] for index in indexes)
+
+    if selected_units == sum(preferred.values()) and all(
+        len(indexed_categories[category]) >= count
+        for category, count in preferred.items()
+    ):
+        targets = preferred
+    else:
+        targets = None
+    for indexes in combinations(range(len(plan.units)), selected_units):
+        counts = Counter(
+            str(plan.units[index].distinctness["question_category"])
+            for index in indexes
+        )
+        if targets is not None:
+            if any(counts[category] != count for category, count in targets.items()):
+                continue
+        elif counts["comprehension"] < minima.comprehension:
+            continue
+        yield tuple(plan.units[index] for index in indexes)
 
 
 def _subplan(plan: UnitPlan, units: Sequence[CertifiedUnit]) -> UnitPlan:
@@ -484,7 +555,17 @@ def _conditional_replacements(
             if replacement.activity_type == choice.plan.activity_type:
                 continue
             for subplan in _floor_subplans(replacement):
-                if _can_reserve(remainder, subplan):
+                replacement_choices = tuple(
+                    _Choice(
+                        current.slot_plans,
+                        subplan if current_index == index else current.plan,
+                        current.substitution_reason,
+                    )
+                    for current_index, current in enumerate(choices)
+                )
+                if _can_reserve(remainder, subplan) and _narrative_drill_overlap_ok(
+                    replacement_choices
+                ):
                     replacements.append(
                         ConditionalReplacement(activity_type=subplan.activity_type, plan=subplan)
                     )
@@ -502,9 +583,9 @@ def allocate_exact_cover(
 ) -> LessonAllocation | None:
     """Allocate every scheduled slot or return ``None`` without partial output.
 
-    Candidate types retain caller-declared replacement order.  Within each
-    certified plan, combinations retain the builder's canonical unit order.
-    The recursive search therefore returns one stable exact-cover allocation.
+    Candidate types retain caller-declared replacement order and every plan
+    retains its builder-certified unit order. The recursive search therefore
+    returns one stable exact-cover allocation.
     """
     ordered = tuple(sorted(slot_plans, key=_slot_sort_key))
     if not ordered or len({item.slot.slot_id for item in ordered}) != len(ordered):
@@ -517,7 +598,7 @@ def allocate_exact_cover(
         index: int, reservation: _Reservation, choices: tuple[_Choice, ...]
     ) -> tuple[_Choice, ...] | None:
         if index == len(ordered):
-            return choices
+            return choices if _narrative_drill_overlap_ok(choices) else None
         for candidate in _candidate_choices(ordered[index]):
             for subplan in _floor_subplans(candidate.plan):
                 if _can_reserve(reservation, subplan):

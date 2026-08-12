@@ -22,13 +22,11 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # Transcription validates these fail-closed selector literals against the live
 # template and density authorities before it may copy a route aggregate here.
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.4"
-# The prompt aggregate and receipt below were transcribed from an exact-head
-# production-path qualification of the v3.15 lesson contract.
-PROMPT_SHA256: Final = "9ea11dd5b97cfb6c384751cc1d98e20fdb5cf51ff51c749dc1989f1d32f892be"
+PROMPT_SHA256: Final = "12c44aea8d079496817d870f0796887bb3802cca30a211c3e5a2d1ee2ac9bd2a"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.15"
-TEMPLATE_SHA256: Final = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
+TEMPLATE_SHA256: Final = "d32f40cb48b5a2cf102507c5aa08c4b44e57b479fbbef9cc638b2da778387380"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
-DENSITY_CONTRACT_DIGEST: Final = "45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b"
+DENSITY_CONTRACT_DIGEST: Final = "a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 QUALIFICATION_ANCHORS: Final = frozenset(
     {"b1-narrative", "b1-dialogue", "b1-informational"}
@@ -110,8 +108,8 @@ LOGICAL_MODELS: Final = (
     ),
 )
 
-# Transcribed from the merged-source qualification matrix (source commit
-# 20cfdfb4ec0ba123f4345a7475685457a03241b3) by
+# Transcribed from the candidate-source qualification matrix (source commit
+# bb4a8af07b9f7420228b150e88371758acee0e1f) by
 # ``hramatka.qualification.transcribe``; the block below is its verbatim output.
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
     QualificationReceipt(
@@ -121,11 +119,11 @@ PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
         provider_model_id="gemini-3.1-pro-high",
         registry_version="QualifiedLogicalModels.v1",
         prompt_pack_version="PromptPackInput.v3.4",
-        prompt_sha256="9ea11dd5b97cfb6c384751cc1d98e20fdb5cf51ff51c749dc1989f1d32f892be",
+        prompt_sha256="12c44aea8d079496817d870f0796887bb3802cca30a211c3e5a2d1ee2ac9bd2a",
         template_version="gemma-phase-pack.v3.15",
-        template_sha256="31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d",
+        template_sha256="d32f40cb48b5a2cf102507c5aa08c4b44e57b479fbbef9cc638b2da778387380",
         density_contract_version="TeacherReadyDensity.v3",
-        density_contract_digest="45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b",
+        density_contract_digest="a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21",
         type_kit_identity="TeacherReadyDensity.v3.unit-plan-kit.v3",
         serializer_temperature=0.0,
         provenance_tier="cli_self_reported",

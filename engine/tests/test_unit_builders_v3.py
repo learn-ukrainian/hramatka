@@ -15,12 +15,15 @@ from hramatka.engine.anchor_inventory_v3 import (
     _application_carrier_rank,
     _break_trivial_truth_pattern,
     _certified_choice_bank,
+    _contextual_choice_bank,
     _contextual_error_replacements,
+    _cross_gap_choice_banks,
     _eligible_tokens,
     _error_replacement,
     _focus_rank,
     _is_degree_token,
     _lemma_for,
+    _safe_source_proposition_carrier,
     _sentences,
     _unambiguous_content_lemma_pos,
     inventory_for_group,
@@ -103,7 +106,7 @@ def test_each_builder_returns_unavailable_for_an_insufficient_anchor(activity_ty
         "text-questions",
     ),
 )
-def test_production_inventory_units_span_four_sentences_with_at_most_two_each(
+def test_production_inventory_units_use_the_required_sentence_spread(
     activity_type: str,
 ) -> None:
     plan = _production_plan(activity_type)
@@ -115,9 +118,48 @@ def test_production_inventory_units_span_four_sentences_with_at_most_two_each(
     ]
 
     assert plan.disposition == "certified"
-    assert len(plan.units) == floor_for(activity_type).minimum_units == 8
-    assert len(set(sentence_ids)) >= 4
-    assert max(Counter(sentence_ids).values()) <= 2
+    assert len(plan.units) == floor_for(activity_type).minimum_units
+    if activity_type == "error-correction":
+        assert len(set(sentence_ids)) == len(sentence_ids)
+    else:
+        assert len(set(sentence_ids)) >= 4
+        assert max(Counter(sentence_ids).values()) <= 2
+
+
+def test_contextual_choice_bank_deduplicates_morphological_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = AnchorToken(
+        "s-1",
+        "s-1:t-2",
+        "скидається",
+        5,
+        15,
+        ({"pos": "verb", "raw": "verb:rev:imperf:pres:s:3", "lemma": "скидатися"},),
+    )
+    sentence = AnchorSentence("s-1", "Риба скидається.", (token,))
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._contextual_error_replacements",
+        lambda *_args, **_kwargs: (
+            ("скидаюсь", "subject-verb-person", "visible subject"),
+            ("скидаюся", "subject-verb-person", "visible subject"),
+            ("скидаєшся", "subject-verb-person", "visible subject"),
+        ),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._replacement_tag_sets",
+        lambda _token, form, *, pos: (
+            {"verb", "rev", "imperf", "pres", "s", "1"}
+            if form in {"скидаюсь", "скидаюся"}
+            else {"verb", "rev", "imperf", "pres", "s", "2"},
+        ),
+    )
+
+    bank = _contextual_choice_bank(sentence, token)
+
+    assert bank is not None
+    assert set(bank[0]) == {"скидається", "скидаюся", "скидаєшся"}
+    assert "скидаюсь" not in bank[0]
 
 
 def test_whitespace_only_sentence_matches_keep_dense_ids_and_cloze_capacity() -> None:
@@ -207,7 +249,197 @@ def test_generic_cloze_uses_other_gap_answers_as_lexical_distractors() -> None:
         assert answer_identity is not None
         assert all(identity is not None for identity in distractor_identities)
         assert all(identity[0] != answer_identity[0] for identity in distractor_identities)
-        assert any(identity[1] == answer_identity[1] for identity in distractor_identities)
+        assert all(identity[1] == answer_identity[1] for identity in distractor_identities)
+
+
+def test_generic_cloze_never_uses_an_atlas_synonym_as_a_distractor(monkeypatch) -> None:
+    def token(index: int, surface: str, lemma: str, pos: str) -> AnchorToken:
+        return AnchorToken(
+            sentence_id=f"s-{index}",
+            token_id=f"s-{index}:t-1",
+            surface=surface,
+            start_offset=0,
+            end_offset=len(surface),
+            vesum_parses=({"pos": pos, "raw": f"{pos}:inanim:n:v_naz", "lemma": lemma},),
+        )
+
+    tokens = (
+        token(1, "багаття", "багаття", "noun"),
+        token(2, "вогнище", "вогнище", "noun"),
+        token(3, "дерево", "дерево", "noun"),
+        token(4, "намет", "намет", "noun"),
+        token(5, "росте", "рости", "verb"),
+        token(6, "зростає", "зростати", "verb"),
+        token(7, "шумить", "шуміти", "verb"),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3.build_atlas_lookup",
+        lambda *_args, **_kwargs: {
+            "вогнище": {"synonyms": ["багаття"]},
+            "багаття": {"synonyms": []},
+        },
+    )
+
+    banks = _cross_gap_choice_banks(tokens)
+
+    assert banks is not None
+    assert "вогнище" not in banks[tokens[0].token_id][0]
+    assert "багаття" not in banks[tokens[1].token_id][0]
+
+
+def test_production_cloze_uses_context_warranted_same_lemma_forms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    tokens = tuple(
+        AnchorToken(
+            sentence_id=f"s-{index}",
+            token_id=f"s-{index}:t-1",
+            surface=surface,
+            start_offset=0,
+            end_offset=len(surface),
+            vesum_parses=({"pos": "noun", "raw": raw, "lemma": lemma},),
+        )
+        for index, (surface, lemma, raw) in enumerate(
+            (
+                ("лісі", "ліс", "noun:inanim:m:v_mis"),
+                ("саду", "сад", "noun:inanim:m:v_rod"),
+                ("домом", "дім", "noun:inanim:m:v_oru"),
+            ),
+            start=1,
+        )
+    )
+    sentences = {
+        token.sentence_id: AnchorSentence(token.sentence_id, token.surface, (token,))
+        for token in tokens
+    }
+    banks = {
+        tokens[0].token_id: (
+            ("лісі", "лісом", "ліси"),
+            (("лісом", "visible head"), ("ліси", "visible head")),
+        ),
+        tokens[1].token_id: (
+            ("саду", "садом", "сади"),
+            (("садом", "visible head"), ("сади", "visible head")),
+        ),
+        tokens[2].token_id: (
+            ("домом", "дому", "доми"),
+            (("дому", "visible head"), ("доми", "visible head")),
+        ),
+    }
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3.data.active_bundle",
+        lambda: SimpleNamespace(
+            manifest={"version": "production"},
+            atlas_db=Path("unused-atlas.db"),
+        ),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._contextual_choice_bank",
+        lambda _sentence, token: banks[token.token_id],
+    )
+
+    assert _cross_gap_choice_banks(tokens, sentences=sentences) == banks
+
+
+def test_production_cloze_keeps_contextually_certified_adjectives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    tokens = (
+        AnchorToken("s-1", "s-1:t-1", "Вони", 0, 4, ({"pos": "pron", "raw": "pron:p:3"},)),
+        AnchorToken(
+            "s-1", "s-1:t-2", "бачать", 5, 11, ({"pos": "verb", "raw": "verb:p:3"},)
+        ),
+        AnchorToken(
+            "s-1",
+            "s-1:t-3",
+            "срібну",
+            12,
+            18,
+            ({"pos": "adj", "raw": "adj:f:v_zna", "lemma": "срібний"},),
+        ),
+        AnchorToken(
+            "s-1",
+            "s-1:t-4",
+            "річку",
+            19,
+            24,
+            ({"pos": "noun", "raw": "noun:inanim:f:v_zna", "lemma": "річка"},),
+        ),
+    )
+    sentence = AnchorSentence("s-1", "Вони бачать срібну річку.", tokens)
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3.data.active_bundle",
+        lambda: SimpleNamespace(manifest={"version": "production"}),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._contextual_choice_bank",
+        lambda _sentence, token: (
+            (("срібну", "срібна", "срібної"), (("срібна", "head"), ("срібної", "head")))
+            if token.token_id == "s-1:t-3"
+            else None
+        ),
+    )
+
+    assert _eligible_tokens("cloze", sentence) == (tokens[2],)
+
+
+def test_contextual_cloze_ignores_an_unrelated_noun_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokens = (
+        AnchorToken(
+            "s-1",
+            "s-1:t-1",
+            "Срібна",
+            0,
+            6,
+            ({"pos": "adj", "raw": "adj:f:s:v_naz", "lemma": "срібний"},),
+        ),
+        AnchorToken(
+            "s-1",
+            "s-1:t-2",
+            "вода",
+            7,
+            11,
+            ({"pos": "noun", "raw": "noun:inanim:f:s:v_naz", "lemma": "вода"},),
+        ),
+        AnchorToken("s-1", "s-1:t-3", "тече", 12, 16, ()),
+        AnchorToken("s-1", "s-1:t-4", "біля", 17, 21, ()),
+        AnchorToken(
+            "s-1",
+            "s-1:t-5",
+            "річки",
+            22,
+            27,
+            ({"pos": "noun", "raw": "noun:inanim:f:s:v_rod", "lemma": "річка"},),
+        ),
+    )
+    sentence = AnchorSentence("s-1", "Срібна вода тече біля річки.", tokens)
+    source_tags = {"adj", "f", "s", "v_naz"}
+    replacement_tags = {"adj", "f", "s", "v_rod"}
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._safe_inflection_rows",
+        lambda _token: (("Срібної", "adj", source_tags, replacement_tags),),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3._replacement_tag_sets",
+        lambda _token, _form, *, pos: (replacement_tags,) if pos == "adj" else (),
+    )
+
+    rows = _contextual_error_replacements(sentence, tokens[0], one_per_mismatch_class=False)
+
+    assert rows == (
+        (
+            "Срібної",
+            "agreement-case",
+            "the mutated adjective no longer agrees with its visible source noun",
+        ),
+    )
 
 
 def test_production_text_question_explanations_have_real_causal_warrants() -> None:
@@ -219,7 +451,7 @@ def test_production_text_question_explanations_have_real_causal_warrants() -> No
     ]
 
     assert plan.disposition == "certified"
-    assert len(causal) == 3
+    assert len(causal) == 2
     assert all(
         re.search(
             r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b",
@@ -381,6 +613,32 @@ def test_cross_pos_homograph_cannot_supply_a_morphology_choice_bank(
     assert _certified_choice_bank(token) is None
 
 
+def test_choice_bank_deduplicates_equivalent_morphological_analyses(monkeypatch) -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface="щулишся",
+        start_offset=0,
+        end_offset=8,
+        vesum_parses=(
+            {"pos": "verb", "raw": "verb:rev:imperf:pres:s:2", "lemma": "щулитися"},
+        ),
+    )
+    monkeypatch.setattr(
+        "hramatka.engine.anchor_inventory_v3.verify_lemma",
+        lambda *_args, **_kwargs: (
+            {"word_form": "щулитесь", "pos": "verb", "tags": "verb:rev:imperf:pres:p:2"},
+            {"word_form": "щулитеся", "pos": "verb", "tags": "verb:rev:imperf:pres:p:2"},
+            {"word_form": "щулюся", "pos": "verb", "tags": "verb:rev:imperf:pres:s:1"},
+        ),
+    )
+
+    bank = _certified_choice_bank(token)
+
+    assert bank is not None
+    assert bank[0] == ("щулишся", "щулитесь", "щулюся")
+
+
 def test_application_carrier_prefers_transferable_action_over_natural_process() -> None:
     action_text = "Можна активно виправлятися і вчинити щось благородне."
     action = AnchorSentence(
@@ -430,6 +688,84 @@ def test_application_carrier_prefers_transferable_action_over_natural_process() 
     )
 
     assert _application_carrier_rank(action) < _application_carrier_rank(scenery)
+
+
+def test_second_person_narration_is_not_a_standalone_question_proposition() -> None:
+    text = "Сидячи на кормі, щулишся від ранкової прохолоди."
+    sentence = AnchorSentence(
+        "s-1",
+        text,
+        (
+            AnchorToken(
+                "s-1",
+                "s-1:t-1",
+                "Сидячи",
+                0,
+                len("Сидячи"),
+                ({"pos": "verb", "raw": "verb:imperf:advp", "lemma": "сидіти"},),
+            ),
+            AnchorToken(
+                "s-1",
+                "s-1:t-2",
+                "щулишся",
+                text.index("щулишся"),
+                text.index("щулишся") + len("щулишся"),
+                (
+                    {
+                        "pos": "verb",
+                        "raw": "verb:rev:imperf:pres:s:2",
+                        "lemma": "щулитися",
+                    },
+                ),
+            ),
+            AnchorToken(
+                "s-1",
+                "s-1:t-3",
+                "прохолоди",
+                text.index("прохолоди"),
+                text.index("прохолоди") + len("прохолоди"),
+                (
+                    {
+                        "pos": "noun",
+                        "raw": "noun:inanim:f:v_rod",
+                        "lemma": "прохолода",
+                    },
+                ),
+            ),
+        ),
+    )
+
+    assert not _safe_source_proposition_carrier(sentence)
+
+
+def test_anaphoric_pronoun_is_not_a_standalone_question_proposition() -> None:
+    text = "На нього дивиться ранкове сонце."
+    surfaces = (
+        (
+            "нього",
+            ({"pos": "noun", "raw": "noun:m:v_rod:pron:pers:3", "lemma": "він"},),
+        ),
+        ("дивиться", ({"pos": "verb", "raw": "verb:rev:pres:s:3", "lemma": "дивитися"},)),
+        ("ранкове", ({"pos": "adj", "raw": "adj:n:v_naz", "lemma": "ранковий"},)),
+        ("сонце", ({"pos": "noun", "raw": "noun:inanim:n:v_naz", "lemma": "сонце"},)),
+    )
+    sentence = AnchorSentence(
+        "s-1",
+        text,
+        tuple(
+            AnchorToken(
+                "s-1",
+                f"s-1:t-{index}",
+                surface,
+                text.index(surface),
+                text.index(surface) + len(surface),
+                parses,
+            )
+            for index, (surface, parses) in enumerate(surfaces, start=1)
+        ),
+    )
+
+    assert not _safe_source_proposition_carrier(sentence)
 
 
 def test_imperative_target_cannot_supply_an_ambiguous_closed_choice_bank() -> None:
@@ -761,7 +1097,7 @@ def test_mark_the_words_plan_records_exact_certified_target_token_records() -> N
     plan = build_mark_the_words(complete_inventory(), slot_id="P1-A1", phase=1)
 
     assert plan.disposition == "certified"
-    assert len(plan.certified_target_tokens) == floor_for("mark-the-words").minimum_units
+    assert len(plan.certified_target_tokens) >= floor_for("mark-the-words").minimum_units
     assert all(
         token.surface and token.end_offset > token.start_offset
         for token in plan.certified_target_tokens
@@ -834,7 +1170,9 @@ def test_mark_the_words_rejects_a_partial_or_non_verbatim_target_list() -> None:
                 request_id=request.request_id,
                 sentence_ids=request.sentence_ids,
                 criterion=request.criterion,
-                target_token_ids=request.target_token_ids[:-1],
+                target_token_ids=request.target_token_ids[
+                    : floor_for("mark-the-words").minimum_units - 1
+                ],
             ),
         ),
         writing_tasks=inventory.writing_tasks,

@@ -175,7 +175,7 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
     assert "exact one-to-one cover" in prompt
     assert 'activity contains exactly {"payload":{...},"answer_key":{...}}' in prompt
     assert "gapped_rendering_surface" in prompt
-    assert "eight questions reveal successive words" in prompt
+    assert "many questions reveal successive words" in prompt
     assert [(block.disposition, block.observed_units) for block in evaluated.blocks] == [
         ("ready", 8)
     ]
@@ -209,19 +209,19 @@ def test_ready_and_tray_are_graded_independently_and_emit_only_content_free_rece
             "phase": 1,
             "type": "cloze",
             "disposition": "tray",
-            "units": 8,
+            "units": 5,
             "floor_met": True,
             "contract_version": "TeacherReadyDensity.v3",
         },
     ]
 
 
-def test_six_unit_output_is_hidden_density_shortfall_with_no_tray_credit() -> None:
+def test_below_floor_output_is_hidden_density_shortfall_with_no_tray_credit() -> None:
     allocation = _allocation("quiz", "cloze")
     evaluated = evaluate_phase_response(
         allocation,
         phase=1,
-        payload=_payload(allocation, unit_counts={"P1-A2": 6}),
+        payload=_payload(allocation, unit_counts={"P1-A2": 4}),
         deterministic_gates=(_passing_gate,),
         raw_contract_validator=_passing_raw_contract,
         tray_slot_ids=("P1-A2",),
@@ -236,7 +236,7 @@ def test_six_unit_output_is_hidden_density_shortfall_with_no_tray_credit() -> No
         "phase": 1,
         "type": "cloze",
         "disposition": "density_shortfall",
-        "units": 6,
+        "units": 4,
         "floor_met": False,
         "contract_version": "TeacherReadyDensity.v3",
     }
@@ -257,7 +257,7 @@ def test_all_deterministic_gates_run_before_any_independent_raw_contract() -> No
     evaluated = evaluate_phase_response(
         allocation,
         phase=1,
-        payload=_payload(allocation, unit_counts={"P1-A2": 6}),
+        payload=_payload(allocation, unit_counts={"P1-A2": 4}),
         deterministic_gates=(gate,),
         raw_contract_validator=raw,
     )
@@ -407,7 +407,7 @@ def test_ready_tray_does_not_block_repair_for_another_slot() -> None:
     evaluated = evaluate_phase_with_repair(
         allocation,
         phase=1,
-        payload=_payload(allocation, unit_counts={"P1-A2": 6}),
+        payload=_payload(allocation, unit_counts={"P1-A2": 4}),
         deterministic_gates=(_passing_gate,),
         raw_contract_validator=_passing_raw_contract,
         repair_renderer=repair,
@@ -446,7 +446,7 @@ def test_missing_scheduled_slots_repair_only_the_missing_ids() -> None:
         (block.slot_id, block.disposition, block.observed_units) for block in evaluated.blocks
     ] == [
         ("P1-A1", "ready", 8),
-        ("P1-A2", "ready", 8),
+        ("P1-A2", "ready", 5),
         ("P1-A3", "ready", 8),
     ]
     assert evaluated.disposition == "teacher_ready"
@@ -745,7 +745,7 @@ def test_bounded_repairs_share_the_original_plan_and_context_then_use_exact_repl
         ("quiz", 8)
     ] * MAX_REPAIR_ROUNDS
     assert len(frozen_prompts) == 1
-    assert replacement_calls == [("cloze", 8)]
+    assert replacement_calls == [("cloze", 5)]
     assert [(block.activity_type, block.disposition) for block in evaluated.blocks] == [
         ("cloze", "ready")
     ]
@@ -847,6 +847,6 @@ def test_receipt_rejects_underfloor_ready_or_tray_dispositions() -> None:
     from hramatka.engine.density_receipt_v3 import BlockDensityReceipt
 
     with pytest.raises(ValueError, match="independently meet"):
-        BlockDensityReceipt(1, "quiz", "ready", 6, False)
+        BlockDensityReceipt(1, "quiz", "ready", 4, False)
     with pytest.raises(ValueError, match="independently meet"):
-        BlockDensityReceipt(1, "quiz", "tray", 6, False)
+        BlockDensityReceipt(1, "quiz", "tray", 4, False)

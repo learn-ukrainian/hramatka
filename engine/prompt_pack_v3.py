@@ -29,7 +29,7 @@ from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3.4"
 TEMPLATE_VERSION = "gemma-phase-pack.v3.15"
-TEMPLATE_SHA256: Final[str] = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
+TEMPLATE_SHA256: Final[str] = "d32f40cb48b5a2cf102507c5aa08c4b44e57b479fbbef9cc638b2da778387380"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
@@ -118,10 +118,13 @@ _ACTIVITY_PURPOSE_SAFE_PREFIXES: Final[dict[str, str]] = {
     "text question uses a vague application object": "vague_application_object",
     "text question pairs experience with a stative predicate": "stative_experience",
     "text question imports source second person": "source_person_import",
-    "text question restates its expected answer": "answer_leak",
     "text question consumes its source answer": "answer_restatement",
     "text question uses unresolved source deixis": "unresolved_reference",
     "text question does not center a learner application": "application_not_learner_centered",
+    "text question reduces an application to yes-no": "application_yes_no",
+    "text-question block lacks one evidence-based interpretive application": (
+        "evidence_based_application_missing"
+    ),
 }
 
 
@@ -223,9 +226,15 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
         "reject": "successively blanking one sentence or exposing another unit answer",
     },
     "cloze": {
-        "purpose": "read a coherent passage and restore context-supported forms",
-        "required": "copy marked_rendering_surface verbatim into payload.text",
-        "reject": "repeated carrier sentences, adjacent marker runs, or a mostly blank passage",
+        "purpose": "read coherent source excerpts and restore context-governed inflections",
+        "required": (
+            "copy marked_rendering_surface verbatim into payload.text and preserve each "
+            "same-lemma contextual morphology bank"
+        ),
+        "reject": (
+            "cross-lemma semantic oddities, repeated carriers, adjacent marker runs, or a "
+            "mostly blank passage"
+        ),
     },
     "fill-in": {
         "purpose": "apply one form from a certified shared bank in a complete sentence",
@@ -257,11 +266,15 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
         "purpose": "check comprehension, inference, and anchored application",
         "required": (
             "one certified question_frame prefix, one natural question clause around the "
-            "short source topic, and at least two source content lemmas left for the answer"
+            "short source topic, with at least one source content lemma left for the answer; "
+            "fact-recovery is only for fresh propositions, while anchored_application must "
+            "ask for interpretation, transfer, or a cross-sentence connection rather than "
+            "repeat literal recall"
         ),
         "reject": (
-            "generic what-the-text-says metadiscourse, a bare topic label, or asking only "
-            "for a token, preposition, conjunction, or part of speech"
+            "literal recall of an already-drilled carrier, generic what-the-text-says "
+            "metadiscourse, a bare topic label, or asking only for a token, preposition, "
+            "conjunction, or part of speech"
         ),
     },
     "mark-the-words": {
@@ -271,20 +284,32 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
     },
     "short-writing": {
         "purpose": "produce a source-grounded communicative response",
-        "required": "the exact source-proposition marker and numeric range appear in the prompt",
-        "reject": "hidden range/source, linguistic-jargon topic, or copied answer form",
+        "required": (
+            "the exact source-proposition marker and numeric range appear in the prompt, and "
+            "the learner must extrapolate, judge, explain, compare, or connect the source to "
+            "personal experience"
+        ),
+        "reject": (
+            "a summary or literal source restatement, hidden range/source, linguistic-jargon "
+            "topic, or copied answer form"
+        ),
     },
 }
 
 _CONTRASTIVE_NEGATIVES: Final[dict[str, str]] = {
-    "quiz": "REJECT: eight questions reveal successive words of one source sentence.",
+    "quiz": "REJECT: many questions reveal successive words of one source sentence.",
     "cloze": "REJECT: {1} {2} {3} is a consecutive blank run without local context.",
     "true-false": "REJECT: a false statement doubles or reorders words.",
     "match-up": "REJECT: left and right are same-root degree forms or neighboring source words.",
     "error-correction": "REJECT: all items mutate the same sentence or contain several errors.",
-    "text-questions": "REJECT: questions merely ask which token or part of speech occurs.",
+    "text-questions": (
+        "REJECT: questions merely ask which token occurs or repeat literal recall from a drill."
+    ),
     "mark-the-words": "REJECT: targets are copied into a detached word list.",
-    "short-writing": "REJECT: word range and source proposition appear only in answer guidance.",
+    "short-writing": (
+        "REJECT: word range and source proposition appear only in guidance, or the learner is "
+        "asked only to summarize the source."
+    ),
 }
 
 
@@ -371,9 +396,12 @@ def _type_kit(slot: object) -> dict[str, Any]:
     plan = slot.plan
     units = [unit.to_dict() for unit in plan.units]
     unit_ids = [unit["unit_id"] for unit in units]
-    expected_count = floor_for(plan.activity_type).minimum_units
-    if len(units) != expected_count or len(unit_ids) != len(set(unit_ids)):
-        raise PromptPackV3Error("Allocation must contain one exact floor-sized unit plan per slot.")
+    minimum_count = floor_for(plan.activity_type).minimum_units
+    expected_count = len(units)
+    if expected_count < minimum_count or len(unit_ids) != len(set(unit_ids)):
+        raise PromptPackV3Error(
+            "Allocation must contain one complete floor-met unit plan per slot."
+        )
     alignments = [
         unit.get("distinctness", {}).get("focus_alignment")
         for unit in units
@@ -645,7 +673,7 @@ def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
 
     for slot in allocation.slots:
         role = role_by_slot[slot.slot_id]
-        if role is None or len(slot.plan.units) != floor_for(slot.scheduled_type).minimum_units:
+        if role is None or len(slot.plan.units) < floor_for(slot.scheduled_type).minimum_units:
             raise PromptPackV3Error("Degree lesson plan is missing a complete registered role.")
         degree_classes = [_plan_degree_class(unit) for unit in slot.plan.units]
         sequence: list[str] = []
@@ -662,11 +690,17 @@ def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
             if max(counts.values(), default=0) > 6:
                 raise PromptPackV3Error("Degree lesson plan has a monotone answer category.")
             if role in {"degree-recognition", "degree-cloze", "degree-comparison-syntax"}:
-                if counts["positive"] < 2 or counts["comparative"] + counts["superlative"] < 4:
+                minimum_higher_forms = max(3, (len(degree_classes) + 1) // 2)
+                if (
+                    counts["positive"] < 2
+                    or counts["comparative"] + counts["superlative"]
+                    < minimum_higher_forms
+                ):
                     raise PromptPackV3Error(
                         "Degree contrast plan lacks a mixed answer distribution."
                     )
-            if role == "degree-context" and counts["superlative"] < 3:
+            minimum_superlatives = 1 if len(degree_classes) <= 5 else 3
+            if role == "degree-context" and counts["superlative"] < minimum_superlatives:
                 raise PromptPackV3Error("Guided degree production lacks superlative constructions.")
 
         for unit, degree_class in zip(slot.plan.units, degree_classes, strict=True):
@@ -825,7 +859,11 @@ def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
         "realistic-transfer",
     )
     causal_re = re.compile(r"\b(?:тому|бо|адже|оскільки|щоб|завдяки|через\s+те)\b|[:—]")
-    for expected_intent, unit in zip(expected_question_intents, text_slot.plan.units, strict=True):
+    for expected_intent, unit in zip(
+        expected_question_intents[: len(text_slot.plan.units)],
+        text_slot.plan.units,
+        strict=True,
+    ):
         actual_intent = unit.distinctness.get("question_intent")
         if actual_intent != expected_intent:
             raise PromptPackV3Error("Text-question unit lacks its certified purpose intent.")
@@ -1127,7 +1165,7 @@ def compact_schema_exemplars(type_kits: Sequence[Mapping[str, Any]]) -> list[dic
         count = kit.get("scheduled_unit_count")
         if not isinstance(activity_type, str) or not isinstance(count, int) or count < 1:
             raise PromptPackV3Error("A requested type-kit needs a positive scheduled unit count.")
-        if count != floor_for(activity_type).minimum_units:
+        if count < floor_for(activity_type).minimum_units:
             raise PromptPackV3Error("A compact exemplar must retain the locked v3 type floor.")
         if activity_type in seen:
             continue
@@ -1784,7 +1822,7 @@ def _uses_second_person(text: str, db_path: Path) -> bool:
 
 
 _QUESTION_CONTENT_POS: Final[frozenset[str]] = frozenset({"noun", "verb", "adj", "adv"})
-_QUESTION_CLOSED_SURFACE_OVERRIDES: Final[frozenset[str]] = frozenset({"при", "під"})
+_QUESTION_CLOSED_SURFACE_OVERRIDES: Final[frozenset[str]] = frozenset({"за", "при", "під"})
 
 
 def _question_content_lemma_groups(text: str, db_path: Path) -> tuple[frozenset[str], ...]:
@@ -1863,6 +1901,9 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         elif relations == {"atlas_synonym.v1"}:
             if not re.search(r"синонім|близьк.*значенн", normalized):
                 raise PromptPackV3Error("match-up instruction hides synonym relation")
+        elif relations == {"atlas_gloss.v1"}:
+            if not re.search(r"слов.*(?:значенн|тлумачен|пояснен)|визначенн", normalized):
+                raise PromptPackV3Error("match-up instruction hides word-definition relation")
         else:
             raise PromptPackV3Error("match-up board mixes or omits certified relations")
         return
@@ -1892,6 +1933,7 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         "anchored_application": re.compile(
             r"\b(?:як|де)\b.*\b(?:застосувати|використати|скористатися)\b|"
             r"\b(?:у|в)\s+якій\b.*\bситуації\b|"
+            r"\bна\s+вашу\s+думку\b|"
             r"\b(?:власному\s+досвіді|з\s+(?:вашого|твого)\s+досвіду|"
             r"подібній\s+ситуації|повсякденному\s+житті)\b|"
             r"\bчи\s+доводилося\s+(?:вам|тобі)\b",
@@ -1950,6 +1992,10 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question pairs experience with a stative predicate at items[{index}]"
             )
+        if category == "anchored_application" and re.match(r"^\s*чи\b", item, re.IGNORECASE):
+            raise PromptPackV3Error(
+                f"text question reduces an application to yes-no at items[{index}]"
+            )
         if category != "anchored_application" and _uses_second_person(item, db_path):
             raise PromptPackV3Error(f"text question imports source second person at items[{index}]")
         question_topic = item.strip()[len(matched_prefix) :].strip(" \t\n:—–-?!.«»")
@@ -1989,11 +2035,17 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question turns a contrast into one causal reason at items[{index}]"
             )
-        topic_limit = 9 if category == "anchored_application" else 4
-        if len(_UKRAINIAN_WORD_RE.findall(question_topic)) > topic_limit:
-            raise PromptPackV3Error(f"text question restates its expected answer at items[{index}]")
+        # ``цьому/цього`` is grounded when it explicitly names the visible
+        # source text or description. Other demonstratives remain rejected:
+        # phrases such as «цих книжок» still invent an unresolved set.
+        deixis_probe = re.sub(
+            r"\b(?:цьому\s+(?:описі|тексті)|цього\s+(?:опису|тексту))\b",
+            "",
+            question_topic,
+            flags=re.IGNORECASE,
+        )
         if _UNRESOLVED_QUESTION_DEIXIS_RE.search(
-            question_topic
+            deixis_probe
         ) or _UNRESOLVED_TOPIC_PRONOUN_RE.search(question_topic):
             raise PromptPackV3Error(
                 f"text question uses unresolved source deixis at items[{index}]"
@@ -2016,16 +2068,18 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             raise PromptPackV3Error(
                 f"text question is detached from its certified topic at items[{index}]"
             )
-        # One naturally reused content lemma plus a locked cognitive category
-        # grounds the question without forcing awkward two-word parroting of
-        # the source sentence.  Distinct-stem and token-retrieval gates still
-        # reject generic or degenerate question sets.
+        # A natural direct question may need several source lemmas as context
+        # even when its answer is one word. Requiring an arbitrary two-word
+        # overlap ceiling rejected valid questions such as asking how a level
+        # is marked while leaving only «фішками» for the answer. The locked
+        # category/topic and at least one unasked source lemma preserve real
+        # elicitation without forcing telegraphic Ukrainian.
         overlap_words = sum(bool(group & source_lemmas) for group in topic_groups)
         if not source_groups or overlap_words < 1:
             raise PromptPackV3Error(
                 f"text question is detached from its rendering surface at items[{index}]"
             )
-        if overlap_words > 2 or len(source_lemmas - question_lemmas) < 2:
+        if len(source_lemmas - question_lemmas) < 1:
             raise PromptPackV3Error(f"text question consumes its source answer at items[{index}]")
         source_frequency_comparative = any(
             word.casefold() in _FREQUENCY_COMPARATIVES
@@ -2068,6 +2122,23 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
                 f"text question omits its certified comparison at items[{index}]"
             )
 
+    application_items = [
+        item
+        for item, unit in zip(items, units, strict=True)
+        if isinstance(item, str)
+        and isinstance(unit, Mapping)
+        and isinstance((distinctness := unit.get("distinctness")), Mapping)
+        and distinctness.get("question_category") == "anchored_application"
+    ]
+    if len(application_items) >= 2 and not any(
+        re.search(r"\bна\s+вашу\s+думку\b", item, re.IGNORECASE)
+        and re.search(r"\b(?:детал|опис|текст)\w*\b", item, re.IGNORECASE)
+        for item in application_items
+    ):
+        raise PromptPackV3Error(
+            "text-question block lacks one evidence-based interpretive application"
+        )
+
 
 def validate_visible_writing_constraints(
     activity: Mapping[str, Any], kit: Mapping[str, Any]
@@ -2104,6 +2175,20 @@ def validate_visible_writing_constraints(
         ):
             raise PromptPackV3Error(
                 "short-writing prompt does not ask for communicative source use"
+            )
+        if re.search(
+            r"\b(?:перекаж\w*|переказ\w*|підсум\w*|відтвори\w*|"
+            r"стисл\w*\s+виклад\w*)\b",
+            normalized,
+        ):
+            raise PromptPackV3Error("short-writing prompt asks for literal source restatement")
+        if not re.search(
+            r"\b(?:власн\w*|сво\w*|ваш\w*|думк\w*|враженн\w*|досвід\w*|"
+            r"уяв\w*|оцін\w*|обґрунт\w*|порівн\w*|поясн\w*)\b",
+            normalized,
+        ):
+            raise PromptPackV3Error(
+                "short-writing prompt does not require synthesis or personal application"
             )
         return
     if kit.get("focus_alignment") == "degree-writing":
@@ -2190,6 +2275,30 @@ def _lemma_set(form: str, db_path: Path) -> set[str]:
 def _pos_set(form: str, db_path: Path) -> set[str]:
     """Return the set of VESUM POS tags for ``form``."""
     return {pos for pos in (match.get("pos") for match in _vesum_matches(form, db_path)) if pos}
+
+
+def _cloze_morph_frames(form: str, db_path: Path) -> set[tuple[str, ...]]:
+    """Return case/number or finite-verb frames relevant to cloze elimination."""
+    frames: set[tuple[str, ...]] = set()
+    for match in _vesum_matches(form, db_path):
+        pos = match.get("pos")
+        tags = set(str(match.get("tags", "")).split(":"))
+        if pos == "noun":
+            case = next((tag for tag in tags if tag.startswith("v_")), None)
+            number = "p" if "p" in tags else "s" if tags & {"s", "m", "f", "n"} else None
+            if case and number:
+                frames.add((pos, case, number))
+        elif pos == "verb":
+            if "inf" in tags:
+                frames.add((pos, "inf"))
+                continue
+            tense = next((tag for tag in ("pres", "futr", "past") if tag in tags), None)
+            number = next((tag for tag in ("s", "p") if tag in tags), None)
+            person = next((tag for tag in ("1", "2", "3") if tag in tags), None)
+            gender = next((tag for tag in ("m", "f", "n") if tag in tags), None)
+            if tense and number and (person or tense == "past"):
+                frames.add((pos, tense, number, person or gender or ""))
+    return frames
 
 
 def _personal_pronoun_frames(form: str, db_path: Path) -> set[tuple[str, str]]:
@@ -2584,10 +2693,10 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             len(options) != len(choice_bank) or set(options) != set(choice_bank)
         ):
             raise PromptPackV3Error(f"{label} does not preserve its exact certified choice bank")
-        if frame_family == "cross-gap-lexical.v1":
+        if frame_family in {"cross-gap-lexical.v1", "contextual-morphology-cloze.v3"}:
             if not isinstance(choice_bank, list) or set(options) != set(choice_bank):
                 raise PromptPackV3Error(
-                    f"{label} does not preserve its exact cross-gap lexical bank"
+                    f"{label} does not preserve its exact certified cloze bank"
                 )
             all_units = kit.get("certified_units", ())
             other_gap_answers = {
@@ -2600,16 +2709,28 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                 and isinstance(forms[0], str)
             }
             distractors = [option for option in options if option != answer]
-            if not distractors or not set(distractors) <= other_gap_answers:
-                raise PromptPackV3Error(
-                    f"{label} contains a distractor that is not another certified gap answer"
-                )
+            if not distractors:
+                raise PromptPackV3Error(f"{label} contains no lexical distractors")
+            if frame_family == "cross-gap-lexical.v1":
+                if not set(distractors) <= other_gap_answers:
+                    raise PromptPackV3Error(
+                        f"{label} contains a distractor that is not another certified gap answer"
+                    )
+            else:
+                if any(
+                    not (answer_lemmas & _lemma_set(option, db_path))
+                    for option in distractors
+                ):
+                    raise PromptPackV3Error(
+                        f"{label} contains a cross-lemma semantic distractor"
+                    )
+                return
             if any(answer_lemmas & _lemma_set(option, db_path) for option in distractors):
                 raise PromptPackV3Error(f"{label} cross-gap bank repeats the answer lemma")
             answer_pos = _pos_set(answer, db_path)
-            if not any(answer_pos & _pos_set(option, db_path) for option in distractors):
+            if not all(answer_pos & _pos_set(option, db_path) for option in distractors):
                 raise PromptPackV3Error(
-                    f"{label} cross-gap bank lacks a same-POS lexical distractor"
+                    f"{label} cross-gap bank contains a cross-POS distractor"
                 )
             return
         if shared_degree_bank:
@@ -2916,10 +3037,10 @@ def validate_exemplar_contamination(
 
 
 def six_item_negative_exemplar() -> dict[str, Any]:
-    """The one intentionally-invalid six-unit example required by the contract."""
+    """Return one intentionally under-floor list example for compatibility."""
     return {
-        "negative_example": "REJECT: six serialized units cannot satisfy a list activity floor.",
-        "serialized_units": [{"unit_id": f"<reject-unit-{index}>"} for index in range(1, 7)],
+        "negative_example": "REJECT: four serialized units cannot satisfy a list activity floor.",
+        "serialized_units": [{"unit_id": f"<reject-unit-{index}>"} for index in range(1, 5)],
     }
 
 
@@ -2971,7 +3092,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             "=== COMPACT ONE-ITEM SCHEMA SHAPES FOR REQUESTED TYPES ONLY ===\n```json\n"
             + _canonical(exemplars)
             + "\n```",
-            "=== ONE SIX-ITEM NEGATIVE EXEMPLAR (reject) ===\n```json\n"
+            "=== ONE UNDER-FLOOR NEGATIVE EXEMPLAR (reject) ===\n```json\n"
             + _canonical(six_item_negative_exemplar())
             + "\n```",
             "=== CONTRASTIVE PEDAGOGY FAILURES (reject) ===\n```json\n"

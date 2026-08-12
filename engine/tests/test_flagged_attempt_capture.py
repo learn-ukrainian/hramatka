@@ -86,7 +86,7 @@ def test_attempted_record_is_forbidden_on_accepted_dispositions() -> None:
 
 def test_shortfall_captures_this_attempts_record_and_ready_does_not() -> None:
     allocation = _allocation("quiz", "cloze")
-    payload = _payload(allocation, unit_counts={"P1-A2": 6})
+    payload = _payload(allocation, unit_counts={"P1-A2": 4})
 
     evaluated = evaluate_phase_response(
         allocation,
@@ -212,7 +212,7 @@ def test_renderer_failure_rounds_stack_errors_but_keep_the_shape_valid_record() 
     evaluated = evaluate_phase_with_repair(
         allocation,
         phase=1,
-        payload=_payload(allocation, unit_counts={"P1-A1": 6}),
+        payload=_payload(allocation, unit_counts={"P1-A1": 4}),
         deterministic_gates=(_passing_gate,),
         raw_contract_validator=_passing_raw_contract,
         repair_renderer=always_raising_repair,

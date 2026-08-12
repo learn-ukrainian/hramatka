@@ -19,8 +19,9 @@ from hramatka.contracts import PILOT_ACTIVITY_TYPES
 from hramatka.engine import density_receipt_v3, teacher_ready_density_v3, unit_plan_v3
 from hramatka.engine.density_receipt_v3 import BlockDensityReceipt
 from hramatka.engine.teacher_ready_density_v3 import (
+    EVIDENCE_CAPACITY_OVERLAYS,
     FLOOR_TABLE,
-    TEXT_QUESTION_3_3_2,
+    TEXT_QUESTION_COMPREHENSION_FLOOR,
     PhaseShape,
     TextQuestionBudget,
     floor_for,
@@ -36,6 +37,12 @@ from hramatka.engine.unit_plan_v3 import (
     certify_unit_plan,
     normalize_distinctness_key,
 )
+
+
+def test_source_comprehension_is_the_only_semantic_evidence_overlay() -> None:
+    assert EVIDENCE_CAPACITY_OVERLAYS == frozenset(
+        {("text-questions", "source-comprehension")}
+    )
 
 
 def _distinctness(activity_type: str, index: int) -> dict[str, object]:
@@ -95,17 +102,20 @@ def test_floor_table_is_the_complete_immutable_v3_authority() -> None:
     assert teacher_ready_density_v3.TEACHER_READY_DENSITY_VERSION == "TeacherReadyDensity.v3"
     assert set(FLOOR_TABLE) == set(PILOT_ACTIVITY_TYPES)
     assert {activity_type: floor.minimum_units for activity_type, floor in FLOOR_TABLE.items()} == {
-        "true-false": 8,
-        "quiz": 8,
-        "cloze": 8,
-        "match-up": 8,
-        "fill-in": 8,
-        "error-correction": 8,
-        "text-questions": 8,
-        "mark-the-words": 8,
+        "true-false": 5,
+        "quiz": 5,
+        "cloze": 5,
+        "match-up": 6,
+        "fill-in": 5,
+        "error-correction": 5,
+        "text-questions": 5,
+        "mark-the-words": 5,
         "short-writing": 1,
     }
-    assert FLOOR_TABLE["text-questions"].category_minima == TEXT_QUESTION_3_3_2
+    assert (
+        FLOOR_TABLE["text-questions"].category_minima
+        == TEXT_QUESTION_COMPREHENSION_FLOOR
+    )
     assert FLOOR_TABLE["short-writing"].minimum_registered_constraints == 2
     assert FLOOR_TABLE["error-correction"].certified_errors_per_unit == 1
     with pytest.raises(TypeError):
@@ -144,7 +154,10 @@ def test_incomplete_or_constraintless_builder_result_is_unavailable_before_gener
         slot_id="P1-A1",
         phase=1,
         activity_type="quiz",
-        units=tuple(_unit("quiz", index) for index in range(7)),
+        units=tuple(
+            _unit("quiz", index)
+            for index in range(floor_for("quiz").minimum_units - 1)
+        ),
     )
     writing_without_constraints = certify_unit_plan(
         slot_id="P1-A2",
@@ -250,7 +263,7 @@ def test_receipt_has_only_the_locked_content_free_shape_and_consumes_floor_autho
         "phase": 2,
         "type": "true-false",
         "disposition": "ready",
-        "units": 8,
+        "units": floor_for("true-false").minimum_units,
         "floor_met": True,
         "contract_version": "TeacherReadyDensity.v3",
     }
@@ -267,16 +280,16 @@ def test_45_minute_lone_phase_three_rejects_text_questions_without_full_budget()
     explicitly_budgeted = PhaseShape(
         duration_minutes=45,
         phase_slots={1: 3, 2: 4, 3: 1},
-        text_question_budget_by_phase={3: TextQuestionBudget(3, 3, 2)},
+        text_question_budget_by_phase={3: TextQuestionBudget(3, 2, 0)},
     )
     assert explicitly_budgeted.allows(3, "text-questions") is True
-    assert explicitly_budgeted.text_question_budget_by_phase[3] == TEXT_QUESTION_3_3_2
+    assert explicitly_budgeted.text_question_budget_by_phase[3] == TextQuestionBudget(3, 2, 0)
 
 
 def test_density_floor_fingerprint_tracks_the_locked_v3_authority() -> None:
     assert (
         teacher_ready_density_v3.density_floor_fingerprint()
-        == "45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b"
+        == "a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21"
     )
 
 

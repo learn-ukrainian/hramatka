@@ -69,6 +69,10 @@ the justified recommendation that follows from it. The instruction must name
 the priorities and recommended variants. Copy every pair exactly. Bare-form
 matching, noun-label lookup, vague «Знайдіть пару» wording, and a
 positive→comparative or comparative→superlative adjacency board are forbidden.
+For a generic atlas_gloss.v1 match-up board, match each exact source lemma to
+its exact certified Ukrainian definition. The instruction must explicitly say
+that learners are matching words from the text to their meanings or
+definitions. Never call this board a synonym or antonym exercise.
 
 For mark-the-words, merge each distinct certified rendering_surface once in
 first-occurrence order, separated by a newline. target_words and the answer key
@@ -83,12 +87,27 @@ set. Copy every option from it exactly once, changing only order. The attached
 exclusion_warrants are internal proof and must never appear in learner copy.
 Never invent, omit, or substitute an option.
 
-For a generic cloze row whose frame_family is cross-gap-lexical.v1, every
-distractor is the correct answer to another gap in the same passage. Copy that
-three-item bank exactly. At least one distractor shares the answer's part of
-speech, but all three choices have distinct source lemmas. Use the passage
-context to choose meaning; never replace this lexical contrast with inflected
-forms of one lemma.
+Quiz and fill-in are language-form practice, not substitutes for reading
+comprehension. Text-questions are the lesson's mandatory source-comprehension
+block. Ask literal fact-recovery questions only for certified fresh source
+propositions. A unit categorized as anchored_application represents a carrier
+already used by language practice: ask the learner to interpret, transfer, or
+connect its meaning across the text or to lived experience, never to repeat the
+same literal recall in another format. Never turn questions into word-form
+selection, token labels, or grammar terminology. When a source-comprehension
+block contains two anchored_application units, make them cognitively distinct:
+one may connect a concrete source event to the learner's experience, while one
+must begin «На вашу думку» and ask for an interpretation supported by details,
+the description, or the text. Both must be open questions that require more
+than yes or no; never emit «Чи доводилося вам...?».
+
+For a generic cloze row whose frame_family is
+contextual-morphology-cloze.v3, every option is a certified form of the same
+source lemma. The complete visible sentence dependency makes exactly one form
+correct. Copy that three-item bank exactly. Never replace it with unrelated
+source words: semantic absurdity is not legitimate difficulty.
+Use passage meaning; never rewrite the bank or turn the item into an ending
+test.
 
 Closed-class targets occur only in cloze, fill-in, quiz, or error-correction.
 A closed-class quiz target uses one bare ___ marker at the answer position.
@@ -125,12 +144,11 @@ Text questions must use both the certified question_category and
 distinctness.question_intent, begin with one complete prefix copied from that
 unit's question_frame.allowed_prefixes, and then form one short, natural clause
 around that unit's certified question_topic. Naturally inflect the topic when
-the clause requires it, but preserve its lemma. The text after a comprehension
-or explanation prefix has at most four Ukrainian content words; an application
-topic has at most nine. Ask for the answer; never state, paraphrase, quote, or
-explain the private answer_span inside the question. Reuse one or two source
-content words after the certified prefix and leave at least two other source
-content lemmas for the learner to supply. Each visible word counts once even
+the clause requires it, but preserve its lemma. Ask for the answer; never
+state, paraphrase, quote, or explain the private answer_span inside the
+question. Reuse enough source content words after the certified prefix to make
+the question natural, but leave at least one source content lemma for the
+learner to supply. Each visible word counts once even
 when it has more than one possible morphological analysis.
 A fact-recovery row asks a direct content question with a grammatical
 interrogative clause. It must make the missing action, state, participant,
@@ -217,10 +235,12 @@ source carrier or private answer span;
 contrast_causality_malformed means the question incorrectly makes both sides of
 an `X, але Y` contrast one cause: use `попри X, через Y`, `хоча X, бо Y`, or a
 non-causal experience question instead;
-answer_leak means shorten the text after the certified prefix to one topic and
-remove the fact, reason, or example that the learner must supply;
-answer_restatement means keep no more than two source content words after the
-certified prefix and leave at least two source content lemmas for the answer.
+evidence_based_application_missing means that, among the two application
+questions, one must begin «На вашу думку» and explicitly ask which detail of
+the text or description supports the interpretation. Name «текст», «опис», or
+«деталь» directly; do not use an unresolved pointer such as bare «там»;
+answer_restatement means the question copied the complete source proposition;
+leave at least one source content lemma for the learner to supply.
 Preserve a complete source relation: keep its explicit participant or topic
 and its predicate, and omit only the answer-bearing circumstance. Never repair
 answer restatement by deleting surrounding context until only an
@@ -244,15 +264,18 @@ item=N is a zero-based item index. Repair metadata lists these same values in
 target_item_indexes. For an item-local repair, follow the final TARGETED
 RESPONSE CONTRACT: return only repair_items for those indexes, not the full
 slot. The evaluator inserts those questions into the immutable prior activity
-and revalidates all eight questions together.
+and revalidates the complete scheduled question block together.
 
 For short-writing, every certified constraint marker is a learner requirement:
 include it verbatim in payload.prompt. Do not hide a source proposition or word
 range only in answer_key.guidance. A generic writing prompt must use the exact
 `Спирайтеся на цю думку з тексту: «...»` marker, ask for a communicative
 explanation, comparison, description, judgment, or personal response, and show
-the numeric word range. Never make a source lemma, lexeme, morphology term,
-infinitive, case, or part-of-speech label the learner's topic.
+the numeric word range. Require extrapolation, judgment, explanation,
+comparison, or a connection to the learner's experience; a summary, retelling,
+or literal restatement of the source is not a writing task. Never make a source
+lemma, lexeme, morphology term, infinitive, case, or part-of-speech label the
+learner's topic.
 When focus_alignment is degree-writing, use the unit's rendering_surface
 verbatim as the complete factual scenario: ask the learner to compare its
 alternatives, choose or justify one, and use щонайменше 3 adjectives in the

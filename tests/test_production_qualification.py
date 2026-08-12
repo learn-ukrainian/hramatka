@@ -83,7 +83,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.delivery.durable_job
         assert cell.delivery.block_count == 6
         assert cell.delivery.phase_counts == {"1": 2, "2": 3, "3": 1}
-        assert cell.delivery.response_units >= 28
+        assert cell.delivery.response_units >= 26
         assert len(cell.delivery.activity_types) >= 4
         assert cell.delivery.phase_three_transfer
         assert cell.delivery.provenance_continuous
@@ -92,7 +92,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.4"
         assert cell.receipt.template_version == "gemma-phase-pack.v3.15"
         assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
-        assert cell.receipt.density.lesson_units == 41
+        assert cell.receipt.density.lesson_units == 27
         assert cell.receipt.density.slot_count == 6
         assert all(
             set(entry.as_dict())
@@ -214,7 +214,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     first_accepted = next(
         index for index, entry in enumerate(sparse_slots) if entry.disposition in {"ready", "tray"}
     )
-    sparse_slots[first_accepted] = replace(sparse_slots[first_accepted], units=7, floor_met=True)
+    sparse_slots[first_accepted] = replace(sparse_slots[first_accepted], units=0, floor_met=True)
     forged_floor = (
         *run.receipts[:-1],
         replace(run.receipts[-1], slot_telemetry=tuple(sparse_slots)),

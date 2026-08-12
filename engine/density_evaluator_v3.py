@@ -787,9 +787,9 @@ def _validate_exact_plan(plan: UnitPlan, slot_id: str, phase: int, activity_type
         or plan.phase != phase
         or plan.activity_type != activity_type
         or not plan.floor_met
-        or len(plan.units) != floor.minimum_units
+        or len(plan.units) < floor.minimum_units
     ):
-        raise ValueError("Repair and replacement plans must be exact floor-sized allocated plans.")
+        raise ValueError("Repair and replacement plans must meet their registered type floor.")
 
 
 def _repair_record(value: object, slot_id: str) -> object:

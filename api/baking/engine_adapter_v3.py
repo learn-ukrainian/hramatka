@@ -217,7 +217,7 @@ def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]
             "quiz",
             "cloze",
             "match-up",
-            "true-false",
+            "error-correction",
             "text-questions",
             "short-writing",
         ),
@@ -260,16 +260,14 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
     replacement_policy = {
         "match-up": ("quiz", "fill-in"),
     }
-    if duration == 45 and focus is None:
-        # Ordinary narrative sources do not reliably contain the three closed
-        # relation witnesses required by the 3+3+2 text-question board.  Keep
-        # that board when it is certifiable, but preserve a complete grounded
-        # lesson through an already-registered closed activity when it is not.
-        # Prefer a distinct fill-in board when match-up itself is unavailable;
-        # reserve the additional quiz occurrence for the relation-scarce
-        # text-question slot.
-        replacement_policy["match-up"] = ("fill-in", "quiz")
-        replacement_policy["text-questions"] = ("quiz",)
+    if duration == 45 and not _is_degree_focus(focus):
+        # A narrative lesson must retain a real source-comprehension block.
+        # Match-up remains optional because an ordinary story need not contain
+        # eight safe lexical relations; use one contextual fill-in board when
+        # that substrate is absent. Error-correction keeps the same fallback
+        # when the source lacks eight unambiguous local error frames.
+        replacement_policy["match-up"] = ("fill-in",)
+        replacement_policy["error-correction"] = ("fill-in",)
     index = 0
     for phase, count in sorted(shape.phase_slots.items()):
         for position in range(1, count + 1):
@@ -298,16 +296,6 @@ def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., 
         occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
     for slot in slots:
         for activity_type in slot.replacement_types:
-            if (
-                source_comprehension_45
-                and slot.requested_type == "text-questions"
-                and activity_type == "quiz"
-            ):
-                # The match-up slot can use fill-in while this slot uses the
-                # one spare quiz group. Exact cover still forbids both slots
-                # from consuming that quiz group together.
-                occurrence_by_slot_type[(slot.slot_id, activity_type)] = 2
-                continue
             occurrences[activity_type] += 1
             occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
 
@@ -321,7 +309,24 @@ def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., 
                 activity_type=activity_type,
                 group_number=occurrence,
             )
-            return BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
+            plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
+            if (
+                source_comprehension_45
+                and activity_type == "fill-in"
+                and occurrence > 1
+                and not plan.floor_met
+            ):
+                # Match-up and error-correction alternatives are mutually
+                # exclusive with their own primaries. A short narrative may
+                # certify only one spare fill-in board; let either slot claim
+                # it, while exact cover still forbids both from sharing it.
+                selected = inventory_for_group(
+                    inventory,  # type: ignore[arg-type]
+                    activity_type=activity_type,
+                    group_number=1,
+                )
+                plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
+            return plan
 
         return build
 
@@ -335,18 +340,10 @@ def _inventory_candidate_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]
 
 def _inventory_replacement_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]:
     """Return the optional replacement lane after all primary occurrences."""
-    source_comprehension_45 = tuple(slot.requested_type for slot in slots) == _scheduled_types(
-        45, None
-    )
     return tuple(
         activity_type
         for slot in slots
         for activity_type in slot.replacement_types
-        if not (
-            source_comprehension_45
-            and slot.requested_type == "text-questions"
-            and activity_type == "quiz"
-        )
     )
 
 

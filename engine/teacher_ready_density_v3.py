@@ -30,6 +30,13 @@ COGNITIVE_OPERATION: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
+# Source comprehension may share a carrier only as a genuine interpretive or
+# transfer task. Literal fact recovery is reserved for undrilled propositions;
+# the final inventory labels any fallback overlap as anchored application.
+EVIDENCE_CAPACITY_OVERLAYS: Final[frozenset[tuple[str, str]]] = frozenset(
+    {("text-questions", "source-comprehension")}
+)
+
 
 @dataclass(frozen=True)
 class TextQuestionBudget:
@@ -49,6 +56,7 @@ class TextQuestionBudget:
 
 
 TEXT_QUESTION_3_3_2: Final = TextQuestionBudget(3, 3, 2)
+TEXT_QUESTION_COMPREHENSION_FLOOR: Final = TextQuestionBudget(3, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -69,26 +77,32 @@ class ActivityFloor:
             raise ValueError("An activity floor must require at least one unit.")
         if self.minimum_registered_constraints < 0 or self.certified_errors_per_unit < 0:
             raise ValueError("Floor subrequirements cannot be negative.")
-        if self.category_minima is not None and self.category_minima.total != self.minimum_units:
-            raise ValueError("Text-question category minima must equal the activity floor.")
+        if (
+            self.category_minima is not None
+            and self.category_minima.total > self.minimum_units
+        ):
+            raise ValueError("Text-question category minima cannot exceed the activity floor.")
 
 
 # The one v3 per-type density authority.  Do not copy these values into future
 # builders, evaluators, receipt code, or phase planners: import ``floor_for``.
 FLOOR_TABLE: Final[Mapping[str, ActivityFloor]] = MappingProxyType(
     {
-        "true-false": ActivityFloor("true-false", 8, "distinct_statement"),
-        "quiz": ActivityFloor("quiz", 8, "distinct_question"),
-        "cloze": ActivityFloor("cloze", 8, "distinct_gap_position"),
-        "match-up": ActivityFloor("match-up", 8, "unique_atlas_pass_pair"),
-        "fill-in": ActivityFloor("fill-in", 8, "distinct_sentence_item"),
+        "true-false": ActivityFloor("true-false", 5, "distinct_statement"),
+        "quiz": ActivityFloor("quiz", 5, "distinct_question"),
+        "cloze": ActivityFloor("cloze", 5, "distinct_gap_position"),
+        "match-up": ActivityFloor("match-up", 6, "unique_atlas_pass_pair"),
+        "fill-in": ActivityFloor("fill-in", 5, "distinct_sentence_item"),
         "error-correction": ActivityFloor(
-            "error-correction", 8, "distinct_sentence_item", certified_errors_per_unit=1
+            "error-correction", 5, "distinct_sentence_item", certified_errors_per_unit=1
         ),
         "text-questions": ActivityFloor(
-            "text-questions", 8, "distinct_question", category_minima=TEXT_QUESTION_3_3_2
+            "text-questions",
+            5,
+            "distinct_question",
+            category_minima=TEXT_QUESTION_COMPREHENSION_FLOOR,
         ),
-        "mark-the-words": ActivityFloor("mark-the-words", 8, "unique_certified_target_token"),
+        "mark-the-words": ActivityFloor("mark-the-words", 5, "unique_certified_target_token"),
         "short-writing": ActivityFloor(
             "short-writing", 1, "productive_task", minimum_registered_constraints=2
         ),
@@ -136,14 +150,23 @@ class PhaseShape:
 
         The special 45-minute restriction is intentionally table-driven.  The
         single phase-3 slot may not carry text-questions unless the same table
-        expressly reserves the full, unsplittable 3+3+2 composition.
+        expressly reserves a complete floor-sized question block.
         """
         floor_for(activity_type)
         if phase not in self.phase_slots:
             return False
         if self.duration_minutes != 45 or phase != 3 or activity_type != "text-questions":
             return True
-        return self.text_question_budget_by_phase.get(phase) == TEXT_QUESTION_3_3_2
+        budget = self.text_question_budget_by_phase.get(phase)
+        minima = floor_for("text-questions").category_minima
+        return (
+            budget is not None
+            and minima is not None
+            and budget.total == floor_for("text-questions").minimum_units
+            and budget.comprehension >= minima.comprehension
+            and budget.explanation_inference >= minima.explanation_inference
+            and budget.anchored_application >= minima.anchored_application
+        )
 
 
 # These are v3 contract values only; they intentionally do not alter the live
