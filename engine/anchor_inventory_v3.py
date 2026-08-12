@@ -3658,10 +3658,11 @@ def inventory_from_anchor(
             )
 
     if source_comprehension_45 and primary_state is not None:
+        source_comprehension_state = replacement_state or primary_state
         joint = _joint_source_comprehension(
             sentences,
-            sentence_group_uses=primary_state[1],
-            sentence_phase_uses=primary_state[3],
+            sentence_group_uses=source_comprehension_state[1],
+            sentence_phase_uses=source_comprehension_state[3],
         )
         if joint is not None:
             question_candidates, prebuilt_true_false_facts = joint
@@ -3679,11 +3680,10 @@ def inventory_from_anchor(
             group_focus_modes["text-questions"].append(None)
             prebuilt_candidates[("text-questions", 1)] = question_candidates
         else:
-            true_false_state = replacement_state or primary_state
             prebuilt_true_false_facts = _balanced_true_false(
                 sentences,
-                sentence_group_uses=true_false_state[1],
-                sentence_phase_uses=true_false_state[3],
+                sentence_group_uses=source_comprehension_state[1],
+                sentence_phase_uses=source_comprehension_state[3],
             )
         if prebuilt_true_false_facts:
             true_false_tokens = tuple(
