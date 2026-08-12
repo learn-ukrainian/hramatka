@@ -8,7 +8,9 @@ immutable substrate.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -19,6 +21,7 @@ from .prompt_pack_v3 import (
     PromptPackV3Error,
     RawContractValidator,
     RuleNamedRejection,
+    RuleNamedRejectionGroup,
     build_phase_context,
     validate_slot_deterministic_gates,
     validate_slot_raw_contract,
@@ -265,6 +268,7 @@ class RepairRequest:
     plan: UnitPlan
     prompt_context: Mapping[str, Any]
     prior_errors: tuple[SlotError, ...]
+    prior_record: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         _validate_exact_plan(self.plan, self.slot_id, self.phase, self.activity_type)
@@ -276,6 +280,20 @@ class RepairRequest:
                 "a pinned v3.2 context digest."
             )
         object.__setattr__(self, "prior_errors", tuple(self.prior_errors))
+        if self.prior_record is not None:
+            object.__setattr__(self, "prior_record", _freeze_context(self.prior_record))
+
+    @property
+    def target_item_indexes(self) -> tuple[int, ...]:
+        """Return item indexes only when every current error is item-local."""
+        return _target_item_indexes(self.prior_errors)
+
+    @property
+    def prior_record_copy(self) -> dict[str, Any] | None:
+        """Return a mutable copy without exposing the evaluator's baseline."""
+        if self.prior_record is None:
+            return None
+        return _thaw_context(self.prior_record)
 
 
 @dataclass(frozen=True)
@@ -378,7 +396,7 @@ def evaluate_phase_with_repair(
 ) -> RepairEvaluation:
     """Run at most max_repair_rounds same-plan repairs, then use only certified replacements.
 
-    Both repair rounds are passed the same frozen prompt context object and the
+    Every repair round is passed the same frozen prompt context object and the
     same original ``UnitPlan`` object for a slot.  The callback's output is
     regraded against that unchanged type-kit, so it cannot alter type, units,
     floors, or evidence.  Conditional replacements are the allocator's only
@@ -423,9 +441,11 @@ def evaluate_phase_with_repair(
                 plan=slot_by_id[slot_id].plan,
                 prompt_context=frozen_context,
                 prior_errors=previous.errors,
+                prior_record=previous.attempted_record,
             )
             try:
-                records.append(_repair_record(repair_renderer(request), slot_id))
+                rendered = _repair_record(repair_renderer(request), slot_id)
+                records.append(_merge_targeted_text_question_repair(previous, rendered, request))
             except Exception:  # renderer failures are recoverable and slot-local
                 renderer_errors[slot_id] = (_rule_error(slot_id, "repair_renderer"),)
         attempt = _evaluate_payload(
@@ -520,6 +540,11 @@ def _evaluate_payload(
                 record, type_kits[slot_id], deterministic_gates=deterministic_gates
             )
             gated[slot_id] = record
+        except RuleNamedRejectionGroup as error:
+            errors_by_slot.setdefault(slot_id, []).extend(
+                _rule_error(slot_id, rejection.rule_key, suffix=rejection.suffix)
+                for rejection in error.rejections
+            )
         except RuleNamedRejection as error:
             errors_by_slot.setdefault(slot_id, []).append(
                 _rule_error(slot_id, error.rule_key, suffix=error.suffix)
@@ -730,6 +755,17 @@ def _freeze_context(context: Mapping[str, Any]) -> Mapping[str, Any]:
     return freeze(context)  # type: ignore[return-value]
 
 
+def _thaw_context(context: Mapping[str, Any]) -> dict[str, Any]:
+    def thaw(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {str(key): thaw(item) for key, item in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            return [thaw(item) for item in value]
+        return value
+
+    return thaw(context)  # type: ignore[return-value]
+
+
 def _validate_exact_plan(plan: UnitPlan, slot_id: str, phase: int, activity_type: str) -> None:
     floor = floor_for(activity_type)
     if (
@@ -749,6 +785,106 @@ def _repair_record(value: object, slot_id: str) -> object:
             raise ValueError("repair renderer must return one slot record or a one-slot payload")
         return slots[0]
     return value
+
+
+_ITEM_ERROR_INDEX_RE = re.compile(r":item=(\d+)$")
+
+
+def _target_item_indexes(errors: Sequence[SlotError]) -> tuple[int, ...]:
+    """Extract a closed item-repair target only from wholly item-local errors."""
+    if not errors:
+        return ()
+    indexes: set[int] = set()
+    for error in errors:
+        match = _ITEM_ERROR_INDEX_RE.search(error.cause)
+        if match is None:
+            return ()
+        indexes.add(int(match.group(1)))
+    return tuple(sorted(indexes))
+
+
+def _merge_targeted_text_question_repair(
+    previous: BlockEvaluation,
+    rendered: object,
+    request: RepairRequest,
+) -> object:
+    """Keep valid questions immutable while replacing only rejected indexes.
+
+    Text-question gates report stable ``item=N`` suffixes.  The provider still
+    returns a complete slot for ordinary contract validation, but once a
+    shape-valid attempt reaches an item-local failure, unrelated model edits
+    must not regress the other seven questions during the next repair round.
+    """
+    indexes = request.target_item_indexes
+    prior = previous.attempted_record
+    if request.activity_type != "text-questions" or not indexes:
+        return rendered
+    if not isinstance(prior, Mapping) or not isinstance(rendered, Mapping):
+        raise ValueError("targeted text-question repair needs two shape-valid records")
+    if set(rendered) == {"repair_items"}:
+        repair_items = rendered.get("repair_items")
+        if not isinstance(repair_items, list) or len(repair_items) != len(indexes):
+            raise ValueError("targeted text-question repair has an invalid patch shape")
+        replacements: dict[int, str] = {}
+        for item in repair_items:
+            if (
+                not isinstance(item, Mapping)
+                or set(item) != {"index", "question"}
+                or not isinstance(item.get("index"), int)
+                or not isinstance(item.get("question"), str)
+                or not item["question"].strip()
+            ):
+                raise ValueError("targeted text-question repair has an invalid item patch")
+            replacements[item["index"]] = item["question"]
+        if tuple(sorted(replacements)) != indexes:
+            raise ValueError("targeted text-question repair changed its requested indexes")
+        merged = deepcopy(dict(prior))
+        merged_activity = merged.get("activity")
+        merged_payload = (
+            merged_activity.get("payload") if isinstance(merged_activity, Mapping) else None
+        )
+        merged_items = (
+            merged_payload.get("items") if isinstance(merged_payload, Mapping) else None
+        )
+        if not isinstance(merged_items, list) or any(
+            index >= len(merged_items) for index in indexes
+        ):
+            raise ValueError("targeted text-question repair changed the item-list shape")
+        for index, question in replacements.items():
+            merged_items[index] = question
+        return merged
+    if (
+        set(prior) != set(rendered)
+        or prior.get("slot_id") != rendered.get("slot_id")
+        or prior.get("type") != rendered.get("type")
+        or prior.get("serialized_units") != rendered.get("serialized_units")
+    ):
+        raise ValueError("targeted text-question repair changed immutable slot fields")
+    prior_activity = prior.get("activity")
+    rendered_activity = rendered.get("activity")
+    if not isinstance(prior_activity, Mapping) or not isinstance(rendered_activity, Mapping):
+        raise ValueError("targeted text-question repair changed the activity shape")
+    prior_payload = prior_activity.get("payload")
+    rendered_payload = rendered_activity.get("payload")
+    if not isinstance(prior_payload, Mapping) or not isinstance(rendered_payload, Mapping):
+        raise ValueError("targeted text-question repair changed the payload shape")
+    prior_items = prior_payload.get("items")
+    rendered_items = rendered_payload.get("items")
+    if (
+        not isinstance(prior_items, list)
+        or not isinstance(rendered_items, list)
+        or len(prior_items) != len(rendered_items)
+        or any(index >= len(prior_items) for index in indexes)
+    ):
+        raise ValueError("targeted text-question repair changed the item-list shape")
+
+    merged = deepcopy(dict(prior))
+    merged_items = merged["activity"]["payload"]["items"]
+    for index in indexes:
+        merged_items[index] = deepcopy(rendered_items[index])
+    if dict(rendered) != merged:
+        raise ValueError("targeted text-question repair changed a non-target field")
+    return merged
 
 
 def _with_errors(
@@ -811,7 +947,16 @@ def _try_replacements(
     attempts: list[PhaseEvaluation] = []
     if replacement_renderer is None:
         return None, tuple(attempts)
-    for replacement in slot.conditional_replacements:
+    replacements = slot.conditional_replacements
+    if slot.scheduled_type == "text-questions":
+        # Item-local repairs are intentionally capped as a latency/cost circuit
+        # breaker.  Give an exhausted open-question slot one clean same-plan
+        # regeneration before considering allocator-certified substitutions.
+        replacements = (
+            ConditionalReplacement(slot.scheduled_type, slot.plan),
+            *replacements,
+        )
+    for replacement in replacements:
         replacement_slot = _replacement_slot(slot, replacement)
         replacement_allocation = LessonAllocation(
             paragraph_ids=allocation.paragraph_ids, slots=(replacement_slot,)

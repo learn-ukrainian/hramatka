@@ -12,6 +12,7 @@ from hramatka.engine.anchor_inventory_v3 import (
     DEGREE_WRITING_LEMMAS,
     DEGREE_WRITING_SCENARIO,
     DEGREE_WRITING_WARRANTS,
+    _application_carrier_rank,
     _break_trivial_truth_pattern,
     _certified_choice_bank,
     _contextual_error_replacements,
@@ -344,6 +345,91 @@ def test_closed_class_homograph_cannot_supply_a_content_choice_bank() -> None:
     )
 
     assert _certified_choice_bank(token) is None
+
+
+@pytest.mark.parametrize(
+    ("surface", "parses"),
+    (
+        (
+            "зараз",
+            (
+                {"pos": "adv", "raw": "adv:pron:dem", "lemma": "зараз"},
+                {"pos": "noun", "raw": "noun:inanim:p:v_rod", "lemma": "зараза"},
+            ),
+        ),
+        (
+            "кілька",
+            (
+                {"pos": "numr", "raw": "numr:p:v_naz:pron:ind", "lemma": "кілька"},
+                {"pos": "noun", "raw": "noun:anim:f:v_naz", "lemma": "кілька"},
+            ),
+        ),
+    ),
+)
+def test_cross_pos_homograph_cannot_supply_a_morphology_choice_bank(
+    surface: str, parses
+) -> None:
+    token = AnchorToken(
+        sentence_id="s-1",
+        token_id="s-1:t-1",
+        surface=surface,
+        start_offset=0,
+        end_offset=len(surface),
+        vesum_parses=parses,
+    )
+
+    assert _certified_choice_bank(token) is None
+
+
+def test_application_carrier_prefers_transferable_action_over_natural_process() -> None:
+    action_text = "Можна активно виправлятися і вчинити щось благородне."
+    action = AnchorSentence(
+        "s-1",
+        action_text,
+        (
+            AnchorToken(
+                "s-1",
+                "s-1:t-1",
+                "виправлятися",
+                action_text.index("виправлятися"),
+                action_text.index("виправлятися") + len("виправлятися"),
+                ({"pos": "verb", "raw": "verb:imperf:inf", "lemma": "виправлятися"},),
+            ),
+            AnchorToken(
+                "s-1",
+                "s-1:t-2",
+                "вчинити",
+                action_text.index("вчинити"),
+                action_text.index("вчинити") + len("вчинити"),
+                ({"pos": "verb", "raw": "verb:perf:inf", "lemma": "вчинити"},),
+            ),
+        ),
+    )
+    scenery_text = "Сонце засяє за кілька хвилин."
+    scenery = AnchorSentence(
+        "s-2",
+        scenery_text,
+        (
+            AnchorToken(
+                "s-2",
+                "s-2:t-1",
+                "Сонце",
+                0,
+                5,
+                ({"pos": "noun", "raw": "noun:inanim:n:v_naz", "lemma": "сонце"},),
+            ),
+            AnchorToken(
+                "s-2",
+                "s-2:t-2",
+                "хвилин",
+                scenery_text.index("хвилин"),
+                scenery_text.index("хвилин") + len("хвилин"),
+                ({"pos": "noun", "raw": "noun:inanim:p:v_rod", "lemma": "хвилина"},),
+            ),
+        ),
+    )
+
+    assert _application_carrier_rank(action) < _application_carrier_rank(scenery)
 
 
 def test_imperative_target_cannot_supply_an_ambiguous_closed_choice_bank() -> None:

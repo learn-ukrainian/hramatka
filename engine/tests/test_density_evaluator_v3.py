@@ -9,6 +9,7 @@ import pytest
 from hramatka.api.baking.engine_adapter_v3 import _activity_gate, _raw_activity_contract
 from hramatka.engine.density_evaluator_v3 import (
     CAUSE_VOCABULARY,
+    MAX_REPAIR_ROUNDS,
     _replacement_slot,
     evaluate_phase_response,
     evaluate_phase_with_repair,
@@ -19,6 +20,7 @@ from hramatka.engine.lesson_capacity_v3 import (
     LessonAllocation,
 )
 from hramatka.engine.prompt_pack_v3 import (
+    PromptPackV3Error,
     build_phase_context,
     render_phase_prompt,
     validate_gap_construction,
@@ -450,7 +452,160 @@ def test_missing_scheduled_slots_repair_only_the_missing_ids() -> None:
     assert evaluated.disposition == "teacher_ready"
 
 
-def test_missing_scheduled_slot_exhausts_both_repairs_then_fails_closed() -> None:
+def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
+    allocation = _allocation("text-questions")
+    context = build_phase_context(allocation, phase=1)
+    record = _record_from_context(context)
+    original_items = [f"Добре питання {index}?" for index in range(8)]
+    original_items[3] = "Погане питання 3?"
+    original_items[6] = "Погане питання 6?"
+    record["activity"] = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": original_items,
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+    repair_targets: list[tuple[int, ...]] = []
+
+    def validate_activity_purpose(activity: dict, _kit: dict) -> None:
+        for index, item in enumerate(activity["payload"]["items"]):
+            if item.startswith("Погане"):
+                raise PromptPackV3Error(
+                    f"text question consumes its source answer at items[{index}]"
+                )
+
+    def repair(request: object) -> dict:
+        repair_targets.append(request.target_item_indexes)
+        return {
+            "repair_items": [
+                {"index": index, "question": f"Виправлене питання {index}?"}
+                for index in request.target_item_indexes
+            ]
+        }
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload={"slots": [record]},
+        deterministic_gates=(validate_activity_purpose,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+    )
+
+    assert repair_targets == [(3, 6)]
+    assert evaluated.disposition == "teacher_ready"
+    assert evaluated.blocks[0].activity["payload"]["items"] == [
+        "Добре питання 0?",
+        "Добре питання 1?",
+        "Добре питання 2?",
+        "Виправлене питання 3?",
+        "Добре питання 4?",
+        "Добре питання 5?",
+        "Виправлене питання 6?",
+        "Добре питання 7?",
+    ]
+
+
+def test_targeted_text_question_repair_discards_non_target_mutations() -> None:
+    allocation = _allocation("text-questions")
+    context = build_phase_context(allocation, phase=1)
+    record = _record_from_context(context)
+    record["activity"] = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Погане питання 0?", *[f"Добре питання {index}?" for index in range(1, 8)]],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+    repair_targets: list[tuple[int, ...]] = []
+
+    def validate_activity_purpose(activity: dict, _kit: dict) -> None:
+        for index, item in enumerate(activity["payload"]["items"]):
+            if item.startswith("Погане"):
+                raise PromptPackV3Error(
+                    f"text question consumes its source answer at items[{index}]"
+                )
+
+    def repair(request: object) -> dict:
+        repair_targets.append(request.target_item_indexes)
+        if request.target_item_indexes:
+            candidate = request.prior_record_copy
+            assert candidate is not None
+            candidate["activity"]["payload"]["items"][0] = "Виправлене питання 0?"
+            candidate["activity"]["payload"]["items"][1] = "Погане повернення 1?"
+            return candidate
+        clean = deepcopy(record)
+        clean["activity"]["payload"]["items"][0] = "Виправлене питання 0?"
+        return clean
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload={"slots": [record]},
+        deterministic_gates=(validate_activity_purpose,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+    )
+
+    assert repair_targets == [(0,), ()]
+    assert evaluated.disposition == "teacher_ready"
+    assert evaluated.blocks[0].activity["payload"]["items"][1] == "Добре питання 1?"
+
+
+def test_exhausted_text_question_repairs_get_one_clean_same_plan_regeneration() -> None:
+    allocation = _allocation("text-questions")
+    context = build_phase_context(allocation, phase=1)
+    record = _record_from_context(context)
+    record["activity"] = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Погане питання 0?", *[f"Добре питання {index}?" for index in range(1, 8)]],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+    repair_rounds: list[int] = []
+    replacement_plans: list[object] = []
+
+    def validate_activity_purpose(activity: dict, _kit: dict) -> None:
+        for index, item in enumerate(activity["payload"]["items"]):
+            if item.startswith("Погане"):
+                raise PromptPackV3Error(
+                    f"text question consumes its source answer at items[{index}]"
+                )
+
+    def repair(request: object) -> dict:
+        repair_rounds.append(request.round)
+        candidate = request.prior_record_copy
+        assert candidate is not None
+        return candidate
+
+    def replacement(request: object) -> dict:
+        replacement_plans.append(request.plan)
+        clean = deepcopy(record)
+        clean["activity"]["payload"]["items"][0] = "Виправлене питання 0?"
+        return clean
+
+    evaluated = evaluate_phase_with_repair(
+        allocation,
+        phase=1,
+        payload={"slots": [record]},
+        deterministic_gates=(validate_activity_purpose,),
+        raw_contract_validator=_passing_raw_contract,
+        repair_renderer=repair,
+        replacement_renderer=replacement,
+    )
+
+    assert repair_rounds == list(range(1, MAX_REPAIR_ROUNDS + 1))
+    assert replacement_plans == [allocation.slots[0].plan]
+    assert evaluated.disposition == "teacher_ready"
+    assert evaluated.blocks[0].activity_type == "text-questions"
+
+
+def test_missing_scheduled_slot_exhausts_bounded_repairs_then_fails_closed() -> None:
     allocation = _allocation("quiz", "cloze")
     subset = _payload(allocation)
     subset["slots"] = [record for record in subset["slots"] if record["slot_id"] == "P1-A1"]
@@ -469,7 +624,10 @@ def test_missing_scheduled_slot_exhausts_both_repairs_then_fails_closed() -> Non
         repair_renderer=repair,
     )
 
-    assert repair_calls == [(1, "P1-A2"), (2, "P1-A2"), (3, "P1-A2"), (4, "P1-A2")]
+    assert repair_calls == [
+        (repair_round, "P1-A2")
+        for repair_round in range(1, MAX_REPAIR_ROUNDS + 1)
+    ]
     assert [(block.slot_id, block.disposition) for block in evaluated.blocks] == [
         ("P1-A1", "ready"),
         ("P1-A2", "dropped"),
@@ -533,7 +691,7 @@ def test_duplicate_scheduled_records_remain_fail_closed() -> None:
     ]
 
 
-def test_two_repairs_share_the_original_plan_and_context_then_use_exact_replacement() -> None:
+def test_bounded_repairs_share_the_original_plan_and_context_then_use_exact_replacement() -> None:
     allocation = _allocation("quiz", replacements=("cloze",))
     calls: list[tuple[int, int, int, str, int]] = []
     replacement_calls: list[tuple[str, int]] = []
@@ -571,15 +729,12 @@ def test_two_repairs_share_the_original_plan_and_context_then_use_exact_replacem
         replacement_renderer=replacement,
     )
 
-    assert [call[0] for call in calls] == [1, 2, 3, 4]
+    assert [call[0] for call in calls] == list(range(1, MAX_REPAIR_ROUNDS + 1))
     assert calls[0][1] == calls[1][1] == calls[2][1] == calls[3][1]
     assert calls[0][2] == calls[1][2] == calls[2][2] == calls[3][2]
     assert [(call[3], call[4]) for call in calls] == [
-        ("quiz", 8),
-        ("quiz", 8),
-        ("quiz", 8),
-        ("quiz", 8),
-    ]
+        ("quiz", 8)
+    ] * MAX_REPAIR_ROUNDS
     assert len(frozen_prompts) == 1
     assert replacement_calls == [("cloze", 8)]
     assert [(block.activity_type, block.disposition) for block in evaluated.blocks] == [
@@ -620,7 +775,7 @@ def test_repair_renderer_failure_keeps_the_second_round_and_replacement_path() -
         replacement_renderer=replacement,
     )
 
-    assert repair_calls == [1, 2, 3, 4]
+    assert repair_calls == list(range(1, MAX_REPAIR_ROUNDS + 1))
     assert replacement_calls == ["cloze"]
     assert evaluated.blocks[0].activity_type == "cloze"
     assert evaluated.blocks[0].disposition == "ready"
@@ -664,7 +819,7 @@ def test_repair_exhaustion_without_a_certified_replacement_drops_only_its_slot()
         repair_renderer=repair,
     )
 
-    assert calls == [1, 2, 3, 4]
+    assert calls == list(range(1, MAX_REPAIR_ROUNDS + 1))
     assert evaluated.disposition == "recoverable_draft"
     assert evaluated.blocks[0].disposition == "dropped"
     assert evaluated.blocks[0].receipt is not None

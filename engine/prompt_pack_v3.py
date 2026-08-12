@@ -12,6 +12,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Final
 
@@ -27,12 +28,12 @@ from .serializer_policy import serializer_temperature
 from .teacher_ready_density_v3 import floor_for
 
 PROMPT_PACK_VERSION = "PromptPackInput.v3.4"
-TEMPLATE_VERSION = "gemma-phase-pack.v3.13"
-TEMPLATE_SHA256: Final[str] = "f78ea917f779f9e04bcf93846a353807bf0b0a04bd16f0a8e2e2bb010eaa3b22"
+TEMPLATE_VERSION = "gemma-phase-pack.v3.15"
+TEMPLATE_SHA256: Final[str] = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
 TYPE_KIT_IDENTITY = "TeacherReadyDensity.v3.unit-plan-kit.v3"
 
 _TRUE_FALSE_NARRATION_RE = re.compile(r"\(\s*(?:true|false)\s*\)", re.IGNORECASE)
-_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.13.md"
+_TEMPLATE_PATH = Path(__file__).with_name("prompts") / "gemma-phase-pack.v3.15.md"
 
 # Literal strings that appear only in the compact synthetic schema shapes.  Their
 # presence in a model response means the serializer copied the exemplar instead
@@ -80,6 +81,16 @@ class RuleNamedRejection(PromptPackV3Error):
         super().__init__(rule_key if suffix is None else f"{rule_key}: {suffix}")
 
 
+class RuleNamedRejectionGroup(PromptPackV3Error):
+    """Several independently repairable item-local failures from one gate."""
+
+    def __init__(self, rejections: Sequence[RuleNamedRejection]) -> None:
+        self.rejections = tuple(rejections)
+        if len(self.rejections) < 2:
+            raise ValueError("A rejection group needs at least two item-local failures.")
+        super().__init__("; ".join(str(rejection) for rejection in self.rejections))
+
+
 DeterministicGate = Callable[[Mapping[str, Any], Mapping[str, Any]], None]
 RawContractValidator = Callable[[Mapping[str, Any]], None]
 
@@ -98,12 +109,19 @@ _ACTIVITY_PURPOSE_SAFE_PREFIXES: Final[dict[str, str]] = {
     "text question asks for a token label instead of meaning": "token_retrieval",
     "text question ignores its certified question category": "question_category_mismatch",
     "text question ignores its certified purpose intent": "question_intent_mismatch",
+    "text question is detached from its certified topic": "certified_topic_missing",
     "text question is detached from its rendering surface": "source_lemma_overlap_missing",
     "text question omits its certified comparison": "degree_comparison_missing",
     "text question turns a contrast into one causal reason": "contrast_causality_malformed",
+    "text question uses generic text-summary metadiscourse": "generic_metadiscourse",
+    "text question uses a generic modal relation": "generic_modal_relation",
+    "text question uses a vague application object": "vague_application_object",
+    "text question pairs experience with a stative predicate": "stative_experience",
+    "text question imports source second person": "source_person_import",
     "text question restates its expected answer": "answer_leak",
     "text question consumes its source answer": "answer_restatement",
     "text question uses unresolved source deixis": "unresolved_reference",
+    "text question does not center a learner application": "application_not_learner_centered",
 }
 
 
@@ -124,6 +142,55 @@ def _activity_purpose_safe_suffix(error: Exception) -> str | None:
     return code if index is None else f"{code}:item={index.group(1)}"
 
 
+def _activity_purpose_item_rejections(
+    gate: DeterministicGate,
+    activity: Mapping[str, Any],
+    type_kit: Mapping[str, Any],
+) -> tuple[RuleNamedRejection, ...]:
+    """Collect every independent text-question failure without weakening the gate."""
+    payload = activity.get("payload")
+    units = type_kit.get("certified_units")
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("type") != "text-questions"
+        or not isinstance(payload.get("items"), list)
+        or not isinstance(units, list)
+        or len(payload["items"]) != len(units)
+    ):
+        return ()
+    narrowed_activity = deepcopy(dict(activity))
+    narrowed_kit = deepcopy(dict(type_kit))
+    narrowed_payload = narrowed_activity.get("payload")
+    narrowed_units = narrowed_kit.get("certified_units")
+    if not isinstance(narrowed_payload, dict) or not isinstance(narrowed_units, list):
+        return ()
+    narrowed_items = narrowed_payload.get("items")
+    if not isinstance(narrowed_items, list):
+        return ()
+    original_indexes = list(range(len(narrowed_items)))
+    rejections: list[RuleNamedRejection] = []
+    while narrowed_items:
+        try:
+            gate(narrowed_activity, narrowed_kit)
+            break
+        except PromptPackV3Error as error:
+            suffix = _activity_purpose_safe_suffix(error)
+            item_match = re.search(r":item=(\d+)$", suffix or "")
+            if item_match is None:
+                raise
+            relative_index = int(item_match.group(1))
+            if relative_index >= len(original_indexes):
+                raise
+            code = suffix[: item_match.start()]
+            original_index = original_indexes.pop(relative_index)
+            rejections.append(
+                RuleNamedRejection("activity_purpose", suffix=f"{code}:item={original_index}")
+            )
+            del narrowed_items[relative_index]
+            del narrowed_units[relative_index]
+    return tuple(rejections)
+
+
 _CLOZE_MARKER_RE = re.compile(r"\{[1-9]\d*\}")
 _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+")
 _EXPLICIT_CAUSAL_SURFACE_RE = re.compile(
@@ -135,13 +202,19 @@ _SOURCE_RELATION_INTENTS: Final[frozenset[str]] = frozenset(
         "causal-clause.v1",
         "purpose-clause.v1",
         "temporal-clause.v1",
+        "definition-content.v1",
         "licensed-vid-cause.v1",
     }
 )
+_FREQUENCY_SCALE_FORMS: Final[frozenset[str]] = frozenset(
+    {"рідше", "частіше", "рідко", "часто"}
+)
+_FREQUENCY_COMPARATIVES: Final[frozenset[str]] = frozenset({"рідше", "частіше"})
 _UNRESOLVED_QUESTION_DEIXIS_RE = re.compile(
     r"\b(?:цих|цьому|цього)\b",
     re.IGNORECASE,
 )
+_UNRESOLVED_TOPIC_PRONOUN_RE = re.compile(r"^(?:він|вона|вони|воно)\b", re.IGNORECASE)
 
 _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
     "quiz": {
@@ -183,10 +256,13 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
     "text-questions": {
         "purpose": "check comprehension, inference, and anchored application",
         "required": (
-            "one certified question_frame prefix, one short source topic, and at least two "
-            "source content lemmas left for the answer"
+            "one certified question_frame prefix, one natural question clause around the "
+            "short source topic, and at least two source content lemmas left for the answer"
         ),
-        "reject": "asking only for a token, preposition, conjunction, or part of speech",
+        "reject": (
+            "generic what-the-text-says metadiscourse, a bare topic label, or asking only "
+            "for a token, preposition, conjunction, or part of speech"
+        ),
     },
     "mark-the-words": {
         "purpose": "notice every certified comparison-degree form in the certified source excerpts",
@@ -256,8 +332,7 @@ def _marked_cloze_rendering_surface(units: Sequence[Mapping[str, Any]]) -> str:
         spans.append((start, end, index))
     ordered_spans = sorted(spans)
     if any(
-        left[1] > right[0]
-        for left, right in zip(ordered_spans, ordered_spans[1:], strict=False)
+        left[1] > right[0] for left, right in zip(ordered_spans, ordered_spans[1:], strict=False)
     ):
         raise PromptPackV3Error("Cloze gap spans overlap.")
     marked = carrier_passage
@@ -343,19 +418,13 @@ def _type_kit(slot: object) -> dict[str, Any]:
         for unit in units:
             distinctness = unit.get("distinctness")
             category = (
-                distinctness.get("question_category")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
             )
             intent = (
-                distinctness.get("question_intent")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_intent") if isinstance(distinctness, Mapping) else None
             )
             frame = (
-                distinctness.get("question_frame")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
             )
             prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
             if (
@@ -378,9 +447,7 @@ def _type_kit(slot: object) -> dict[str, Any]:
                 surface = unit.get("rendering_surface")
                 forms = unit.get("allowed_forms")
                 start = (
-                    answer_span.get("start_offset")
-                    if isinstance(answer_span, Mapping)
-                    else None
+                    answer_span.get("start_offset") if isinstance(answer_span, Mapping) else None
                 )
                 end = answer_span.get("end_offset") if isinstance(answer_span, Mapping) else None
                 text = answer_span.get("text") if isinstance(answer_span, Mapping) else None
@@ -790,12 +857,10 @@ def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
         re.IGNORECASE,
     )
     context_cue_count = sum(
-        bool(contextual_cues.search(unit.rendering_surface or ""))
-        for unit in contextual.plan.units
+        bool(contextual_cues.search(unit.rendering_surface or "")) for unit in contextual.plan.units
     )
     has_transformation_suffix = any(
-        re.search(r"\([^)]*\)\s*$", unit.rendering_surface or "")
-        for unit in contextual.plan.units
+        re.search(r"\([^)]*\)\s*$", unit.rendering_surface or "") for unit in contextual.plan.units
     )
     if context_cue_count < 6 or has_transformation_suffix:
         raise PromptPackV3Error(
@@ -1185,7 +1250,7 @@ def _synthetic_items(activity_type: str, count: int) -> list[dict[str, Any]]:
 
 
 def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any]:
-    """Return a concrete, non-copyable compact activity shape."""
+    """Return a compact activity shape whose learner values must be composed."""
     items = _synthetic_items(activity_type, count)
     if activity_type == "quiz":
         return {
@@ -1255,13 +1320,18 @@ def _synthetic_activity_example(activity_type: str, count: int) -> dict[str, Any
             "answer_key": {"items": [item["correction"] for item in items]},
         }
     if activity_type == "text-questions":
+        # Text questions are the only open-ended list activity in this pack.
+        # A concrete synthetic question or guidance string is unusually easy
+        # for a serializer to copy verbatim, even though the template forbids
+        # exemplar reuse.  Keep the JSON shape but leave its learner-facing
+        # values blank so the model has no competing question content.
         return {
             "payload": {
                 "type": "text-questions",
-                "instruction": "Дайте відповідь.",
-                "items": [item["question"] for item in items],
+                "instruction": "",
+                "items": ["" for _item in items],
             },
-            "answer_key": {"guidance": "Синтетична вказівка."},
+            "answer_key": {"guidance": ""},
         }
     if activity_type == "short-writing":
         item = items[0]
@@ -1677,6 +1747,71 @@ _TOKEN_RETRIEVAL_QUESTION_RE = re.compile(
     r"\b(?:яке|який|яка|які)\s+(?:слово|прийменник|сполучник|займенник|частина\s+мови)\b",
     re.IGNORECASE,
 )
+_GENERIC_TEXT_SUMMARY_QUESTION_RE = re.compile(
+    r"^(?:що\s+(?:в\s+тексті\s+сказано|ми\s+дізнаємося)|"
+    r"яку\s+інформацію\s+подає\s+текст)\b",
+    re.IGNORECASE,
+)
+_GENERIC_MODAL_RELATION_RE = re.compile(
+    r"^(?:навіщо|чому)\s+(?:потрібно|треба|слід|варто)\b",
+    re.IGNORECASE,
+)
+_VAGUE_APPLICATION_OBJECT_RE = re.compile(
+    r"\bщось\s+(?:подібн\w*|схож\w*|таке)\b",
+    re.IGNORECASE,
+)
+_STATIVE_EXPERIENCE_RE = re.compile(
+    r"\bдоводилося\s+(?:вам|тобі)\b[^?!.]{0,80}\bзнати\b",
+    re.IGNORECASE,
+)
+_SECOND_PERSON_SURFACES: Final[frozenset[str]] = frozenset(
+    {"ти", "тебе", "тобі", "тобою", "ви", "вас", "вам", "вами"}
+)
+
+
+def _uses_second_person(text: str, db_path: Path) -> bool:
+    for word in _UKRAINIAN_WORD_RE.findall(text):
+        if word.casefold() in _SECOND_PERSON_SURFACES:
+            return True
+        matches = _vesum_matches(word, db_path)
+        if matches and all(
+            match.get("pos") == "verb"
+            and re.search(r":(?:s|p):2(?:$|:)", str(match.get("tags", ""))) is not None
+            for match in matches
+        ):
+            return True
+    return False
+
+
+_QUESTION_CONTENT_POS: Final[frozenset[str]] = frozenset({"noun", "verb", "adj", "adv"})
+_QUESTION_CLOSED_SURFACE_OVERRIDES: Final[frozenset[str]] = frozenset({"при", "під"})
+
+
+def _question_content_lemma_groups(text: str, db_path: Path) -> tuple[frozenset[str], ...]:
+    """Return at most one semantic-overlap vote per visible word.
+
+    VESUM intentionally exposes every analysis. Counting each analysis as a
+    separate word made ``при`` consume the lemma ``перти`` and made ``гори``
+    consume both ``гора`` and ``горіти``. Group content analyses by visible
+    surface. Only the two observed high-confidence prepositions override an
+    ambiguous content parse; words such as ``коло`` and ``край`` retain their
+    possible content reading and still receive at most one vote.
+    """
+    groups: list[frozenset[str]] = []
+    for word in _UKRAINIAN_WORD_RE.findall(text):
+        if word.casefold() in _QUESTION_CLOSED_SURFACE_OVERRIDES:
+            continue
+        matches = _vesum_matches(word, db_path)
+        lemmas = frozenset(
+            lemma.casefold()
+            for match in matches
+            if match.get("pos") in _QUESTION_CONTENT_POS
+            and isinstance((lemma := match.get("lemma")), str)
+            and lemma.strip()
+        )
+        if lemmas:
+            groups.append(lemmas)
+    return tuple(groups)
 
 
 def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any]) -> None:
@@ -1741,14 +1876,17 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         return
     category_patterns = {
         "comprehension": re.compile(
-            r"\b(?:що|хто|де|коли|скільки|який|яка|які|яке)\b", re.IGNORECASE
+            r"\b(?:що|хто|де|коли|куди|звідки|як|скільки|чи|"
+            r"який|яка|які|яке|якого|яку|яким|якими)\b",
+            re.IGNORECASE,
         ),
         "explanation_inference": re.compile(
-            r"\b(?:чому|навіщо|коли)\b|з\s+якої\s+причини|"
+            r"\b(?:чому|навіщо|коли|доки)\b|як\s+довго|з\s+якої\s+причини|"
             r"з\s+якою\s+метою|до\s+якого\s+моменту|"
             r"від\s+чого|через\s+що|"
             r"що\s+(?:це\s+)?(?:пояснює|показує|свідчить)|"
-            r"який\s+висновок|як\s+(?:ви|можна)\s+(?:пояснити|поясните|зрозуміти)",
+            r"який\s+висновок|як\s+(?:ви|можна)\s+(?:пояснити|поясните|зрозуміти)|"
+            r"у\s+чому\s+полягає",
             re.IGNORECASE,
         ),
         "anchored_application": re.compile(
@@ -1792,15 +1930,43 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             ),
             None,
         )
-        if (
-            not isinstance(prefixes, list)
-            or not prefixes
-            or matched_prefix is None
-        ):
+        if not isinstance(prefixes, list) or not prefixes or matched_prefix is None:
             raise PromptPackV3Error(
                 f"text question ignores its certified question category at items[{index}]"
             )
+        if category == "comprehension" and _GENERIC_TEXT_SUMMARY_QUESTION_RE.search(item):
+            raise PromptPackV3Error(
+                f"text question uses generic text-summary metadiscourse at items[{index}]"
+            )
+        if category == "explanation_inference" and _GENERIC_MODAL_RELATION_RE.search(item):
+            raise PromptPackV3Error(
+                f"text question uses a generic modal relation at items[{index}]"
+            )
+        if category == "anchored_application" and _VAGUE_APPLICATION_OBJECT_RE.search(item):
+            raise PromptPackV3Error(
+                f"text question uses a vague application object at items[{index}]"
+            )
+        if category == "anchored_application" and _STATIVE_EXPERIENCE_RE.search(item):
+            raise PromptPackV3Error(
+                f"text question pairs experience with a stative predicate at items[{index}]"
+            )
+        if category != "anchored_application" and _uses_second_person(item, db_path):
+            raise PromptPackV3Error(f"text question imports source second person at items[{index}]")
         question_topic = item.strip()[len(matched_prefix) :].strip(" \t\n:—–-?!.«»")
+        if (
+            category == "anchored_application"
+            and matched_prefix.casefold() == "з вашого досвіду"
+            and re.match(
+                r"^(?:як|де|коли)\s+"
+                r"(?!(?:ви|вам|вас|ваш\w*|можна|варто|слід|краще|найкраще|"
+                r"зазвичай|часто)\b)",
+                question_topic.lstrip(", "),
+                re.IGNORECASE,
+            )
+        ):
+            raise PromptPackV3Error(
+                f"text question does not center a learner application at items[{index}]"
+            )
         pattern = category_patterns.get(category)
         if pattern is None or not pattern.search(item):
             raise PromptPackV3Error(
@@ -1825,39 +1991,27 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             )
         topic_limit = 9 if category == "anchored_application" else 4
         if len(_UKRAINIAN_WORD_RE.findall(question_topic)) > topic_limit:
-            raise PromptPackV3Error(
-                f"text question restates its expected answer at items[{index}]"
-            )
-        if _UNRESOLVED_QUESTION_DEIXIS_RE.search(question_topic):
+            raise PromptPackV3Error(f"text question restates its expected answer at items[{index}]")
+        if _UNRESOLVED_QUESTION_DEIXIS_RE.search(
+            question_topic
+        ) or _UNRESOLVED_TOPIC_PRONOUN_RE.search(question_topic):
             raise PromptPackV3Error(
                 f"text question uses unresolved source deixis at items[{index}]"
             )
-        source_lemmas = {
-            lemma
-            for word in _UKRAINIAN_WORD_RE.findall(rendering_surface or "")
-            for match in _vesum_matches(word, db_path)
-            if match.get("pos") in {"noun", "verb", "adj", "adv"}
-            and isinstance((lemma := match.get("lemma")), str)
-        }
-        question_lemmas = {
-            lemma
-            for word in _UKRAINIAN_WORD_RE.findall(item)
-            for match in _vesum_matches(word, db_path)
-            if match.get("pos") in {"noun", "verb", "adj", "adv"}
-            and isinstance((lemma := match.get("lemma")), str)
-        }
+        source_groups = _question_content_lemma_groups(rendering_surface or "", db_path)
+        question_groups = _question_content_lemma_groups(item, db_path)
+        topic_groups = _question_content_lemma_groups(question_topic, db_path)
+        source_lemmas = set().union(*source_groups) if source_groups else set()
+        question_lemmas = set().union(*question_groups) if question_groups else set()
         certified_topic = (
-            distinctness.get("question_topic")
-            if isinstance(distinctness, Mapping)
-            else None
+            distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
         )
         certified_topic_lemma = (
             certified_topic.get("lemma") if isinstance(certified_topic, Mapping) else None
         )
         if (
             isinstance(certified_topic_lemma, str)
-            and certified_topic_lemma.casefold()
-            not in {lemma.casefold() for lemma in question_lemmas}
+            and certified_topic_lemma.casefold() not in question_lemmas
         ):
             raise PromptPackV3Error(
                 f"text question is detached from its certified topic at items[{index}]"
@@ -1866,22 +2020,27 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         # grounds the question without forcing awkward two-word parroting of
         # the source sentence.  Distinct-stem and token-retrieval gates still
         # reject generic or degenerate question sets.
-        required_overlap = min(1, len(source_lemmas))
-        if required_overlap == 0 or len(source_lemmas & question_lemmas) < required_overlap:
+        overlap_words = sum(bool(group & source_lemmas) for group in topic_groups)
+        if not source_groups or overlap_words < 1:
             raise PromptPackV3Error(
                 f"text question is detached from its rendering surface at items[{index}]"
             )
-        prefix_lemmas = {
-            lemma
-            for word in _UKRAINIAN_WORD_RE.findall(matched_prefix)
-            for match in _vesum_matches(word, db_path)
-            if match.get("pos") in {"noun", "verb", "adj", "adv"}
-            and isinstance((lemma := match.get("lemma")), str)
-        }
-        overlap = (source_lemmas & question_lemmas) - prefix_lemmas
-        if len(overlap) > 2 or len(source_lemmas - question_lemmas) < 2:
+        if overlap_words > 2 or len(source_lemmas - question_lemmas) < 2:
+            raise PromptPackV3Error(f"text question consumes its source answer at items[{index}]")
+        source_frequency_comparative = any(
+            word.casefold() in _FREQUENCY_COMPARATIVES
+            and any(
+                parse.get("pos") == "adv" and "compc" in str(parse.get("tags", ""))
+                for parse in _vesum_matches(word, db_path)
+            )
+            for word in _UKRAINIAN_WORD_RE.findall(rendering_surface or "")
+        )
+        if source_frequency_comparative and not any(
+            word.casefold() in _FREQUENCY_SCALE_FORMS
+            for word in _UKRAINIAN_WORD_RE.findall(item)
+        ):
             raise PromptPackV3Error(
-                f"text question consumes its source answer at items[{index}]"
+                f"text question omits its certified comparison at items[{index}]"
             )
         source_degree_lemmas = {
             lemma
@@ -1898,9 +2057,7 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             if (lemma := _catalog_positive_lemma(word)) is not None
         }
         focus_alignment = (
-            distinctness.get("focus_alignment")
-            if isinstance(distinctness, Mapping)
-            else None
+            distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
         )
         if (
             focus_alignment == "anchor-comprehension"
@@ -2448,9 +2605,7 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
                     f"{label} contains a distractor that is not another certified gap answer"
                 )
             if any(answer_lemmas & _lemma_set(option, db_path) for option in distractors):
-                raise PromptPackV3Error(
-                    f"{label} cross-gap bank repeats the answer lemma"
-                )
+                raise PromptPackV3Error(f"{label} cross-gap bank repeats the answer lemma")
             answer_pos = _pos_set(answer, db_path)
             if not any(answer_pos & _pos_set(option, db_path) for option in distractors):
                 raise PromptPackV3Error(
@@ -2926,9 +3081,19 @@ def validate_slot_deterministic_gates(
         raise RuleNamedRejection("learner_facing_fields") from error
     for gate in deterministic_gates:
         try:
+            if getattr(gate, "__name__", "") == "validate_activity_purpose":
+                item_rejections = _activity_purpose_item_rejections(gate, activity, type_kit)
+                if len(item_rejections) > 1:
+                    raise RuleNamedRejectionGroup(item_rejections)
+                if item_rejections:
+                    raise item_rejections[0]
             gate(activity, type_kit)
+        except (RuleNamedRejection, RuleNamedRejectionGroup):
+            raise
         except RepairableSerializationError as error:
-            raise RuleNamedRejection("activity_binding") from error
+            item = re.search(r":item=(\d+)$", str(error))
+            suffix = f"question_frame:item={item.group(1)}" if item is not None else None
+            raise RuleNamedRejection("activity_binding", suffix=suffix) from error
         except RepairableGapConstructionError as error:
             raise RuleNamedRejection("gap_construction", suffix=str(error)) from error
         except Exception as error:

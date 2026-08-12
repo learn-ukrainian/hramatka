@@ -13,6 +13,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,7 @@ _TEXT_QUESTION_GUIDANCE_LABELS = {
     "causal-clause.v1": "Причина",
     "purpose-clause.v1": "Мета",
     "temporal-clause.v1": "Часова умова",
+    "definition-content.v1": "Зміст",
     "licensed-vid-cause.v1": "Причина стану",
 }
 
@@ -117,9 +119,7 @@ def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
         for pair in pairs:
             if isinstance(pair, Mapping):
                 surfaces.extend(
-                    value
-                    for key in ("left", "right")
-                    if isinstance((value := pair.get(key)), str)
+                    value for key in ("left", "right") if isinstance((value := pair.get(key)), str)
                 )
     return tuple(surfaces)
 
@@ -131,6 +131,7 @@ def _has_external_options(payload: Mapping[str, Any], anchor_text: str | None) -
         and surfaces
         and any(not is_anchor_verbatim(surface, anchor_text) for surface in surfaces)
     )
+
 
 # Teacher-facing Ukrainian for the engine's flag verdict (#402), keyed by the
 # rule-named ``CAUSE_VOCABULARY`` of the CURRENT evaluator/gate stack
@@ -344,11 +345,12 @@ def _canonicalize_redundant_payload_fields(
     """Restore only schema-required copies already present in the answer key.
 
     Quiz ``correct`` indices and cloze ``answer`` strings are represented in
-    both payload and answer key by the public activity contract.  A missing
-    payload copy carries no independent pedagogical information, so restore it
-    deterministically from the same indexed/same-ID key.  Supplied values are
-    never overwritten; malformed or ambiguous keys remain untouched and fail
-    the ordinary exact-binding gates.
+    both payload and answer key by the public activity contract. Text-question
+    guidance is replaced from certified source spans during block assembly, so
+    its model-authored value is likewise non-authoritative. Missing redundant
+    values carry no independent pedagogical information. Supplied closed-item
+    values are never overwritten; malformed or ambiguous keys remain untouched
+    and fail the ordinary exact-binding gates.
     """
     if not isinstance(parsed, Mapping) or not isinstance(parsed.get("slots"), list):
         return ()
@@ -419,6 +421,12 @@ def _canonicalize_redundant_payload_fields(
                     blank["answer"] = keyed[blank_id]
                     restored += 1
                 field = "payload.blanks[].answer"
+        elif activity_type == "text-questions" and isinstance(answer_key, dict):
+            guidance = answer_key.get("guidance")
+            if not isinstance(guidance, str) or not guidance.strip():
+                answer_key["guidance"] = "Орієнтири формуються із сертифікованого тексту."
+                restored = 1
+                field = "answer_key.guidance"
         if restored:
             events.append(
                 {
@@ -588,9 +596,7 @@ def _certified_choice_banks(kit: Mapping[str, Any]) -> tuple[tuple[str, ...], ..
     return tuple(banks)
 
 
-def _certified_gapped_surfaces(
-    kit: Mapping[str, Any], answers: tuple[str, ...]
-) -> tuple[str, ...]:
+def _certified_gapped_surfaces(kit: Mapping[str, Any], answers: tuple[str, ...]) -> tuple[str, ...]:
     """Return and independently verify each serialized learner gap surface."""
     units = kit.get("certified_units")
     if not isinstance(units, list) or len(units) != len(answers):
@@ -904,12 +910,10 @@ def _bind_learner_payload_to_certified_units(
         units = kit.get("certified_units")
         if not isinstance(units, list) or len(units) != len(items):
             raise ValueError("v3 text-questions kit is detached from certified units.")
-        for item, unit in zip(items, units, strict=True):
+        for index, (item, unit) in enumerate(zip(items, units, strict=True)):
             distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
             frame = (
-                distinctness.get("question_frame")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
             )
             prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
             normalized = item.strip().casefold()
@@ -929,25 +933,19 @@ def _bind_learner_payload_to_certified_units(
                 )
             ):
                 raise ValueError(
-                    "v3 text-question is detached from certified question frame."
+                    f"v3 text-question is detached from certified question frame:item={index}"
                 )
             answer_span = (
-                distinctness.get("answer_span")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("answer_span") if isinstance(distinctness, Mapping) else None
             )
             topic = (
-                distinctness.get("question_topic")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
             )
             if answer_span is not None or topic is not None:
                 surface = unit.get("rendering_surface")
                 allowed = unit.get("allowed_forms")
                 start = (
-                    answer_span.get("start_offset")
-                    if isinstance(answer_span, Mapping)
-                    else None
+                    answer_span.get("start_offset") if isinstance(answer_span, Mapping) else None
                 )
                 end = answer_span.get("end_offset") if isinstance(answer_span, Mapping) else None
                 text = answer_span.get("text") if isinstance(answer_span, Mapping) else None
@@ -1154,6 +1152,8 @@ class EngineLessonBaker:
         slot_id: str,
         repair_round: int | None,
         prior_errors: tuple[SlotError, ...],
+        target_item_indexes: tuple[int, ...] = (),
+        prior_record: Mapping[str, Any] | None = None,
     ) -> str:
         """Render a repair request containing only the immutable failed slot."""
         prior_errors_section = ""
@@ -1168,18 +1168,57 @@ class EngineLessonBaker:
                 )
                 + "\n```"
             )
+        prior_record_section = ""
+        if target_item_indexes and prior_record is not None:
+            prompt_record = deepcopy(dict(prior_record))
+            prompt_record.pop("_generator_model_id", None)
+            prior_record_section = (
+                "=== V3 PRIOR SLOT ATTEMPT "
+                "(context only; do not return this full slot) ===\n```json\n"
+                + json.dumps(
+                    prompt_record,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n```"
+            )
+        targeted_response_section = ""
+        if target_item_indexes:
+            targeted_response_section = (
+                "=== V3 TARGETED RESPONSE CONTRACT ===\n"
+                "Return only this JSON object, with exactly one entry for every requested "
+                "zero-based index and no other fields:\n```json\n"
+                + json.dumps(
+                    {
+                        "repair_items": [
+                            {"index": index, "question": ""} for index in target_item_indexes
+                        ]
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n```\n"
+                "Write each replacement question from its matching certified unit. "
+                "The evaluator inserts these questions into the immutable prior slot and "
+                "revalidates the complete eight-question activity."
+            )
         return "\n\n".join(
             tuple(
                 item
                 for item in (
                     render_phase_prompt(one_slot_context(context, slot_id=slot_id)),
+                    prior_record_section,
                     prior_errors_section,
+                    targeted_response_section,
                     "=== V3 REPAIR REQUEST (metadata) ===\n```json\n"
                     + json.dumps(
                         {
                             "mode": mode,
                             "repair_round": repair_round,
                             "slot_id": slot_id,
+                            "target_item_indexes": list(target_item_indexes),
                         },
                         sort_keys=True,
                         separators=(",", ":"),
@@ -1202,6 +1241,29 @@ class EngineLessonBaker:
         if len(matches) != 1:
             raise ValueError("v3 repair renderer did not return exactly the requested slot.")
         return matches[0]
+
+    @staticmethod
+    def _targeted_question_patch(payload: object, target_item_indexes: tuple[int, ...]) -> object:
+        """Return the narrow patch emitted by an item-local question repair."""
+        if not isinstance(payload, Mapping) or set(payload) != {"repair_items"}:
+            raise ValueError("v3 targeted repair renderer returned no repair_items patch.")
+        repair_items = payload.get("repair_items")
+        if not isinstance(repair_items, list):
+            raise ValueError("v3 targeted repair_items must be a list.")
+        observed_indexes = tuple(
+            item.get("index") if isinstance(item, Mapping) else None for item in repair_items
+        )
+        if observed_indexes != target_item_indexes:
+            raise ValueError("v3 targeted repair_items do not match the requested indexes.")
+        if any(
+            not isinstance(item, Mapping)
+            or set(item) != {"index", "question"}
+            or not isinstance(item.get("question"), str)
+            or not item["question"].strip()
+            for item in repair_items
+        ):
+            raise ValueError("v3 targeted repair_items contain an invalid question patch.")
+        return {"repair_items": [dict(item) for item in repair_items]}
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
         job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
@@ -1465,11 +1527,15 @@ class EngineLessonBaker:
                 slot_id=request.slot_id,
                 repair_round=request.round,
                 prior_errors=request.prior_errors,
+                target_item_indexes=request.target_item_indexes,
+                prior_record=request.prior_record_copy,
             ),
             raw_attempt_counter=raw_attempt_counter,
             raw_out_root=raw_out_root,
             raw_bake_id=raw_bake_id,
         )
+        if request.target_item_indexes:
+            return self._targeted_question_patch(payload, request.target_item_indexes)
         return self._one_slot_record(payload, request.slot_id)
 
     def _render_replacement(
@@ -1516,9 +1582,7 @@ class EngineLessonBaker:
             source_guidance: list[str] = []
             for unit in plan.units:
                 answer_span = unit.distinctness.get("answer_span")
-                answer = (
-                    answer_span.get("text") if isinstance(answer_span, Mapping) else None
-                )
+                answer = answer_span.get("text") if isinstance(answer_span, Mapping) else None
                 if not isinstance(answer, str) or not answer.strip():
                     answer = unit.rendering_surface
                 if not isinstance(answer, str) or not answer.strip():

@@ -11,7 +11,7 @@ Core invariant: no list activity reaches a model unless deterministic preflight 
 | # | Disposition | Resolution |
 |---|---|---|
 | 1 | **ABSORB** | Each type has a deterministic unit builder returning either a certified plan meeting its floor or `unavailable`. Legacy prompts, soft preflight, and tray credit cannot schedule types. |
-| 2 | **ABSORB** | `<8` at preflight causes substitution at t=0 with zero model calls. The initial call plus two repairs may only serialize the same immutable certified plan. |
+| 2 | **ABSORB** | `<8` at preflight causes substitution at t=0 with zero model calls. The initial call plus at most four bounded repairs may only serialize the same immutable certified plan. An exhausted text-question slot gets one clean same-plan regeneration before any allocator-certified substitution; it never enters an unbounded item-repair loop. |
 | 3 | **ABSORB** | A lesson-wide exact-cover allocator consumes shared evidence/kit resources across all slots. It also certifies conditional replacement plans. On failure, deterministically widen to adjacent lesson paragraphs; if still impossible, emit recoverable `insufficient_anchor_capacity` before generation. |
 | 4 | **ABSORB** | False true-false items require a versioned closed mutation rule with deterministic constructor, verifier, and literal evidence binding. Unknown or free-form mutations fail closed. |
 | 5 | **ABSORB** | Short-writing constraints come only from a closed deterministic registry, including `contains_lemma_set`, `min_verb_count`, `target_case_usage`, and `word_count_range`, implemented through regex/VESUM. LLM judgment is prohibited. |

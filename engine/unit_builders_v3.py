@@ -44,9 +44,23 @@ _TOKEN_RE: Final = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
 _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     {
         "comprehension": (
-            "Що повідомляє уривок про",
-            "Що сказано в уривку про",
-            "Який факт подає уривок про",
+            "Хто",
+            "Що",
+            "Де",
+            "Коли",
+            "Куди",
+            "Звідки",
+            "Як",
+            "Який",
+            "Яка",
+            "Яке",
+            "Які",
+            "Якого",
+            "Яку",
+            "Яким",
+            "Якими",
+            "Скільки",
+            "Чи",
         ),
         "explanation_inference": (
             "Чому",
@@ -55,8 +69,6 @@ _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingP
         ),
         "anchored_application": (
             "Як можна застосувати",
-            "У якій подібній ситуації",
-            "У якій реальній ситуації",
             "Чи доводилося вам",
             "З вашого досвіду",
         ),
@@ -66,7 +78,8 @@ _TEXT_QUESTION_RELATION_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = Mapping
     {
         "causal-clause.v1": ("Чому", "З якої причини"),
         "purpose-clause.v1": ("З якою метою", "Навіщо"),
-        "temporal-clause.v1": ("Коли", "До якого моменту"),
+        "temporal-clause.v1": ("Коли", "Доки", "Як довго", "До якого моменту"),
+        "definition-content.v1": ("У чому полягає",),
         "licensed-vid-cause.v1": ("Від чого", "Через що"),
     }
 )
@@ -270,9 +283,7 @@ def _candidate_unit(
         if (
             candidate.target_start_offset is None
             or candidate.target_end_offset is None
-            or rendering_surface[
-                candidate.target_start_offset : candidate.target_end_offset
-            ]
+            or rendering_surface[candidate.target_start_offset : candidate.target_end_offset]
             != candidate.expected_key
         ):
             raise ValueError("Closed activity gap offsets must bind the certified answer.")
@@ -314,9 +325,7 @@ def _candidate_unit(
                 or candidate.frame_family != "contextual-mismatch.v1"
                 or not candidate.semantic_warrant
             ):
-                raise ValueError(
-                    "Error-correction needs a locally warranted contextual mismatch."
-                )
+                raise ValueError("Error-correction needs a locally warranted contextual mismatch.")
             distinctness["error_position"] = (
                 "sentence-initial" if candidate.target_start_offset == 0 else "within-sentence"
             )
@@ -341,23 +350,25 @@ def _candidate_unit(
                     ),
                     None,
                 )
-                topic = next(
-                    (
-                        token
-                        for token in sentence.tokens
-                        if token.token_id == candidate.topic_token_id
-                    ),
-                    None,
-                ) if sentence is not None else None
+                topic = (
+                    next(
+                        (
+                            token
+                            for token in sentence.tokens
+                            if token.token_id == candidate.topic_token_id
+                        ),
+                        None,
+                    )
+                    if sentence is not None
+                    else None
+                )
                 if (
                     sentence is None
                     or candidate.answer_start_offset is None
                     or candidate.answer_end_offset is None
                     or candidate.answer_start_offset < 0
                     or candidate.answer_end_offset <= candidate.answer_start_offset
-                    or sentence.text[
-                        candidate.answer_start_offset : candidate.answer_end_offset
-                    ]
+                    or sentence.text[candidate.answer_start_offset : candidate.answer_end_offset]
                     != candidate.expected_key
                     or topic is None
                     or not isinstance(candidate.topic_lemma, str)
@@ -491,11 +502,13 @@ def _generic_builder(
             for category, minimum in required.items()
         ):
             candidates = ()
-    if activity_type == "error-correction" and any(
-        candidate.kit_rule_id is None for candidate in candidates
-    ) and (
-        len({candidate.morphology_class for candidate in candidates}) < 3
-        or sum(candidate.target_start_offset == 0 for candidate in candidates) > 4
+    if (
+        activity_type == "error-correction"
+        and any(candidate.kit_rule_id is None for candidate in candidates)
+        and (
+            len({candidate.morphology_class for candidate in candidates}) < 3
+            or sum(candidate.target_start_offset == 0 for candidate in candidates) > 4
+        )
     ):
         candidates = ()
     evidence_candidates = tuple(item for item in candidates if item.kit_rule_id is None)

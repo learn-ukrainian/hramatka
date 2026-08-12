@@ -425,16 +425,14 @@ _DEGREE_FORMATION_FRAMES: Final = (
     _practice_frame(
         "галасливий",
         "comparative",
-        "Після тихого передмістя ми відразу помітили, що центр ще галасливіший. "
-        "(галасливий)",
+        "Після тихого передмістя ми відразу помітили, що центр ще галасливіший. (галасливий)",
         frame_family="guided-perception-change.v2",
         semantic_warrant="ще after a perceived contrast licenses галасливіший",
     ),
     _practice_frame(
         "дорогий",
         "comparative",
-        "Із двох подібних оголошень варіант у центрі дорожчий за варіант біля парку. "
-        "(дорогий)",
+        "Із двох подібних оголошень варіант у центрі дорожчий за варіант біля парку. (дорогий)",
         frame_family="guided-listing-contrast.v2",
         semantic_warrant="за introduces the requested price comparison",
         morphology_class="alternation",
@@ -451,8 +449,7 @@ _DEGREE_FORMATION_FRAMES: Final = (
     _practice_frame(
         "високий",
         "comparative",
-        "Шостий поверх вищий за четвертий; родина врахувала це під час вибору. "
-        "(високий)",
+        "Шостий поверх вищий за четвертий; родина врахувала це під час вибору. (високий)",
         frame_family="guided-floor-contrast.v2",
         semantic_warrant="за introduces the requested floor comparison",
         morphology_class="alternation",
@@ -460,8 +457,7 @@ _DEGREE_FORMATION_FRAMES: Final = (
     _practice_frame(
         "добрий",
         "comparative",
-        "Після обговорення ми вирішили, що варіант пані Оксани кращий за решту. "
-        "(добрий)",
+        "Після обговорення ми вирішили, що варіант пані Оксани кращий за решту. (добрий)",
         frame_family="guided-decision-contrast.v2",
         semantic_warrant="за решту licenses the suppletive comparative кращий",
         morphology_class="suppletive",
@@ -582,8 +578,7 @@ _DEGREE_CONTEXT_FRAMES: Final = (
     _practice_frame(
         "зручний",
         "comparative",
-        "Для родини з дитячим візком маршрут без сходів зручніший за шлях через "
-        "підземний перехід.",
+        "Для родини з дитячим візком маршрут без сходів зручніший за шлях через підземний перехід.",
         frame_family="user-priority-contrast.v2",
         semantic_warrant="the stroller constraint warrants зручніший",
     ),
@@ -597,16 +592,14 @@ _DEGREE_CONTEXT_FRAMES: Final = (
     _practice_frame(
         "спокійний",
         "superlative",
-        "У другому районі після десятої не чути транспорту; серед трьох він "
-        "найспокійніший.",
+        "У другому районі після десятої не чути транспорту; серед трьох він найспокійніший.",
         frame_family="quiet-hours-ranking.v2",
         semantic_warrant="the absence of night traffic warrants найспокійніший",
     ),
     _practice_frame(
         "безпечний",
         "superlative",
-        "У третьому районі є освітлені переходи й нічний патруль; з усіх трьох він "
-        "найбезпечніший.",
+        "У третьому районі є освітлені переходи й нічний патруль; з усіх трьох він найбезпечніший.",
         frame_family="safety-feature-ranking.v2",
         semantic_warrant="the stated safety features warrant найбезпечніший",
     ),
@@ -890,6 +883,7 @@ _RELATION_PRIORITY = (
     "temporal-clause.v1",
     "purpose-clause.v1",
     "licensed-vid-cause.v1",
+    "definition-content.v1",
     "causal-clause.v1",
 )
 _NEGATION_SCOPE_EXCLUSIONS = frozenset(
@@ -950,9 +944,9 @@ class _RelationSpan:
     answer_end: int
     topic_token: AnchorToken
     topic_lemma: str
-_EXPLICIT_CAUSAL_RE = re.compile(
-    r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b"
-)
+
+
+_EXPLICIT_CAUSAL_RE = re.compile(r"\b(?:тому|бо|адже|оскільки|завдяки|через\s+те)\b")
 _ANAPHORIC_WRITING_OPENING_RE = re.compile(
     r"^(?:так(?:ий|а|е|і)|це|цей|ця|ці|також|тому)\b",
     re.IGNORECASE,
@@ -980,6 +974,7 @@ _UNSAFE_TAG_MARKERS = (
     ":short",
     ":prop",
 )
+_TOPIC_UNSAFE_TAG_MARKERS = tuple(marker for marker in _UNSAFE_TAG_MARKERS if marker != ":prop")
 _UNSAFE_ATLAS_ANTONYM_PAIRS = frozenset(
     {
         ("ідеальний", "дійсний"),
@@ -1154,9 +1149,7 @@ def _safe_true_fact_carrier(sentence: AnchorSentence) -> bool:
 def _safe_source_proposition_carrier(sentence: AnchorSentence) -> bool:
     """Require a declarative proposition with room for a non-revealing question."""
     content_lemmas = {
-        lemma
-        for token in sentence.tokens
-        if (lemma := _content_lemma(token)) is not None
+        lemma for token in sentence.tokens if (lemma := _content_lemma(token)) is not None
     }
     return (
         _safe_item_carrier(sentence)
@@ -1301,9 +1294,7 @@ def _token_tag_sets(token: AnchorToken, *, pos: str) -> tuple[set[str], ...]:
     )
 
 
-def _replacement_tag_sets(
-    token: AnchorToken, form: str, *, pos: str
-) -> tuple[set[str], ...]:
+def _replacement_tag_sets(token: AnchorToken, form: str, *, pos: str) -> tuple[set[str], ...]:
     """Return every safe same-lemma/POS analysis licensed by one surface."""
     identity = _unambiguous_content_lemma_pos(token)
     if identity is None or identity[1] != pos:
@@ -1345,24 +1336,17 @@ _CLAUSE_BOUNDARY_RE: Final = re.compile(r"[,;:—–]")
 
 def _is_finite_verb(token: AnchorToken) -> bool:
     return any(
-        parse.get("pos") == "verb"
-        and ":inf" not in f":{parse.get('raw', '')}"
+        parse.get("pos") == "verb" and ":inf" not in f":{parse.get('raw', '')}"
         for parse in token.vesum_parses
     )
 
 
 def _case_ambiguous_nominative(tags_rows: Sequence[set[str]]) -> bool:
-    cases = {
-        case
-        for tags in tags_rows
-        for case in tags & (_CASE_TAGS - {"v_kly"})
-    }
+    cases = {case for tags in tags_rows for case in tags & (_CASE_TAGS - {"v_kly"})}
     return "v_naz" in cases and bool(cases - {"v_naz"})
 
 
-def _same_local_clause(
-    sentence: AnchorSentence, first_index: int, second_index: int
-) -> bool:
+def _same_local_clause(sentence: AnchorSentence, first_index: int, second_index: int) -> bool:
     """Return whether two nearby tokens have no visible clause boundary between them."""
     left_index, right_index = sorted((first_index, second_index))
     left = sentence.tokens[left_index]
@@ -1376,15 +1360,13 @@ def _same_local_clause(
     )
 
 
-def _subject_frames_before(
-    sentence: AnchorSentence, token_index: int
-) -> set[tuple[str, str]]:
+def _subject_frames_before(sentence: AnchorSentence, token_index: int) -> set[tuple[str, str]]:
     """Return every unambiguous subject frame in the same local clause."""
     frames: set[tuple[str, str]] = set()
     verb = sentence.tokens[token_index]
     right_boundary = verb.start_offset
     for subject in reversed(sentence.tokens[:token_index]):
-        between = sentence.text[subject.end_offset:right_boundary]
+        between = sentence.text[subject.end_offset : right_boundary]
         if _CLAUSE_BOUNDARY_RE.search(between):
             break
         if subject.surface.casefold() in _SUBORDINATORS or _is_finite_verb(subject):
@@ -1397,14 +1379,11 @@ def _subject_frames_before(
             for parse in subject.vesum_parses:
                 raw = str(parse.get("raw", ""))
                 tags = set(raw.split(":"))
-                if (
-                    "v_naz" not in tags
-                    or any(marker in f":{raw}" for marker in _UNSAFE_TAG_MARKERS)
+                if "v_naz" not in tags or any(
+                    marker in f":{raw}" for marker in _UNSAFE_TAG_MARKERS
                 ):
                     continue
-                number = _feature(tags, _NUMBER_TAGS) or (
-                    "s" if tags & _GENDER_TAGS else None
-                )
+                number = _feature(tags, _NUMBER_TAGS) or ("s" if tags & _GENDER_TAGS else None)
                 if number is None:
                     continue
                 person = _feature(tags, _PERSON_TAGS) if ":pers:" in f":{raw}:" else "3"
@@ -1478,11 +1457,7 @@ def _contextual_error_replacements(
                 )
                 if source_value != replacement_value
             )
-            if (
-                changes
-                and replacement_frames
-                and replacement_frames.isdisjoint(all_noun_frames)
-            ):
+            if changes and replacement_frames and replacement_frames.isdisjoint(all_noun_frames):
                 mismatch_class = next(
                     name for name in ("number", "case", "gender") if name in changes
                 )
@@ -1518,9 +1493,7 @@ def _contextual_error_replacements(
                 )
                 for tags in _replacement_tag_sets(token, form, pos="verb")
             }
-            replacement_frames = {
-                frame for frame in replacement_frames if None not in frame
-            }
+            replacement_frames = {frame for frame in replacement_frames if None not in frame}
             if (
                 None in source_frame
                 or source_frame not in subject_frames
@@ -1592,9 +1565,7 @@ def _contextual_error_replacements(
     return tuple((*ordered[offset:], *ordered[:offset]))
 
 
-def _error_replacement(
-    sentence: AnchorSentence, token: AnchorToken
-) -> tuple[str, str, str] | None:
+def _error_replacement(sentence: AnchorSentence, token: AnchorToken) -> tuple[str, str, str] | None:
     """Return one locally provable dependency mismatch, never an arbitrary form."""
     rows = _contextual_error_replacements(sentence, token)
     return rows[0] if rows else None
@@ -1613,6 +1584,117 @@ def _unambiguous_content_lemma_pos(token: AnchorToken) -> tuple[str, str] | None
         and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
     }
     return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+_APPLICATION_TRANSFER_LEMMAS: Final[frozenset[str]] = frozenset(
+    {
+        "бажати",
+        "берегтися",
+        "вибирати",
+        "виправлятися",
+        "вирішити",
+        "вчинити",
+        "дізнатися",
+        "думати",
+        "знати",
+        "могти",
+        "обирати",
+        "планувати",
+        "порадити",
+        "пояснити",
+        "розповідати",
+        "слухати",
+        "уявляти",
+        "хотіти",
+    }
+)
+_APPLICATION_NATURAL_LEMMAS: Final[frozenset[str]] = frozenset(
+    {
+        "вітер",
+        "вода",
+        "дощ",
+        "зоря",
+        "місяць",
+        "небо",
+        "річка",
+        "сніг",
+        "сонце",
+        "туман",
+        "хмара",
+        "хвилина",
+    }
+)
+_APPLICATION_STATIVE_LEMMAS: Final[frozenset[str]] = frozenset({"знати"})
+_APPLICATION_PERSONAL_FORMS: Final[frozenset[str]] = frozenset(
+    {
+        "я",
+        "мене",
+        "мені",
+        "мною",
+        "ти",
+        "тебе",
+        "тобі",
+        "тобою",
+        "ми",
+        "нас",
+        "нам",
+        "нами",
+        "ви",
+        "вас",
+        "вам",
+        "вами",
+    }
+)
+
+
+def _application_carrier_rank(sentence: AnchorSentence) -> tuple[int, int, int, int]:
+    """Rank transferable human propositions ahead of incidental scenery."""
+    lemmas = {lemma for token in sentence.tokens if (lemma := _content_lemma(token)) is not None}
+    words = {token.surface.casefold() for token in sentence.tokens}
+    has_transfer = bool(lemmas & _APPLICATION_TRANSFER_LEMMAS)
+    has_person = bool(words & _APPLICATION_PERSONAL_FORMS) or any(
+        ":anim" in str(parse.get("raw", ""))
+        for token in sentence.tokens
+        for parse in token.vesum_parses
+    )
+    natural_only = bool(lemmas & _APPLICATION_NATURAL_LEMMAS) and not (has_transfer or has_person)
+    starts_with_connector = bool(
+        sentence.tokens
+        and sentence.tokens[0].surface.casefold() in {"а", "але", "адже", "проте", "тому", "тож"}
+    )
+    return (
+        0 if has_transfer else 1 if has_person else 2,
+        int(natural_only),
+        int(starts_with_connector and not has_transfer),
+        abs(len(sentence.tokens) - 12),
+    )
+
+
+def _application_topic(sentence: AnchorSentence) -> tuple[AnchorToken, str] | None:
+    """Prefer an event, or a concrete source object when the predicate is stative."""
+    preferred = _topic_token(sentence, prefer_nearest_verb=True)
+    if preferred is None:
+        return None
+    if preferred[1] == "вчинити":
+        for token in sentence.tokens[sentence.tokens.index(preferred[0]) + 1 :]:
+            lemma = _topic_lemma(token)
+            if lemma is not None and any(
+                parse.get("pos") in {"noun", "adj"} and ":pron" not in str(parse.get("raw", ""))
+                for parse in token.vesum_parses
+            ):
+                return token, lemma
+    if preferred[1] not in _APPLICATION_STATIVE_LEMMAS:
+        return preferred
+    for token in sentence.tokens[sentence.tokens.index(preferred[0]) + 1 :]:
+        lemma = _topic_lemma(token)
+        if lemma is not None and any(
+            parse.get("pos") == "noun"
+            and ":inanim" in str(parse.get("raw", ""))
+            and ":pron" not in str(parse.get("raw", ""))
+            for parse in token.vesum_parses
+        ):
+            return token, lemma
+    return preferred
 
 
 def _atlas_semantic_pairs(
@@ -1740,9 +1822,7 @@ def _degree_match_pairs(
     if len(rows) < 8:
         return {}
     pairs = (
-        DEGREE_PARAPHRASE_PAIRS
-        if role == "degree-positive-comparative"
-        else DEGREE_PRIORITY_PAIRS
+        DEGREE_PARAPHRASE_PAIRS if role == "degree-positive-comparative" else DEGREE_PRIORITY_PAIRS
     )
     relation = (
         "degree-comparison-paraphrase.v1"
@@ -1852,17 +1932,23 @@ def _certified_choice_bank(
         ":impr" in str(parse.get("raw", "")) for parse in token.vesum_parses
     ):
         return None
-    identities = sorted(
-        {
-            (str(parse["lemma"]).casefold(), str(parse["pos"]))
-            for parse in token.vesum_parses
-            if isinstance(parse.get("lemma"), str)
-            and str(parse["lemma"]).strip()
-            and parse.get("pos") in _CONTENT_POS
-            and ":pron" not in str(parse.get("raw", ""))
-            and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
-        }
-    )
+    identity = _unambiguous_content_lemma_pos(token)
+    if identity is None:
+        return None
+    observed_pos = {
+        str(parse["pos"])
+        for parse in token.vesum_parses
+        if isinstance(parse.get("pos"), str)
+        and isinstance(parse.get("lemma"), str)
+        and str(parse["lemma"]).strip()
+    }
+    # An isolated surface can hide a different major POS that is the actual
+    # reading in context (``зараз`` adverb vs the noun ``зараза``; ``кілька``
+    # numeral vs the fish noun). Never build a morphology bank from the one
+    # surviving dictionary identity when VESUM exposes that cross-POS risk.
+    if observed_pos != {identity[1]}:
+        return None
+    identities = (identity,)
     for lemma, pos in identities:
         source_tags = tuple(
             frozenset(str(parse["raw"]).split(":"))
@@ -2006,20 +2092,14 @@ def _finite_predicate(token: AnchorToken) -> bool:
 
 
 def _content_lemma(token: AnchorToken) -> str | None:
-    if any(
-        parse.get("pos") in _CLOSED_CLASS_POS | {"numr"}
-        for parse in token.vesum_parses
-    ):
+    if any(parse.get("pos") in _CLOSED_CLASS_POS | {"numr"} for parse in token.vesum_parses):
         return None
     rows = [
         parse
         for parse in token.vesum_parses
         if parse.get("pos") in _CONTENT_POS
         and isinstance(parse.get("lemma"), str)
-        and not any(
-            marker in str(parse.get("raw", ""))
-            for marker in _UNSAFE_TAG_MARKERS
-        )
+        and not any(marker in str(parse.get("raw", "")) for marker in _UNSAFE_TAG_MARKERS)
     ]
     if not rows:
         return None
@@ -2029,6 +2109,32 @@ def _content_lemma(token: AnchorToken) -> str | None:
     lemmas = {
         str(parse["lemma"]).casefold()
         for parse in ordinary
+        if isinstance(parse.get("lemma"), str) and str(parse["lemma"]).strip()
+    }
+    return next(iter(lemmas)) if len(lemmas) == 1 else None
+
+
+def _topic_lemma(token: AnchorToken) -> str | None:
+    """Return one safe question-topic lemma, including a source proper name.
+
+    Proper names remain excluded from generated answer banks and morphology
+    tasks, but a name already present in the teacher's source is often the most
+    natural subject of a comprehension question.
+    """
+    if any(parse.get("pos") in _CLOSED_CLASS_POS | {"numr"} for parse in token.vesum_parses):
+        return None
+    if any(":pron" in str(parse.get("raw", "")) for parse in token.vesum_parses):
+        return None
+    rows = [
+        parse
+        for parse in token.vesum_parses
+        if parse.get("pos") in _CONTENT_POS
+        and isinstance(parse.get("lemma"), str)
+        and not any(marker in str(parse.get("raw", "")) for marker in _TOPIC_UNSAFE_TAG_MARKERS)
+    ]
+    lemmas = {
+        str(parse["lemma"]).casefold()
+        for parse in rows
         if isinstance(parse.get("lemma"), str) and str(parse["lemma"]).strip()
     }
     return next(iter(lemmas)) if len(lemmas) == 1 else None
@@ -2101,6 +2207,7 @@ def _topic_token(
     *,
     before_offset: int | None = None,
     prefer_nearest_verb: bool = False,
+    excluded_lemmas: frozenset[str] = frozenset(),
 ) -> tuple[AnchorToken, str] | None:
     tokens = tuple(
         token
@@ -2119,27 +2226,53 @@ def _topic_token(
             *tokens,
         )
     else:
-        nominative_nouns = tuple(
+        has_predicative = any(
+            ":predic" in str(parse.get("raw", ""))
+            for token in tokens
+            for parse in token.vesum_parses
+        )
+        direct_case_nouns = tuple(
             token
             for token in tokens
             if any(
                 parse.get("pos") == "noun"
-                and ":v_naz" in str(parse.get("raw", ""))
+                and any(marker in str(parse.get("raw", "")) for marker in (":v_naz", ":v_zna"))
                 and ":pron" not in str(parse.get("raw", ""))
-                and _content_lemma(token) is not None
+                and _topic_lemma(token) is not None
+                for parse in token.vesum_parses
+            )
+        )
+        ordinary_nouns = tuple(
+            token
+            for token in tokens
+            if any(parse.get("pos") == "noun" for parse in token.vesum_parses)
+            and _topic_lemma(token) is not None
+        )
+        predicative_infinitives = tuple(
+            token
+            for token in tokens
+            if has_predicative
+            and any(
+                parse.get("pos") == "verb" and ":inf" in str(parse.get("raw", ""))
                 for parse in token.vesum_parses
             )
         )
         finite_verbs = tuple(token for token in tokens if _finite_predicate(token))
-        content = tuple(token for token in tokens if _content_lemma(token) is not None)
-        ordered = (*nominative_nouns, *finite_verbs, *content)
+        content = tuple(token for token in tokens if _topic_lemma(token) is not None)
+        ordered = (
+            *direct_case_nouns,
+            *predicative_infinitives,
+            *ordinary_nouns,
+            *finite_verbs,
+            *content,
+        )
     seen: set[str] = set()
     for token in ordered:
         if token.token_id in seen:
             continue
         seen.add(token.token_id)
-        lemma = _content_lemma(token)
-        if lemma is not None:
+        lemma = _topic_lemma(token)
+        if lemma is not None and lemma not in excluded_lemmas:
             return token, lemma
     return None
 
@@ -2191,22 +2324,50 @@ def _relation_spans(sentence: AnchorSentence) -> tuple[_RelationSpan, ...]:
         )
 
     for index, word in enumerate(words):
+        if sentence.text.rfind("(", 0, tokens[index].start_offset) > sentence.text.rfind(
+            ")", 0, tokens[index].start_offset
+        ):
+            continue
         prior_punctuation = (
             sentence.text[tokens[index - 1].end_offset : tokens[index].start_offset]
             if index
             else ""
         )
+        definition_predicate = next(
+            (
+                token
+                for token in reversed(tokens[:index])
+                if _finite_predicate(token) and _content_lemma(token) == "полягати"
+            ),
+            None,
+        )
+        definition_complement = (
+            word in {"що", "щоб"}
+            and index >= 2
+            and words[index - 2 : index] == ["в", "тому"]
+            and definition_predicate is not None
+        )
+        if definition_complement:
+            topic = _topic_token(
+                sentence,
+                before_offset=definition_predicate.start_offset,
+            )
+            if topic is not None:
+                append(
+                    "definition-content.v1",
+                    index,
+                    topic_token=topic[0],
+                )
+            continue
         if word in {"бо", "оскільки"} or (word == "адже" and index > 0):
             if (index > 0 and _finite_predicate(tokens[index - 1])) or any(
                 _finite_predicate(token) for token in tokens[:index]
             ):
                 append("causal-clause.v1", index)
         if word == "тому" and index + 1 < len(words) and words[index + 1] == "що":
-            append("causal-clause.v1", index)
-        if (
-            word == "через"
-            and words[index : index + 3] == ["через", "те", "що"]
-        ):
+            if not (index > 0 and words[index - 1] == "в" and definition_predicate is not None):
+                append("causal-clause.v1", index)
+        if word == "через" and words[index : index + 3] == ["через", "те", "що"]:
             append("causal-clause.v1", index)
         if word in {"аби", "щоб"}:
             append("purpose-clause.v1", index)
@@ -2217,9 +2378,8 @@ def _relation_spans(sentence: AnchorSentence) -> tuple[_RelationSpan, ...]:
                 continue
             if any(_finite_predicate(token) for token in tokens[index + 1 :]):
                 append("temporal-clause.v1", index)
-        if (
-            words[index : index + 3] in (["після", "того", "як"], ["до", "того", "як"])
-            and any(_finite_predicate(token) for token in tokens[index + 3 :])
+        if words[index : index + 3] in (["після", "того", "як"], ["до", "того", "як"]) and any(
+            _finite_predicate(token) for token in tokens[index + 3 :]
         ):
             append("temporal-clause.v1", index)
 
@@ -2387,9 +2547,39 @@ def _joint_source_comprehension(
             int(sentence.sentence_id.removeprefix("s-")),
         ),
     )
-    question_carriers = ranked[:5]
-    if len(question_carriers) != 5:
+    comprehension_carriers: list[tuple[AnchorSentence, tuple[AnchorToken, str]]] = []
+    used_comprehension_topics: set[str] = set()
+    for sentence in ranked:
+        topic = _topic_token(
+            sentence,
+            excluded_lemmas=frozenset(used_comprehension_topics),
+        )
+        if topic is None:
+            continue
+        comprehension_carriers.append((sentence, topic))
+        used_comprehension_topics.add(topic[1])
+        if len(comprehension_carriers) == 3:
+            break
+    comprehension_sentence_ids = {
+        sentence.sentence_id for sentence, _topic in comprehension_carriers
+    }
+    application_carriers = [
+        (sentence, topic)
+        for sentence in sorted(
+            ranked,
+            key=lambda sentence: (
+                _application_carrier_rank(sentence),
+                int(sentence.sentence_id.removeprefix("s-")),
+            ),
+        )
+        if sentence.sentence_id not in comprehension_sentence_ids
+        if (topic := _application_topic(sentence)) is not None
+    ][:2]
+    if len(comprehension_carriers) != 3 or len(application_carriers) != 2:
         return None
+    question_carriers = tuple(
+        sentence for sentence, _topic in (*comprehension_carriers, *application_carriers)
+    )
     question_sentence_ids = {sentence.sentence_id for sentence in question_carriers}
     true_sentences = [
         sentence
@@ -2402,10 +2592,7 @@ def _joint_source_comprehension(
         return None
 
     questions: list[EvidenceCandidate] = []
-    for sentence in question_carriers[:3]:
-        topic = _topic_token(sentence)
-        if topic is None:
-            return None
+    for sentence, topic in comprehension_carriers:
         questions.append(
             _source_question_candidate(
                 sentence,
@@ -2431,10 +2618,7 @@ def _joint_source_comprehension(
                 topic_lemma=relation.topic_lemma,
             )
         )
-    for sentence in question_carriers[3:]:
-        topic = _topic_token(sentence)
-        if topic is None:
-            return None
+    for sentence, topic in application_carriers:
         questions.append(
             _source_question_candidate(
                 sentence,
@@ -2556,11 +2740,7 @@ def _eligible_tokens(
         return tuple(token for token in tokens if token.token_id in (match_pairs or {}))
     if activity_type == "error-correction":
         return focused(
-            tuple(
-                token
-                for token in tokens
-                if _error_replacement(sentence, token) is not None
-            )
+            tuple(token for token in tokens if _error_replacement(sentence, token) is not None)
         )
     if activity_type == "short-writing":
         return focused(
@@ -2909,8 +3089,7 @@ def _diverse_group(
                         (
                             candidate
                             for candidate in available_candidates
-                            if candidate.start_offset > 0
-                            or selected_initial_errors < 4
+                            if candidate.start_offset > 0 or selected_initial_errors < 4
                         ),
                         None,
                     ),
@@ -3491,12 +3670,8 @@ def inventory_from_anchor(
                         else None
                     )
                     replacement = replacement_row[0] if replacement_row is not None else None
-                    morphology_class = (
-                        replacement_row[1] if replacement_row is not None else None
-                    )
-                    semantic_warrant = (
-                        replacement_row[2] if replacement_row is not None else None
-                    )
+                    morphology_class = replacement_row[1] if replacement_row is not None else None
+                    semantic_warrant = replacement_row[2] if replacement_row is not None else None
                     derived = (
                         sentence.text[: token.start_offset]
                         + replacement
@@ -3524,10 +3699,7 @@ def inventory_from_anchor(
                             ),
                             rendering_surface=cloze_passage,
                             target_start_offset=(
-                                (
-                                    cloze_sentence_starts[sentence.sentence_id]
-                                    + token.start_offset
-                                )
+                                (cloze_sentence_starts[sentence.sentence_id] + token.start_offset)
                                 if activity_type == "cloze" and cloze_passage is not None
                                 else token.start_offset
                                 if activity_type in {"quiz", "fill-in", "error-correction"}
@@ -3564,9 +3736,7 @@ def inventory_from_anchor(
                             token_id=token.token_id,
                             literal_evidence=sentence.text,
                             expected_key=sentence.text,
-                            semantic_target=(
-                                f"{activity_type}:{category}:{sentence.sentence_id}"
-                            ),
+                            semantic_target=(f"{activity_type}:{category}:{sentence.sentence_id}"),
                             category=category,
                             question_intent=intent,
                             semantic_warrant=(

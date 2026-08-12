@@ -93,7 +93,7 @@ def test_v34_context_uses_the_new_template_and_type_kit_identity() -> None:
     context = _context()
 
     assert context["pack_version"] == PROMPT_PACK_VERSION == "PromptPackInput.v3.4"
-    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.13"
+    assert context["template_version"] == TEMPLATE_VERSION == "gemma-phase-pack.v3.15"
     assert context["type_kit_identity"] == TYPE_KIT_IDENTITY
     kit = context["type_kits"][0]
     assert kit["identity"] == TYPE_KIT_IDENTITY
@@ -186,9 +186,24 @@ def test_compact_exemplars_are_requested_type_only_and_keep_exact_count() -> Non
     assert len(negative["serialized_units"]) == 6
     prompt = render_phase_prompt(context)
     assert "SYNTHETIC-QUIZ-STEM" in prompt
-    assert "v3.13" in prompt
+    assert "v3.15" in prompt
     assert "APPLICABLE TYPE PURPOSE CONTRACTS" in prompt
     assert "CONTRASTIVE PEDAGOGY FAILURES" in prompt
+
+
+def test_text_question_schema_shape_has_no_copyable_learner_content() -> None:
+    context = _context("text-questions")
+
+    exemplar = compact_schema_exemplars(context["type_kits"])[0]
+    activity = exemplar["one_item_slot_shape"]["activity"]
+    prompt = render_phase_prompt(context)
+
+    assert activity["payload"]["instruction"] == ""
+    assert activity["payload"]["items"] == [""]
+    assert activity["answer_key"]["guidance"] == ""
+    assert "SYNTHETIC-OPEN-QUESTION" not in prompt
+    assert "Синтетична вказівка." not in prompt
+    assert "never return that value blank" in prompt
 
 
 def test_benchmark_surfaces_are_in_the_offline_vesum_regression_bundle() -> None:
@@ -1046,9 +1061,9 @@ def test_quiz_non_revealing_gate_uses_one_certified_source_per_item() -> None:
 def test_natural_text_question_categories_need_one_source_content_lemma() -> None:
     kit = _context("text-questions")["type_kits"][0]
     activities = {
-        "comprehension": "Що повідомляє уривок про читання?",
+        "comprehension": "Що розвиває читання?",
         "explanation_inference": "Як можна пояснити користь читання?",
-        "anchored_application": "У якій реальній ситуації допоможе читання?",
+        "anchored_application": "Як можна застосувати читання?",
     }
     for category, question in activities.items():
         single = deepcopy(kit)
@@ -1073,6 +1088,80 @@ def test_natural_text_question_categories_need_one_source_content_lemma() -> Non
         activity["payload"]["items"] = [question.replace("читання", "подорож")]
         with pytest.raises(PromptPackV3Error, match="detached from its rendering surface"):
             validate_activity_purpose(activity, single)
+
+
+def test_definition_question_uses_the_poliahati_content_frame(monkeypatch) -> None:
+    original_matches = prompt_pack_v3._vesum_matches
+    known = {
+        "сенс": [{"lemma": "сенс", "pos": "noun"}],
+        "гри": [{"lemma": "гра", "pos": "noun"}],
+        "полягає": [{"lemma": "полягати", "pos": "verb"}],
+        "кожен": [{"lemma": "кожний", "pos": "adj"}],
+        "прагне": [{"lemma": "прагнути", "pos": "verb"}],
+        "перемоги": [{"lemma": "перемога", "pos": "noun"}],
+    }
+
+    def vesum_matches(word, db_path):
+        normalized = word.casefold()
+        if normalized in known:
+            return known[normalized]
+        return original_matches(word, db_path)
+
+    monkeypatch.setattr(prompt_pack_v3, "_vesum_matches", vesum_matches)
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "explanation_inference"
+    )
+    unit["rendering_surface"] = "Сенс гри полягає в тому, що кожен прагне перемоги."
+    unit["distinctness"]["question_intent"] = "definition-content.v1"
+    unit["distinctness"]["question_topic"] = {"surface": "Сенс", "lemma": "сенс"}
+    unit["distinctness"]["question_frame"] = {
+        "allowed_prefixes": ["У чому полягає"],
+        "category": "explanation_inference",
+        "intent": "definition-content.v1",
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["У чому полягає сенс гри?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    validate_activity_purpose(activity, kit)
+
+
+def test_explanation_question_rejects_a_bare_personal_pronoun_topic() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "explanation_inference"
+    )
+    unit["rendering_surface"] = "Іван читав, коли почався дощ."
+    unit["distinctness"]["question_intent"] = "temporal-clause.v1"
+    unit["distinctness"]["question_topic"] = {"surface": "читав", "lemma": "читати"}
+    unit["distinctness"]["question_frame"] = {
+        "allowed_prefixes": ["Коли"],
+        "category": "explanation_inference",
+        "intent": "temporal-clause.v1",
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Коли він читав?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="unresolved source deixis"):
+        validate_activity_purpose(activity, kit)
 
 
 def test_licensed_cause_question_accepts_correct_ukrainian_case() -> None:
@@ -1111,13 +1200,95 @@ def test_text_question_must_leave_source_content_for_the_answer() -> None:
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["Що повідомляє уривок про читання, мозок і людину?"],
+            "items": ["Чи читання розвиває мозок людини?"],
         },
         "answer_key": {"guidance": "Відповідайте за текстом."},
     }
 
     with pytest.raises(PromptPackV3Error, match="consumes its source answer"):
         validate_activity_purpose(activity, kit)
+
+
+@pytest.mark.parametrize(
+    ("rendering_surface", "question", "topic_surface", "topic_lemma"),
+    (
+        (
+            "При створенні гра була орієнтована на молодіжну аудиторію.",
+            "Яку аудиторію обрали для гри?",
+            "гра",
+            "гра",
+        ),
+        (
+            "Вниз западалися боки гори у глибокі чорні ізвори.",
+            "Як описано боки гори?",
+            "боки",
+            "бік",
+        ),
+    ),
+)
+def test_text_question_overlap_counts_each_ambiguous_surface_once(
+    rendering_surface: str,
+    question: str,
+    topic_surface: str,
+    topic_lemma: str,
+    monkeypatch,
+) -> None:
+    """VESUM ambiguity must not manufacture extra answer words."""
+    original_matches = prompt_pack_v3._vesum_matches
+    ambiguous = {
+        "при": [
+            {"lemma": "перти", "pos": "verb"},
+            {"lemma": "при", "pos": "prep"},
+        ],
+        "створенні": [{"lemma": "створення", "pos": "noun"}],
+        "гра": [{"lemma": "гра", "pos": "noun"}],
+        "гру": [{"lemma": "гра", "pos": "noun"}],
+        "гри": [{"lemma": "гра", "pos": "noun"}],
+        "була": [{"lemma": "бути", "pos": "verb"}],
+        "орієнтована": [{"lemma": "орієнтувати", "pos": "verb"}],
+        "молодіжну": [{"lemma": "молодіжний", "pos": "adj"}],
+        "аудиторію": [{"lemma": "аудиторія", "pos": "noun"}],
+        "боки": [{"lemma": "бік", "pos": "noun"}],
+        "гори": [
+            {"lemma": "гора", "pos": "noun"},
+            {"lemma": "горіти", "pos": "verb"},
+        ],
+        "западалися": [{"lemma": "западатися", "pos": "verb"}],
+        "глибокі": [{"lemma": "глибокий", "pos": "adj"}],
+        "чорні": [{"lemma": "чорний", "pos": "adj"}],
+        "ізвори": [{"lemma": "ізвір", "pos": "noun"}],
+    }
+
+    def vesum_matches(word, db_path):
+        normalized = word.casefold()
+        if normalized in ambiguous:
+            return ambiguous[normalized]
+        return original_matches(word, db_path)
+
+    monkeypatch.setattr(prompt_pack_v3, "_vesum_matches", vesum_matches)
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = rendering_surface
+    unit["distinctness"]["question_topic"] = {
+        "token_id": "s-1:t-1",
+        "surface": topic_surface,
+        "lemma": topic_lemma,
+    }
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": [question],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    validate_activity_purpose(activity, kit)
 
 
 def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
@@ -1133,7 +1304,7 @@ def test_anchored_application_accepts_natural_learner_experience_cue() -> None:
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["З вашого досвіду, де допомагають книги?"],
+            "items": ["З вашого досвіду, як вам допомагають книги?"],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1155,12 +1326,57 @@ def test_anchored_application_accepts_an_explicit_source_noun_topic() -> None:
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["У якій реальній ситуації важливе читання?"],
+            "items": ["Як можна застосувати читання?"],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
 
     validate_activity_purpose(activity, kit)
+
+
+def test_anchored_application_rejects_recall_disguised_as_a_situation() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    )
+    unit["rendering_surface"] = "Оригінальну гру переклали українською мовою."
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["У якій реальній ситуації оригінальну гру переклали українською мовою?"],
+        },
+        "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="certified question category"):
+        validate_activity_purpose(activity, kit)
+
+
+def test_anchored_application_rejects_an_experience_cue_wrapper() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "anchored_application"
+    )
+    unit["rendering_surface"] = "Добра душа допомагає людям у скруті."
+    unit["distinctness"]["question_topic"] = {"surface": "душа", "lemma": "душа"}
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["З вашого досвіду, як діє добра душа?"],
+        },
+        "answer_key": {"guidance": "Обґрунтуйте відповідь."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="does not center a learner application"):
+        validate_activity_purpose(activity, kit)
 
 
 def test_anchored_application_rejects_contrast_as_one_causal_reason() -> None:
@@ -1179,8 +1395,7 @@ def test_anchored_application_rejects_contrast_as_one_causal_reason() -> None:
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
             "items": [
-                "Чи доводилося вам відмовлятися від квартири через те, що вона "
-                "красива, але дорога?"
+                "Чи доводилося вам відмовлятися від квартири через те, що вона красива, але дорога?"
             ],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
@@ -1230,9 +1445,7 @@ def test_degree_comprehension_question_must_keep_its_certified_comparison(
         "читає": [{"lemma": "читати", "tags": "verb:imperf:pres", "pos": "verb"}],
         "книжку": [{"lemma": "книжка", "tags": "noun:f:acc", "pos": "noun"}],
         "щовечора": [{"lemma": "щовечора", "tags": "adv", "pos": "adv"}],
-        "повідомляє": [
-            {"lemma": "повідомляти", "tags": "verb:imperf:pres", "pos": "verb"}
-        ],
+        "повідомляє": [{"lemma": "повідомляти", "tags": "verb:imperf:pres", "pos": "verb"}],
         "уривок": [{"lemma": "уривок", "tags": "noun:m:nom", "pos": "noun"}],
     }
     monkeypatch.setattr(
@@ -1254,15 +1467,13 @@ def test_degree_comprehension_question_must_keep_its_certified_comparison(
     unit["rendering_surface"] = "Старша сестра читає книжку щовечора."
     unit["distinctness"]["focus_alignment"] = "anchor-comprehension"
     unit["distinctness"]["question_topic"] = {"surface": "книжку", "lemma": "книжка"}
-    unit["distinctness"]["question_frame"] = {
-        "allowed_prefixes": ["Що повідомляє уривок про"]
-    }
+    unit["distinctness"]["question_frame"] = {"allowed_prefixes": ["Яку"]}
     kit["certified_units"] = [unit]
     activity = {
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": ["Що повідомляє уривок про книжку?"],
+            "items": ["Яку книжку обрали?"],
         },
         "answer_key": {"guidance": "Відповідайте за текстом."},
     }
@@ -1271,6 +1482,51 @@ def test_degree_comprehension_question_must_keep_its_certified_comparison(
         validate_activity_purpose(activity, kit)
 
     unit["distinctness"].pop("focus_alignment")
+    validate_activity_purpose(activity, kit)
+
+
+def test_frequency_comprehension_question_must_keep_its_certified_scale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyses = {
+        "як": [{"lemma": "як", "pos": "adv", "tags": "adv"}],
+        "тепер": [{"lemma": "тепер", "pos": "adv", "tags": "adv"}],
+        "уже": [{"lemma": "уже", "pos": "adv", "tags": "adv"}],
+        "хати": [{"lemma": "хата", "pos": "noun", "tags": "noun:p:v_naz"}],
+        "попадалися": [
+            {"lemma": "попадатися", "pos": "verb", "tags": "verb:imperf:past:p"}
+        ],
+        "рідше": [{"lemma": "рідше", "pos": "adv", "tags": "adv:compc"}],
+        "часто": [{"lemma": "часто", "pos": "adv", "tags": "adv"}],
+    }
+    monkeypatch.setattr(
+        prompt_pack_v3,
+        "_vesum_matches",
+        lambda word, _db_path: analyses.get(word.casefold(), []),
+    )
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = "Тепер уже хати попадалися рідше."
+    unit["distinctness"]["question_topic"] = {"surface": "хати", "lemma": "хата"}
+    unit["distinctness"]["question_frame"] = {"allowed_prefixes": ["Як"]}
+    kit["certified_units"] = [unit]
+    activity = {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": ["Як попадалися хати?"],
+        },
+        "answer_key": {"guidance": "Відповідайте за текстом."},
+    }
+
+    with pytest.raises(PromptPackV3Error, match="omits its certified comparison"):
+        validate_activity_purpose(activity, kit)
+
+    activity["payload"]["items"] = ["Як часто попадалися хати?"]
     validate_activity_purpose(activity, kit)
 
 
@@ -1289,15 +1545,11 @@ def test_degree_cue_accepts_only_normative_correlative_pairs() -> None:
 def test_degree_writing_rejects_literal_base_word_requirement() -> None:
     """`малий` is a lemma cue; correct `менший` must satisfy the learner task."""
     kit = _context("short-writing")["type_kits"][0]
-    marker = (
-        "утворіть потрібні форми від прикметників «малий», «світлий», «теплий», «близький»"
-    )
+    marker = "утворіть потрібні форми від прикметників «малий», «світлий», «теплий», «близький»"
     unit = kit["certified_units"][0]
     unit["allowed_forms"] = [marker, "від 80 до 110 слів"]
     unit["rendering_surface"] = anchor_inventory_v3.DEGREE_WRITING_SCENARIO
-    unit["distinctness"]["attribute_warrants"] = dict(
-        anchor_inventory_v3.DEGREE_WRITING_WARRANTS
-    )
+    unit["distinctness"]["attribute_warrants"] = dict(anchor_inventory_v3.DEGREE_WRITING_WARRANTS)
     kit["focus_alignment"] = "degree-writing"
     activity = {
         "payload": {
@@ -1322,13 +1574,13 @@ def test_degree_writing_rejects_literal_base_word_requirement() -> None:
     (
         ("Яке слово стоїть у реченні?", "token_retrieval"),
         ("Чому в уривку згадано читання?", "question_category_mismatch"),
-        ("Що повідомляє уривок про подорож?", "source_lemma_overlap_missing"),
+        ("Що ми дізнаємося про читання?", "generic_metadiscourse"),
+        ("Куди веде подорож?", "source_lemma_overlap_missing"),
         (
-            "Що повідомляє уривок про те, як регулярне читання щодня розвиває "
-            "мозок дорослої людини вдома?",
+            "Що регулярне читання щодня розвиває у мозку дорослої людини вдома?",
             "answer_leak",
         ),
-        ("Що повідомляє уривок про читання цих книжок?", "unresolved_reference"),
+        ("Що розвиває читання цих книжок?", "unresolved_reference"),
     ),
 )
 def test_text_question_repair_receives_safe_actionable_gate_code(
@@ -1362,6 +1614,114 @@ def test_text_question_repair_receives_safe_actionable_gate_code(
 
     assert rejected.value.rule_key == "activity_purpose"
     assert rejected.value.suffix == f"{suffix}:item=0"
+
+
+@pytest.mark.parametrize(
+    ("category", "question", "suffix"),
+    (
+        ("explanation_inference", "Навіщо потрібно тільки берегтися?", "generic_modal_relation"),
+        (
+            "anchored_application",
+            "Чи доводилося вам вчинити щось подібне?",
+            "vague_application_object",
+        ),
+        (
+            "anchored_application",
+            "Чи доводилося вам знати про події лише з оповідань?",
+            "stative_experience",
+        ),
+        (
+            "explanation_inference",
+            "Від чого щулишся на кормі?",
+            "source_person_import",
+        ),
+    ),
+)
+def test_observed_tetiana_question_defects_receive_item_local_repairs(
+    category: str, question: str, suffix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if suffix == "source_person_import":
+        original_matches = prompt_pack_v3._vesum_matches
+        monkeypatch.setattr(
+            prompt_pack_v3,
+            "_vesum_matches",
+            lambda word, db_path: (
+                [{"lemma": "щулитися", "pos": "verb", "tags": "verb:rev:imperf:pres:s:2"}]
+                if word.casefold() == "щулишся"
+                else original_matches(word, db_path)
+            ),
+        )
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == category
+    )
+    if category == "explanation_inference":
+        intent = "purpose-clause.v1" if question.startswith("Навіщо") else "licensed-vid-cause.v1"
+        prefix = "Навіщо" if question.startswith("Навіщо") else "Від чого"
+        unit["distinctness"]["question_intent"] = intent
+        unit["distinctness"]["question_frame"] = {
+            "allowed_prefixes": [prefix],
+            "category": category,
+            "intent": intent,
+        }
+    kit["certified_units"] = [unit]
+    record = {
+        "activity": {
+            "payload": {
+                "type": "text-questions",
+                "instruction": "Дайте відповідь.",
+                "items": [question],
+            },
+            "answer_key": {"guidance": "Відповідайте повними реченнями."},
+        }
+    }
+
+    with pytest.raises(RuleNamedRejection) as rejected:
+        validate_slot_deterministic_gates(
+            record,
+            kit,
+            deterministic_gates=(validate_activity_purpose,),
+        )
+
+    assert rejected.value.rule_key == "activity_purpose"
+    assert rejected.value.suffix == f"{suffix}:item=0"
+
+
+def test_missing_certified_question_topic_receives_an_item_local_repair_code() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    unit = next(
+        unit
+        for unit in kit["certified_units"]
+        if unit["distinctness"]["question_category"] == "comprehension"
+    )
+    unit["rendering_surface"] = "Регулярне читання розвиває мозок."
+    unit["distinctness"]["question_topic"] = {
+        "surface": "читання",
+        "lemma": "читання",
+    }
+    kit["certified_units"] = [unit]
+    record = {
+        "activity": {
+            "payload": {
+                "type": "text-questions",
+                "instruction": "Дайте відповідь.",
+                "items": ["Що розвиває мозок?"],
+            },
+            "answer_key": {"guidance": "Відповідайте повними реченнями."},
+        }
+    }
+
+    with pytest.raises(RuleNamedRejection) as rejected:
+        validate_slot_deterministic_gates(
+            record,
+            kit,
+            deterministic_gates=(validate_activity_purpose,),
+        )
+
+    assert rejected.value.rule_key == "activity_purpose"
+    assert rejected.value.suffix == "certified_topic_missing:item=0"
 
 
 def test_duplicate_options_or_duplicate_answers_fail_closed() -> None:
@@ -1451,11 +1811,11 @@ def test_degree_reinforcement_fill_requires_a_real_degree_contrast(
         validate_distractor_adjacency(activity, kit)
 
 
-def test_pack_v313_no_options_zero_mandate_and_enforces_varied_placement() -> None:
-    """Pack v3.13 contains no options[0] mandate and enforces varied answer placement."""
+def test_pack_v315_no_options_zero_mandate_and_enforces_varied_placement() -> None:
+    """Pack v3.15 contains no options[0] mandate and enforces varied answer placement."""
     from pathlib import Path
 
-    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.13.md"
+    template_path = Path(__file__).parent.parent / "prompts" / "gemma-phase-pack.v3.15.md"
     content = template_path.read_text(encoding="utf-8")
     assert "first option (`options[0]`)" not in content
     assert "options[0]" not in content

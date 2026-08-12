@@ -709,10 +709,13 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
     terms: list[str] = []
     lemmas: set[str] = set()
     for word in re.findall(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+", surface):
+        if word.casefold() in {"при", "під"}:
+            continue
+        matches = _vesum_matches(word, paths.vesum_db())
         match = next(
             (
                 row
-                for row in _vesum_matches(word, paths.vesum_db())
+                for row in matches
                 if row.get("pos") in {"noun", "verb", "adj", "adv"}
                 and isinstance(row.get("lemma"), str)
             ),
@@ -744,10 +747,29 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
         "causal-clause.v1",
         "purpose-clause.v1",
         "temporal-clause.v1",
+        "definition-content.v1",
         "licensed-vid-cause.v1",
     }
     if category == "comprehension" and intent == "fact-recovery":
-        return f"{prefixes[0]} «{named_topic}» ({index + 1})?"
+        if any(
+            word.casefold() in {"рідше", "частіше"}
+            for word in re.findall(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+", surface)
+        ):
+            predicate = next(
+                (
+                    word
+                    for word in re.findall(r"[А-Яа-яІіЇїЄєҐґʼ’'-]+", surface)
+                    if any(
+                        match.get("pos") == "verb"
+                        for match in _vesum_matches(word, paths.vesum_db())
+                    )
+                ),
+                None,
+            )
+            if predicate is not None:
+                return f"Як часто {predicate.casefold()} {named_topic.casefold()} ({index + 1})?"
+        prefix = "Що" if "Що" in prefixes else prefixes[0]
+        return f"{prefix} пов'язано з «{named_topic}» ({index + 1})?"
     if category == "explanation_inference" and intent in {
         "explicit-causal",
         *relation_intents,
@@ -757,6 +779,8 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
         natural_topic = (
             named_topic if proper_name else named_topic[:1].lower() + named_topic[1:]
         )
+        if intent == "definition-content.v1":
+            return f"{prefixes[0]} {natural_topic} ({index + 1})?"
         return f"{prefixes[0]} в уривку {natural_topic} ({index + 1})?"
     if category == "anchored_application" and intent in {
         "realistic-transfer",

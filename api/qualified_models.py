@@ -24,10 +24,10 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.4"
 # The prompt aggregate and receipts below remain from the preceding contract.
 # That receipt mismatch deliberately exposes no production route until the
-# exact v3.13 candidate commit completes a fresh qualification transcription.
+# exact v3.15 candidate commit completes a fresh qualification transcription.
 PROMPT_SHA256: Final = "a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc76fb4b2b1"
-TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.13"
-TEMPLATE_SHA256: Final = "f78ea917f779f9e04bcf93846a353807bf0b0a04bd16f0a8e2e2bb010eaa3b22"
+TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.15"
+TEMPLATE_SHA256: Final = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
 DENSITY_CONTRACT_DIGEST: Final = "45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"
