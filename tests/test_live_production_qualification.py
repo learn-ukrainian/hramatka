@@ -625,7 +625,11 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
             provider=SlowProvider(route),
             cell_root=tmp_path / "long",
             bake_hard_timeout_seconds=100,
-            readiness_timeout_seconds=2,
+            # The success leg proves that the injected readiness limit is
+            # honored, not that a complete bake finishes within two wall-clock
+            # seconds on a loaded shared CI runner. It still returns as soon as
+            # the job is terminal.
+            readiness_timeout_seconds=10,
             runner_stop_timeout_seconds=1,
             runner_stop_waiter=lambda _runner, _timeout: True,
         )

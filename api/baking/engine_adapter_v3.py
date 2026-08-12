@@ -260,6 +260,16 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
     replacement_policy = {
         "match-up": ("quiz", "fill-in"),
     }
+    if duration == 45 and focus is None:
+        # Ordinary narrative sources do not reliably contain the three closed
+        # relation witnesses required by the 3+3+2 text-question board.  Keep
+        # that board when it is certifiable, but preserve a complete grounded
+        # lesson through an already-registered closed activity when it is not.
+        # Prefer a distinct fill-in board when match-up itself is unavailable;
+        # reserve the additional quiz occurrence for the relation-scarce
+        # text-question slot.
+        replacement_policy["match-up"] = ("fill-in", "quiz")
+        replacement_policy["text-questions"] = ("quiz",)
     index = 0
     for phase, count in sorted(shape.phase_slots.items()):
         for position in range(1, count + 1):
@@ -276,15 +286,28 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
 
 
 def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., object]]:
-    """Bind repeated types to distinct pre-certified anchor resource groups."""
+    """Bind slots to pre-certified groups, including one exact-cover-shared fallback."""
     occurrence_by_slot_type: dict[tuple[str, str], int] = {}
     occurrences: Counter[str] = Counter()
+    source_comprehension_45 = tuple(slot.requested_type for slot in slots) == _scheduled_types(
+        45, None
+    )
     for slot in slots:
         activity_type = slot.requested_type
         occurrences[activity_type] += 1
         occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
     for slot in slots:
         for activity_type in slot.replacement_types:
+            if (
+                source_comprehension_45
+                and slot.requested_type == "text-questions"
+                and activity_type == "quiz"
+            ):
+                # The match-up slot can use fill-in while this slot uses the
+                # one spare quiz group. Exact cover still forbids both slots
+                # from consuming that quiz group together.
+                occurrence_by_slot_type[(slot.slot_id, activity_type)] = 2
+                continue
             occurrences[activity_type] += 1
             occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
 
@@ -312,7 +335,19 @@ def _inventory_candidate_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]
 
 def _inventory_replacement_types(slots: tuple[LessonSlot, ...]) -> tuple[str, ...]:
     """Return the optional replacement lane after all primary occurrences."""
-    return tuple(activity_type for slot in slots for activity_type in slot.replacement_types)
+    source_comprehension_45 = tuple(slot.requested_type for slot in slots) == _scheduled_types(
+        45, None
+    )
+    return tuple(
+        activity_type
+        for slot in slots
+        for activity_type in slot.replacement_types
+        if not (
+            source_comprehension_45
+            and slot.requested_type == "text-questions"
+            and activity_type == "quiz"
+        )
+    )
 
 
 def _anchor_text(anchor: str | Mapping[str, object]) -> str:

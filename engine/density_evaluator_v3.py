@@ -418,6 +418,9 @@ def evaluate_phase_with_repair(
     )
     attempts: list[PhaseEvaluation] = [initial]
     final = {block.slot_id: block for block in initial.blocks}
+    replacement_eligible = {
+        block.slot_id: block.attempted_record is not None for block in initial.blocks
+    }
     pending = []
     for block in initial.failed:
         if block.repairable:
@@ -462,6 +465,10 @@ def evaluate_phase_with_repair(
             errors_by_slot=renderer_errors,
         )
         attempts.append(attempt)
+        for block in attempt.blocks:
+            replacement_eligible[block.slot_id] = (
+                replacement_eligible[block.slot_id] or block.attempted_record is not None
+            )
         final.update({block.slot_id: block for block in attempt.blocks})
         pending = []
         for block in attempt.failed:
@@ -472,6 +479,14 @@ def evaluate_phase_with_repair(
 
     for slot_id in pending:
         slot = slot_by_id[slot_id]
+        previous = final[slot_id]
+        if not replacement_eligible[slot_id]:
+            # A conditional replacement may recover a model-produced slot that
+            # exhausted its fixed-plan repairs.  It must not manufacture an
+            # activity when the provider never returned a shape-valid slot at
+            # all; that remains a provider serialization failure.
+            final[slot_id] = _dropped(previous, slot_id, reason="repair_exhausted")
+            continue
         replacement, replacement_attempts = _try_replacements(
             slot,
             allocation=allocation,
@@ -485,7 +500,6 @@ def evaluate_phase_with_repair(
         if replacement is not None:
             final[slot_id] = replacement
             continue
-        previous = final[slot_id]
         final[slot_id] = _dropped(previous, slot_id, reason="repair_exhausted")
 
     return RepairEvaluation(

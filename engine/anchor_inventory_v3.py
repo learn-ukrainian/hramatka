@@ -2675,6 +2675,81 @@ def _joint_source_comprehension(
     return tuple(questions), tuple(facts)
 
 
+def _balanced_true_false(
+    sentences: Sequence[AnchorSentence],
+    *,
+    sentence_group_uses: Counter[str],
+    sentence_phase_uses: dict[str, set[int]],
+) -> tuple[TrueFalseFact, ...]:
+    """Build the balanced source-bound board without requiring question relations.
+
+    Text questions and true/false share Phase 2 when both are available, but
+    relation scarcity in the former must not erase independently provable
+    statements in the latter.  Every row still uses a distinct safe carrier;
+    false rows retain the closed predicate-negation catalog.
+    """
+    eligible = tuple(
+        sentence
+        for sentence in sentences
+        if sentence.tokens
+        and sentence_group_uses[sentence.sentence_id] < 2
+        and 2 not in sentence_phase_uses.get(sentence.sentence_id, set())
+        and _safe_item_carrier(sentence)
+    )
+    false_rows = [
+        (sentence, predicate)
+        for sentence in eligible
+        if (predicate := next(iter(_safe_asserted_predicates(sentence)), None)) is not None
+    ][:4]
+    if len(false_rows) != 4:
+        return ()
+    false_sentence_ids = {sentence.sentence_id for sentence, _predicate in false_rows}
+    true_sentences = [
+        sentence
+        for sentence in eligible
+        if sentence.sentence_id not in false_sentence_ids and _safe_true_fact_carrier(sentence)
+    ][:4]
+    if len(true_sentences) != 4:
+        return ()
+
+    facts = [
+        TrueFalseFact(
+            fact_id=f"true-false:1:false-{index}",
+            sentence_id=sentence.sentence_id,
+            literal_evidence=sentence.text,
+            source_surface=predicate.token.surface,
+            replacement_surface=f"не {predicate.token.surface}",
+            truth_value=False,
+            mutation_rule_id="negate-asserted-predicate.v1",
+            source_start_offset=predicate.token.start_offset,
+            source_end_offset=predicate.token.end_offset,
+        )
+        for index, (sentence, predicate) in enumerate(false_rows, start=1)
+    ]
+    facts.extend(
+        TrueFalseFact(
+            fact_id=f"true-false:1:true-{index}",
+            sentence_id=sentence.sentence_id,
+            literal_evidence=sentence.text,
+            source_surface=sentence.tokens[0].surface,
+            replacement_surface=sentence.tokens[0].surface,
+            truth_value=True,
+            mutation_rule_id="negate-asserted-predicate.v1",
+        )
+        for index, sentence in enumerate(true_sentences, start=1)
+    )
+    order_seed = hashlib.sha256(
+        "\n".join(sentence.text for sentence in eligible).encode("utf-8")
+    ).hexdigest()
+    facts.sort(
+        key=lambda fact: hashlib.sha256(
+            f"{order_seed}:{fact.sentence_id}:{fact.truth_value}".encode()
+        ).hexdigest()
+    )
+    _break_trivial_truth_pattern(facts)
+    return tuple(facts)
+
+
 def _break_trivial_truth_pattern(facts: list[TrueFalseFact]) -> None:
     """Keep balanced answer keys from teaching a positional shortcut."""
     pattern = tuple(fact.truth_value for fact in facts)
@@ -3360,6 +3435,9 @@ def inventory_from_anchor(
     primary_state: (
         tuple[set[str], Counter[str], dict[str, set[str]], dict[str, set[int]]] | None
     ) = None
+    replacement_state: (
+        tuple[set[str], Counter[str], dict[str, set[str]], dict[str, set[int]]] | None
+    ) = None
     for lane_index, lane in enumerate(lanes):
         if lane_index == 0 or primary_state is None:
             used_token_ids: set[str] = set()
@@ -3571,6 +3649,13 @@ def inventory_from_anchor(
                 {key: set(value) for key, value in sentence_operation_uses.items()},
                 {key: set(value) for key, value in sentence_phase_uses.items()},
             )
+        else:
+            replacement_state = (
+                set(used_token_ids),
+                Counter(sentence_group_uses),
+                {key: set(value) for key, value in sentence_operation_uses.items()},
+                {key: set(value) for key, value in sentence_phase_uses.items()},
+            )
 
     if source_comprehension_45 and primary_state is not None:
         joint = _joint_source_comprehension(
@@ -3589,6 +3674,18 @@ def inventory_from_anchor(
                 )
                 for candidate in question_candidates
             )
+            groups_by_type["text-questions"].append(question_tokens)
+            group_numbers_by_type["text-questions"].append(1)
+            group_focus_modes["text-questions"].append(None)
+            prebuilt_candidates[("text-questions", 1)] = question_candidates
+        else:
+            true_false_state = replacement_state or primary_state
+            prebuilt_true_false_facts = _balanced_true_false(
+                sentences,
+                sentence_group_uses=true_false_state[1],
+                sentence_phase_uses=true_false_state[3],
+            )
+        if prebuilt_true_false_facts:
             true_false_tokens = tuple(
                 next(
                     sentence.tokens[0]
@@ -3597,10 +3694,6 @@ def inventory_from_anchor(
                 )
                 for fact in prebuilt_true_false_facts
             )
-            groups_by_type["text-questions"].append(question_tokens)
-            group_numbers_by_type["text-questions"].append(1)
-            group_focus_modes["text-questions"].append(None)
-            prebuilt_candidates[("text-questions", 1)] = question_candidates
             groups_by_type["true-false"].append(true_false_tokens)
             group_numbers_by_type["true-false"].append(1)
             group_focus_modes["true-false"].append(None)

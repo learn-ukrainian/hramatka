@@ -606,14 +606,19 @@ def test_exhausted_text_question_repairs_get_one_clean_same_plan_regeneration() 
 
 
 def test_missing_scheduled_slot_exhausts_bounded_repairs_then_fails_closed() -> None:
-    allocation = _allocation("quiz", "cloze")
+    allocation = _allocation("quiz", "cloze", replacements=("fill-in",))
     subset = _payload(allocation)
     subset["slots"] = [record for record in subset["slots"] if record["slot_id"] == "P1-A1"]
     repair_calls: list[tuple[int, str]] = []
+    replacement_calls: list[str] = []
 
     def repair(request: object) -> dict:
         repair_calls.append((request.round, request.slot_id))
         return {"slots": []}
+
+    def replacement(request: object) -> dict:
+        replacement_calls.append(request.slot_id)
+        return _record_from_context(request.prompt_context)
 
     evaluated = evaluate_phase_with_repair(
         allocation,
@@ -622,6 +627,7 @@ def test_missing_scheduled_slot_exhausts_bounded_repairs_then_fails_closed() -> 
         deterministic_gates=(_passing_gate,),
         raw_contract_validator=_passing_raw_contract,
         repair_renderer=repair,
+        replacement_renderer=replacement,
     )
 
     assert repair_calls == [
@@ -632,6 +638,7 @@ def test_missing_scheduled_slot_exhausts_bounded_repairs_then_fails_closed() -> 
         ("P1-A1", "ready"),
         ("P1-A2", "dropped"),
     ]
+    assert replacement_calls == []
     assert evaluated.disposition == "recoverable_draft"
 
 
@@ -713,6 +720,8 @@ def test_bounded_repairs_share_the_original_plan_and_context_then_use_exact_repl
             frozen_prompts.append(render_phase_prompt(request.prompt_context))
         record = _record_from_context(request.prompt_context)
         record["serialized_units"] = record["serialized_units"][:6]
+        if request.round == MAX_REPAIR_ROUNDS:
+            return {"slot_id": request.slot_id}
         return record
 
     def replacement(request: object) -> dict:
