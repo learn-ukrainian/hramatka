@@ -24,7 +24,7 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.4"
 # The prompt aggregate and receipt below were transcribed from an exact-head
 # production-path qualification of the v3.15 lesson contract.
-PROMPT_SHA256: Final = "398c1017b2aa45e0639042d83baa2ceb3afdab12d68b426ac69746f15734406b"
+PROMPT_SHA256: Final = "9ea11dd5b97cfb6c384751cc1d98e20fdb5cf51ff51c749dc1989f1d32f892be"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.15"
 TEMPLATE_SHA256: Final = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
@@ -111,7 +111,7 @@ LOGICAL_MODELS: Final = (
 )
 
 # Transcribed from the merged-source qualification matrix (source commit
-# 5aa2e55cd311e2c9ed24fb523b5e0185c128faed) by
+# 20cfdfb4ec0ba123f4345a7475685457a03241b3) by
 # ``hramatka.qualification.transcribe``; the block below is its verbatim output.
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
     QualificationReceipt(
@@ -121,7 +121,7 @@ PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
         provider_model_id="gemini-3.1-pro-high",
         registry_version="QualifiedLogicalModels.v1",
         prompt_pack_version="PromptPackInput.v3.4",
-        prompt_sha256="398c1017b2aa45e0639042d83baa2ceb3afdab12d68b426ac69746f15734406b",
+        prompt_sha256="9ea11dd5b97cfb6c384751cc1d98e20fdb5cf51ff51c749dc1989f1d32f892be",
         template_version="gemma-phase-pack.v3.15",
         template_sha256="31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d",
         density_contract_version="TeacherReadyDensity.v3",
