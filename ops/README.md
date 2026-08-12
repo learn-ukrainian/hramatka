@@ -197,7 +197,7 @@ its loopback-only URL. It stores that account's SQLite file under
 shows the persistent unauthenticated-mode warning in the app. The local session route is not
 registered without all of those conditions and is not part of the deployed pilot path.
 
-The default launcher also permits the Flash receipt's explicit
+The default launcher also permits the Pro receipt's explicit
 `cli_self_reported` provenance tier only in that marked local environment. The API configuration
 default remains `api_observed`, and deployed/pilot starts keep their invite door.
 
@@ -219,9 +219,9 @@ Prerequisites:
 - `HRAMATKA_GEMMA_FALLBACK_API_KEY`, or a local `~/.secret/openrouter.key` file, for the
   local compatibility baker.
 
-The launcher enables the subscription route with OpenRouter, so the qualified Gemini 3.6 Flash
+The launcher enables the subscription route with OpenRouter, so the qualified Gemini 3.1 Pro
 route can be constructed while the legacy Gemma base baker remains available. Google AI Studio is
-not included in this local default because its unqualified Flash route would correctly fail the
+not included in this local default because its unqualified Pro route would correctly fail the
 exact-route gate. If a requested provider credential or the required subscription CLI is absent,
 startup fails instead of silently showing an empty model picker.
 

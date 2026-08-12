@@ -22,10 +22,9 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # Transcription validates these fail-closed selector literals against the live
 # template and density authorities before it may copy a route aggregate here.
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.4"
-# The prompt aggregate and receipts below remain from the preceding contract.
-# That receipt mismatch deliberately exposes no production route until the
-# exact v3.15 candidate commit completes a fresh qualification transcription.
-PROMPT_SHA256: Final = "a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc76fb4b2b1"
+# The prompt aggregate and receipt below were transcribed from an exact-head
+# production-path qualification of the v3.15 lesson contract.
+PROMPT_SHA256: Final = "398c1017b2aa45e0639042d83baa2ceb3afdab12d68b426ac69746f15734406b"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.15"
 TEMPLATE_SHA256: Final = "31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d"
 DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
@@ -111,8 +110,8 @@ LOGICAL_MODELS: Final = (
     ),
 )
 
-# Transcribed from qualification matrix run12 (source commit
-# 014fd4333f2e281f63f6441237f2a3cad326dc3b) by
+# Transcribed from the merged-source qualification matrix (source commit
+# 5aa2e55cd311e2c9ed24fb523b5e0185c128faed) by
 # ``hramatka.qualification.transcribe``; the block below is its verbatim output.
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
     QualificationReceipt(
@@ -121,16 +120,16 @@ PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
         provider_host="antigravity-cli",
         provider_model_id="gemini-3.1-pro-high",
         registry_version="QualifiedLogicalModels.v1",
-        prompt_pack_version="PromptPackInput.v3.2",
-        prompt_sha256="a17dc772b9b89756bac08cab28ba9f2642beb2e98a9bba7305ef5cc76fb4b2b1",
-        template_version="gemma-phase-pack.v3.6",
-        template_sha256="d55591b54961d2b789a42b413f6d3f5ad9404950ebf3492e5e0d02929eb5cd89",
+        prompt_pack_version="PromptPackInput.v3.4",
+        prompt_sha256="398c1017b2aa45e0639042d83baa2ceb3afdab12d68b426ac69746f15734406b",
+        template_version="gemma-phase-pack.v3.15",
+        template_sha256="31691f4ab0c093fe34d5f122f472f050e629eb08426a45b7b15053e7b141145d",
         density_contract_version="TeacherReadyDensity.v3",
-        density_contract_digest="1114645f2b2015e453ddb44542347b9af1de8aba6f6c64f875b5768550b946bf",
+        density_contract_digest="45749642e9260c39a702fc2d9dbec7dee28361d97a3f6cffbeece8ae7157d25b",
         type_kit_identity="TeacherReadyDensity.v3.unit-plan-kit.v3",
         serializer_temperature=0.0,
         provenance_tier="cli_self_reported",
-        passed_anchors=frozenset({"b1-dialogue", "b1-morphology", "b1-narrative"}),
+        passed_anchors=frozenset({"b1-dialogue", "b1-informational", "b1-narrative"}),
         passed=True,
     ),
 )

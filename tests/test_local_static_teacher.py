@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import sqlite3
-import sys
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
@@ -108,11 +107,11 @@ def test_deployed_configuration_defaults_to_api_observed_and_has_no_local_door(
     assert not settings.local_static_teacher_enabled
 
 
-def test_marked_local_launcher_fails_closed_without_current_qualification(
+def test_marked_local_launcher_lists_current_subscription_qualification(
     monkeypatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setenv("HRAMATKA_SUBSCRIPTION_EXECUTABLE", sys.executable)
+    monkeypatch.setenv("HRAMATKA_SUBSCRIPTION_EXECUTABLE", "/usr/bin/true")
     monkeypatch.delenv("HRAMATKA_GEN_MODEL", raising=False)
     settings = replace(
         _settings(tmp_path, static=True),
@@ -124,9 +123,15 @@ def test_marked_local_launcher_fails_closed_without_current_qualification(
         assert client.get(_STATIC_PATH, follow_redirects=False).status_code == 303
         payload = client.get("/api/lesson-models").json()
 
-    assert payload["models"] == []
+    assert payload["models"] == [
+        {
+            "id": "gemini-3.1-pro",
+            "label": "Gemini 3.1 Pro",
+            "description": "Ретельне складання уроку.",
+        }
+    ]
     assert payload["unavailable_message"] == (
-        "Моделі тимчасово недоступні: кваліфікація для поточних правил уроку ще не завершена."
+        "Показано лише моделі з повною кваліфікацією для поточних правил уроку."
     )
 
 

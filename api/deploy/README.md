@@ -91,12 +91,12 @@ qualification route; do not configure a paid Vertex fallback. Set
 API-provider bake key may be billed. Without it, standard API-provider bake calls
 are refused before transport; subscription-client routes are unaffected.
 
-The transcribed current-v3 Flash receipt has `cli_self_reported` subscription
+The transcribed current-v3 Pro receipt has `cli_self_reported` subscription
 provenance. Set
 `HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER=cli_self_reported` only to
 permit that explicitly lower-observability receipt; it does not make the
-receipt API-observed. With that setting, `/api/lesson-models` exposes Flash
-while unqualified Pro and Gemma remain hidden.
+receipt API-observed. With that setting, `/api/lesson-models` exposes Pro
+while unqualified Flash and Gemma remain hidden.
 
 For Google-AIS on a host, prefer `HRAMATKA_AIS_API_KEY_FILE` pointing to the
 root-readable secret file rather than copying the key into the environment file.

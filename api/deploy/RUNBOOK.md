@@ -57,10 +57,10 @@ change, provisioning, or disclosure of any secret.
    Antigravity subscriptions for Gemini Flash and Pro, and OpenRouter for Gemma.
    Google-AIS remains a separate qualification route; do not configure a paid
    Vertex fallback.
-   The current Flash qualification receipt is `cli_self_reported` subscription
+   The current Pro qualification receipt is `cli_self_reported` subscription
    evidence, so set
    `HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER=cli_self_reported` to
-   expose that route without presenting it as API-observed evidence. Pro and
+   expose that route without presenting it as API-observed evidence. Flash and
    Gemma remain unavailable until their own current receipts are transcribed.
    Set `HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND=1` only after acknowledging that
    an API-provider key may be billed; standard API-provider bake generation is
