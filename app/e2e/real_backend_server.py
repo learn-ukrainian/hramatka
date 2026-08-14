@@ -7,6 +7,7 @@ session, Origin/CSRF, SQLite, status-polling, and revision routes.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -21,6 +22,8 @@ LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 EXPECTED_STATE_DIRECTORY = Path(__file__).resolve().parents[1] / ".real-e2e"
 TEST_LOGICAL_MODEL_ID = "gemini-3.6-flash"
+
+
 class E2EInterpreterError(RuntimeError):
     """Raised when the real-backend harness is not using its requested Python."""
 
@@ -111,9 +114,7 @@ def _fixture_baker(runtime_dir: Path) -> Any:
     class FixtureBaker(EngineLessonBaker):
         """Fast deterministic LessonBaker port implementation; it never calls a provider."""
 
-        def __init__(
-            self, runtime_dir: Path, *, logical_model_id: str | None = None
-        ) -> None:
+        def __init__(self, runtime_dir: Path, *, logical_model_id: str | None = None) -> None:
             self._runtime_dir = runtime_dir
 
             def generator(prompt: str) -> str:
@@ -143,11 +144,27 @@ def _fixture_baker(runtime_dir: Path) -> Any:
             )
             return routed
 
-        def bake(
-            self, anchor: str | dict, duration: int, focus: str | None
-        ) -> dict[str, Any]:
+        def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
             del anchor
             return super().bake(fixtures.load_anchor(), duration, focus)
+
+        def regenerate_activity(
+            self,
+            anchor: str | dict,
+            duration: int,
+            focus: str | None,
+            *,
+            block: dict[str, Any],
+            feedback: str | None,
+        ) -> dict[str, Any]:
+            """Deterministic changed block for the real API/browser contract seam."""
+            del anchor, duration, focus, feedback
+            replacement = copy.deepcopy(block)
+            replacement["activity"]["payload"]["instruction"] += " Новий варіант."
+            replacement["activity"]["provenance"]["generator"] = TEST_LOGICAL_MODEL_ID
+            replacement["provenance"]["generator"] = TEST_LOGICAL_MODEL_ID
+            replacement["note"] = "Створено новий перевірений варіант."
+            return replacement
 
     return FixtureBaker(runtime_dir)
 
@@ -195,9 +212,10 @@ def _runtime_directory() -> tuple[Path, str]:
 
 
 def _write_ready(descriptor: int, *, pid: int, port: int) -> None:
-    payload = json.dumps(
-        {"pid": pid, "port": port, "python_prefix": sys.prefix}, separators=(",", ":")
-    ) + "\n"
+    payload = (
+        json.dumps({"pid": pid, "port": port, "python_prefix": sys.prefix}, separators=(",", ":"))
+        + "\n"
+    )
     encoded = payload.encode("ascii")
     if len(encoded) > 256:
         raise RuntimeError("real-backend readiness payload is unexpectedly large")

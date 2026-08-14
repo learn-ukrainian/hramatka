@@ -8,7 +8,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from itertools import combinations
 from types import MappingProxyType
@@ -1901,6 +1901,35 @@ _APPLICATION_PERSONAL_FORMS: Final[frozenset[str]] = frozenset(
         "вами",
     }
 )
+_APPLICATION_GROUNDING_EXCLUDED_LEMMAS: Final[frozenset[str]] = frozenset(
+    {"людина", "світ"}
+)
+
+
+def _application_question_grounding_terms(sentence: AnchorSentence) -> tuple[str, ...]:
+    """Expose a compact, non-personal source handle for an application question."""
+    terms: list[str] = []
+    seen_lemmas: set[str] = set()
+    for token in sentence.tokens:
+        lemma = _topic_lemma(token)
+        if (
+            lemma is None
+            or lemma in seen_lemmas
+            or lemma in _APPLICATION_GROUNDING_EXCLUDED_LEMMAS
+            or len(token.surface) < 4
+            or not any(
+                parse.get("pos") == "noun"
+                and ":inanim" in str(parse.get("raw", ""))
+                and ":pron" not in str(parse.get("raw", ""))
+                for parse in token.vesum_parses
+            )
+        ):
+            continue
+        terms.append(token.surface)
+        seen_lemmas.add(lemma)
+        if len(terms) == 4:
+            break
+    return tuple(terms)
 
 
 def _application_carrier_rank(sentence: AnchorSentence) -> tuple[int, int, int, int]:
@@ -2784,6 +2813,337 @@ def _source_question_candidate(
         topic_token_id=topic_token.token_id,
         topic_lemma=topic_lemma,
         focus_alignment=focus_alignment,
+    )
+
+
+_REGENERATION_CHANGE_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:зараз|спочатку|потім|згодом|невдовзі|через|за\s+(?:кілька|\d+)|"
+    r"третин\w*|половин\w*|відсот\w*|але|проте|однак)\b|\d",
+    re.IGNORECASE,
+)
+_REGENERATION_LATE_DAYPART_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:звечора|увечері|вечір\w*|ніч|ночі|ніччю|нічн\w*)\b",
+    re.IGNORECASE,
+)
+_REGENERATION_EARLY_DAYPART_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:вдосвіта|вранці|світан\w*|ранок\w*|ранков\w*)\b",
+    re.IGNORECASE,
+)
+_REGENERATION_SOUND_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:звук\w*|шурх\w*|скрик\w*|плюск\w*|плеск\w*|стук\w*|"
+    r"шум\w*|гул\w*|голос\w*|постріл\w*|чути|чутно|луна\w*|бах|лоп|фш)\b",
+    re.IGNORECASE,
+)
+_REGENERATION_VISIBLE_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:видн\w*|бач\w*|з'яв\w*|з’яв\w*|зник\w*|світл\w*|темн\w*|"
+    r"яскрав\w*|блід\w*|тьмян\w*|сяй\w*|див\w*|сонц\w*|туман\w*|"
+    r"колір\w*|форма\w*|розмір\w*|вигляд\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _narrative_regeneration_profile(sentences: Sequence[AnchorSentence]) -> bool:
+    """Whether the source independently supports all three narrative lenses."""
+    text = " ".join(sentence.text for sentence in sentences)
+    return (
+        _REGENERATION_LATE_DAYPART_RE.search(text) is not None
+        and _REGENERATION_EARLY_DAYPART_RE.search(text) is not None
+        and _REGENERATION_SOUND_RE.search(text) is not None
+        and _REGENERATION_CHANGE_MARKER_RE.search(text) is not None
+        and _REGENERATION_VISIBLE_RE.search(text) is not None
+    )
+
+
+def _narrative_application_carriers(
+    carriers: Sequence[tuple[AnchorSentence, tuple[str, ...]]],
+) -> tuple[tuple[AnchorSentence, tuple[str, ...]], ...]:
+    """Choose a human episode and a separate detail-rich proposition."""
+    if len(carriers) < 2:
+        return ()
+
+    def personal_rank(row: tuple[AnchorSentence, tuple[str, ...]]) -> tuple[int, ...]:
+        sentence = row[0]
+        words = {token.surface.casefold() for token in sentence.tokens}
+        has_person = bool(words & _APPLICATION_PERSONAL_FORMS) or any(
+            ":anim" in str(parse.get("raw", ""))
+            for token in sentence.tokens
+            for parse in token.vesum_parses
+        )
+        return (
+            int(not has_person),
+            *_application_carrier_rank(sentence)[:3],
+            int(sentence.sentence_id.removeprefix("s-")),
+        )
+
+    personal = min(
+        carriers,
+        key=personal_rank,
+    )
+    evidence = min(
+        (row for row in carriers if row[0].sentence_id != personal[0].sentence_id),
+        key=lambda row: (
+            -len({token.surface.casefold() for token in row[0].tokens if len(token.surface) >= 4}),
+            _application_carrier_rank(row[0]),
+        ),
+    )
+    return (personal, evidence)
+
+
+def _regeneration_span_supports(
+    lens: str, context: Sequence[AnchorSentence]
+) -> bool:
+    """Certify that a multi-sentence span can honestly support its B1 move."""
+    predicate_count = sum(
+        1 for sentence in context for token in sentence.tokens if _finite_predicate(token)
+    )
+    if predicate_count < 2:
+        return False
+    if lens == "change-comparison":
+        return _REGENERATION_CHANGE_MARKER_RE.search(
+            " ".join(sentence.text for sentence in context)
+        ) is not None
+    return lens in {"episode-synthesis", "evidence-details"}
+
+
+def regeneration_text_question_inventory(
+    inventory: CertificationInventory,
+    *,
+    original_unit_ids: Sequence[str],
+    excluded_comprehension_sentence_ids: Collection[str] = (),
+) -> CertificationInventory:
+    """Build a fresh five-proposition board for one reviewed B1 question block.
+
+    The original three comprehension carriers remain the evidence spine when
+    they express complete propositions.  Elliptical fragments are replaced by
+    the nearest unused declarative proposition, preferring a following
+    sentence at equal distance.  The two application carriers are chosen
+    across the complete anchor by proposition transferability instead of by
+    the lexical token group that happened to fill the original slot.  Their
+    contract is the proposition itself: no noun lemma is exposed as a topic
+    the serializer must force into a learner question.
+    """
+    original_by_id = {
+        candidate.candidate_id: candidate
+        for candidate in inventory.candidates
+        if candidate.activity_type == "text-questions"
+    }
+    original = tuple(
+        original_by_id[unit_id]
+        for unit_id in original_unit_ids
+        if unit_id in original_by_id
+    )
+    minimum = floor_for("text-questions").minimum_units
+    comprehension = tuple(
+        candidate for candidate in original if candidate.category == "comprehension"
+    )
+    if (
+        len(original) != minimum
+        or len(comprehension) < TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension
+        or any(candidate.focus_alignment != "source-comprehension" for candidate in original)
+    ):
+        return replace(
+            inventory,
+            candidates=tuple(
+                candidate
+                for candidate in inventory.candidates
+                if candidate.activity_type != "text-questions"
+            ),
+        )
+
+    selected_comprehension = comprehension[: TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension]
+    sentence_positions = {
+        sentence.sentence_id: position for position, sentence in enumerate(inventory.sentences)
+    }
+    excluded_carriers = frozenset(excluded_comprehension_sentence_ids)
+    narrative_profile = _narrative_regeneration_profile(inventory.sentences)
+    comprehension_lenses = (
+        ("daypart-contrast", "sound-shift", "visible-change")
+        if narrative_profile
+        else ("episode-synthesis", "evidence-details", "change-comparison")
+    )
+    comprehension_carriers: dict[
+        str, tuple[AnchorSentence, AnchorToken, str, tuple[AnchorSentence, ...]]
+    ] = {}
+    comprehension_sentence_ids: set[str] = set()
+    comprehension_context_ids: set[str] = set()
+    selection_order = (
+        tuple(zip(comprehension_lenses, selected_comprehension, strict=True))
+        if narrative_profile
+        else (
+            ("change-comparison", selected_comprehension[2]),
+            ("episode-synthesis", selected_comprehension[0]),
+            ("evidence-details", selected_comprehension[1]),
+        )
+    )
+    for lens, candidate in selection_order:
+        original_position = sentence_positions.get(candidate.sentence_id)
+        if original_position is None:
+            break
+        ranked_sentences = sorted(
+            inventory.sentences,
+            key=lambda sentence: (
+                abs(sentence_positions[sentence.sentence_id] - original_position),
+                sentence_positions[sentence.sentence_id] < original_position,
+                sentence_positions[sentence.sentence_id],
+            ),
+        )
+        carrier = None
+        for sentence in ranked_sentences:
+            position = sentence_positions[sentence.sentence_id]
+            offsets = (-1, 0, 1) if lens != "change-comparison" else (0, 1, 2)
+            context = (
+                tuple(inventory.sentences)
+                if narrative_profile
+                else tuple(
+                    inventory.sentences[context_position]
+                    for offset in offsets
+                    if 0 <= (context_position := position + offset)
+                    < len(inventory.sentences)
+                )
+            )
+            context_ids = {item.sentence_id for item in context}
+            if (
+                len(context) < 2
+                or sentence.sentence_id in comprehension_sentence_ids
+                or sentence.sentence_id in excluded_carriers
+                or (
+                    not narrative_profile
+                    and not context_ids.isdisjoint(comprehension_context_ids)
+                )
+                or (
+                    not narrative_profile
+                    and not _regeneration_span_supports(lens, context)
+                )
+                or not _safe_source_proposition_carrier(sentence)
+                or not any(_finite_predicate(token) for token in sentence.tokens)
+                or (topic := _topic_token(sentence)) is None
+            ):
+                continue
+            topic_token, topic_lemma = topic
+            carrier = (sentence, topic_token, topic_lemma, context)
+            break
+        if carrier is None:
+            break
+        comprehension_carriers[lens] = carrier
+        comprehension_sentence_ids.add(carrier[0].sentence_id)
+        if not narrative_profile:
+            comprehension_context_ids.update(
+                item.sentence_id for item in carrier[3]
+            )
+    if len(comprehension_carriers) != TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension:
+        return replace(
+            inventory,
+            candidates=tuple(
+                candidate
+                for candidate in inventory.candidates
+                if candidate.activity_type != "text-questions"
+            ),
+        )
+    eligible_application_carriers = tuple(
+        (sentence, grounding_terms)
+        for sentence in sorted(
+            inventory.sentences,
+            key=lambda item: (
+                _application_carrier_rank(item),
+                int(item.sentence_id.removeprefix("s-")),
+            ),
+        )
+        if sentence.sentence_id not in comprehension_sentence_ids
+        and sentence.tokens
+        and _safe_item_carrier(sentence)
+        and _safe_source_proposition_carrier(sentence)
+        and (grounding_terms := _application_question_grounding_terms(sentence))
+    )
+    application_carriers = (
+        _narrative_application_carriers(eligible_application_carriers)
+        if narrative_profile
+        else eligible_application_carriers[:2]
+    )
+    if len(application_carriers) != 2:
+        return replace(
+            inventory,
+            candidates=tuple(
+                candidate
+                for candidate in inventory.candidates
+                if candidate.activity_type != "text-questions"
+            ),
+        )
+
+    replacements: list[EvidenceCandidate] = []
+    for lens in comprehension_lenses:
+        sentence, topic_token, _topic_lemma, context = comprehension_carriers[lens]
+        position = len(replacements) + 1
+        rendering_surface = " ".join(item.text for item in context)
+        replacements.append(
+            EvidenceCandidate(
+                activity_type="text-questions",
+                candidate_id=f"text-questions:regeneration:{position}",
+                sentence_id=sentence.sentence_id,
+                token_id=topic_token.token_id,
+                literal_evidence=sentence.text,
+                expected_key=rendering_surface,
+                semantic_target=(
+                    f"source-span-regeneration:{sentence.sentence_id}:"
+                    f"comprehension:{position}"
+                ),
+                category="comprehension",
+                question_intent="fact-recovery",
+                semantic_warrant=(
+                    "ordered exact source sentences support one fresh communicative "
+                    "B1 comprehension move"
+                ),
+                answer_start_offset=0,
+                answer_end_offset=len(rendering_surface),
+                focus_alignment="source-comprehension",
+                rendering_surface=rendering_surface,
+                question_basis="source-span",
+                question_lens=lens,
+                question_context_sentence_ids=tuple(
+                    item.sentence_id for item in context
+                ),
+            )
+        )
+    application_lenses = ("personal-example", "evidence-evaluation")
+    for (sentence, grounding_terms), application_lens in zip(
+        application_carriers, application_lenses, strict=True
+    ):
+        position = len(replacements) + 1
+        replacements.append(
+            EvidenceCandidate(
+                activity_type="text-questions",
+                candidate_id=f"text-questions:regeneration:{position}",
+                sentence_id=sentence.sentence_id,
+                token_id=sentence.tokens[0].token_id,
+                literal_evidence=sentence.text,
+                expected_key=sentence.text,
+                semantic_target=(
+                    f"source-proposition-regeneration:{sentence.sentence_id}:"
+                    f"anchored-application:{position}"
+                ),
+                category="anchored_application",
+                question_intent="anchored-application.v1",
+                semantic_warrant=(
+                    "complete source proposition supports a broadly relatable "
+                    "experience or evidence-based interpretation"
+                ),
+                answer_start_offset=0,
+                answer_end_offset=len(sentence.text),
+                focus_alignment="source-comprehension",
+                question_basis="source-proposition",
+                question_lens=application_lens,
+                question_grounding_terms=grounding_terms,
+            )
+        )
+    return replace(
+        inventory,
+        candidates=(
+            *(
+                candidate
+                for candidate in inventory.candidates
+                if candidate.activity_type != "text-questions"
+            ),
+            *replacements,
+        ),
     )
 
 

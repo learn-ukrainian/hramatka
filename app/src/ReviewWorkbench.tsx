@@ -8,6 +8,7 @@ import {
   type RejectedEntry,
   type FocusStatus,
   type ActivityFeedbackEntry,
+  type ActivityRegenerationEntry,
   splitReviewBlocks,
   PHASE_LABELS,
   marginStateChip,
@@ -26,6 +27,7 @@ export interface LessonResourceView {
   warning_acknowledgements: string[];
   /** Applicable-only verdicts keyed by flagged block id (#402). */
   activity_feedback?: Record<string, ActivityFeedbackEntry>;
+  activity_regenerations?: ActivityRegenerationEntry[];
   lesson: {
     title: string;
     level: string;
@@ -53,6 +55,8 @@ export interface ReviewWorkbenchProps {
   onAcceptLesson: () => void;
   onReturnToDraft: () => void;
   onActivityFeedback: (blockId: string, verdict: 'good' | 'bad', comment: string | null) => void;
+  onRegenerateActivity: (blockId: string, feedback: string | null) => void;
+  onRetryRegeneration: (regenerationId: string) => void;
   allWarningsAcked: boolean;
 }
 
@@ -70,6 +74,8 @@ export default function ReviewWorkbench({
   onAcceptLesson,
   onReturnToDraft,
   onActivityFeedback,
+  onRegenerateActivity,
+  onRetryRegeneration,
   allWarningsAcked,
 }: ReviewWorkbenchProps) {
   const { lesson, warning_acknowledgements } = resource;
@@ -78,9 +84,23 @@ export default function ReviewWorkbench({
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [feedbackComments, setFeedbackComments] = useState<Record<string, string>>({});
   const [feedbackReopened, setFeedbackReopened] = useState<Record<string, boolean>>({});
+  const [regenerationBlockId, setRegenerationBlockId] = useState<string | null>(null);
+  const [regenerationFeedback, setRegenerationFeedback] = useState('');
 
   const { byPhase, reserve } = splitReviewBlocks(lesson.blocks, lesson.duration);
   const acks = new Set(warning_acknowledgements);
+  const regenerations = resource.activity_regenerations || [];
+  const activeRegeneration = regenerations.find(
+    (item) => item.status === 'queued' || item.status === 'running',
+  );
+  const blockIsBusy = (blockId: string) =>
+    loading || activeRegeneration?.block_id === blockId;
+  const latestRegenerationByBlock = new Map<string, ActivityRegenerationEntry>();
+  for (const item of regenerations) {
+    if (!latestRegenerationByBlock.has(item.block_id)) {
+      latestRegenerationByBlock.set(item.block_id, item);
+    }
+  }
 
   // An unsupported focus is a caveat about the whole lesson, so it gets a real
   // banner rather than a slot in the rejected tray — nothing was rejected.
@@ -91,6 +111,7 @@ export default function ReviewWorkbench({
   const { t } = useT();
 
   const renderBlockContent = (block: ReviewBlock) => {
+    const blockBusy = blockIsBusy(block.id);
     if (editingBlockId === block.id) {
       return (
         <ActivityEditor
@@ -100,7 +121,7 @@ export default function ReviewWorkbench({
             setEditingBlockId(null);
           }}
           onCancel={() => setEditingBlockId(null)}
-          disabled={loading}
+          disabled={blockBusy}
         />
       );
     }
@@ -154,6 +175,7 @@ export default function ReviewWorkbench({
   };
 
   const renderFeedback = (block: ReviewBlock) => {
+    const blockBusy = blockIsBusy(block.id);
     // #402: the teacher judges the engine's verdict on a flagged block.
     const saved = activityFeedback[block.id];
     const reopened = feedbackReopened[block.id] === true;
@@ -168,7 +190,7 @@ export default function ReviewWorkbench({
             className="link-btn"
             data-action="feedback-change"
             onClick={() => setFeedbackReopened((prev) => ({ ...prev, [block.id]: true }))}
-            disabled={loading}
+            disabled={blockBusy}
           >
             {t('feedback.change')}
           </button>
@@ -192,19 +214,118 @@ export default function ReviewWorkbench({
           onChange={(event) =>
             setFeedbackComments((prev) => ({ ...prev, [block.id]: event.target.value }))
           }
-          disabled={loading}
+          disabled={blockBusy}
         />
-        <button type="button" data-action="feedback-good" onClick={() => submit('good')} disabled={loading}>
+        <button type="button" data-action="feedback-good" onClick={() => submit('good')} disabled={blockBusy}>
           {t('feedback.good')}
         </button>
-        <button type="button" data-action="feedback-bad" onClick={() => submit('bad')} disabled={loading}>
+        <button type="button" data-action="feedback-bad" onClick={() => submit('bad')} disabled={blockBusy}>
           {t('feedback.bad')}
         </button>
       </span>
     );
   };
 
+  const renderRegeneration = (block: ReviewBlock) => {
+    const blockBusy = blockIsBusy(block.id);
+    const eligible = /^block-[1-9][0-9]*$/.test(block.id)
+      && block.edited === false
+      && block.provenance?.source === 'generated';
+    if (!eligible) return null;
+    const latest = latestRegenerationByBlock.get(block.id);
+    const isActive = latest?.status === 'queued' || latest?.status === 'running';
+    if (isActive) {
+      return (
+        <div className="regeneration-state" data-testid="regeneration-active">
+          <span className="chip muted">
+            {t(latest.status === 'queued' ? 'regeneration.queued' : 'regeneration.running')}
+          </span>
+          <span className="mnote">{t('regeneration.keepOld')}</span>
+        </div>
+      );
+    }
+    if (latest?.status === 'failed') {
+      return (
+        <div className="regeneration-state" data-testid="regeneration-failed">
+          <span className="chip bad">{t('regeneration.failed')}</span>
+          <span className="mnote">{latest.failure_message || t('regeneration.failedFallback')}</span>
+          <button
+            type="button"
+            data-action="regeneration-retry"
+            onClick={() => onRetryRegeneration(latest.id)}
+            disabled={blockBusy || Boolean(activeRegeneration)}
+          >
+            {t('regeneration.retry')}
+          </button>
+        </div>
+      );
+    }
+    if (regenerationBlockId === block.id) {
+      return (
+        <div className="regeneration-form" data-testid="regeneration-form">
+          <label htmlFor={`regeneration-feedback-${block.id}`}>
+            {t('regeneration.feedbackLabel')}
+          </label>
+          <textarea
+            id={`regeneration-feedback-${block.id}`}
+            value={regenerationFeedback}
+            maxLength={1000}
+            placeholder={t('regeneration.feedbackPlaceholder')}
+            onChange={(event) => setRegenerationFeedback(event.target.value)}
+            disabled={blockBusy}
+          />
+          <span className="mtools">
+            <button
+              type="button"
+              data-action="regeneration-submit"
+              onClick={() => {
+                onRegenerateActivity(block.id, regenerationFeedback.trim() || null);
+                setRegenerationBlockId(null);
+                setRegenerationFeedback('');
+              }}
+              disabled={blockBusy || Boolean(activeRegeneration)}
+            >
+              {t('regeneration.submit')}
+            </button>
+            <button
+              type="button"
+              data-action="regeneration-cancel"
+              onClick={() => {
+                setRegenerationBlockId(null);
+                setRegenerationFeedback('');
+              }}
+              disabled={blockBusy}
+            >
+              {t('editor.cancel')}
+            </button>
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div className="regeneration-state">
+        {latest?.status === 'succeeded' && (
+          <span className="chip ok" data-testid="regeneration-succeeded">
+            {t('regeneration.succeeded')}
+          </span>
+        )}
+        <button
+          type="button"
+          data-action="regeneration-open"
+          onClick={() => {
+            setRegenerationBlockId(block.id);
+            setRegenerationFeedback('');
+          }}
+          disabled={blockBusy || Boolean(activeRegeneration)}
+        >
+          {t('regeneration.open')}
+        </button>
+      </div>
+    );
+  };
+
   const renderMargin = (block: ReviewBlock) => {
+    const blockBusy = blockIsBusy(block.id);
     const acked = acks.has(block.id);
     const chip = marginStateChip(block, acked);
     const isWarn = blockNeedsReview(block);
@@ -227,17 +348,18 @@ export default function ReviewWorkbench({
         {block.provenance && <span className="mnote">{t('review.checks')}{block.provenance.gates?.length ? block.provenance.gates.join(', ') : '—'}</span>}
         {block.provenance?.external_options && <span className="mnote">{t('review.external')}</span>}
         <span className="mtools">
-          <button type="button" title={t('review.edit')} data-action="b-edit" onClick={() => setEditingBlockId(block.id)} disabled={loading}>✎</button>
-          <button type="button" title={t('review.up')} data-action="b-up" onClick={() => onMoveBlock(block.id, 'up')} disabled={loading}>↑</button>
-          <button type="button" title={t('review.down')} data-action="b-down" onClick={() => onMoveBlock(block.id, 'down')} disabled={loading}>↓</button>
-          <button type="button" title={t('review.remove')} data-action="b-del" onClick={() => onRemoveBlock(block.id)} disabled={loading}>✕</button>
+          <button type="button" title={t('review.edit')} data-action="b-edit" onClick={() => setEditingBlockId(block.id)} disabled={blockBusy}>✎</button>
+          <button type="button" title={t('review.up')} data-action="b-up" onClick={() => onMoveBlock(block.id, 'up')} disabled={blockBusy}>↑</button>
+          <button type="button" title={t('review.down')} data-action="b-down" onClick={() => onMoveBlock(block.id, 'down')} disabled={blockBusy}>↓</button>
+          <button type="button" title={t('review.remove')} data-action="b-del" onClick={() => onRemoveBlock(block.id)} disabled={blockBusy}>✕</button>
           {showAck && (
-            <button type="button" className="accept ack-btn" data-action="b-accept" onClick={() => onAckWarning(block.id)} disabled={loading}>
+            <button type="button" className="accept ack-btn" data-action="b-accept" onClick={() => onAckWarning(block.id)} disabled={blockBusy}>
               {t('review.ack')}
             </button>
           )}
         </span>
         {isFlagged && renderFeedback(block)}
+        {renderRegeneration(block)}
       </div>
     );
   };
@@ -377,10 +499,11 @@ export default function ReviewWorkbench({
               </div>
               <div className="dmargin noprint">
                 <span className="mtools">
-                  <button type="button" data-action="b-include" onClick={() => onIncludeReserve(block.id)} disabled={loading}>
+                  <button type="button" data-action="b-include" onClick={() => onIncludeReserve(block.id)} disabled={blockIsBusy(block.id)}>
                     {t('review.include')}
                   </button>
                 </span>
+                {renderRegeneration(block)}
               </div>
             </div>
           ))}

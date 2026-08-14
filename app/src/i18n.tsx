@@ -758,6 +758,31 @@ const DICT = {
   'feedback.savedBad': { uk: 'Ви оцінили: вправа погана', en: 'Your verdict: bad activity' },
   'feedback.change': { uk: 'Змінити оцінку', en: 'Change verdict' },
 
+  // one-block regeneration (#418)
+  'regeneration.open': { uk: 'Створити інший варіант', en: 'Create another version' },
+  'regeneration.feedbackLabel': {
+    uk: 'Що саме варто змінити? (необовʼязково)',
+    en: 'What should change? (optional)',
+  },
+  'regeneration.feedbackPlaceholder': {
+    uk: 'Наприклад: менше очевидних підказок, природніші формулювання…',
+    en: 'For example: fewer obvious clues, more natural wording…',
+  },
+  'regeneration.submit': { uk: 'Створити новий варіант', en: 'Create new version' },
+  'regeneration.queued': { uk: 'У черзі', en: 'Queued' },
+  'regeneration.running': { uk: 'Створюємо новий варіант…', en: 'Creating a new version…' },
+  'regeneration.keepOld': {
+    uk: 'Ця вправа лишається в уроці, доки новий варіант не пройде перевірки.',
+    en: 'This activity stays in the lesson until the new version passes verification.',
+  },
+  'regeneration.failed': { uk: 'Новий варіант не створено', en: 'New version not created' },
+  'regeneration.failedFallback': {
+    uk: 'Попередню вправу збережено. Спробуйте ще раз.',
+    en: 'The previous activity was preserved. Please try again.',
+  },
+  'regeneration.retry': { uk: 'Спробувати ще раз', en: 'Try again' },
+  'regeneration.succeeded': { uk: '✓ створено новий варіант', en: '✓ new version created' },
+
   // activity editor field labels
   'editor.field.title': { uk: 'Назва', en: 'Title' },
   'editor.field.instruction': { uk: 'Інструкція', en: 'Instruction' },

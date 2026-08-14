@@ -465,7 +465,12 @@ def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
             "instruction": "Дайте відповідь.",
             "items": original_items,
         },
-        "answer_key": {"guidance": "Відповідайте за текстом."},
+        "answer_key": {
+            "guidance": "\n".join(
+                f"{index + 1}. Зразок відповіді: Початковий зразок {index}."
+                for index in range(8)
+            )
+        },
     }
     repair_targets: list[tuple[int, ...]] = []
 
@@ -480,7 +485,11 @@ def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
         repair_targets.append(request.target_item_indexes)
         return {
             "repair_items": [
-                {"index": index, "question": f"Виправлене питання {index}?"}
+                {
+                    "guidance_sample": f"Виправлений зразок {index}.",
+                    "index": index,
+                    "question": f"Виправлене питання {index}?",
+                }
                 for index in request.target_item_indexes
             ]
         }
@@ -506,6 +515,12 @@ def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
         "Виправлене питання 6?",
         "Добре питання 7?",
     ]
+    assert "4. Зразок відповіді: Виправлений зразок 3." in evaluated.blocks[
+        0
+    ].activity["answer_key"]["guidance"]
+    assert "7. Зразок відповіді: Виправлений зразок 6." in evaluated.blocks[
+        0
+    ].activity["answer_key"]["guidance"]
 
 
 def test_targeted_text_question_repair_discards_non_target_mutations() -> None:

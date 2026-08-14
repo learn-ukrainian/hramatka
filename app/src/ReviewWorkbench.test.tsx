@@ -174,6 +174,8 @@ describe('ReviewWorkbench deliberate-error affordance (#208 / #164)', () => {
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
           onActivityFeedback={vi.fn()}
+          onRegenerateActivity={vi.fn()}
+          onRetryRegeneration={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={true}
@@ -230,6 +232,8 @@ describe('ReviewWorkbench honesty flags', () => {
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
           onActivityFeedback={vi.fn()}
+          onRegenerateActivity={vi.fn()}
+          onRetryRegeneration={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={false}
@@ -258,6 +262,8 @@ describe('ReviewWorkbench answer key rendering', () => {
           onAckWarning={vi.fn()}
           onSaveActivity={vi.fn()}
           onActivityFeedback={vi.fn()}
+          onRegenerateActivity={vi.fn()}
+          onRetryRegeneration={vi.fn()}
           onAcceptLesson={vi.fn()}
           onReturnToDraft={vi.fn()}
           allWarningsAcked={true}
@@ -325,6 +331,8 @@ function renderWorkbench(
     onAckWarning: vi.fn(),
     onSaveActivity: vi.fn(),
     onActivityFeedback: vi.fn(),
+    onRegenerateActivity: vi.fn(),
+    onRetryRegeneration: vi.fn(),
     onAcceptLesson: vi.fn(),
     onReturnToDraft: vi.fn(),
     allWarningsAcked: true,
@@ -495,5 +503,101 @@ describe('engine-flagged blocks — badge, ack flow, and teacher feedback (#402)
 
     expect(screen.queryByTestId('feedback-form')).not.toBeInTheDocument();
     expect(screen.queryByTestId('flagged-badge')).not.toBeInTheDocument();
+  });
+});
+
+describe('one-block regeneration (#418)', () => {
+  const generatedResource = (): LessonResourceView => ({
+    ...mockResource,
+    lesson: {
+      ...mockResource.lesson,
+      blocks: [
+        {
+          ...mockResource.lesson.blocks[0],
+          provenance: { source: 'generated', generator: 'gemini', gates: ['v3'] },
+        },
+      ],
+    },
+  });
+
+  const regeneration = (status: 'queued' | 'running' | 'succeeded' | 'failed') => ({
+    id: '11111111-1111-4111-8111-111111111111',
+    lesson_id: mockResource.lesson_id,
+    block_id: 'block-1',
+    base_revision: 1,
+    status,
+    attempt: 1,
+    failure_code: status === 'failed' ? 'generation_failed' : null,
+    failure_message: status === 'failed' ? 'Попередню вправу збережено.' : null,
+    prompt_version: 'HramatkaBlockRegeneration.v1',
+    prompt_sha256: 'a'.repeat(64),
+    old_block_hash: 'b'.repeat(64),
+    new_block_hash: status === 'succeeded' ? 'c'.repeat(64) : null,
+    applied_revision: status === 'succeeded' ? 2 : null,
+    created_at: '2026-08-13T00:00:00Z',
+    updated_at: '2026-08-13T00:00:00Z',
+    started_at: status === 'queued' ? null : '2026-08-13T00:00:01Z',
+    completed_at: status === 'succeeded' || status === 'failed'
+      ? '2026-08-13T00:00:02Z'
+      : null,
+  });
+
+  it('submits optional teacher guidance for exactly the selected generated block', () => {
+    const props = renderWorkbench(generatedResource());
+
+    fireEvent.click(screen.getByText('Створити інший варіант'));
+    fireEvent.change(screen.getByPlaceholderText(/менше очевидних підказок/i), {
+      target: { value: '  Природніші формулювання.  ' },
+    });
+    fireEvent.click(screen.getByText('Створити новий варіант'));
+
+    expect(props.onRegenerateActivity).toHaveBeenCalledWith(
+      'block-1',
+      'Природніші формулювання.',
+    );
+  });
+
+  it('keeps the old activity visible during work and exposes a durable failed retry', () => {
+    const active = generatedResource();
+    renderWorkbench({ ...active, activity_regenerations: [regeneration('running')] }, {
+      loading: true,
+    });
+
+    expect(screen.getByTestId('regeneration-active')).toHaveTextContent(
+      'Ця вправа лишається в уроці',
+    );
+    expect(screen.getByText('Це правда.')).toBeInTheDocument();
+
+    const failed = generatedResource();
+    const retry = vi.fn();
+    renderWorkbench(
+      { ...failed, activity_regenerations: [regeneration('failed')] },
+      { onRetryRegeneration: retry },
+    );
+    fireEvent.click(screen.getByText('Спробувати ще раз'));
+
+    expect(retry).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
+  });
+
+  it('keeps unrelated blocks and lesson controls usable while the selected block regenerates', () => {
+    const generated = generatedResource();
+    const resource = {
+      ...generated,
+      activity_regenerations: [regeneration('running')],
+      lesson: {
+        ...generated.lesson,
+        blocks: [generated.lesson.blocks[0], mockResource.lesson.blocks[1]],
+      },
+    };
+    renderWorkbench(resource);
+
+    const selected = document.querySelector('[data-block-id="block-1"]') as HTMLElement;
+    const unrelated = document.querySelector('[data-block-id="block-2"]') as HTMLElement;
+    expect((selected.querySelector('[data-action="b-edit"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((selected.querySelector('[data-action="b-del"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((unrelated.querySelector('[data-action="b-edit"]') as HTMLButtonElement).disabled).toBe(false);
+    expect((unrelated.querySelector('[data-action="b-del"]') as HTMLButtonElement).disabled).toBe(false);
+    expect((document.querySelector('[data-v="45"]') as HTMLButtonElement).disabled).toBe(false);
+    expect((document.querySelector('[data-action="accept-lesson"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });

@@ -5,12 +5,15 @@ from __future__ import annotations
 import pytest
 
 from hramatka.engine.lesson_capacity_v3 import (
+    AllocatedSlot,
     AnchorParagraph,
     AnchorWindow,
+    LessonAllocation,
     LessonSlot,
     SlotPlans,
     allocate_exact_cover,
     preflight_lesson,
+    replacement_plan_can_coexist,
 )
 from hramatka.engine.unit_builders_v3 import AnchorSentence, CertificationInventory
 from hramatka.engine.unit_plan_v3 import (
@@ -34,11 +37,13 @@ def _plan(
     unit_count: int = 8,
     question_categories: tuple[str, ...] | None = None,
     shared_claim: str | None = None,
+    distinctness_prefix: str | None = None,
+    unit_id_prefix: str | None = None,
 ) -> UnitPlan:
     """Build source-free certified substrate for allocator-only tests."""
     units = tuple(
         CertifiedUnit(
-            unit_id=f"{slot_id}:{activity_type}:{index}",
+            unit_id=f"{unit_id_prefix or slot_id}:{activity_type}:{index}",
             resource_claims=(
                 ResourceClaim("stem", shared_claim or f"{claim_prefix}:{index}"),
             ),
@@ -47,7 +52,7 @@ def _plan(
             expected_key_or_rule=ExpectedKeyRule("key", f"key-{index}"),
             citation_plan=(Citation("capacity-fixture", f"unit:{index}"),),
             distinctness={
-                "stem": f"{slot_id}:{activity_type}:{index}",
+                "stem": f"{distinctness_prefix or slot_id}:{activity_type}:{index}",
                 **(
                     {
                         "question_category": (
@@ -145,6 +150,58 @@ def test_exact_cover_reserves_shared_claims_and_substitutes_before_generation() 
     assert chosen["P2-A1"].scheduled_type == "true-false"
     assert chosen["P2-A1"].substitution_reason == "capacity"
     assert chosen["P2-A1"].plan.floor_met
+
+
+def test_replacement_plan_must_be_fresh_and_coexist_with_retained_slots() -> None:
+    target = _plan(
+        slot_id="P1-A1",
+        phase=1,
+        activity_type="quiz",
+        claim_prefix="old",
+        evidence_id="evidence:old",
+    )
+    retained = _plan(
+        slot_id="P2-A1",
+        phase=2,
+        activity_type="fill-in",
+        claim_prefix="retained",
+        evidence_id="evidence:retained",
+    )
+    allocation = LessonAllocation(
+        paragraph_ids=("fixture",),
+        slots=(
+            AllocatedSlot("P1-A1", 1, "quiz", "quiz", target),
+            AllocatedSlot("P2-A1", 2, "fill-in", "fill-in", retained),
+        ),
+    )
+    fresh = _plan(
+        slot_id="P1-A1",
+        phase=1,
+        activity_type="quiz",
+        claim_prefix="fresh",
+        evidence_id="evidence:fresh",
+        distinctness_prefix="fresh",
+        unit_id_prefix="fresh",
+    )
+    retained_overlap = _plan(
+        slot_id="P1-A1",
+        phase=1,
+        activity_type="quiz",
+        claim_prefix="retained",
+        evidence_id="evidence:fresh",
+        distinctness_prefix="fresh",
+        unit_id_prefix="fresh-overlap",
+    )
+
+    assert replacement_plan_can_coexist(
+        allocation, target_slot_id="P1-A1", candidate=fresh
+    )
+    assert not replacement_plan_can_coexist(
+        allocation, target_slot_id="P1-A1", candidate=target
+    )
+    assert not replacement_plan_can_coexist(
+        allocation, target_slot_id="P1-A1", candidate=retained_overlap
+    )
 
 
 def test_source_evidence_second_use_needs_a_new_phase_and_operation() -> None:

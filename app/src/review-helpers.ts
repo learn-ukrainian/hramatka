@@ -76,6 +76,29 @@ export interface ActivityFeedbackEntry {
   updated_at: string;
 }
 
+export type ActivityRegenerationStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+/** Teacher-safe status and exact prompt/block provenance for one replacement attempt. */
+export interface ActivityRegenerationEntry {
+  id: string;
+  lesson_id: string;
+  block_id: string;
+  base_revision: number;
+  status: ActivityRegenerationStatus;
+  attempt: number;
+  failure_code: string | null;
+  failure_message: string | null;
+  prompt_version: string;
+  prompt_sha256: string;
+  old_block_hash: string;
+  new_block_hash: string | null;
+  applied_revision: number | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 /**
  * The lesson document's honest focus outcome (lu.lesson.v1 >= 1.1.0).
  * Absent — never an explicit null — when the teacher requested no focus.

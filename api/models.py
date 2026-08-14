@@ -118,6 +118,22 @@ class ActivityReplacementMutation(FrozenModel):
     activity: dict[str, Any]
 
 
+class ActivityRegenerationCreate(FrozenModel):
+    """Create one idempotent asynchronous replacement for a generated block."""
+
+    id: UUID
+    expected_revision: int = Field(ge=1)
+    feedback: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("feedback", mode="before")
+    @classmethod
+    def normalize_feedback(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        return trimmed or None
+
+
 class RestoreRejectedMutation(FrozenModel):
     expected_revision: int = Field(ge=1)
     phase: Literal[1, 2, 3] = 2

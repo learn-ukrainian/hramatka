@@ -59,6 +59,7 @@ _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingP
             "Яку",
             "Яким",
             "Якими",
+            "Чим",
             "Скільки",
             "Чи",
         ),
@@ -68,6 +69,9 @@ _TEXT_QUESTION_ALLOWED_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = MappingP
             "Як можна пояснити",
         ),
         "anchored_application": (
+            "Що",
+            "Коли",
+            "Пригадайте",
             "Як можна застосувати",
             "З вашого досвіду",
             "На вашу думку",
@@ -81,6 +85,55 @@ _TEXT_QUESTION_RELATION_PREFIXES: Final[Mapping[str, tuple[str, ...]]] = Mapping
         "temporal-clause.v1": ("Коли", "Доки", "Як довго", "До якого моменту"),
         "definition-content.v1": ("У чому полягає",),
         "licensed-vid-cause.v1": ("Від чого", "Через що"),
+    }
+)
+_REGENERATION_LENS_CONTRACTS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "episode-synthesis": (
+            "Ask what people do or how the described process unfolds across at least two "
+            "sentences in the source span. The sample must combine at least two concrete "
+            "actions or claims; never answer with 'part of the sequence' or 'plays a role'."
+        ),
+        "evidence-details": (
+            "Ask which two or more concrete details describe the scene or support the topic. "
+            "The sample must name those details in ordinary B1 Ukrainian; do not use "
+            "metalinguistic labels such as visual perception or sensory imagery."
+        ),
+        "change-comparison": (
+            "Ask how two explicitly stated times, states, quantities, or details change or "
+            "differ across the source span. The sample must state both sides and any stated "
+            "result or reaction using only details from the span."
+        ),
+        "daypart-contrast": (
+            "Use one short, ordinary spoken B1 question asking how two explicitly different "
+            "parts of the day differ. Do not stack subquestions or ask about literary technique. "
+            "The sample must state one concrete source action or state from each period without "
+            "invented mood labels."
+        ),
+        "sound-shift": (
+            "In ordinary spoken B1 language, ask how at least two explicitly stated source sounds "
+            "differ or follow one another. The sample must name the actual sounds or sound-making "
+            "actions from the source, not an object that merely produces them."
+        ),
+        "visible-change": (
+            "Ask directly how an explicitly visible source detail changes. Do not put a "
+            "meta-instruction about using one's own words in the question. The sample must "
+            "paraphrase both source states and any stated result or reaction in conversational "
+            "B1 instead of discussing literary technique."
+        ),
+        "personal-example": (
+            "Ask naturally when the learner had one specific comparable experience; avoid "
+            "the stiff construction 'during which case'. The sample must model a concrete "
+            "first-person episode with an identifiable event, not repeat 'different stories' "
+            "or 'interesting incidents' from the source and not compare itself to source "
+            "characters."
+        ),
+        "evidence-evaluation": (
+            "Ask directly 'what do you like and why' without combining 'in your opinion' with "
+            "'you' or calling it a detail from the description. The sample must connect at least "
+            "two concrete source details and give a natural spoken opinion; do not ask about "
+            "literary effectiveness."
+        ),
     }
 )
 _UKRAINIAN_CASE_FORMS: Final[Mapping[str, str]] = MappingProxyType(
@@ -159,6 +212,10 @@ class EvidenceCandidate:
     answer_end_offset: int | None = None
     topic_token_id: str | None = None
     topic_lemma: str | None = None
+    question_basis: str | None = None
+    question_lens: str | None = None
+    question_grounding_terms: tuple[str, ...] = ()
+    question_context_sentence_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -335,17 +392,45 @@ def _candidate_unit(
             )
         if candidate.activity_type == "text-questions":
             distinctness["question_category"] = candidate.category
+            if candidate.question_lens is not None:
+                distinctness["regeneration_lens"] = candidate.question_lens
+                lens_contract = _REGENERATION_LENS_CONTRACTS.get(candidate.question_lens)
+                if lens_contract is None:
+                    raise ValueError("Text-question regeneration lens has no contract.")
+                distinctness["regeneration_lens_contract"] = lens_contract
+                if candidate.question_lens == "personal-example":
+                    distinctness["regeneration_source_context"] = " ".join(
+                        sentence.text for sentence in inventory.sentences
+                    )
+                if candidate.question_context_sentence_ids:
+                    evidence_segments = tuple(
+                        item.text
+                        for sentence_id in candidate.question_context_sentence_ids
+                        for item in inventory.sentences
+                        if item.sentence_id == sentence_id
+                    )
+                    if len(evidence_segments) != len(
+                        candidate.question_context_sentence_ids
+                    ):
+                        raise ValueError(
+                            "Text-question regeneration evidence segments are detached."
+                        )
+                    distinctness["regeneration_evidence_segments"] = list(
+                        evidence_segments
+                    )
             prefixes = _TEXT_QUESTION_RELATION_PREFIXES.get(
                 candidate.question_intent or ""
             ) or _TEXT_QUESTION_ALLOWED_PREFIXES.get(candidate.category or "")
             if prefixes is None:
                 raise ValueError("Text-question category has no certified question frame.")
-            if (
+            has_source_proof = (
                 candidate.answer_start_offset is not None
                 or candidate.answer_end_offset is not None
                 or candidate.topic_token_id is not None
                 or candidate.topic_lemma is not None
-            ):
+                or candidate.question_basis is not None
+            )
+            if has_source_proof:
                 sentence = next(
                     (
                         item
@@ -366,21 +451,41 @@ def _candidate_unit(
                     if sentence is not None
                     else None
                 )
+                proposition_basis = candidate.question_basis == "source-proposition"
+                span_basis = candidate.question_basis == "source-span"
+                proof_surface = (
+                    candidate.rendering_surface if span_basis else sentence.text
+                )
                 if (
                     sentence is None
                     or candidate.answer_start_offset is None
                     or candidate.answer_end_offset is None
                     or candidate.answer_start_offset < 0
                     or candidate.answer_end_offset <= candidate.answer_start_offset
-                    or sentence.text[candidate.answer_start_offset : candidate.answer_end_offset]
+                    or not isinstance(proof_surface, str)
+                    or proof_surface[candidate.answer_start_offset : candidate.answer_end_offset]
                     != candidate.expected_key
-                    or topic is None
-                    or not isinstance(candidate.topic_lemma, str)
-                    or not candidate.topic_lemma.strip()
+                    or (
+                        not (proposition_basis or span_basis)
+                        and (
+                            topic is None
+                            or not isinstance(candidate.topic_lemma, str)
+                            or not candidate.topic_lemma.strip()
+                        )
+                    )
+                    or (
+                        (proposition_basis or span_basis)
+                        and (
+                            candidate.category
+                            not in {"comprehension", "anchored_application"}
+                            or candidate.focus_alignment != "source-comprehension"
+                            or candidate.topic_token_id is not None
+                            or candidate.topic_lemma is not None
+                        )
+                    )
                 ):
                     raise ValueError(
-                        "Text-question answer span and named topic must bind one "
-                        "source proposition."
+                        "Text-question source proof must bind one source proposition."
                     )
                 distinctness["answer_span"] = {
                     "sentence_id": candidate.sentence_id,
@@ -388,11 +493,63 @@ def _candidate_unit(
                     "end_offset": candidate.answer_end_offset,
                     "text": candidate.expected_key,
                 }
-                distinctness["question_topic"] = {
-                    "token_id": topic.token_id,
-                    "surface": topic.surface,
-                    "lemma": candidate.topic_lemma,
-                }
+                if proposition_basis:
+                    distinctness["question_basis"] = {
+                        "kind": "source-proposition",
+                        "sentence_id": candidate.sentence_id,
+                    }
+                    if candidate.category == "anchored_application":
+                        source_surfaces = {token.surface for token in sentence.tokens}
+                        if (
+                            not candidate.question_grounding_terms
+                            or any(
+                                term not in source_surfaces
+                                for term in candidate.question_grounding_terms
+                            )
+                        ):
+                            raise ValueError(
+                                "Text-question application grounding terms must bind source tokens."
+                            )
+                        distinctness["regeneration_grounding_terms"] = list(
+                            candidate.question_grounding_terms
+                        )
+                    elif candidate.question_grounding_terms:
+                        raise ValueError(
+                            "Comprehension propositions cannot carry application grounding terms."
+                        )
+                elif span_basis:
+                    context_sentences = tuple(
+                        item
+                        for sentence_id in candidate.question_context_sentence_ids
+                        for item in inventory.sentences
+                        if item.sentence_id == sentence_id
+                    )
+                    if (
+                        candidate.category != "comprehension"
+                        or len(context_sentences) < 2
+                        or len(context_sentences)
+                        != len(candidate.question_context_sentence_ids)
+                        or candidate.sentence_id
+                        not in candidate.question_context_sentence_ids
+                        or " ".join(item.text for item in context_sentences)
+                        != candidate.rendering_surface
+                        or candidate.question_grounding_terms
+                    ):
+                        raise ValueError(
+                            "Text-question source span must bind ordered source sentences."
+                        )
+                    distinctness["question_basis"] = {
+                        "kind": "source-span",
+                        "sentence_id": candidate.sentence_id,
+                        "sentence_ids": list(candidate.question_context_sentence_ids),
+                    }
+                else:
+                    assert topic is not None
+                    distinctness["question_topic"] = {
+                        "token_id": topic.token_id,
+                        "surface": topic.surface,
+                        "lemma": candidate.topic_lemma,
+                    }
             distinctness["question_frame"] = {
                 "allowed_prefixes": list(prefixes),
                 "category": candidate.category,
@@ -429,11 +586,18 @@ def _candidate_unit(
             tuple(
                 ResourceClaim("context_sentence", sentence.sentence_id)
                 for sentence in inventory.sentences
-                if candidate.activity_type == "cloze"
-                and isinstance(candidate.rendering_surface, str)
-                and sentence.text in candidate.rendering_surface
+                if (
+                    candidate.activity_type == "cloze"
+                    and isinstance(candidate.rendering_surface, str)
+                    and sentence.text in candidate.rendering_surface
+                )
+                or (
+                    candidate.activity_type == "text-questions"
+                    and sentence.sentence_id in candidate.question_context_sentence_ids
+                    and sentence.sentence_id != candidate.sentence_id
+                )
             )
-            if candidate.activity_type == "cloze"
+            if candidate.activity_type in {"cloze", "text-questions"}
             else ()
         )
         resource_claims = (
@@ -464,7 +628,12 @@ def _candidate_unit(
         expected_key_or_rule=ExpectedKeyRule(
             "rule" if error_count else "key", candidate.expected_key, error_count
         ),
-        citation_plan=(Citation(inventory.source_id, f"sentence:{candidate.sentence_id}"),),
+        citation_plan=tuple(
+            Citation(inventory.source_id, f"sentence:{sentence_id}")
+            for sentence_id in (
+                candidate.question_context_sentence_ids or (candidate.sentence_id,)
+            )
+        ),
         distinctness=distinctness,
         rendering_surface=candidate.rendering_surface or candidate.literal_evidence,
     )

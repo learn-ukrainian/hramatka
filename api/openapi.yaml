@@ -674,6 +674,91 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/blocks/{block_id}/regenerations:
+    post:
+      tags: [Lessons]
+      operationId: createActivityRegeneration
+      summary: Queue a checked replacement for one unchanged generated block
+      description: |
+        The current block remains in the lesson while a separate durable job
+        regenerates its original allocation slot with the lesson's stored
+        logical model. At most one replacement job is queued or running per
+        lesson. Success atomically replaces only this block, increments the
+        lesson revision, clears acceptance and this block's acknowledgement,
+        and retains prompt/model and old/new block hashes. Failure leaves the
+        lesson document and revision unchanged. Optional teacher feedback is
+        untrusted model input and is never allowed to change the certified
+        slot/type/plan or bypass normal gates.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/BlockId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/ActivityRegenerationCreate'
+      responses:
+        '202':
+          description: Replacement job queued or the identical idempotent job returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityRegeneration'
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/LessonBlockNotFound'}
+        '409': {$ref: '#/components/responses/CreateRegenerationConflict'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/PersistenceUnavailable'}
+  /api/lessons/{lesson_id}/regenerations/{regeneration_id}:
+    get:
+      tags: [Lessons]
+      operationId: getActivityRegeneration
+      summary: Poll one owner-scoped block replacement job
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/RegenerationId'
+      responses:
+        '200':
+          description: Current durable replacement status and content-free provenance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityRegeneration'
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '404': {$ref: '#/components/responses/RegenerationNotFound'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/PersistenceUnavailable'}
+  /api/lessons/{lesson_id}/regenerations/{regeneration_id}/retry:
+    post:
+      tags: [Lessons]
+      operationId: retryActivityRegeneration
+      summary: Requeue a failed replacement against the current unchanged target
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/RegenerationId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '202':
+          description: Failed replacement job requeued with an incremented attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityRegeneration'
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/RegenerationNotFound'}
+        '409': {$ref: '#/components/responses/RetryRegenerationConflict'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/PersistenceUnavailable'}
   /api/lessons/{lesson_id}/blocks/{block_id}/feedback:
     put:
       tags: [Lessons]
@@ -913,6 +998,14 @@ components:
         type: integer
         minimum: 0
       description: Zero-based index in the `lesson.rejected[]` array at expected_revision.
+    RegenerationId:
+      name: regeneration_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Browser-generated idempotency key for one block replacement job.
     OriginHeader:
       name: Origin
       in: header
@@ -962,6 +1055,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ActivityReplacementMutation'
+    ActivityRegenerationCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ActivityRegenerationCreate'
     RestoreRejectedMutation:
       required: true
       content:
@@ -1654,6 +1753,7 @@ components:
         - accepted_revision
         - warning_acknowledgements
         - activity_feedback
+        - activity_regenerations
         - logical_model_id
         - methodology
         - grammar_focus
@@ -1696,6 +1796,11 @@ components:
             a row is present only while its flag-time content hash still
             matches the live block, so it is always the teacher's judgment of
             what is currently on screen.
+        activity_regenerations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityRegeneration'
+          description: Newest-first owner-scoped replacement history; block snapshots are omitted.
         logical_model_id:
           type: [string, 'null']
           description: Null only for a durable lesson created before model selection.
@@ -1738,6 +1843,74 @@ components:
           minimum: 1
         activity:
           $ref: '#/components/schemas/ActivityDocument'
+    ActivityRegenerationCreate:
+      type: object
+      additionalProperties: false
+      required: [id, expected_revision]
+      properties:
+        id:
+          type: string
+          format: uuid
+        expected_revision:
+          type: integer
+          minimum: 1
+        feedback:
+          type: [string, 'null']
+          maxLength: 1000
+          description: Optional trimmed teacher guidance, treated as untrusted model input.
+    ActivityRegeneration:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - lesson_id
+        - block_id
+        - base_revision
+        - status
+        - attempt
+        - failure_code
+        - failure_message
+        - prompt_version
+        - prompt_sha256
+        - old_block_hash
+        - new_block_hash
+        - applied_revision
+        - created_at
+        - updated_at
+        - started_at
+        - completed_at
+      properties:
+        id: {type: string, format: uuid}
+        lesson_id: {type: string, format: uuid}
+        block_id: {type: string, minLength: 1, maxLength: 128}
+        base_revision: {type: integer, minimum: 1}
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        attempt: {type: integer, minimum: 1}
+        failure_code:
+          type: [string, 'null']
+          enum:
+            - null
+            - provider_unavailable
+            - generation_failed
+            - engine_unavailable
+            - revision_conflict
+            - block_changed
+            - worker_restarted
+        failure_message: {type: [string, 'null']}
+        prompt_version: {type: string, minLength: 1}
+        prompt_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        old_block_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        new_block_hash: {type: [string, 'null'], pattern: '^[0-9a-f]{64}$'}
+        applied_revision: {type: [integer, 'null'], minimum: 2}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        completed_at: {type: [string, 'null'], format: date-time}
+        reused:
+          type: boolean
+          description: Present on create only; true for an identical idempotent retry.
     RestoreRejectedMutation:
       type: object
       additionalProperties: false
@@ -2012,6 +2185,74 @@ components:
                 message: The lesson is not in a state that allows this change.
                 retryable: false
                 lesson_id: 66f0640d-531d-4fca-a0a8-f634b57f16af
+    RegenerationNotFound:
+      description: |
+        The lesson does not exist or belongs to another teacher
+        (`lesson_not_found`), or the owner-scoped replacement attempt does not
+        exist for this lesson (`regeneration_not_found`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            lessonAbsent:
+              value:
+                code: lesson_not_found
+                message: Lesson not found.
+                retryable: false
+            regenerationAbsent:
+              value:
+                code: regeneration_not_found
+                message: Activity regeneration not found.
+                retryable: false
+    CreateRegenerationConflict:
+      description: |
+        A stale revision (`revision_conflict`), invalid lesson or block state
+        (`regeneration_state_conflict`), another queued/running replacement
+        (`regeneration_in_progress`), a reused UUID with different canonical
+        inputs (`idempotency_conflict`), or an unavailable stored model
+        (`model_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            activeReplacement:
+              value:
+                code: regeneration_in_progress
+                message: Another activity regeneration is already in progress.
+                retryable: false
+            invalidState:
+              value:
+                code: regeneration_state_conflict
+                message: The lesson or block state does not allow regeneration.
+                retryable: false
+            idempotencyConflict:
+              value:
+                code: idempotency_conflict
+                message: This identifier is already bound to another regeneration.
+                retryable: false
+    RetryRegenerationConflict:
+      description: |
+        A stale revision (`revision_conflict`), an attempt not in a retryable
+        state (`regeneration_state_conflict`), another queued/running
+        replacement (`regeneration_in_progress`), or an unavailable stored
+        model (`model_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            activeReplacement:
+              value:
+                code: regeneration_in_progress
+                message: Another activity regeneration is already in progress.
+                retryable: false
+            invalidState:
+              value:
+                code: regeneration_state_conflict
+                message: This regeneration attempt cannot be retried.
+                retryable: false
     AcceptanceConflict:
       description: Stale expected_revision, non-ready state, or unresolved visible warnings
       content:

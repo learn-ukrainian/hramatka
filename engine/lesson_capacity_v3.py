@@ -391,21 +391,24 @@ def _all_source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
     )
 
 
-def _narrative_drill_overlap_ok(choices: Sequence[_Choice]) -> bool:
+def _narrative_drill_plan_overlap_ok(plans: Sequence[UnitPlan]) -> bool:
     """Keep quiz/fill-in carriers distinct in the 45-minute narrative shape."""
     if not any(
-        (choice.plan.activity_type, _operation_for(choice.plan))
-        in EVIDENCE_CAPACITY_OVERLAYS
-        for choice in choices
+        (plan.activity_type, _operation_for(plan)) in EVIDENCE_CAPACITY_OVERLAYS
+        for plan in plans
     ):
         return True
-    quiz_plans = [choice.plan for choice in choices if choice.plan.activity_type == "quiz"]
-    fill_plans = [choice.plan for choice in choices if choice.plan.activity_type == "fill-in"]
+    quiz_plans = [plan for plan in plans if plan.activity_type == "quiz"]
+    fill_plans = [plan for plan in plans if plan.activity_type == "fill-in"]
     return all(
         len(_all_source_evidence_ids(quiz) & _all_source_evidence_ids(fill)) <= 2
         for quiz in quiz_plans
         for fill in fill_plans
     )
+
+
+def _narrative_drill_overlap_ok(choices: Sequence[_Choice]) -> bool:
+    return _narrative_drill_plan_overlap_ok(tuple(choice.plan for choice in choices))
 
 
 def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
@@ -446,6 +449,56 @@ def _reserve(reservation: _Reservation, plan: UnitPlan) -> _Reservation:
     for source_id in _source_evidence_ids(plan):
         source_usage[source_id] = (*source_usage.get(source_id, ()), use)
     return _Reservation(claims=frozenset(claims), source_usage=source_usage)
+
+
+def replacement_plan_can_coexist(
+    allocation: LessonAllocation,
+    *,
+    target_slot_id: str,
+    candidate: UnitPlan,
+) -> bool:
+    """Whether one fresh same-type plan can replace a slot without claim reuse.
+
+    Regeneration removes the target plan before considering its replacement,
+    but every retained slot keeps the exact allocator reservations it had at
+    lesson creation.  The candidate must also use different non-evidence
+    claims from the old target; otherwise shuffled choices or relabelled stems
+    could masquerade as a new activity.
+    """
+    targets = tuple(slot for slot in allocation.slots if slot.slot_id == target_slot_id)
+    if len(targets) != 1:
+        return False
+    target = targets[0]
+    if (
+        not candidate.floor_met
+        or candidate.slot_id != target.slot_id
+        or candidate.phase != target.phase
+        or candidate.activity_type != target.scheduled_type
+    ):
+        return False
+    old_claims = frozenset(_non_evidence_claims(target.plan))
+    candidate_claims = _non_evidence_claims(candidate)
+    if (
+        len(candidate_claims) != len(set(candidate_claims))
+        or not old_claims.isdisjoint(candidate_claims)
+        or not {unit.unit_id for unit in target.plan.units}.isdisjoint(
+            unit.unit_id for unit in candidate.units
+        )
+    ):
+        return False
+    retained_plans = tuple(
+        slot.plan for slot in allocation.slots if slot.slot_id != target_slot_id
+    )
+    if not _narrative_drill_plan_overlap_ok((*retained_plans, candidate)):
+        return False
+    reservation = _Reservation.empty()
+    for slot in allocation.slots:
+        if slot.slot_id == target_slot_id:
+            continue
+        if not _can_reserve(reservation, slot.plan):
+            return False
+        reservation = _reserve(reservation, slot.plan)
+    return _can_reserve(reservation, candidate)
 
 
 def _floor_subplans(plan: UnitPlan) -> Iterator[UnitPlan]:

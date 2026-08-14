@@ -471,7 +471,12 @@ def _type_kit(slot: object) -> dict[str, Any]:
                 )
             answer_span = distinctness.get("answer_span")
             question_topic = distinctness.get("question_topic")
-            if answer_span is not None or question_topic is not None:
+            question_basis = distinctness.get("question_basis")
+            if (
+                answer_span is not None
+                or question_topic is not None
+                or question_basis is not None
+            ):
                 surface = unit.get("rendering_surface")
                 forms = unit.get("allowed_forms")
                 start = (
@@ -484,6 +489,25 @@ def _type_kit(slot: object) -> dict[str, Any]:
                     "explanation_inference": set(_SOURCE_RELATION_INTENTS),
                     "anchored_application": {"anchored-application.v1"},
                 }.get(category, set())
+                proposition_basis = (
+                    isinstance(question_basis, Mapping)
+                    and isinstance(answer_span, Mapping)
+                    and question_basis.get("kind")
+                    in {"source-proposition", "source-span"}
+                    and question_basis.get("sentence_id") == answer_span.get("sentence_id")
+                    and category in {"comprehension", "anchored_application"}
+                    and distinctness.get("focus_alignment") == "source-comprehension"
+                    and (
+                        question_basis.get("kind") != "source-span"
+                        or (
+                            category == "comprehension"
+                            and isinstance(question_basis.get("sentence_ids"), list)
+                            and len(question_basis["sentence_ids"]) >= 2
+                            and question_basis.get("sentence_id")
+                            in question_basis["sentence_ids"]
+                        )
+                    )
+                )
                 if (
                     not isinstance(surface, str)
                     or not isinstance(start, int)
@@ -493,9 +517,15 @@ def _type_kit(slot: object) -> dict[str, Any]:
                     or surface[start:end] != text
                     or forms != [text]
                     or intent not in allowed_intents
-                    or not isinstance(question_topic, Mapping)
-                    or not isinstance(question_topic.get("token_id"), str)
-                    or not isinstance(question_topic.get("lemma"), str)
+                    or (
+                        not proposition_basis
+                        and (
+                            not isinstance(question_topic, Mapping)
+                            or not isinstance(question_topic.get("token_id"), str)
+                            or not isinstance(question_topic.get("lemma"), str)
+                        )
+                    )
+                    or (proposition_basis and question_topic is not None)
                 ):
                     raise PromptPackV3Error(
                         "Text-question source proposition proof is detached from its unit."
@@ -1917,7 +1947,7 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         return
     category_patterns = {
         "comprehension": re.compile(
-            r"\b(?:що|хто|де|коли|куди|звідки|як|скільки|чи|"
+            r"\b(?:що|хто|де|коли|куди|звідки|як|чим|скільки|чи|"
             r"який|яка|які|яке|якого|яку|яким|якими)\b",
             re.IGNORECASE,
         ),
@@ -1932,6 +1962,9 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         ),
         "anchored_application": re.compile(
             r"\b(?:як|де)\b.*\b(?:застосувати|використати|скористатися)\b|"
+            r"^\s*коли\s+ви\b|"
+            r"^\s*пригадайте\b|"
+            r"^\s*що\s+вам\b.*\bчому\b|"
             r"\b(?:у|в)\s+якій\b.*\bситуації\b|"
             r"\bна\s+вашу\s+думку\b|"
             r"\b(?:власному\s+досвіді|з\s+(?:вашого|твого)\s+досвіду|"
@@ -2061,8 +2094,16 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         certified_topic_lemma = (
             certified_topic.get("lemma") if isinstance(certified_topic, Mapping) else None
         )
+        focus_alignment = (
+            distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
+        )
+        broad_source_application = (
+            focus_alignment == "source-comprehension"
+            and category == "anchored_application"
+        )
         if (
             isinstance(certified_topic_lemma, str)
+            and not broad_source_application
             and certified_topic_lemma.casefold() not in question_lemmas
         ):
             raise PromptPackV3Error(
@@ -2110,9 +2151,6 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             for word in _UKRAINIAN_WORD_RE.findall(item)
             if (lemma := _catalog_positive_lemma(word)) is not None
         }
-        focus_alignment = (
-            distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
-        )
         if (
             focus_alignment == "anchor-comprehension"
             and source_degree_lemmas
@@ -2122,18 +2160,25 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
                 f"text question omits its certified comparison at items[{index}]"
             )
 
-    application_items = [
-        item
+    application_rows = [
+        (item, distinctness)
         for item, unit in zip(items, units, strict=True)
         if isinstance(item, str)
         and isinstance(unit, Mapping)
         and isinstance((distinctness := unit.get("distinctness")), Mapping)
         and distinctness.get("question_category") == "anchored_application"
     ]
-    if len(application_items) >= 2 and not any(
-        re.search(r"\bна\s+вашу\s+думку\b", item, re.IGNORECASE)
-        and re.search(r"\b(?:детал|опис|текст)\w*\b", item, re.IGNORECASE)
-        for item in application_items
+    if len(application_rows) >= 2 and not any(
+        (
+            distinctness.get("regeneration_lens") == "evidence-evaluation"
+            and re.search(r"^\s*що\s+вам\b", item, re.IGNORECASE)
+            and re.search(r"\bчому\b", item, re.IGNORECASE)
+        )
+        or (
+            re.search(r"\bна\s+вашу\s+думку\b", item, re.IGNORECASE)
+            and re.search(r"\b(?:детал|опис|текст)\w*\b", item, re.IGNORECASE)
+        )
+        for item, distinctness in application_rows
     ):
         raise PromptPackV3Error(
             "text-question block lacks one evidence-based interpretive application"

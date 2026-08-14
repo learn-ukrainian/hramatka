@@ -34,11 +34,16 @@ from hramatka.engine.providers import (
 from .agent_monitor import router as agent_monitor_router
 from .anchor_preparation import AnchorPreparationError, prepare_anchor_text
 from .baking.artifacts import configured_engine_out_dir
-from .baking.engine_adapter_v3 import EngineLessonBaker
+from .baking.engine_adapter_v3 import (
+    REGENERATION_PROMPT_SHA256,
+    REGENERATION_PROMPT_VERSION,
+    EngineLessonBaker,
+)
 from .baking.port import LessonBaker
 from .config import Settings
 from .models import (
     ActivityFeedbackMutation,
+    ActivityRegenerationCreate,
     ActivityReplacementMutation,
     BlockMoveMutation,
     DurationMutation,
@@ -62,6 +67,10 @@ from .review_attestation import ReviewAttestationError, ReviewAttestor
 from .runner import BakeRunner
 from .security import csrf_matches, csrf_token
 from .store import (
+    ActivityRegenerationInProgress,
+    ActivityRegenerationNotFound,
+    ActivityRegenerationRecord,
+    ActivityRegenerationStateConflict,
     FeedbackNotApplicable,
     IdempotencyConflict,
     InviteUnavailable,
@@ -253,7 +262,9 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
 
 
 def _resource_payload(
-    job: JobRecord, activity_feedback: dict[str, dict[str, object]] | None = None
+    job: JobRecord,
+    activity_feedback: dict[str, dict[str, object]] | None = None,
+    activity_regenerations: list[ActivityRegenerationRecord] | None = None,
 ) -> dict[str, object]:
     if job.lesson is None:  # pragma: no cover - enforced by the ready-state check
         raise RuntimeError("A ready lesson aggregate must have a lesson document.")
@@ -274,12 +285,38 @@ def _resource_payload(
         # a row whose flag-time hash no longer matches the live block is
         # presented as "no feedback yet", never as a current judgment.
         "activity_feedback": dict(activity_feedback or {}),
+        "activity_regenerations": [
+            _activity_regeneration_payload(item) for item in (activity_regenerations or [])
+        ],
         "logical_model_id": job.logical_model_id,
         # Keep the pinned lesson document valid while giving current clients
         # explicit names for the durable create-form choices.
         "methodology": job.methodology,
         "grammar_focus": job.grammar_focus,
         "lesson": lesson,
+    }
+
+
+def _activity_regeneration_payload(record: ActivityRegenerationRecord) -> dict[str, object]:
+    """Return status/provenance only; block snapshots remain private durable history."""
+    return {
+        "id": record.id,
+        "lesson_id": record.lesson_id,
+        "block_id": record.block_id,
+        "base_revision": record.base_revision,
+        "status": record.status,
+        "attempt": record.attempt,
+        "failure_code": record.failure_code,
+        "failure_message": record.failure_message,
+        "prompt_version": record.prompt_version,
+        "prompt_sha256": record.prompt_sha256,
+        "old_block_hash": record.old_block_hash,
+        "new_block_hash": record.new_block_hash,
+        "applied_revision": record.applied_revision,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "started_at": record.started_at,
+        "completed_at": record.completed_at,
     }
 
 
@@ -371,6 +408,7 @@ def create_app(
         # In-process engine work is not resumable after a process exit.  Mark it
         # durably failed before this process claims any new aggregate.
         store.recover_baking_jobs(settings.bake_hard_timeout_seconds)
+        store.recover_activity_regenerations()
         runner.start()
         try:
             yield
@@ -557,11 +595,17 @@ def create_app(
         return job
 
     def lesson_resource(job: JobRecord) -> dict[str, object]:
-        """The one lesson-resource assembly: always carries applicable feedback."""
+        """The one lesson-resource assembly: feedback plus durable replacement state."""
         feedback: dict[str, dict[str, object]] = {}
+        regenerations: list[ActivityRegenerationRecord] = []
         if job.status == "ready" and job.lesson is not None:
             feedback = store.applicable_activity_feedback(job.teacher_id, job.id)
-        return _resource_payload(job, activity_feedback=feedback)
+            regenerations = store.list_activity_regenerations(job.teacher_id, job.id)
+        return _resource_payload(
+            job,
+            activity_feedback=feedback,
+            activity_regenerations=regenerations,
+        )
 
     def raise_review_mutation_error(error: Exception, lesson_id: str) -> None:
         """Map every durable review-edit failure to the frozen error envelope."""
@@ -588,6 +632,47 @@ def create_app(
                 lesson_id=lesson_id,
             ) from error
         if isinstance(error, ReviewMutationInvalid):
+            raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+        raise error
+
+    def raise_regeneration_error(error: Exception, lesson_id: str) -> None:
+        if isinstance(error, LessonNotFound):
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
+        if isinstance(error, LessonBlockNotFound):
+            raise PilotError(404, "lesson_block_not_found", "Блок уроку не знайдено.") from error
+        if isinstance(error, ActivityRegenerationNotFound):
+            raise PilotError(
+                404, "regeneration_not_found", "Спробу створення варіанта не знайдено."
+            ) from error
+        if isinstance(error, RevisionConflict):
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "Урок змінено; оновіть його перед повторною спробою.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, ActivityRegenerationInProgress):
+            raise PilotError(
+                409,
+                "regeneration_in_progress",
+                "Для цього уроку вже створюється новий варіант вправи.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, (LessonStateConflict, ActivityRegenerationStateConflict)):
+            raise PilotError(
+                409,
+                "regeneration_state_conflict",
+                "Стан уроку або блока не дозволяє створити цей варіант.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, IdempotencyConflict):
+            raise PilotError(
+                409,
+                "idempotency_conflict",
+                "Цей ідентифікатор уже пов’язаний з іншою спробою.",
+                lesson_id=lesson_id,
+            ) from error
+        if isinstance(error, (ReviewMutationInvalid, ValueError)):
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         raise error
 
@@ -1047,6 +1132,143 @@ def create_app(
             )
             job = owner_job(session.teacher_id, new_lesson_id)
         return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
+
+    @app.post(
+        "/api/lessons/{lesson_id}/blocks/{block_id}/regenerations",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_activity_regeneration(
+        lesson_id: UUID,
+        block_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        ],
+        request_body: ActivityRegenerationCreate,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        lesson_job = owner_job(session.teacher_id, lesson_key)
+        logical_model_id = lesson_job.logical_model_id
+        if logical_model_id is None:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Для цього уроку не збережено модель. Створіть новий урок.",
+            )
+        try:
+            model_registry.require_qualified(logical_model_id)
+            if production_routing_required:
+                logical_generator(logical_model_id)
+        except (LogicalModelUnavailable, ValueError) as error:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Модель цього уроку більше не доступна. Створіть новий урок.",
+            ) from error
+        try:
+            regeneration, created = store.create_or_get_activity_regeneration(
+                session.teacher_id,
+                str(request_body.id),
+                lesson_id=lesson_key,
+                block_id=block_id,
+                expected_revision=request_body.expected_revision,
+                feedback=request_body.feedback,
+                prompt_version=REGENERATION_PROMPT_VERSION,
+                prompt_sha256=REGENERATION_PROMPT_SHA256,
+            )
+        except (
+            LessonNotFound,
+            LessonBlockNotFound,
+            LessonStateConflict,
+            RevisionConflict,
+            ActivityRegenerationInProgress,
+            IdempotencyConflict,
+            ValueError,
+        ) as error:
+            raise_regeneration_error(error, lesson_key)
+        if created and not runner.submit(regeneration.id):
+            store.fail_activity_regeneration(
+                session.teacher_id,
+                regeneration.id,
+                "engine_unavailable",
+                "Сервіс створення варіантів недоступний. Попередній блок збережено.",
+            )
+            regeneration = (
+                store.get_activity_regeneration(session.teacher_id, regeneration.id) or regeneration
+            )
+        return {**_activity_regeneration_payload(regeneration), "reused": not created}
+
+    @app.get("/api/lessons/{lesson_id}/regenerations/{regeneration_id}")
+    def get_activity_regeneration(
+        lesson_id: UUID,
+        regeneration_id: UUID,
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        owner_job(session.teacher_id, lesson_key)
+        regeneration = store.get_activity_regeneration(session.teacher_id, str(regeneration_id))
+        if regeneration is None or regeneration.lesson_id != lesson_key:
+            raise PilotError(
+                404, "regeneration_not_found", "Спробу створення варіанта не знайдено."
+            )
+        return _activity_regeneration_payload(regeneration)
+
+    @app.post(
+        "/api/lessons/{lesson_id}/regenerations/{regeneration_id}/retry",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def retry_activity_regeneration(
+        lesson_id: UUID,
+        regeneration_id: UUID,
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        regeneration = store.get_activity_regeneration(session.teacher_id, str(regeneration_id))
+        if regeneration is None or regeneration.lesson_id != lesson_key:
+            raise PilotError(
+                404, "regeneration_not_found", "Спробу створення варіанта не знайдено."
+            )
+        try:
+            model_registry.require_qualified(regeneration.logical_model_id)
+            if production_routing_required:
+                logical_generator(regeneration.logical_model_id)
+        except (LogicalModelUnavailable, ValueError) as error:
+            raise PilotError(
+                409,
+                "model_unavailable",
+                "Модель цього уроку більше не доступна. Створіть новий урок.",
+            ) from error
+        try:
+            retried = store.retry_activity_regeneration(
+                session.teacher_id,
+                str(regeneration_id),
+                expected_revision=request_body.expected_revision,
+                prompt_version=REGENERATION_PROMPT_VERSION,
+                prompt_sha256=REGENERATION_PROMPT_SHA256,
+            )
+        except (
+            ActivityRegenerationNotFound,
+            ActivityRegenerationInProgress,
+            ActivityRegenerationStateConflict,
+            LessonNotFound,
+            LessonBlockNotFound,
+            LessonStateConflict,
+            RevisionConflict,
+            ValueError,
+        ) as error:
+            raise_regeneration_error(error, lesson_key)
+        if not runner.submit(retried.id):
+            store.fail_activity_regeneration(
+                session.teacher_id,
+                retried.id,
+                "engine_unavailable",
+                "Сервіс створення варіантів недоступний. Попередній блок збережено.",
+            )
+            retried = store.get_activity_regeneration(session.teacher_id, retried.id) or retried
+        return _activity_regeneration_payload(retried)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/accept")
     def acknowledge_warning(

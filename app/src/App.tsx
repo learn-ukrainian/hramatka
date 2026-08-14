@@ -33,6 +33,7 @@ import {
   FOCUS_STATUS_ACK_ID,
   type LessonDuration,
   type FocusStatus,
+  type ActivityRegenerationEntry,
 } from './review-helpers';
 
 /**
@@ -112,6 +113,7 @@ interface LessonResource {
   warning_acknowledgements: string[];
   /** Applicable-only teacher verdicts on flagged blocks, keyed by block id (#402). */
   activity_feedback?: Record<string, { verdict: 'good' | 'bad'; comment: string | null; updated_at: string }>;
+  activity_regenerations?: ActivityRegenerationEntry[];
   logical_model_id: string | null;
   methodology?: 'ttt';
   grammar_focus?: string | null;
@@ -296,7 +298,9 @@ export default function TeacherApp() {
   // Track the id we are actively polling for. Used to make clear-on-id-change + start
   // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
   const activePollIdRef = useRef<string | null>(null);
+  const currentLessonIdRef = useRef<string | null>(null);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
+  const regenerationMutationInFlightRef = useRef(false);
 
   // Last bake request: sessionStorage (+ in-memory fallback when storage unavailable).
   // Recovery path: API status does not expose anchor on failed lessons — see app-helpers.
@@ -311,6 +315,14 @@ export default function TeacherApp() {
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
+
+  const activeActivityRegeneration = lesson?.activity_regenerations?.find(
+    (item) => item.status === 'queued' || item.status === 'running',
+  );
+
+  useEffect(() => {
+    currentLessonIdRef.current = currentLessonId;
+  }, [currentLessonId]);
 
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
@@ -1249,8 +1261,93 @@ export default function TeacherApp() {
     setLocalAcks(lr.warning_acknowledgements || []);
   };
 
-  const handleRevisionConflict = async () => {
-    if (currentLessonId) await openLesson(currentLessonId, 'review');
+  const applyActivityRegeneration = (entry: ActivityRegenerationEntry) => {
+    setLesson((current) => {
+      if (!current || current.lesson_id !== entry.lesson_id) return current;
+      return {
+        ...current,
+        activity_regenerations: [
+          entry,
+          ...(current.activity_regenerations || []).filter((item) => item.id !== entry.id),
+        ],
+      };
+    });
+  };
+
+  const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry) => {
+    if (entry.status !== 'succeeded' && entry.status !== 'failed') {
+      applyActivityRegeneration(entry);
+      return;
+    }
+    const resourceResponse = await apiFetch(`/api/lessons/${entry.lesson_id}`);
+    if (!resourceResponse.ok) {
+      // A failed regeneration never changed lesson content, so its durable retry
+      // affordance is safe to show even when the resource refetch is transiently
+      // unavailable. Success is different: never paint a success badge over the
+      // stale block that the teacher is still looking at.
+      if (entry.status === 'failed') {
+        applyActivityRegeneration(entry);
+        return;
+      }
+      throw new Error('regeneration lesson refresh unavailable');
+    }
+    const resource: LessonResource = await resourceResponse.json();
+    if (currentLessonIdRef.current !== entry.lesson_id) return;
+    applyLessonResource(resource);
+    if (entry.status === 'succeeded') await loadCatalog();
+  };
+
+  // A replacement is a separate durable job. Reloading the page reconstructs
+  // this poll from `activity_regenerations`; the old block stays visible meanwhile.
+  useEffect(() => {
+    const regeneration = activeActivityRegeneration;
+    const lessonId = lesson?.lesson_id;
+    if (!regeneration || !lessonId) return undefined;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const response = await apiFetch(
+          `/api/lessons/${lessonId}/regenerations/${regeneration.id}`,
+        );
+        if (!response.ok) {
+          if (response.status === 401) {
+            const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
+            if (!cancelled) handleApiError(envelope);
+            return;
+          }
+          throw new Error('regeneration poll unavailable');
+        }
+        const status: ActivityRegenerationEntry = await response.json();
+        if (cancelled) return;
+        if (status.status === 'succeeded' || status.status === 'failed') {
+          const resourceResponse = await apiFetch(`/api/lessons/${lessonId}`);
+          if (!cancelled && resourceResponse.ok) {
+            const resource: LessonResource = await resourceResponse.json();
+            if (cancelled) return;
+            applyLessonResource(resource);
+            if (status.status === 'succeeded') await loadCatalog();
+            return;
+          }
+        } else {
+          applyActivityRegeneration(status);
+        }
+      } catch {
+        // A transient poll failure must not turn a durable server job into a UI failure.
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 1200);
+    };
+    timer = window.setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [lesson?.lesson_id, activeActivityRegeneration?.id]);
+
+  const handleRevisionConflict = async (expectedLessonId?: string) => {
+    const lessonId = expectedLessonId || currentLessonIdRef.current;
+    if (!lessonId || currentLessonIdRef.current !== lessonId) return;
+    await openLesson(lessonId, 'review');
   };
 
   const reviewMutation = async (
@@ -1336,6 +1433,86 @@ export default function TeacherApp() {
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
       body: JSON.stringify({ verdict, ...(comment ? { comment } : {}) }),
     });
+
+  const createActivityRegeneration = async (blockId: string, feedback: string | null) => {
+    if (
+      !lesson || !currentLessonId || !csrf || activeActivityRegeneration
+      || regenerationMutationInFlightRef.current
+    ) return;
+    regenerationMutationInFlightRef.current = true;
+    const requestLessonId = currentLessonId;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/api/lessons/${requestLessonId}/blocks/${blockId}/regenerations`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          body: JSON.stringify({
+            id: crypto.randomUUID(),
+            expected_revision: lesson.revision,
+            ...(feedback ? { feedback } : {}),
+          }),
+        },
+      );
+      if (response.ok) {
+        await reconcileActivityRegeneration(await response.json());
+        return;
+      }
+      const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
+      if (currentLessonIdRef.current !== requestLessonId) return;
+      if (envelope.code === 'revision_conflict') {
+        setError(errKey('err.lessonChangedReload'));
+        await handleRevisionConflict(requestLessonId);
+      } else {
+        setError(errOr(envelope.message, 'err.generic'));
+      }
+    } catch {
+      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+    } finally {
+      regenerationMutationInFlightRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  const retryActivityRegeneration = async (regenerationId: string) => {
+    if (
+      !lesson || !currentLessonId || !csrf || activeActivityRegeneration
+      || regenerationMutationInFlightRef.current
+    ) return;
+    regenerationMutationInFlightRef.current = true;
+    const requestLessonId = currentLessonId;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/api/lessons/${requestLessonId}/regenerations/${regenerationId}/retry`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+          body: JSON.stringify({ expected_revision: lesson.revision }),
+        },
+      );
+      if (response.ok) {
+        await reconcileActivityRegeneration(await response.json());
+        return;
+      }
+      const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
+      if (currentLessonIdRef.current !== requestLessonId) return;
+      if (envelope.code === 'revision_conflict') {
+        setError(errKey('err.lessonChangedReload'));
+        await handleRevisionConflict(requestLessonId);
+      } else {
+        setError(errOr(envelope.message, 'err.generic'));
+      }
+    } catch {
+      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+    } finally {
+      regenerationMutationInFlightRef.current = false;
+      setLoading(false);
+    }
+  };
 
   const renderBlocks = (l: LessonResource, viewMode: 'review' | 'run' | 'conduct') => (
     <LessonBlocks
@@ -2002,6 +2179,8 @@ export default function TeacherApp() {
                       onAcceptLesson={acceptLesson}
                       onReturnToDraft={returnToDraft}
                       onActivityFeedback={putActivityFeedback}
+                      onRegenerateActivity={createActivityRegeneration}
+                      onRetryRegeneration={retryActivityRegeneration}
                       allWarningsAcked={allVisibleWarningsAcked(lesson)}
                     />
                   )}

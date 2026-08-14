@@ -14,6 +14,16 @@ class LessonBaker(Protocol):
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]: ...
 
+    def regenerate_activity(
+        self,
+        anchor: str | dict,
+        duration: int,
+        focus: str | None,
+        *,
+        block: dict[str, Any],
+        feedback: str | None,
+    ) -> dict[str, Any]: ...
+
 
 class BakeError(RuntimeError):
     """A safe, teacher-visible failure raised by a lesson baker."""

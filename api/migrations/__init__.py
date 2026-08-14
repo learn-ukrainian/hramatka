@@ -14,6 +14,7 @@ from .v006_durable_teacher_sessions import apply as apply_v006
 from .v007_local_static_sessions import apply as apply_v007
 from .v008_teacher_passkeys import apply as apply_v008
 from .v009_activity_feedback import apply as apply_v009
+from .v010_activity_regenerations import apply as apply_v010
 
 
 class MigrationError(RuntimeError):
@@ -32,6 +33,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (7, "local_static_sessions", apply_v007),
     (8, "teacher_passkeys", apply_v008),
     (9, "activity_feedback", apply_v009),
+    (10, "activity_regenerations", apply_v010),
 )
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

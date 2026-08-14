@@ -839,17 +839,30 @@ def _merge_targeted_text_question_repair(
         repair_items = rendered.get("repair_items")
         if not isinstance(repair_items, list) or len(repair_items) != len(indexes):
             raise ValueError("targeted text-question repair has an invalid patch shape")
-        replacements: dict[int, str] = {}
+        replacements: dict[int, tuple[str, str | None]] = {}
         for item in repair_items:
             if (
                 not isinstance(item, Mapping)
-                or set(item) != {"index", "question"}
+                or set(item) not in (
+                    {"index", "question"},
+                    {"guidance_sample", "index", "question"},
+                )
                 or not isinstance(item.get("index"), int)
                 or not isinstance(item.get("question"), str)
                 or not item["question"].strip()
+                or (
+                    "guidance_sample" in item
+                    and (
+                        not isinstance(item.get("guidance_sample"), str)
+                        or not item["guidance_sample"].strip()
+                    )
+                )
             ):
                 raise ValueError("targeted text-question repair has an invalid item patch")
-            replacements[item["index"]] = item["question"]
+            replacements[item["index"]] = (
+                item["question"],
+                item.get("guidance_sample"),
+            )
         if tuple(sorted(replacements)) != indexes:
             raise ValueError("targeted text-question repair changed its requested indexes")
         merged = deepcopy(dict(prior))
@@ -864,8 +877,32 @@ def _merge_targeted_text_question_repair(
             index >= len(merged_items) for index in indexes
         ):
             raise ValueError("targeted text-question repair changed the item-list shape")
-        for index, question in replacements.items():
+        for index, (question, _sample) in replacements.items():
             merged_items[index] = question
+        if any(sample is not None for _question, sample in replacements.values()):
+            merged_answer_key = (
+                merged_activity.get("answer_key")
+                if isinstance(merged_activity, Mapping)
+                else None
+            )
+            guidance = (
+                merged_answer_key.get("guidance")
+                if isinstance(merged_answer_key, Mapping)
+                else None
+            )
+            guidance_lines = (
+                [line.strip() for line in guidance.splitlines() if line.strip()]
+                if isinstance(guidance, str)
+                else []
+            )
+            if len(guidance_lines) != len(merged_items):
+                raise ValueError(
+                    "targeted text-question repair cannot bind its guidance samples"
+                )
+            for index, (_question, sample) in replacements.items():
+                if sample is not None:
+                    guidance_lines[index] = f"{index + 1}. Зразок відповіді: {sample}"
+            merged_answer_key["guidance"] = "\n".join(guidance_lines)
         return merged
     if (
         set(prior) != set(rendered)

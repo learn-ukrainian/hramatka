@@ -118,6 +118,18 @@ class FeedbackNotApplicable(ValueError):
     """Teacher feedback targets a block that is not currently engine-flagged (#402)."""
 
 
+class ActivityRegenerationNotFound(KeyError):
+    """An owner-scoped one-block regeneration job was not found."""
+
+
+class ActivityRegenerationInProgress(ValueError):
+    """The lesson already has queued or running regeneration work."""
+
+
+class ActivityRegenerationStateConflict(ValueError):
+    """A regeneration job cannot perform the requested state transition."""
+
+
 # Kept as a compatibility import for callers still using the prototype spelling.
 WarningBlocksUnacknowledged = WarningAcknowledgementsRequired
 
@@ -309,6 +321,33 @@ class JobRecord:
     def last_error(self) -> str | None:
         """Prototype-compatible name for the safe durable failure message."""
         return self.failure_message
+
+
+@dataclass(frozen=True)
+class ActivityRegenerationRecord:
+    id: str
+    teacher_id: str
+    lesson_id: str
+    block_id: str
+    request_hash: bytes
+    base_revision: int
+    status: str
+    feedback: str | None
+    attempt: int
+    failure_code: str | None
+    failure_message: str | None
+    old_block_hash: str
+    old_block: dict[str, Any]
+    new_block_hash: str | None
+    new_block: dict[str, Any] | None
+    logical_model_id: str
+    prompt_version: str
+    prompt_sha256: str
+    applied_revision: int | None
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    completed_at: str | None
 
 
 @dataclass(frozen=True)
@@ -1610,6 +1649,520 @@ class JobStore:
             )
         return cursor.rowcount
 
+    # -- Durable one-block regeneration jobs (#418) -----------------------
+
+    def create_or_get_activity_regeneration(
+        self,
+        teacher_id: str,
+        regeneration_id: str,
+        *,
+        lesson_id: str,
+        block_id: str,
+        expected_revision: int,
+        feedback: str | None,
+        prompt_version: str,
+        prompt_sha256: str,
+    ) -> tuple[ActivityRegenerationRecord, bool]:
+        """Create one idempotent queued replacement while leaving the lesson usable."""
+        if isinstance(feedback, str):
+            feedback = feedback.strip() or None
+        if feedback is not None and (not isinstance(feedback, str) or len(feedback) > 1000):
+            raise ValueError("Regeneration feedback must be non-empty text up to 1000 characters.")
+        if not prompt_version or not re.fullmatch(r"[0-9a-f]{64}", prompt_sha256):
+            raise ValueError("Regeneration prompt provenance is invalid.")
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            existing_row = connection.execute(
+                "SELECT * FROM activity_regenerations WHERE id = ?", (regeneration_id,)
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._activity_regeneration_record(existing_row)
+                request_hash = _activity_regeneration_request_hash(
+                    lesson_id=lesson_id,
+                    block_id=block_id,
+                    base_revision=expected_revision,
+                    feedback=feedback,
+                    old_block_hash=existing.old_block_hash,
+                    logical_model_id=existing.logical_model_id,
+                    prompt_version=prompt_version,
+                    prompt_sha256=prompt_sha256,
+                )
+                if existing.teacher_id != teacher_id or existing.request_hash != request_hash:
+                    raise IdempotencyConflict(
+                        "This regeneration ID is already bound to different inputs."
+                    )
+                return existing, False
+            lesson_job = self._require_owned(connection, teacher_id, lesson_id)
+            self._require_expected_revision(lesson_job, expected_revision)
+            self._require_ready(lesson_job)
+            lesson = self._require_lesson(lesson_job)
+            block = self._regenerable_block(lesson, block_id)
+            logical_model_id = lesson_job.logical_model_id
+            if logical_model_id is None:
+                raise LessonStateConflict("The lesson has no durable model route.")
+            old_block_json = canonical_json(block)
+            old_block_hash = _canonical_hash_hex(block)
+            request_hash = _activity_regeneration_request_hash(
+                lesson_id=lesson_id,
+                block_id=block_id,
+                base_revision=expected_revision,
+                feedback=feedback,
+                old_block_hash=old_block_hash,
+                logical_model_id=logical_model_id,
+                prompt_version=prompt_version,
+                prompt_sha256=prompt_sha256,
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO activity_regenerations (
+                        id, teacher_id, lesson_id, block_id, request_hash, base_revision,
+                        status, feedback, attempt, failure_code, failure_message,
+                        old_block_hash, old_block_json, new_block_hash, new_block_json,
+                        logical_model_id, prompt_version, prompt_sha256, applied_revision,
+                        created_at, updated_at, started_at, completed_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, 'queued', ?, 1, NULL, NULL,
+                        ?, ?, NULL, NULL, ?, ?, ?, NULL, ?, ?, NULL, NULL
+                    )
+                    """,
+                    (
+                        regeneration_id,
+                        teacher_id,
+                        lesson_id,
+                        block_id,
+                        request_hash,
+                        expected_revision,
+                        feedback,
+                        old_block_hash,
+                        old_block_json,
+                        logical_model_id,
+                        prompt_version,
+                        prompt_sha256,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                created = True
+            except sqlite3.IntegrityError:
+                created = False
+            row = connection.execute(
+                "SELECT * FROM activity_regenerations WHERE id = ?", (regeneration_id,)
+            ).fetchone()
+            if row is None:
+                raise ActivityRegenerationInProgress(
+                    "The lesson already has active regeneration work."
+                )
+            record = self._activity_regeneration_record(row)
+            if record.teacher_id != teacher_id or record.request_hash != request_hash:
+                raise IdempotencyConflict(
+                    "This regeneration ID is already bound to different inputs."
+                )
+            return record, created
+
+    def get_activity_regeneration(
+        self, teacher_id: str, regeneration_id: str
+    ) -> ActivityRegenerationRecord | None:
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM activity_regenerations
+                WHERE teacher_id = ? AND id = ?
+                """,
+                (teacher_id, regeneration_id),
+            ).fetchone()
+        return self._activity_regeneration_record(row) if row is not None else None
+
+    def list_activity_regenerations(
+        self, teacher_id: str, lesson_id: str, *, limit: int = 50
+    ) -> list[ActivityRegenerationRecord]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Regeneration history limit must be between 1 and 100.")
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM activity_regenerations
+                WHERE teacher_id = ? AND lesson_id = ?
+                ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (teacher_id, lesson_id, limit),
+            ).fetchall()
+        return [self._activity_regeneration_record(row) for row in rows]
+
+    def claim_next_activity_regeneration(self) -> ActivityRegenerationRecord | None:
+        """Atomically claim the oldest queued replacement for the shared worker pool."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM activity_regenerations
+                WHERE status = 'queued' ORDER BY created_at, id LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'running', started_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'queued' AND attempt = ?
+                """,
+                (timestamp, timestamp, row["id"], row["attempt"]),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = connection.execute(
+                "SELECT * FROM activity_regenerations WHERE id = ?", (row["id"],)
+            ).fetchone()
+        return self._activity_regeneration_record(claimed) if claimed is not None else None
+
+    def complete_activity_regeneration(
+        self,
+        teacher_id: str,
+        regeneration_id: str,
+        replacement_block: Mapping[str, Any],
+    ) -> bool:
+        """Apply one checked block and its lesson revision in the same transaction."""
+        replacement = copy.deepcopy(dict(replacement_block))
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM activity_regenerations
+                WHERE teacher_id = ? AND id = ?
+                """,
+                (teacher_id, regeneration_id),
+            ).fetchone()
+            if row is None:
+                raise ActivityRegenerationNotFound(regeneration_id)
+            regeneration = self._activity_regeneration_record(row)
+            if regeneration.status != "running":
+                return False
+            lesson_job = self._require_owned(connection, teacher_id, regeneration.lesson_id)
+            if lesson_job.status != "ready" or lesson_job.revision != regeneration.base_revision:
+                self._fail_activity_regeneration_in_connection(
+                    connection,
+                    regeneration_id,
+                    code="revision_conflict",
+                    message="Урок змінився. Оновіть його й спробуйте створити варіант ще раз.",
+                    timestamp=timestamp,
+                )
+                return False
+            lesson = copy.deepcopy(self._require_lesson(lesson_job))
+            try:
+                blocks = lesson["blocks"]
+                index = next(
+                    position
+                    for position, block in enumerate(blocks)
+                    if isinstance(block, Mapping) and block.get("id") == regeneration.block_id
+                )
+                current = blocks[index]
+            except (KeyError, TypeError, StopIteration):
+                self._fail_activity_regeneration_in_connection(
+                    connection,
+                    regeneration_id,
+                    code="block_changed",
+                    message="Вибраний блок змінився. Оновіть урок і спробуйте ще раз.",
+                    timestamp=timestamp,
+                )
+                return False
+            if _canonical_hash_hex(current) != regeneration.old_block_hash:
+                self._fail_activity_regeneration_in_connection(
+                    connection,
+                    regeneration_id,
+                    code="block_changed",
+                    message="Вибраний блок змінився. Оновіть урок і спробуйте ще раз.",
+                    timestamp=timestamp,
+                )
+                return False
+            if (
+                replacement.get("id") != regeneration.block_id
+                or replacement.get("phase") != current.get("phase")
+                or replacement.get("type") != current.get("type")
+                or _activity_learning_content(replacement.get("activity"))
+                == _activity_learning_content(current.get("activity"))
+            ):
+                raise ReviewMutationInvalid("Regenerated block does not preserve its slot.")
+            blocks[index] = replacement
+            lesson["accepted"] = False
+            lesson["updated_at"] = timestamp
+            acknowledgements = set(lesson_job.warning_acknowledgements)
+            acknowledgements.discard(regeneration.block_id)
+            validate_lesson(lesson)
+            new_revision = lesson_job.revision + 1
+            lesson_cursor = connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET lesson_json = ?, warning_acknowledgements_json = ?, accepted = 0,
+                    accepted_at = NULL, accepted_revision = NULL, updated_at = ?,
+                    revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status = 'ready' AND revision = ?
+                """,
+                (
+                    canonical_json(lesson),
+                    canonical_json(sorted(acknowledgements)),
+                    timestamp,
+                    teacher_id,
+                    regeneration.lesson_id,
+                    regeneration.base_revision,
+                ),
+            )
+            if lesson_cursor.rowcount != 1:
+                raise RevisionConflict("The lesson changed during regeneration completion.")
+            new_block_json = canonical_json(replacement)
+            new_block_hash = _canonical_hash_hex(replacement)
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'succeeded', failure_code = NULL, failure_message = NULL,
+                    new_block_hash = ?, new_block_json = ?, applied_revision = ?,
+                    completed_at = ?, updated_at = ?
+                WHERE teacher_id = ? AND id = ? AND status = 'running'
+                """,
+                (
+                    new_block_hash,
+                    new_block_json,
+                    new_revision,
+                    timestamp,
+                    timestamp,
+                    teacher_id,
+                    regeneration_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceUnavailable("Regeneration completion lost its durable job.")
+            return True
+
+    def fail_activity_regeneration(
+        self,
+        teacher_id: str,
+        regeneration_id: str,
+        failure_code: str,
+        failure_message: str,
+    ) -> bool:
+        _validate_activity_regeneration_failure(failure_code, failure_message)
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'failed', failure_code = ?, failure_message = ?,
+                    completed_at = ?, updated_at = ?
+                WHERE teacher_id = ? AND id = ? AND status IN ('queued', 'running')
+                """,
+                (
+                    failure_code,
+                    failure_message,
+                    timestamp,
+                    timestamp,
+                    teacher_id,
+                    regeneration_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def retry_activity_regeneration(
+        self,
+        teacher_id: str,
+        regeneration_id: str,
+        *,
+        expected_revision: int,
+        prompt_version: str,
+        prompt_sha256: str,
+    ) -> ActivityRegenerationRecord:
+        """Retry a terminal failure against the teacher's current unchanged target block."""
+        if not prompt_version or not re.fullmatch(r"[0-9a-f]{64}", prompt_sha256):
+            raise ValueError("Regeneration prompt provenance is invalid.")
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM activity_regenerations
+                WHERE teacher_id = ? AND id = ?
+                """,
+                (teacher_id, regeneration_id),
+            ).fetchone()
+            if row is None:
+                raise ActivityRegenerationNotFound(regeneration_id)
+            regeneration = self._activity_regeneration_record(row)
+            if regeneration.status != "failed":
+                if (
+                    regeneration.status in {"queued", "running", "succeeded"}
+                    and regeneration.base_revision == expected_revision
+                ):
+                    # The browser may retry after losing the first HTTP response.
+                    # Return that durable attempt instead of reporting a false
+                    # failure or creating duplicate work.
+                    return regeneration
+                raise ActivityRegenerationStateConflict("Only failed regeneration can be retried.")
+            lesson_job = self._require_owned(connection, teacher_id, regeneration.lesson_id)
+            self._require_expected_revision(lesson_job, expected_revision)
+            self._require_ready(lesson_job)
+            block = self._regenerable_block(self._require_lesson(lesson_job), regeneration.block_id)
+            active = connection.execute(
+                """
+                SELECT 1 FROM activity_regenerations
+                WHERE teacher_id = ? AND lesson_id = ? AND id != ?
+                  AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (
+                    teacher_id,
+                    regeneration.lesson_id,
+                    regeneration_id,
+                ),
+            ).fetchone()
+            if active is not None:
+                raise ActivityRegenerationInProgress(
+                    "The lesson already has active regeneration work."
+                )
+            old_block_hash = _canonical_hash_hex(block)
+            old_block_json = canonical_json(block)
+            request_hash = _activity_regeneration_request_hash(
+                lesson_id=regeneration.lesson_id,
+                block_id=regeneration.block_id,
+                base_revision=expected_revision,
+                feedback=regeneration.feedback,
+                old_block_hash=old_block_hash,
+                logical_model_id=regeneration.logical_model_id,
+                prompt_version=prompt_version,
+                prompt_sha256=prompt_sha256,
+            )
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'queued', base_revision = ?, attempt = attempt + 1,
+                    failure_code = NULL, failure_message = NULL,
+                    request_hash = ?, old_block_hash = ?, old_block_json = ?,
+                    prompt_version = ?, prompt_sha256 = ?,
+                    new_block_hash = NULL, new_block_json = NULL,
+                    applied_revision = NULL, started_at = NULL, completed_at = NULL,
+                    updated_at = ?
+                WHERE teacher_id = ? AND id = ? AND status = 'failed'
+                """,
+                (
+                    expected_revision,
+                    request_hash,
+                    old_block_hash,
+                    old_block_json,
+                    prompt_version,
+                    prompt_sha256,
+                    timestamp,
+                    teacher_id,
+                    regeneration_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ActivityRegenerationStateConflict("Regeneration retry lost its state.")
+            retried = connection.execute(
+                "SELECT * FROM activity_regenerations WHERE id = ?", (regeneration_id,)
+            ).fetchone()
+        assert retried is not None
+        return self._activity_regeneration_record(retried)
+
+    def recover_activity_regenerations(self) -> int:
+        """Fail only interrupted running replacements; queued work remains claimable."""
+        timestamp = now_iso()
+        message = "Створення нового варіанта перервалося. Спробуйте ще раз."
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'failed', failure_code = 'worker_restarted',
+                    failure_message = ?, completed_at = ?, updated_at = ?
+                WHERE status = 'running'
+                """,
+                (message, timestamp, timestamp),
+            )
+        return cursor.rowcount
+
+    def sweep_expired_activity_regenerations(self, hard_timeout_seconds: int) -> int:
+        """Fail running replacements whose worker can no longer finish them.
+
+        This is the periodic counterpart to startup recovery. It also closes
+        the double-fault case where generation fails and the first persistence
+        attempt to record that failure is itself temporarily unavailable.
+        """
+        if hard_timeout_seconds <= 0:
+            raise ValueError("Regeneration timeout must be positive.")
+        cutoff = _add_seconds(now_iso(), -hard_timeout_seconds)
+        timestamp = now_iso()
+        message = "Час на створення нового варіанта вичерпано. Спробуйте ще раз."
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'failed', failure_code = 'engine_unavailable',
+                    failure_message = ?, completed_at = ?, updated_at = ?
+                WHERE status = 'running' AND started_at < ?
+                """,
+                (message, timestamp, timestamp, cutoff),
+            )
+        return cursor.rowcount
+
+    def fail_queued_activity_regenerations(self, failure_message: str) -> int:
+        """Fail queued replacements only when the shared worker pool is unavailable."""
+        _validate_activity_regeneration_failure("engine_unavailable", failure_message)
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE activity_regenerations
+                SET status = 'failed', failure_code = 'engine_unavailable',
+                    failure_message = ?, completed_at = ?, updated_at = ?
+                WHERE status = 'queued'
+                """,
+                (failure_message, timestamp, timestamp),
+            )
+        return cursor.rowcount
+
+    @staticmethod
+    def _regenerable_block(lesson: Mapping[str, Any], block_id: str) -> dict[str, Any]:
+        blocks = lesson.get("blocks")
+        if not isinstance(blocks, list):
+            raise PersistenceUnavailable("A ready lesson has no valid blocks.")
+        block = next(
+            (
+                candidate
+                for candidate in blocks
+                if isinstance(candidate, dict) and candidate.get("id") == block_id
+            ),
+            None,
+        )
+        if block is None:
+            raise LessonBlockNotFound(block_id)
+        provenance = block.get("provenance")
+        if (
+            re.fullmatch(r"block-[1-9][0-9]*", block_id) is None
+            or block.get("edited") is not False
+            or not isinstance(provenance, Mapping)
+            or provenance.get("source") != "generated"
+        ):
+            raise LessonStateConflict(
+                "Only an unchanged engine-generated lesson block can be regenerated."
+            )
+        return copy.deepcopy(block)
+
+    @staticmethod
+    def _fail_activity_regeneration_in_connection(
+        connection: sqlite3.Connection,
+        regeneration_id: str,
+        *,
+        code: str,
+        message: str,
+        timestamp: str,
+    ) -> None:
+        _validate_activity_regeneration_failure(code, message)
+        connection.execute(
+            """
+            UPDATE activity_regenerations
+            SET status = 'failed', failure_code = ?, failure_message = ?,
+                completed_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            (code, message, timestamp, timestamp, regeneration_id),
+        )
+
     # -- Owner-scoped review and acceptance transitions --------------------
 
     def move_block(
@@ -1940,9 +2493,7 @@ class JobStore:
                 raise FeedbackNotApplicable("The block is not currently engine-flagged.")
             wire_hash = block.get("flagged_content_hash")
             if not isinstance(wire_hash, str) or not wire_hash:
-                raise PersistenceUnavailable(
-                    "A flagged block has no frozen content hash."
-                )
+                raise PersistenceUnavailable("A flagged block has no frozen content hash.")
             timestamp = now_iso()
             current = connection.execute(
                 """
@@ -2171,6 +2722,45 @@ class JobStore:
         )
 
     @staticmethod
+    def _activity_regeneration_record(row: sqlite3.Row) -> ActivityRegenerationRecord:
+        try:
+            old_block = json.loads(row["old_block_json"])
+            new_block = (
+                json.loads(row["new_block_json"]) if row["new_block_json"] is not None else None
+            )
+        except (TypeError, json.JSONDecodeError) as error:
+            raise PersistenceUnavailable("SQLite contains unreadable regeneration data.") from error
+        if not isinstance(old_block, dict) or (
+            new_block is not None and not isinstance(new_block, dict)
+        ):
+            raise PersistenceUnavailable("SQLite contains unreadable regeneration data.")
+        return ActivityRegenerationRecord(
+            id=row["id"],
+            teacher_id=row["teacher_id"],
+            lesson_id=row["lesson_id"],
+            block_id=row["block_id"],
+            request_hash=bytes(row["request_hash"]),
+            base_revision=row["base_revision"],
+            status=row["status"],
+            feedback=row["feedback"],
+            attempt=row["attempt"],
+            failure_code=row["failure_code"],
+            failure_message=row["failure_message"],
+            old_block_hash=row["old_block_hash"],
+            old_block=old_block,
+            new_block_hash=row["new_block_hash"],
+            new_block=new_block,
+            logical_model_id=row["logical_model_id"],
+            prompt_version=row["prompt_version"],
+            prompt_sha256=row["prompt_sha256"],
+            applied_revision=row["applied_revision"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+        )
+
+    @staticmethod
     def _visible_blocks(lesson: Mapping[str, Any]) -> list[dict[str, Any]]:
         try:
             from .lesson import split_review_blocks
@@ -2263,6 +2853,63 @@ def _validate_failure(failure_code: str, failure_message: str) -> None:
         or len(failure_message) > 500
     ):
         raise ValueError("Failure messages must be safe non-empty text up to 500 characters.")
+
+
+def _canonical_hash_hex(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _activity_regeneration_request_hash(
+    *,
+    lesson_id: str,
+    block_id: str,
+    base_revision: int,
+    feedback: str | None,
+    old_block_hash: str,
+    logical_model_id: str,
+    prompt_version: str,
+    prompt_sha256: str,
+) -> bytes:
+    request_json = canonical_json(
+        {
+            "lesson_id": lesson_id,
+            "block_id": block_id,
+            "base_revision": base_revision,
+            "feedback": feedback,
+            "old_block_hash": old_block_hash,
+            "logical_model_id": logical_model_id,
+            "prompt_version": prompt_version,
+            "prompt_sha256": prompt_sha256,
+        }
+    )
+    return hashlib.sha256(request_json.encode("utf-8")).digest()
+
+
+def _activity_learning_content(activity: Any) -> tuple[Any, Any]:
+    if not isinstance(activity, Mapping):
+        return None, None
+    return activity.get("payload"), activity.get("answer_key")
+
+
+def _validate_activity_regeneration_failure(failure_code: str, failure_message: str) -> None:
+    allowed = {
+        "provider_unavailable",
+        "generation_failed",
+        "engine_unavailable",
+        "revision_conflict",
+        "block_changed",
+        "worker_restarted",
+    }
+    if failure_code not in allowed:
+        raise ValueError("Unknown regeneration failure code.")
+    if (
+        not isinstance(failure_message, str)
+        or not failure_message.strip()
+        or len(failure_message) > 500
+    ):
+        raise ValueError(
+            "Regeneration failure messages must be safe non-empty text up to 500 characters."
+        )
 
 
 def _add_hours(timestamp: str, hours: int) -> str:

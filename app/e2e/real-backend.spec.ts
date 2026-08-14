@@ -31,6 +31,36 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   const revisionBefore = await page.locator('.meta').textContent();
   const initialRevision = Number(revisionBefore?.match(/Ревізія: (\d+)/)?.[1]);
   expect(initialRevision).toBeGreaterThan(0);
+
+  // A real browser crosses the real API, durable queue, runner and revision CAS.
+  // Exactly one selected activity changes; the old one remains visible while work runs.
+  const lessonBlocks = page.locator('.lesson-view .dblock:not(.empty-phase)');
+  const blockContent = (index: number) =>
+    lessonBlocks.nth(index).locator(':scope > .bcontent').textContent();
+  const beforeActivities = await Promise.all(
+    Array.from({ length: await lessonBlocks.count() }, (_, index) => blockContent(index)),
+  );
+  const firstBlock = page.locator('.lesson-view [data-block-id="block-1"]');
+  await firstBlock.getByRole('button', { name: 'Створити інший варіант' }).click();
+  await firstBlock.getByPlaceholder(/менше очевидних підказок/).fill(
+    'Зробіть формулювання природнішим.',
+  );
+  const regenerationRequest = page.waitForRequest(
+    request => request.url().includes('/blocks/block-1/regenerations')
+      && request.method() === 'POST',
+  );
+  await firstBlock.getByRole('button', { name: 'Створити новий варіант' }).click();
+  expect((await regenerationRequest).postDataJSON().feedback).toBe(
+    'Зробіть формулювання природнішим.',
+  );
+  await expect(firstBlock.getByTestId('regeneration-succeeded')).toBeVisible({ timeout: 10_000 });
+  const afterActivities = await Promise.all(
+    Array.from({ length: await lessonBlocks.count() }, (_, index) => blockContent(index)),
+  );
+  expect(afterActivities[0]).not.toBe(beforeActivities[0]);
+  expect(afterActivities.slice(1)).toEqual(beforeActivities.slice(1));
+  await expect(page.locator('.meta')).toContainText(`Ревізія: ${initialRevision + 1}`);
+
   const warnings = await page.locator('.ack-btn').count();
   for (let remaining = warnings - 1; remaining >= 0; remaining -= 1) {
     await page.locator('.ack-btn').first().click();
@@ -38,7 +68,9 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   }
   await page.getByRole('button', { name: /Прийняти заняття/ }).click();
   await expect(page.getByText('Прийнято', { exact: true })).toBeVisible();
-  await expect(page.locator('.meta')).toContainText(`Ревізія: ${initialRevision + warnings + 1}`);
+  await expect(page.locator('.meta')).toContainText(
+    `Ревізія: ${initialRevision + 1 + warnings + 1}`,
+  );
 
   const directUrl = page.url();
   await page.reload();

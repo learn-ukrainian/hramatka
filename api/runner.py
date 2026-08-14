@@ -16,7 +16,7 @@ from .baking.port import (
     ProviderUnavailable,
 )
 from .lesson import materialize_lesson
-from .store import JobStore, PersistenceUnavailable
+from .store import JobStore, PersistenceUnavailable, RevisionConflict
 from .validation import validate_lesson
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,12 @@ _SAFE_GENERATION_FAILURE_MESSAGE = (
 _SAFE_NO_ELIGIBLE_ACTIVITIES_MESSAGE = (
     "Не вдалося підібрати вправи для цього тексту. "
     "Спробуйте додати більше деталей або обрати інший текст."
+)
+_SAFE_REGENERATION_FAILURE_MESSAGE = (
+    "Не вдалося створити новий варіант. Попередній блок збережено; спробуйте ще раз."
+)
+_SAFE_REGENERATION_PROVIDER_MESSAGE = (
+    "Модель тимчасово недоступна. Попередній блок збережено; спробуйте ще раз."
 )
 _PROVIDER_RETRY_DELAY_SECONDS = 1.0
 _STOP_JOIN_TIMEOUT_SECONDS = 10
@@ -65,6 +71,8 @@ class BakeRunner:
         self._stop = threading.Event()
         self._poisoned = threading.Event()
         self._state_lock = threading.Lock()
+        self._claim_lock = threading.Lock()
+        self._prefer_regeneration = False
         self._workers: list[threading.Thread] = []
         self._watchdog: threading.Thread | None = None
 
@@ -142,12 +150,16 @@ class BakeRunner:
         return True
 
     def expire_and_quarantine(self) -> bool:
-        """Durably fail every individually expired in-flight bake, never siblings.
+        """Durably fail every individually expired in-flight task, never siblings.
 
         The compatibility name remains for callers, but an ordinary timeout is
         not a systemic outage and therefore must not quarantine the worker pool.
         """
-        return self._store.sweep_expired_bakes(self._hard_timeout_seconds) > 0
+        expired_bakes = self._store.sweep_expired_bakes(self._hard_timeout_seconds)
+        expired_regenerations = self._store.sweep_expired_activity_regenerations(
+            self._hard_timeout_seconds
+        )
+        return expired_bakes + expired_regenerations > 0
 
     def quarantine(self) -> None:
         """Stop and fail queued work only for an explicit systemic condition."""
@@ -156,27 +168,48 @@ class BakeRunner:
             "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
             failure_code="engine_unavailable",
         )
+        self._store.fail_queued_activity_regenerations(
+            "Сервіс створення варіантів недоступний. Попередній блок збережено."
+        )
         self._wake.set()
 
     def _work(self) -> None:
         while not self._stop.is_set() and not self._poisoned.is_set():
             try:
-                job = self._claim_next_job()
+                job, regeneration = self._claim_next_work()
             except PersistenceUnavailable:
                 log.warning("Claim skipped: persistence unavailable; will retry.")
                 time.sleep(0.5)
                 continue
-            if job is None:
+            if job is None and regeneration is None:
                 self._wake.wait(timeout=1)
                 self._wake.clear()
                 continue
             try:
-                self._run_job(job)
+                if job is not None:
+                    self._run_job(job)
+                else:
+                    self._run_activity_regeneration(regeneration)
             except Exception:
                 log.exception(
-                    "Worker thread caught unhandled exception while running job %s",
-                    job.id,
+                    "Worker thread caught unhandled exception while running durable work %s",
+                    (job or regeneration).id,
                 )
+
+    def _claim_next_work(self):
+        """Alternate queue priority so neither durable work class can starve."""
+        with self._claim_lock:
+            prefer_regeneration = self._prefer_regeneration
+            self._prefer_regeneration = not prefer_regeneration
+            if prefer_regeneration:
+                regeneration = self._claim_next_activity_regeneration()
+                if regeneration is not None:
+                    return None, regeneration
+                return self._claim_next_job(), None
+            job = self._claim_next_job()
+            if job is not None:
+                return job, None
+            return None, self._claim_next_activity_regeneration()
 
     def _claim_next_job(self):
         """Retry optimistic CAS losers promptly so a wake fills the whole pool."""
@@ -185,6 +218,92 @@ class BakeRunner:
             if job is not None:
                 return job
         return None
+
+    def _claim_next_activity_regeneration(self):
+        """Retry optimistic CAS losers so replacement work fills an idle pool seat."""
+        for _ in range(self._worker_count):
+            regeneration = self._store.claim_next_activity_regeneration()
+            if regeneration is not None:
+                return regeneration
+        return None
+
+    def _run_activity_regeneration(self, regeneration) -> None:
+        """Generate and atomically apply one replacement, preserving failure fallback."""
+        try:
+            lesson_job = self._store.get(regeneration.teacher_id, regeneration.lesson_id)
+            if lesson_job is None:
+                self._store.fail_activity_regeneration(
+                    regeneration.teacher_id,
+                    regeneration.id,
+                    "engine_unavailable",
+                    _SAFE_REGENERATION_FAILURE_MESSAGE,
+                )
+                return
+            replacement = self._regenerate_with_one_provider_retry(regeneration, lesson_job)
+            self._store.complete_activity_regeneration(
+                regeneration.teacher_id, regeneration.id, replacement
+            )
+        except ProviderUnavailable:
+            self._store.fail_activity_regeneration(
+                regeneration.teacher_id,
+                regeneration.id,
+                "provider_unavailable",
+                _SAFE_REGENERATION_PROVIDER_MESSAGE,
+            )
+        except RevisionConflict:
+            self._store.fail_activity_regeneration(
+                regeneration.teacher_id,
+                regeneration.id,
+                "revision_conflict",
+                "Урок змінився. Оновіть його й спробуйте створити варіант ще раз.",
+            )
+        except (BakeError, ValidationError, ValueError):
+            self._store.fail_activity_regeneration(
+                regeneration.teacher_id,
+                regeneration.id,
+                "generation_failed",
+                _SAFE_REGENERATION_FAILURE_MESSAGE,
+            )
+        except Exception:
+            self._store.fail_activity_regeneration(
+                regeneration.teacher_id,
+                regeneration.id,
+                "engine_unavailable",
+                _SAFE_REGENERATION_FAILURE_MESSAGE,
+            )
+
+    def _regenerate_with_one_provider_retry(self, regeneration, lesson_job) -> dict:
+        request = {
+            "anchor_id": regeneration.id,
+            "body_uk": lesson_job.anchor_text,
+            "source": lesson_job.anchor_source,
+            "grammar_focus": lesson_job.grammar_focus,
+            "methodology": lesson_job.methodology,
+        }
+        route_for_job = getattr(self._baker, "for_logical_model", None)
+        baker = (
+            route_for_job(regeneration.logical_model_id) if callable(route_for_job) else self._baker
+        )
+        regenerate = getattr(baker, "regenerate_activity", None)
+        if not callable(regenerate):
+            raise ValueError("Configured baker does not support block regeneration.")
+        for attempt in range(2):
+            try:
+                return regenerate(
+                    request,
+                    lesson_job.duration,
+                    lesson_job.focus,
+                    block=regeneration.old_block,
+                    feedback=regeneration.feedback,
+                )
+            except ProviderUnavailable as error:
+                if (
+                    attempt == 1
+                    or not error.retry_exhausted
+                    or self._stop.wait(_PROVIDER_RETRY_DELAY_SECONDS * (2**attempt))
+                ):
+                    raise
+        raise AssertionError("Provider retry loop must return or raise.")  # pragma: no cover
 
     def _run_job(self, job) -> None:  # JobRecord is deliberately duck-typed for test seams.
         lesson = None
@@ -203,11 +322,7 @@ class BakeRunner:
             self._log_safe_bake_error(job, error)
             try:
                 latest_job = self._store.get(job.teacher_id, job.id)
-                progress = (
-                    dict(latest_job.progress)
-                    if (latest_job and latest_job.progress)
-                    else {}
-                )
+                progress = dict(latest_job.progress) if (latest_job and latest_job.progress) else {}
                 errors_list = []
                 lesson_obj = (
                     lesson
@@ -216,6 +331,7 @@ class BakeRunner:
                 )
                 if lesson_obj is not None:
                     from hramatka.api.validation import lesson_validator
+
                     try:
                         validator = lesson_validator()
                         validation_errors = list(validator.iter_errors(lesson_obj))
@@ -237,24 +353,26 @@ class BakeRunner:
                                 pass
                         raw_val = str(val_err.instance)
                         truncated_value = raw_val[:256] + ("..." if len(raw_val) > 256 else "")
-                        errors_list.append({
-                            "rule_path": rule_path,
-                            "block_index": block_index,
-                            "block_type": block_type,
-                            "offending_value": truncated_value,
-                            "message": val_err.message,
-                        })
+                        errors_list.append(
+                            {
+                                "rule_path": rule_path,
+                                "block_index": block_index,
+                                "block_type": block_type,
+                                "offending_value": truncated_value,
+                                "message": val_err.message,
+                            }
+                        )
                 if not errors_list:
-                    errors_list.append({
-                        "rule_path": "",
-                        "block_index": None,
-                        "block_type": None,
-                        "offending_value": "",
-                        "message": str(error),
-                    })
-                progress["failure_detail"] = {
-                    "errors": errors_list
-                }
+                    errors_list.append(
+                        {
+                            "rule_path": "",
+                            "block_index": None,
+                            "block_type": None,
+                            "offending_value": "",
+                            "message": str(error),
+                        }
+                    )
+                progress["failure_detail"] = {"errors": errors_list}
                 self._store.update_progress(job.id, progress)
             except Exception as capture_exc:
                 log.exception("Failed to capture validation error details: %s", capture_exc)
@@ -345,9 +463,7 @@ class BakeRunner:
             failure_message = _SAFE_FAILURE_MESSAGE
         elif isinstance(error, FloorUnmetError):
             failure_code = "lesson_floor_unmet"
-            failure_message = (
-                str(error) if error.blames_source else FLOOR_SHORTFALL_UA_MESSAGE
-            )
+            failure_message = str(error) if error.blames_source else FLOOR_SHORTFALL_UA_MESSAGE
         elif isinstance(error, BakeError) and getattr(error, "generation_error_type", None):
             if error.generation_error_type == "NoEligibleActivities":
                 failure_code = "no_eligible_activities"
@@ -363,4 +479,10 @@ class BakeRunner:
     def _watchdog_loop(self) -> None:
         interval = max(0.05, min(self._hard_timeout_seconds / 4, 5))
         while not self._stop.wait(interval):
-            self.expire_and_quarantine()
+            try:
+                self.expire_and_quarantine()
+            except (PersistenceUnavailable, ValueError):
+                # A transient database failure must not permanently kill the
+                # only periodic recovery path. An invalid timeout is not
+                # reachable through validated settings, but is also fail-safe.
+                log.warning("Timeout sweep skipped; will retry.")
