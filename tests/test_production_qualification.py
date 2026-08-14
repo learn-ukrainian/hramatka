@@ -88,7 +88,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.delivery.phase_three_transfer
         assert cell.delivery.provenance_continuous
         assert cell.receipt.outcome == "passed"
-        assert cell.receipt.semantic_gate == "not_run"
+        assert cell.receipt.semantic_gate == "passed"
         assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.4"
         assert cell.receipt.template_version == "gemma-phase-pack.v3.15"
         assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
@@ -111,6 +111,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
             for entry in cell.receipt.slot_telemetry
         )
         assert any(trace.mode == "initial" for trace in cell.receipt.repair_trace)
+        assert any(trace.mode == "semantic_review" for trace in cell.receipt.repair_trace)
         assert all(
             trace.expected_route == cell.receipt.expected_route
             and trace.observed_route == cell.receipt.observed_route

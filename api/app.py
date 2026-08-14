@@ -390,11 +390,24 @@ def create_app(
             qualified_routes=model.provider_routes,
         )
 
+    @cache
+    def logical_semantic_reviewer(logical_model_id: str):
+        # A separate selector guarantees a separate provider invocation and
+        # prompt context from the lesson serializer while retaining the exact
+        # route set covered by the logical model's qualification receipts.
+        model = model_registry.require_qualified(logical_model_id)
+        return make_logical_model_generator(
+            logical_model_id,
+            settings.bake_providers,
+            qualified_routes=model.provider_routes,
+        )
+
     baker = baker or EngineLessonBaker(
         store=store,
         generator=make_bake_generator(settings.bake_providers),
         engine_out_dir=configured_engine_out_dir(),
         logical_generator_factory=logical_generator,
+        semantic_reviewer_factory=logical_semantic_reviewer,
     )
     runner = BakeRunner(
         store,

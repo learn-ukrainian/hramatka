@@ -345,8 +345,12 @@ class _PinnedRouteProvider:
         v3_kits_match = _V3_KITS_RE.search(prompt)
         v3_probe_match = _V3_PROBE_RE.search(prompt)
         v3_repair_match = _V3_REPAIR_RE.search(prompt)
+        semantic_review = "BEGIN_HOST_REVIEW_REQUEST\n" in prompt
         try:
-            if v3_kits_match is not None:
+            if semantic_review:
+                mode = "semantic_review"
+                phase = 3
+            elif v3_kits_match is not None:
                 kits = json.loads(v3_kits_match.group(1))
                 if not isinstance(kits, list) or not kits:
                     raise ValueError("missing v3 type-kits")
@@ -370,7 +374,7 @@ class _PinnedRouteProvider:
                 "Pinned route received an invalid qualification prompt boundary."
             ) from error
         if (
-            mode not in {"initial", "repair", "replacement"}
+            mode not in {"initial", "repair", "replacement", "semantic_review"}
             or type(phase) is not int
             or phase not in {1, 2, 3}
         ):
@@ -384,7 +388,13 @@ class _PinnedRouteProvider:
         if context is not None:
             context.record_qualification_route_trace(
                 RepairTraceEntry(
-                    mode="initial" if mode == "initial" else "repair",
+                    mode=(
+                        "semantic_review"
+                        if mode == "semantic_review"
+                        else "initial"
+                        if mode == "initial"
+                        else "repair"
+                    ),
                     phase=phase,
                     expected_route=self._route,
                     observed_route=self._route,
@@ -429,7 +439,7 @@ def _validate_complete_live_run(
         observed.append(pair)
         if (
             getattr(receipt, "outcome", None) != "passed"
-            or getattr(receipt, "semantic_gate", None) != "not_run"
+            or getattr(receipt, "semantic_gate", None) != "passed"
         ):
             invalid.add(pair)
     observed_set = set(observed)
@@ -586,7 +596,11 @@ def execute_live_diagnostic(
         or receipt.logical_model_id != logical_model_id
         or receipt.expected_route != route
         or receipt.observed_route != route
-        or receipt.semantic_gate != "not_run"
+        or (
+            receipt.semantic_gate != "passed"
+            if receipt.outcome == "passed"
+            else receipt.semantic_gate not in {"not_run", "failed"}
+        )
     ):
         raise LiveQualificationError("Diagnostic cell did not retain its configured route binding.")
     return run

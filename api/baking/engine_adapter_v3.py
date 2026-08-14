@@ -53,6 +53,7 @@ from hramatka.engine.prompt_pack_v3 import (
     build_phase_context,
     one_slot_context,
     render_phase_prompt,
+    teacher_sample_review_inputs,
     validate_activity_purpose,
     validate_degree_lesson_plan,
     validate_distractor_adjacency,
@@ -65,6 +66,15 @@ from hramatka.engine.prompt_pack_v3 import (
     validate_visible_writing_constraints,
 )
 from hramatka.engine.providers import TelemetryContext, telemetry_ctx
+from hramatka.engine.semantic_review_v1 import (
+    SemanticReviewAmbiguous,
+    SemanticReviewCache,
+    SemanticReviewConfigurationError,
+    SemanticReviewMalformed,
+    SemanticReviewRejected,
+    review_teacher_samples,
+    runtime_review_provenance,
+)
 from hramatka.engine.teacher_ready_density_v3 import phase_shape_for
 from hramatka.engine.transport import (
     GenerationUnparseable,
@@ -437,15 +447,6 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
-_TEXT_QUESTION_GUIDANCE_LABELS = {
-    "causal-clause.v1": "Причина",
-    "purpose-clause.v1": "Мета",
-    "temporal-clause.v1": "Часова умова",
-    "definition-content.v1": "Зміст",
-    "licensed-vid-cause.v1": "Причина стану",
-}
-
-
 def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
     """Return learner choice surfaces that must be honest about outside text."""
     surfaces: list[str] = []
@@ -2085,6 +2086,10 @@ class EngineLessonBaker:
         engine_out_dir: str | Path | None = None,
         store: Any | None = None,
         logical_generator_factory: Callable[[str], Callable[[str], str]] | None = None,
+        semantic_reviewer: Callable[[str], str] | object | None = None,
+        semantic_reviewer_factory: Callable[[str], Callable[[str], str] | object] | None = None,
+        semantic_reviewer_route: str | None = None,
+        semantic_review_cache: SemanticReviewCache | None = None,
         logical_model_id: str | None = None,
     ) -> None:
         del cache_dir
@@ -2093,6 +2098,10 @@ class EngineLessonBaker:
         self._engine_out_dir = engine_out_dir
         self.store = store
         self._logical_generator_factory = logical_generator_factory
+        self._semantic_reviewer = semantic_reviewer
+        self._semantic_reviewer_factory = semantic_reviewer_factory
+        self._semantic_reviewer_route = semantic_reviewer_route
+        self._semantic_review_cache = semantic_review_cache or SemanticReviewCache()
         self._logical_model_id = logical_model_id
 
     def for_logical_model(self, logical_model_id: str | None) -> EngineLessonBaker:
@@ -2100,14 +2109,60 @@ class EngineLessonBaker:
             return self
         if self._logical_generator_factory is None:
             raise ValueError("This v3 engine baker has no logical-model routing factory.")
+        semantic_reviewer = (
+            self._semantic_reviewer_factory(logical_model_id)
+            if self._semantic_reviewer_factory is not None
+            else self._semantic_reviewer
+        )
         return EngineLessonBaker(
             generator=self._logical_generator_factory(logical_model_id),
             bundle=self._resolved_bundle,
             engine_out_dir=self._engine_out_dir,
             store=self.store,
             logical_generator_factory=self._logical_generator_factory,
+            semantic_reviewer=semantic_reviewer,
+            semantic_reviewer_factory=self._semantic_reviewer_factory,
+            semantic_reviewer_route=self._semantic_reviewer_route,
+            semantic_review_cache=self._semantic_review_cache,
             logical_model_id=logical_model_id,
         )
+
+    def _review_teacher_samples(self, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Authorize a host-built sample batch before any answer key is rendered."""
+        try:
+            review_teacher_samples(
+                rows,
+                reviewer=self._semantic_reviewer,
+                cache=self._semantic_review_cache,
+                code_provenance=runtime_review_provenance(adapter_path=Path(__file__)),
+                explicit_route=self._semantic_reviewer_route,
+            )
+        except GeneratorUnavailable as error:
+            # Provider transports already applied their bounded retry policy.
+            # Do not let the durable runner repeat a costly semantic review.
+            raise ProviderUnavailable(
+                "Semantic reviewer is unavailable.", retry_exhausted=False
+            ) from error
+        except SemanticReviewConfigurationError as error:
+            raise GenerationFailed(
+                "Semantic reviewer is not configured.",
+                generation_error_type="SemanticReviewConfigurationError",
+            ) from error
+        except SemanticReviewMalformed as error:
+            raise GenerationFailed(
+                "Semantic reviewer returned an invalid result.",
+                generation_error_type="SemanticReviewMalformed",
+            ) from error
+        except SemanticReviewAmbiguous as error:
+            raise GenerationFailed(
+                "Semantic reviewer could not make a safe decision.",
+                generation_error_type="SemanticReviewAmbiguous",
+            ) from error
+        except SemanticReviewRejected as error:
+            raise FloorUnmetError(
+                "Bake failed: a generated teacher sample was not semantically supported.",
+                blames_source=False,
+            ) from error
 
     def resolve_data_bundle(self) -> data.DataBundle:
         if self._resolved_bundle is None:
@@ -2343,7 +2398,7 @@ class EngineLessonBaker:
             job_id=job_id if isinstance(job_id, str) else None,
             store=self.store,
             phases_total=3,
-            calls_planned=3,
+            calls_planned=4,
             calls_done=0,
             phase=1,
             step="generation",
@@ -2390,7 +2445,7 @@ class EngineLessonBaker:
                             "activity quality rules.",
                             blames_source=False,
                         ) from error
-                    blocks: list[dict[str, Any]] = []
+                    accepted_candidates: list[tuple[Any, Any, Mapping[str, Any]]] = []
                     rejected: list[dict[str, Any]] = []
                     phase_evaluations: list[tuple[Any, str, int]] = []
                     raw_attempt_counter = [0]
@@ -2441,6 +2496,11 @@ class EngineLessonBaker:
                         )
                         self._record_qualification_evaluation(phase, evaluated)
                         phase_evaluations.append((evaluated, initial_raw, initial_attempt))
+                        kits_by_slot = {
+                            kit["slot_id"]: kit
+                            for kit in phase_context["type_kits"]
+                            if isinstance(kit, Mapping) and isinstance(kit.get("slot_id"), str)
+                        }
                         for block in evaluated.blocks:
                             if block.accepted:
                                 allocated = next(
@@ -2448,14 +2508,14 @@ class EngineLessonBaker:
                                     for slot in preflight.allocation.slots
                                     if slot.slot_id == block.slot_id
                                 )
-                                blocks.append(
-                                    self._block(
-                                        block,
-                                        len(blocks),
-                                        plan=allocated.plan,
-                                        anchor_text=anchor_text,
+                                kit = kits_by_slot.get(block.slot_id)
+                                if kit is None:
+                                    raise GenerationFailed(
+                                        "Bake failed: accepted slot lost its certified "
+                                        "review input.",
+                                        generation_error_type="SemanticReviewConfigurationError",
                                     )
-                                )
+                                accepted_candidates.append((block, allocated, kit))
                                 continue
                             rejected.append(self._flag_notice(block))
                     if any(
@@ -2478,6 +2538,31 @@ class EngineLessonBaker:
                             "Bake failed: v3 serialization did not produce every certified slot.",
                             blames_source=False,
                         )
+                    semantic_rows: list[dict[str, Any]] = []
+                    reviewed_slots: set[str] = set()
+                    for block, _allocated, kit in accepted_candidates:
+                        rows = teacher_sample_review_inputs(block.activity, kit)
+                        for row in rows:
+                            item_index = row.get("item_index")
+                            semantic_rows.append(
+                                {
+                                    "review_id": f"{block.slot_id}:{item_index}",
+                                    **row,
+                                }
+                            )
+                            reviewed_slots.add(block.slot_id)
+                    context.update_progress_db(step="gates")
+                    self._review_teacher_samples(semantic_rows)
+                    blocks = [
+                        self._block(
+                            block,
+                            index,
+                            plan=allocated.plan,
+                            anchor_text=anchor_text,
+                            teacher_sample_semantically_approved=block.slot_id in reviewed_slots,
+                        )
+                        for index, (block, allocated, _kit) in enumerate(accepted_candidates)
+                    ]
                     context.update_progress_db(step="assembly")
                     return {"blocks": blocks, "rejected": rejected}
             except (data.DataConfigError, data.DataDriftError) as error:
@@ -2503,7 +2588,9 @@ class EngineLessonBaker:
             job_id=regeneration_id if isinstance(regeneration_id, str) else None,
             store=self.store,
             phases_total=1,
-            calls_planned=1,
+            calls_planned=(
+                2 if block.get("type") in {"text-questions", "short-writing"} else 1
+            ),
             calls_done=0,
             phase=block.get("phase") if block.get("phase") in {1, 2, 3} else 1,
             step="generation",
@@ -2816,12 +2903,24 @@ class EngineLessonBaker:
                             "Regeneration failed: no checked replacement was produced.",
                             blames_source=False,
                         )
+                    review_rows = tuple(
+                        {
+                            "review_id": f"{target.slot_id}:{row.get('item_index')}",
+                            **row,
+                        }
+                        for row in teacher_sample_review_inputs(
+                            evaluated.blocks[0].activity,
+                            phase_context["type_kits"][0],
+                        )
+                    )
+                    context.update_progress_db(step="gates")
+                    self._review_teacher_samples(review_rows)
                     replacement = self._block(
                         evaluated.blocks[0],
                         original_index,
                         plan=target.plan,
                         anchor_text=anchor_text,
-                        preserve_authored_guidance=target.scheduled_type == "text-questions",
+                        teacher_sample_semantically_approved=bool(review_rows),
                     )
                     replacement["id"] = block_id
                     replacement["phase"] = block["phase"]
@@ -3037,7 +3136,7 @@ class EngineLessonBaker:
         *,
         plan: Any | None = None,
         anchor_text: str | None = None,
-        preserve_authored_guidance: bool = False,
+        teacher_sample_semantically_approved: bool = False,
     ) -> dict[str, Any]:
         activity = evaluation.activity
         assert isinstance(activity, Mapping)
@@ -3045,37 +3144,21 @@ class EngineLessonBaker:
         answer_key = activity["answer_key"]
         assert isinstance(payload, Mapping) and isinstance(answer_key, Mapping)
         activity_type = evaluation.activity_type
+        if (
+            activity_type in {"text-questions", "short-writing"}
+            and not teacher_sample_semantically_approved
+        ):
+            raise ValueError("teacher sample was not semantically approved")
         external_options = _has_external_options(payload, anchor_text)
         rendered_answer_key = dict(answer_key)
-        if (
-            activity_type == "text-questions"
-            and plan is not None
-            and not preserve_authored_guidance
-        ):
-            source_guidance: list[str] = []
-            for unit in plan.units:
-                answer_span = unit.distinctness.get("answer_span")
-                answer = answer_span.get("text") if isinstance(answer_span, Mapping) else None
-                if not isinstance(answer, str) or not answer.strip():
-                    answer = unit.rendering_surface
-                if not isinstance(answer, str) or not answer.strip():
-                    continue
-                category = unit.distinctness.get("question_category")
-                intent = unit.distinctness.get("question_intent")
-                label = (
-                    "Факт за текстом"
-                    if category == "comprehension"
-                    else _TEXT_QUESTION_GUIDANCE_LABELS.get(intent, "Явний зв'язок")
-                    if category == "explanation_inference"
-                    else "Критерій: реалістичне застосування думки"
-                )
-                source_guidance.append(f"{label}: {answer}")
-            if source_guidance:
-                source_guidance = list(dict.fromkeys(source_guidance))
-                rendered_answer_key["guidance"] = "Орієнтири для вчителя:\n" + "\n".join(
-                    f"{position}. {surface}"
-                    for position, surface in enumerate(source_guidance, start=1)
-                )
+        gates = [
+            "v3",
+            *(
+                ["teacher-sample-semantic-v1"]
+                if teacher_sample_semantically_approved
+                else []
+            ),
+        ]
         # Truthful provenance only.  A missing generator identity is stamped as
         # "unknown" rather than the old silent GEMMA default that made every
         # block falsely claim google-ais/gemma-4-31b-it.
@@ -3087,7 +3170,11 @@ class EngineLessonBaker:
             "level": "b1",
             "payload": dict(payload),
             "answer_key": rendered_answer_key,
-            "provenance": {"source": "generated", "generator": model, "gates": ["v3"]},
+            "provenance": {
+                "source": "generated",
+                "generator": model,
+                "gates": gates,
+            },
         }
         outer_answer_key = dict(rendered_answer_key)
         if activity_type == "error-correction" and plan is not None:
@@ -3143,7 +3230,7 @@ class EngineLessonBaker:
             "provenance": {
                 "source": "generated",
                 "generator": model,
-                "gates": ["v3"],
+                "gates": gates,
                 "external_options": external_options,
             },
             "quality": "engine_ok",

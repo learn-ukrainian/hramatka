@@ -42,6 +42,7 @@ from .transport import (
     AISGeneratorPort,
     GeneratorUnavailable,
     generator_model_id,
+    generator_route_identity,
 )
 
 log = logging.getLogger(__name__)
@@ -182,7 +183,7 @@ def _content_free_qualification_route_trace(value: object) -> dict[str, Any] | N
     }:
         return None
     if (
-        value.get("mode") not in {"initial", "repair"}
+        value.get("mode") not in {"initial", "repair", "semantic_review"}
         or type(value.get("phase")) is not int
         or value.get("phase") not in {1, 2, 3}
     ):
@@ -788,6 +789,28 @@ class SubscriptionGeneratorPort:
     host: str = SUBSCRIPTION_HOST
     _client_version: str | None = field(default=None, init=False, repr=False)
     _raw_output_sha256: list[str] = field(default_factory=list, init=False, repr=False)
+    _semantic_review_route: tuple[str, str, str] | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def bind_semantic_review_route(
+        self, *, route_id: str, host: str, model_id: str
+    ) -> None:
+        """Seal one qualification route onto this subscription provider port."""
+        if (
+            not all(isinstance(value, str) and value for value in (route_id, host, model_id))
+            or self.host != host
+            or self.model != model_id
+        ):
+            raise ValueError("Semantic-review route binding does not match the provider port.")
+        binding = (route_id, host, model_id)
+        if self._semantic_review_route not in {None, binding}:
+            raise ValueError("Semantic-review provider port is already bound to another route.")
+        self._semantic_review_route = binding
+
+    def semantic_review_route_identity(self) -> tuple[str, str, str] | None:
+        """Return the factory-sealed route; unqualified ports remain unavailable."""
+        return self._semantic_review_route
 
     def is_configured(self) -> bool:
         """Whether the explicitly configured local executable can be found."""
@@ -876,6 +899,7 @@ class SubscriptionGeneratorPort:
         if not _subscription_completion_text(raw):
             raise GeneratorUnavailable("subscription client did not emit a serializer completion")
         generator_model_id.set(self.model)
+        generator_route_identity.set((self.host, self.model))
         self._raw_output_sha256.append(hashlib.sha256(raw.encode("utf-8")).hexdigest())
         ctx = telemetry_ctx.get()
         if ctx is not None:
@@ -1370,6 +1394,13 @@ class FailoverGeneratorPort(AISGeneratorPort):
         super().__init__(**kwargs)
         self._fallback = fallback
         self._fallback_label = fallback_label
+
+    def bind_semantic_review_route(
+        self, *, route_id: str, host: str, model_id: str
+    ) -> None:
+        """Transparent fallback is incompatible with exact semantic-review attribution."""
+        del route_id, host, model_id
+        raise ValueError("A failover provider cannot be a qualified semantic reviewer route.")
 
     def __call__(self, prompt: str) -> str:
         try:
@@ -2051,6 +2082,14 @@ def make_logical_model_generator(
         actual_routes,
         configured_hosts=configured_hosts,
     )
+    for provider, port in routes.items():
+        route_id, _catalog_host, _catalog_model = available[provider]
+        host, model_id = actual_routes[route_id]
+        port.bind_semantic_review_route(
+            route_id=route_id,
+            host=host,
+            model_id=model_id,
+        )
     if qualified_routes is not None:
         for port in routes.values():
             if not port.is_configured():

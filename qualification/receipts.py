@@ -242,7 +242,11 @@ class RepairTraceEntry:
         )
         mode = row["mode"]
         phase = row["phase"]
-        if mode not in {"initial", "repair"} or type(phase) is not int or phase not in {1, 2, 3}:
+        if (
+            mode not in {"initial", "repair", "semantic_review"}
+            or type(phase) is not int
+            or phase not in {1, 2, 3}
+        ):
             raise QualificationError("Repair trace entry has invalid mode or phase.")
         return cls(
             mode=mode,
@@ -998,6 +1002,10 @@ def aggregate_receipts(
                 raise QualificationError("Generation or repair trace lost route continuity.")
         if not any(trace.mode == "initial" for trace in receipt.repair_trace):
             raise QualificationError("Receipt has no route-bound initial generation trace.")
+        if receipt.semantic_gate == "passed" and not any(
+            trace.mode == "semantic_review" for trace in receipt.repair_trace
+        ):
+            raise QualificationError("Receipt has no route-bound semantic review trace.")
         grouped[(receipt.logical_model_id, receipt.expected_route.route_id)].append(receipt)
     if seen != expected_cells:
         raise QualificationError(

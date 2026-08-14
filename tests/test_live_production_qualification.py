@@ -112,7 +112,7 @@ def _complete_fake_run(request: LiveQualificationRequest, *, failed: bool = Fals
                         anchor_id=anchor_id,
                         expected_route=route,
                         outcome=outcome,
-                        semantic_gate="not_run",
+                        semantic_gate="not_run" if outcome == "failed" else "passed",
                     )
                 )
             )
@@ -708,7 +708,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []
     assert not environment_root.exists()
-    assert all(cell.receipt.semantic_gate == "not_run" for cell in run.cells)
+    assert all(cell.receipt.semantic_gate == "passed" for cell in run.cells)
     assert all(path.is_file() for path in run.receipt_paths)
     assert all(
         all(
@@ -724,8 +724,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         for cell in run.cells
         if cell.receipt.expected_route.route_id == "gemini-flash-subscription"
     )
-    # The locked shadow-tier ruling keeps ``semantic_gate=not_run`` advisory;
-    # only the current v3 aggregate may create this candidate receipt.
+    # A current aggregate now includes the fail-closed teacher-sample review.
     assert (
         RouteAggregate(
             logical_model_id="gemini-3.6-flash",

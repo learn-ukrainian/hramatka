@@ -151,7 +151,10 @@ def _current_engine_digest() -> str:
         engine_root / "density_evaluator_v3.py",
         engine_root / "lesson_capacity_v3.py",
         engine_root / "prompt_pack_v3.py",
+        engine_root / "providers.py",
+        engine_root / "semantic_review_v1.py",
         engine_root / "teacher_ready_density_v3.py",
+        engine_root / "transport.py",
         engine_root / "unit_builders_v3.py",
         Path(__file__).parents[1] / "api" / "baking" / "engine_adapter_v3.py",
     )
@@ -1041,6 +1044,51 @@ class _DeterministicRouteProvider:
         }
 
     def __call__(self, prompt: str) -> str:
+        if "BEGIN_HOST_REVIEW_REQUEST\n" in prompt:
+            request_text = prompt.split("BEGIN_HOST_REVIEW_REQUEST\n", 1)[1].split(
+                "\nEND_HOST_REVIEW_REQUEST", 1
+            )[0]
+            request = json.loads(request_text)
+            binding = RepairTraceEntry(
+                mode="semantic_review",
+                phase=3,
+                expected_route=self._route,
+                observed_route=self._route,
+            )
+            with self._lock:
+                self.calls.append(binding)
+                self.prompt_digests.append(_sha(prompt))
+            ctx = telemetry_ctx.get()
+            if ctx is not None:
+                ctx.record_provider_call(
+                    {
+                        "event": "qualification_semantic_review_call",
+                        "mode": "semantic_review",
+                        "phase": 3,
+                        "qualification_route_trace": binding.as_dict(),
+                        "host": self._route.host,
+                        "model": self._route.model_id,
+                        "duration_ms": 0,
+                        "attempts": 1,
+                        "http_status_class": "2xx",
+                        "activity_type": "teacher-sample-semantic-review",
+                    }
+                )
+            return json.dumps(
+                {
+                    "contract_version": request["contract_version"],
+                    "input_digest": request["input_digest"],
+                    "results": [
+                        {
+                            "review_id": item["review_id"],
+                            "verdict": "pass",
+                            "failure_codes": [],
+                        }
+                        for item in request["items"]
+                    ],
+                },
+                ensure_ascii=False,
+            )
         phase_match = _PHASE_RE.search(prompt)
         kits_match = _KITS_RE.search(prompt)
         v3_kits_match = _V3_KITS_RE.search(prompt)
@@ -1611,6 +1659,8 @@ class ProductionQualificationHarness:
             cache_dir=cell_root / "cache",
             engine_out_dir=engine_out_dir or cell_root / "engine-out",
             logical_generator_factory=logical_generator_factory,
+            semantic_reviewer_factory=logical_generator_factory,
+            semantic_reviewer_route=f"{route.route_id}:{route.host}:{route.model_id}",
         )
         app = create_app(
             settings=Settings(
@@ -1721,6 +1771,18 @@ class ProductionQualificationHarness:
             raise AssertionError(
                 "A ready qualification job must retain three live v3 prompt digests."
             )
+        semantic_review_observed = any(
+            trace.mode == "semantic_review" for trace in durable_trace
+        )
+        if terminal_status == "ready" and not semantic_review_observed:
+            raise AssertionError("Qualification ready state has no semantic review trace.")
+        semantic_gate = (
+            "passed"
+            if terminal_status == "ready"
+            else "failed"
+            if semantic_review_observed
+            else "not_run"
+        )
         receipt = CellReceipt(
             source_commit=self._source_commit,
             harness_sha256=_file_digest(Path(__file__)),
@@ -1744,7 +1806,7 @@ class ProductionQualificationHarness:
             density=density,
             slot_telemetry=slot_telemetry,
             repair_trace=durable_trace,
-            semantic_gate="not_run",
+            semantic_gate=semantic_gate,
             outcome="passed" if self._delivery_ready(delivery, density) else "failed",
             provider_provenance=self._provider_provenance(provider),
         )

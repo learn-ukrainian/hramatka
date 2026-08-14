@@ -28,6 +28,7 @@ AIS_API_KEY_FILE_ENV = "HRAMATKA_AIS_API_KEY_FILE"
 METERED_PROVIDER_SPEND_ACK_ENV = "HRAMATKA_ACCEPT_METERED_PROVIDER_SPEND"
 
 generator_model_id = contextvars.ContextVar("generator_model_id", default=None)
+generator_route_identity = contextvars.ContextVar("generator_route_identity", default=None)
 activity_model_registry = contextvars.ContextVar("activity_model_registry", default=None)
 
 
@@ -98,6 +99,27 @@ class AISGeneratorPort:
         self._timeout_s = timeout_s
         self._transport: Transport = transport or _unwired_transport
         self._raw_output_sha256: list[str] = []
+        self._semantic_review_route: tuple[str, str, str] | None = None
+
+    def bind_semantic_review_route(
+        self, *, route_id: str, host: str, model_id: str
+    ) -> None:
+        """Seal one qualification route onto this non-failover provider port."""
+        actual_host = getattr(self._transport, "host", None)
+        if (
+            not all(isinstance(value, str) and value for value in (route_id, host, model_id))
+            or actual_host != host
+            or self._model != model_id
+        ):
+            raise ValueError("Semantic-review route binding does not match the provider port.")
+        binding = (route_id, host, model_id)
+        if self._semantic_review_route not in {None, binding}:
+            raise ValueError("Semantic-review provider port is already bound to another route.")
+        self._semantic_review_route = binding
+
+    def semantic_review_route_identity(self) -> tuple[str, str, str] | None:
+        """Return the factory-sealed route; unqualified ports remain unavailable."""
+        return self._semantic_review_route
 
     def resolve_key(self) -> str:
         """Resolve the configured AIS key without exposing its source."""
@@ -156,6 +178,10 @@ class AISGeneratorPort:
                 prompt, api_key=key, model=self._model, timeout_s=self._timeout_s
             )
             generator_model_id.set(self._model)
+            host = getattr(self._transport, "host", None)
+            generator_route_identity.set(
+                (host, self._model) if isinstance(host, str) and host else None
+            )
             self._raw_output_sha256.append(sha256(res.encode("utf-8")).hexdigest())
             return res
         except SystemExit as exc:  # a fail-closed transport guard must not crash the worker
