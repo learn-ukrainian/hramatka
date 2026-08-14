@@ -31,7 +31,6 @@ from hramatka.engine.providers import (
     make_logical_model_generator,
 )
 
-from .agent_monitor import router as agent_monitor_router
 from .anchor_preparation import AnchorPreparationError, prepare_anchor_text
 from .baking.artifacts import configured_engine_out_dir
 from .baking.engine_adapter_v3 import (
@@ -566,12 +565,6 @@ def create_app(
                 403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
             )
         return session
-
-    # The monitor router is intentionally dependency-free as a reusable unit,
-    # but the live API must not disclose its lease tokens without a teacher
-    # session.  The session dependency lives in this factory because it closes
-    # over this application's store.
-    app.include_router(agent_monitor_router, dependencies=[Depends(require_session)])
 
     def session_payload(session: AuthenticatedSession) -> dict[str, object]:
         payload: dict[str, object] = {

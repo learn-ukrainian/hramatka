@@ -22,6 +22,7 @@ from jsonschema import Draft7Validator
 from hramatka.engine import data, vendoring
 from hramatka.engine.anchor_inventory_v3 import (
     DEGREE_60_SCHEDULE,
+    degree_focus_requested,
     inventory_for_group,
     inventory_from_anchor,
     regeneration_text_question_inventory,
@@ -84,7 +85,6 @@ from hramatka.engine.transport import (
 from hramatka.engine.unit_builders_v3 import BUILDERS
 
 from ..store import canonical_json
-from ..validation import cloze_markers_align
 from .artifacts import bake_artifact_dir
 from .port import FloorUnmetError, GenerationFailed, ProviderUnavailable
 
@@ -551,20 +551,9 @@ def _mode(phase: int, activity_type: str) -> str:
     return "письмово" if activity_type == "cloze" else "усно"
 
 
-def _is_degree_focus(focus: str | None) -> bool:
-    if not isinstance(focus, str):
-        return False
-    normalized = focus.casefold()
-    return (
-        "компаратив" in normalized
-        or "суперлатив" in normalized
-        or ("ступен" in normalized and "порівнян" in normalized)
-    )
-
-
 def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]:
     """Return the one deterministic v3 schedule for a supported phase shape."""
-    if duration == 60 and _is_degree_focus(focus):
+    if duration == 60 and degree_focus_requested(focus):
         return tuple(activity_type for _slot_id, activity_type, _role in DEGREE_60_SCHEDULE)
     by_duration = {
         45: (
@@ -614,12 +603,10 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
     replacement_policy = {
         "match-up": ("quiz", "fill-in"),
     }
-    if duration == 45 and not _is_degree_focus(focus):
-        # A narrative lesson must retain a real source-comprehension block.
-        # Match-up remains optional because an ordinary story need not contain
-        # eight safe lexical relations; use one contextual fill-in board when
-        # that substrate is absent. Error-correction keeps the same fallback
-        # when the source lacks eight unambiguous local error frames.
+    if duration == 45:
+        # 45-minute lessons keep the narrative schedule even when the teacher
+        # typed a degree-like focus. Fill-in fallbacks follow that shape, not
+        # the 60-minute degree table (#453).
         replacement_policy["match-up"] = ("fill-in",)
         replacement_policy["error-correction"] = ("fill-in",)
     index = 0
@@ -3237,73 +3224,6 @@ class EngineLessonBaker:
             "flag_reason_uk": None,
             "flagged_content_hash": None,
             "engine_reason_class": None,
-        }
-
-    @staticmethod
-    def _flagged_block(evaluation: Any, index: int) -> dict[str, Any] | None:
-        """Mirror ``_block`` for a dropped slot's last shape-valid attempt (#402).
-
-        Returns ``None`` when the attempt cannot legally render inline: the
-        envelope must satisfy the same pinned pilot activity contract and cloze
-        marker invariant that ``validate_lesson`` enforces on every block, and
-        its payload must be the scheduled type.  Content is never fabricated to
-        force an inline card — those drops stay in the rejected tray as a
-        contentless notice.
-        """
-        record = evaluation.attempted_record
-        if not isinstance(record, Mapping):
-            return None
-        activity = record.get("activity")
-        if not isinstance(activity, Mapping):
-            return None
-        payload = activity.get("payload")
-        answer_key = activity.get("answer_key")
-        if not isinstance(payload, Mapping) or not isinstance(answer_key, Mapping):
-            return None
-        activity_type = evaluation.activity_type
-        if activity_type not in _TITLES or payload.get("type") != activity_type:
-            return None
-        model = record.get("_generator_model_id")
-        model = model if isinstance(model, str) and model else "unknown"
-        envelope = {
-            "id": f"activity-{activity_type}-{index + 1}",
-            "type": activity_type,
-            "title": _TITLES[activity_type],
-            "level": "b1",
-            "payload": dict(payload),
-            "answer_key": dict(answer_key),
-            # Truthful provenance: no v3 gate certified this content.
-            "provenance": {"source": "generated", "generator": model, "gates": []},
-        }
-        if next(iter(_ACTIVITY_VALIDATOR.iter_errors(envelope)), None) is not None:
-            return None
-        if not cloze_markers_align(envelope):
-            return None
-        reason_class, reason_uk = _flag_reason_fields(evaluation)
-        return {
-            "id": f"block-{index + 1}",
-            "phase": evaluation.phase,
-            "type": activity_type,
-            "mode": _mode(evaluation.phase, activity_type),
-            "activity": envelope,
-            "answer_key": dict(answer_key),
-            "mark": "ok",
-            "note": None,
-            "edited": False,
-            "provenance": {
-                "source": "generated",
-                "generator": model,
-                "gates": [],
-                "external_options": False,
-            },
-            "quality": "engine_flagged",
-            "flag_reason_uk": reason_uk,
-            # Frozen at flag time from the exact wire envelope bytes; feedback
-            # staleness compares against this, never a recomputed hash.
-            "flagged_content_hash": hashlib.sha256(
-                canonical_json(envelope).encode("utf-8")
-            ).hexdigest(),
-            "engine_reason_class": reason_class,
         }
 
     @staticmethod

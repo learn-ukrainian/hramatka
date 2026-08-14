@@ -60,7 +60,11 @@ class PromptPackError(ValueError):
 
 
 def enabled() -> bool:
-    """Return whether the replacement protocol is explicitly enabled."""
+    """Legacy v2-adapter gate. Production v3 always serializes a prompt pack.
+
+    ``HRAMATKA_PROMPT_PACK`` is read only by ``engine_adapter.py``. The live
+    baker in ``engine_adapter_v3`` ignores this env var (#457).
+    """
     return os.environ.get("HRAMATKA_PROMPT_PACK") == "1"
 
 

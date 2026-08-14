@@ -1085,7 +1085,8 @@ def _lemma_for(token: AnchorToken) -> str | None:
     return lemma
 
 
-def _degree_focus_requested(focus: str | None) -> bool:
+def degree_focus_requested(focus: str | None) -> bool:
+    """Return whether *focus* names a comparative/superlative degree lesson."""
     if not isinstance(focus, str):
         return False
     normalized = focus.casefold()
@@ -1098,7 +1099,7 @@ def _degree_focus_requested(focus: str | None) -> bool:
 
 def _focus_rank(token: AnchorToken, focus: str | None) -> int:
     """Prefer source-attested focus forms without excluding other capacity."""
-    if not _degree_focus_requested(focus):
+    if not degree_focus_requested(focus):
         return 0
     raws = tuple(str(parse.get("raw", "")) for parse in token.vesum_parses)
     if any("compc" in raw or "comps" in raw for raw in raws):
@@ -4245,7 +4246,7 @@ def _writing_group(
 ) -> tuple[AnchorToken, ...] | None:
     """Reserve the single source unit that short-writing actually certifies."""
     operation = COGNITIVE_OPERATION.get("short-writing", "short-writing")
-    if _degree_focus_requested(focus):
+    if degree_focus_requested(focus):
         degree_candidates: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
         for sentence in sentences:
             if sentence_group_uses[
@@ -4309,7 +4310,7 @@ def _writing_group(
                         for item in _eligible_tokens(
                             "short-writing",
                             sentence,
-                            focus_mode=(_FOCUS_PRIMARY if _degree_focus_requested(focus) else None),
+                            focus_mode=(_FOCUS_PRIMARY if degree_focus_requested(focus) else None),
                         )
                         if item.token_id not in used_token_ids
                     ),
@@ -4457,7 +4458,7 @@ def inventory_from_anchor(
                 # carriers have consumed capacity. This makes unused source
                 # propositions the deterministic first choice.
                 return 9
-            if _lane_index == 0 and _degree_focus_requested(focus):
+            if _lane_index == 0 and degree_focus_requested(focus):
                 role = degree_role(slot_id, activity_type) if slot_id is not None else None
                 if role in {
                     "degree-formation",
@@ -4519,7 +4520,7 @@ def inventory_from_anchor(
                 and activity_type == "text-questions"
             ):
                 focus_mode = "source-comprehension"
-            elif lane_index == 0 and _degree_focus_requested(focus):
+            elif lane_index == 0 and degree_focus_requested(focus):
                 focus_mode = degree_role(slot_id, activity_type) if slot_id is not None else None
                 if focus_mode is not None:
                     pass

@@ -660,8 +660,8 @@ def test_invite_opt_out_keeps_runtime_private_and_each_run_gets_fresh_state(
     assert len(first["HRAMATKA_CSRF_HMAC_KEY"]) == 43
     assert stat.S_IMODE(first_root.stat().st_mode) == 0o700
     assert first["HRAMATKA_MOCK_MODE"] == "0"
-    assert first["HRAMATKA_PROMPT_PACK"] == "1"
-    assert first["HRAMATKA_SLOT_REPAIR"] == "1"
+    assert "HRAMATKA_PROMPT_PACK" not in first
+    assert "HRAMATKA_SLOT_REPAIR" not in first
     assert first["HRAMATKA_GEN_JSON_MODE"] == "0"
     assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
 
@@ -704,7 +704,7 @@ def test_slot_repair_has_an_explicit_local_opt_out(tmp_path: Path) -> None:
     )
 
     assert config.slot_repair is False
-    assert resolved["HRAMATKA_SLOT_REPAIR"] == "0"
+    assert "HRAMATKA_SLOT_REPAIR" not in resolved
 
 
 def test_skip_build_requires_an_existing_frontend_build(

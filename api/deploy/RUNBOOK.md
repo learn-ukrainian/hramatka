@@ -385,7 +385,7 @@ same cross-family rule.
 
    Stage-1 `hramatka/ops/deploy.sh ops@HOST` (issues #210/#212) builds a
    release-local `.venv` under `releases/<stamp>` and proves
-   `jwt`/`cryptography`/`psutil` on that interpreter before the atomic
+   `jwt`/`cryptography` on that interpreter before the atomic
    `current` flip (`ln -sfn` + `mv -T`, never `mv -f` onto the symlink). Host
    migration from a pre-releases layout is
    `hramatka/ops/migrate_release_layout.sh` (operator-run; refuses if already

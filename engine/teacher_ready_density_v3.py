@@ -55,7 +55,6 @@ class TextQuestionBudget:
         return self.comprehension + self.explanation_inference + self.anchored_application
 
 
-TEXT_QUESTION_3_3_2: Final = TextQuestionBudget(3, 3, 2)
 TEXT_QUESTION_COMPREHENSION_FLOOR: Final = TextQuestionBudget(3, 0, 0)
 
 

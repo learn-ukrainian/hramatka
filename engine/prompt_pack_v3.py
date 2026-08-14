@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import paths
-from .anchor_inventory_v3 import DEGREE_CATALOG_VERSION, DEGREE_LADDERS, degree_role
+from .anchor_inventory_v3 import (
+    DEGREE_60_SCHEDULE,
+    DEGREE_CATALOG_VERSION,
+    DEGREE_LADDERS,
+    degree_focus_requested,
+    degree_role,
+)
 from .closed_class_policy import (
     CLOSED_CLASS_ALLOWED_SHAPES,
     is_closed_class_form,
@@ -547,12 +553,7 @@ def build_phase_context(
     if not slots:
         raise PromptPackV3Error(f"Allocation has no scheduled slots for phase {phase}.")
     type_kits = [_type_kit(slot) for slot in slots]
-    normalized_focus = focus.casefold() if isinstance(focus, str) else ""
-    is_degree_lesson = len(allocation.slots) == 10 and (
-        "компаратив" in normalized_focus
-        or "суперлатив" in normalized_focus
-        or ("ступен" in normalized_focus and "порівнян" in normalized_focus)
-    )
+    is_degree_lesson = len(allocation.slots) == 10 and degree_focus_requested(focus)
     if is_degree_lesson:
         for kit in type_kits:
             expected_role = degree_role(str(kit["slot_id"]), str(kit["type"]))
@@ -670,19 +671,7 @@ def _surface_has_degree_cue(surface: str, degree_class: str) -> bool:
 def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
     """Fail closed on the advisor-approved degree lesson before provider spend."""
     expected = tuple(
-        (slot_id, activity_type)
-        for slot_id, activity_type, _role in (
-            ("P1-A1", "text-questions", "anchor-comprehension"),
-            ("P1-A2", "quiz", "degree-recognition"),
-            ("P1-A3", "cloze", "degree-cloze"),
-            ("P2-A1", "fill-in", "degree-formation"),
-            ("P2-A2", "match-up", "degree-positive-comparative"),
-            ("P2-A3", "error-correction", "degree-error-correction"),
-            ("P2-A4", "quiz", "degree-comparison-syntax"),
-            ("P2-A5", "fill-in", "degree-context"),
-            ("P3-A1", "match-up", "degree-comparative-superlative"),
-            ("P3-A2", "short-writing", "degree-writing"),
-        )
+        (slot_id, activity_type) for slot_id, activity_type, _role in DEGREE_60_SCHEDULE
     )
     observed = tuple((slot.slot_id, slot.scheduled_type) for slot in allocation.slots)
     if observed != expected:

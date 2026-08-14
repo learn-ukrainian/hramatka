@@ -1,6 +1,6 @@
-"""Tests for providers.py — the real OpenAI-compatible HTTP transport + the
-name→generator registry. NO real network: every call is driven through an
-`httpx.MockTransport`, so the actual provider API is never hit.
+"""Tests for the provider registry (split across telemetry/transports/factories).
+
+NO real network: every call is driven through an `httpx.MockTransport`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from hramatka.api.qualified_models import LOGICAL_MODELS
-from hramatka.engine import providers
+from hramatka.engine import provider_factories, provider_telemetry, provider_transports, providers
 from hramatka.engine.transport import (
     AIS_API_KEY_FILE_ENV,
     GEMMA_MODEL,
@@ -700,8 +700,11 @@ def test_qualified_flash_default_constructs_no_vertex_transport(monkeypatch):
         raise AssertionError("qualified Flash must not construct a Vertex transport")
 
     monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
-    monkeypatch.setattr(providers, "_gemini_routes", fail_if_vertex_path_is_constructed)
-    monkeypatch.setattr(providers, "_validate_vertex_base_url", fail_if_vertex_path_is_constructed)
+    # Patch the canonical factories seam — providers.py is only a re-export (#456).
+    monkeypatch.setattr(provider_factories, "_gemini_routes", fail_if_vertex_path_is_constructed)
+    monkeypatch.setattr(
+        provider_factories, "_validate_vertex_base_url", fail_if_vertex_path_is_constructed
+    )
 
     selector = providers.make_logical_model_generator("gemini-3.6-flash")
 
@@ -710,6 +713,36 @@ def test_qualified_flash_default_constructs_no_vertex_transport(monkeypatch):
     assert isinstance(generator, AISGeneratorPort)
     assert not isinstance(generator, providers.FailoverGeneratorPort)
     assert generator._transport.host == "google-ais"
+
+
+def test_providers_facade_identity_matches_canonical_modules() -> None:
+    """Compatibility re-exports must be the same objects as the split modules."""
+    assert providers.make_logical_model_generator is provider_factories.make_logical_model_generator
+    assert providers._gemini_routes is provider_factories._gemini_routes
+    assert providers._gemini_ais_route is provider_factories._gemini_ais_route
+    assert providers._validate_vertex_base_url is provider_transports._validate_vertex_base_url
+    assert providers.FailoverGeneratorPort is provider_transports.FailoverGeneratorPort
+    assert providers.TelemetryContext is provider_telemetry.TelemetryContext
+    assert providers.provider_call_slot is provider_telemetry.provider_call_slot
+
+
+def test_facade_only_monkeypatch_does_not_hide_factory_seam(monkeypatch):
+    """Patching providers._gemini_routes alone must not silence factories divergence."""
+    facade_hits = {"n": 0}
+
+    def facade_only(*_args, **_kwargs):
+        facade_hits["n"] += 1
+        raise AssertionError("facade-only patch should not run for factory construction")
+
+    monkeypatch.setenv(providers.AIS_API_KEY_ENV, "ais-key")
+    monkeypatch.setattr(providers, "_gemini_routes", facade_only)
+
+    # Factories still owns the live binding; a facade-only patch must not trip.
+    selector = providers.make_logical_model_generator("gemini-3.6-flash")
+    assert facade_hits["n"] == 0
+    assert tuple(selector._generators) == ("google-ais",)
+    # And the facade binding has diverged from the canonical seam.
+    assert providers._gemini_routes is not provider_factories._gemini_routes
 
 
 def test_route_binding_qualified_routes_resolve_route_ids(monkeypatch):

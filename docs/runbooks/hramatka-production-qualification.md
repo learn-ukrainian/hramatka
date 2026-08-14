@@ -201,8 +201,8 @@ route currently shipped for Flash; it never loads or prints an API key.
 ```bash
 SOURCE_COMMIT="$(git rev-parse HEAD)"
 MANIFEST_SHA256="$(.venv/bin/python -c 'from hramatka.qualification.manifest import load_manifest; print(load_manifest().sha256)')"
-export HRAMATKA_SLOT_REPAIR=1
-export HRAMATKA_PROMPT_PACK=1
+# v3 qualification uses engine_adapter_v3; prompt-pack and slot-repair
+# env gates are legacy-adapter-only and do not change the live baker.
 export SOURCE_COMMIT MANIFEST_SHA256
 ACK="$(.venv/bin/python - <<'PY'
 import os

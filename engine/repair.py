@@ -41,7 +41,11 @@ _OBSERVED_VALUE_FIELDS = (
 
 
 def enabled() -> bool:
-    """Return the explicit, default-off repair switch."""
+    """Legacy v2-adapter gate. Production v3 always runs same-plan repair.
+
+    ``HRAMATKA_SLOT_REPAIR`` is read only by ``engine_adapter.py``. The live
+    baker in ``engine_adapter_v3`` ignores this env var (#457).
+    """
     return os.environ.get("HRAMATKA_SLOT_REPAIR", "").strip().lower() in {"1", "true", "yes", "on"}
 
 

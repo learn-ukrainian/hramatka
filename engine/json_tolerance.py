@@ -4,6 +4,19 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import Final
+
+# Bound the failed-opener walk. A 250k `{`/`[` bomb is otherwise superlinear on
+# JSONDecoder.raw_decode and can stall an in-process bake worker (#451).
+_MAX_FAILED_DECODES: Final = 64
+
+
+def _object_scan_start(text: str, start: int) -> int:
+    """Jump to the last `{{` in a run; only that opener can start an object."""
+    if start < len(text) and text[start] == "{":
+        while start + 1 < len(text) and text[start + 1] == "{":
+            start += 1
+    return start
 
 
 def _extract_json(
@@ -20,15 +33,19 @@ def _extract_json(
     first_dict: dict | None = None
     first_dict_list: list | None = None
     search_from = 0
+    failed_decodes = 0
     while search_from < len(text):
         starts = [text.find(char, search_from) for char in "[{"]
         starts = [start for start in starts if start >= 0]
         if not starts:
             break
-        start = min(starts)
+        start = _object_scan_start(text, min(starts))
         try:
             obj, end = decoder.raw_decode(text, start)
-        except ValueError:
+        except (ValueError, RecursionError):
+            failed_decodes += 1
+            if failed_decodes >= _MAX_FAILED_DECODES:
+                return first_dict if first_dict is not None else first_dict_list
             search_from = start + 1
             continue
         # Nested containers belong to this candidate; do not treat them as
@@ -106,15 +123,19 @@ def repair_split_envelope(
     """Merge adjacent, disjoint top-level objects only when the envelope closes."""
     decoder = json.JSONDecoder()
     search_from = 0
+    failed_decodes = 0
     while search_from < len(raw):
         starts = [raw.find(char, search_from) for char in "[{"]
         starts = [start for start in starts if start >= 0]
         if not starts:
             return None
-        start = min(starts)
+        start = _object_scan_start(raw, min(starts))
         try:
             first, first_end = decoder.raw_decode(raw, start)
-        except ValueError:
+        except (ValueError, RecursionError):
+            failed_decodes += 1
+            if failed_decodes >= _MAX_FAILED_DECODES:
+                return None
             search_from = start + 1
             continue
         if not isinstance(first, dict):
@@ -133,7 +154,7 @@ def repair_split_envelope(
                 next_start += 1
             try:
                 next_object, next_end = decoder.raw_decode(raw, next_start)
-            except ValueError:
+            except (ValueError, RecursionError):
                 break
             if not isinstance(next_object, dict):
                 break
@@ -142,7 +163,7 @@ def repair_split_envelope(
         if region_end != first_end:
             try:
                 objects = json.loads(f"[{raw[start:region_end]}]")
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 objects = None
             if isinstance(objects, list) and all(isinstance(item, dict) for item in objects):
                 merged: dict = {}
