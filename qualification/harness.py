@@ -937,14 +937,20 @@ def _v3_live_record_from_kit(
         }
         answer_key = {"items": expected_keys}
     elif activity_type == "text-questions":
+        questions = [
+            _question_from_unit(unit, index) for index, unit in enumerate(certified_units)
+        ]
         payload = {
             "type": activity_type,
             "instruction": "Дайте відповідь.",
-            "items": [
-                _question_from_unit(unit, index) for index, unit in enumerate(certified_units)
-            ],
+            "items": questions,
         }
-        answer_key = {"guidance": "x"}
+        answer_key = {
+            "guidance": "\n".join(
+                f"{index}. Зразок відповіді: {unit['rendering_surface']}"
+                for index, unit in enumerate(certified_units, start=1)
+            )
+        }
     elif activity_type == "short-writing":
         prompt_fragments = [
             fragment for unit in certified_units for fragment in unit["allowed_forms"]
@@ -963,7 +969,28 @@ def _v3_live_record_from_kit(
                 "Напишіть короткий текст про ваш розклад дня: " + ", ".join(prompt_fragments) + "."
             )
         payload = {"type": activity_type, "prompt": prompt}
-        answer_key = {"guidance": "Перевірте виконання кожної умови."}
+        distinctness = certified_units[0].get("distinctness")
+        specs = distinctness.get("constraint_specs") if isinstance(distinctness, Mapping) else None
+        word_range = next(
+            (
+                spec.get("params")
+                for spec in specs
+                if isinstance(spec, Mapping) and spec.get("kind") == "word_count_range"
+            ),
+            None,
+        ) if isinstance(specs, list) else None
+        minimum = word_range.get("minimum") if isinstance(word_range, Mapping) else None
+        if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+            raise QualificationError("Qualification short-writing range is missing.")
+        sample_words = (
+            "Я чітко пояснюю власну думку й наводжу доречний приклад".split()
+        )
+        sample = " ".join(sample_words[index % len(sample_words)] for index in range(minimum))
+        answer_key = {
+            "guidance": (
+                "Перевірте виконання кожної умови. Зразок відповіді: " + sample
+            )
+        }
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")
     return {

@@ -104,6 +104,7 @@ _DETERMINISTIC_GATE_RULE_KEYS: Final[dict[str, str]] = {
     "validate_non_revealing_sequence": "non_revealing_sequence",
     "validate_activity_purpose": "activity_purpose",
     "validate_visible_writing_constraints": "short_writing_visible_constraints",
+    "validate_teacher_sample_constraints": "teacher_sample_constraints",
 }
 _ACTIVITY_PURPOSE_SAFE_PREFIXES: Final[dict[str, str]] = {
     "text question asks for a token label instead of meaning": "token_retrieval",
@@ -269,7 +270,9 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
             "short source topic, with at least one source content lemma left for the answer; "
             "fact-recovery is only for fresh propositions, while anchored_application must "
             "ask for interpretation, transfer, or a cross-sentence connection rather than "
-            "repeat literal recall"
+            "repeat literal recall; answer_key.guidance has exactly one ordered line per "
+            "question in the form `N. Зразок відповіді: <concrete Ukrainian sample>`, "
+            "numbered from 1, and each sample answers its matching unit"
         ),
         "reject": (
             "literal recall of an already-drilled carrier, generic what-the-text-says "
@@ -287,7 +290,8 @@ _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
         "required": (
             "the exact source-proposition marker and numeric range appear in the prompt, and "
             "the learner must extrapolate, judge, explain, compare, or connect the source to "
-            "personal experience"
+            "personal experience; answer_key.guidance has exactly one `Зразок відповіді:` "
+            "marker followed by a concrete Ukrainian sample inside the certified word range"
         ),
         "reject": (
             "a summary or literal source restatement, hidden range/source, linguistic-jargon "
@@ -2284,6 +2288,241 @@ def validate_visible_writing_constraints(
         }
         if required_lemmas & leaked:
             raise PromptPackV3Error("short-writing prompt leaks a target degree form")
+
+
+_TEXT_QUESTION_SAMPLE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<index>[1-9]\d*)\.\s*Зразок\s+відповіді\s*:\s*(?P<sample>\S(?:.*\S)?)$",
+    re.IGNORECASE,
+)
+_WRITING_SAMPLE_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"\bЗразок\s+відповіді\s*:\s*",
+    re.IGNORECASE,
+)
+_TEACHER_SAMPLE_UKRAINIAN_WORD_RE: Final[re.Pattern[str]] = re.compile(
+    r"[А-Яа-яІіЇїЄєҐґ][А-Яа-яІіЇїЄєҐґʼ’'\-]*"
+)
+
+
+def _text_question_teacher_samples(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> tuple[str, ...]:
+    payload = activity.get("payload")
+    answer_key = activity.get("answer_key")
+    items = payload.get("items") if isinstance(payload, Mapping) else None
+    guidance = answer_key.get("guidance") if isinstance(answer_key, Mapping) else None
+    units = kit.get("certified_units")
+    if (
+        not isinstance(items, list)
+        or not isinstance(units, list)
+        or len(items) != len(units)
+        or not isinstance(guidance, str)
+    ):
+        raise PromptPackV3Error("text-question teacher samples are detached from their units")
+    lines = tuple(line.strip() for line in guidance.splitlines() if line.strip())
+    matches = tuple(_TEXT_QUESTION_SAMPLE_RE.fullmatch(line) for line in lines)
+    if (
+        len(lines) != len(items)
+        or any(match is None for match in matches)
+        or tuple(int(match.group("index")) for match in matches if match is not None)
+        != tuple(range(1, len(items) + 1))
+    ):
+        raise PromptPackV3Error(
+            "text-question guidance must contain one ordered teacher sample per item"
+        )
+    return tuple(match.group("sample") for match in matches if match is not None)
+
+
+def _short_writing_teacher_sample(activity: Mapping[str, Any]) -> str:
+    answer_key = activity.get("answer_key")
+    guidance = answer_key.get("guidance") if isinstance(answer_key, Mapping) else None
+    if not isinstance(guidance, str):
+        raise PromptPackV3Error("short-writing teacher sample is missing")
+    markers = tuple(_WRITING_SAMPLE_MARKER_RE.finditer(guidance))
+    if len(markers) != 1:
+        raise PromptPackV3Error("short-writing guidance needs exactly one teacher sample")
+    sample = guidance[markers[0].end() :].strip()
+    if not sample:
+        raise PromptPackV3Error("short-writing teacher sample is empty")
+    return sample
+
+
+def _writing_word_count_range(kit: Mapping[str, Any]) -> tuple[int, int]:
+    units = kit.get("certified_units")
+    unit = units[0] if isinstance(units, list) and len(units) == 1 else None
+    distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+    specs = distinctness.get("constraint_specs") if isinstance(distinctness, Mapping) else None
+    ranges = (
+        [
+            spec.get("params")
+            for spec in specs
+            if isinstance(spec, Mapping) and spec.get("kind") == "word_count_range"
+        ]
+        if isinstance(specs, list)
+        else []
+    )
+    params = ranges[0] if len(ranges) == 1 else None
+    minimum = params.get("minimum") if isinstance(params, Mapping) else None
+    maximum = params.get("maximum") if isinstance(params, Mapping) else None
+    if (
+        not isinstance(minimum, int)
+        or isinstance(minimum, bool)
+        or not isinstance(maximum, int)
+        or isinstance(maximum, bool)
+        or minimum < 1
+        or maximum < minimum
+        or set(params) != {"minimum", "maximum"}
+    ):
+        raise PromptPackV3Error("short-writing word-count contract is malformed")
+    return minimum, maximum
+
+
+def teacher_sample_review_inputs(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    """Build private semantic-review inputs only from host-certified evidence.
+
+    The provider authors questions and samples, but never the evidence used to
+    judge them.  This projection deliberately ignores any provider-authored
+    proof-like field and is stripped before the learner activity is rendered.
+    """
+    payload = activity.get("payload")
+    if not isinstance(payload, Mapping):
+        raise PromptPackV3Error("teacher samples require an activity payload")
+    activity_type = payload.get("type")
+    units = kit.get("certified_units")
+    if not isinstance(units, list):
+        raise PromptPackV3Error("teacher samples require certified units")
+    if activity_type == "text-questions":
+        items = payload.get("items")
+        if not isinstance(items, list) or len(items) != len(units):
+            raise PromptPackV3Error("text-question teacher samples are detached from their units")
+        samples = _text_question_teacher_samples(activity, kit)
+        rows: list[dict[str, Any]] = []
+        for index, (question, sample, unit) in enumerate(
+            zip(items, samples, units, strict=True)
+        ):
+            if not isinstance(question, str) or not isinstance(unit, Mapping):
+                raise PromptPackV3Error("text-question semantic review input is malformed")
+            surface = unit.get("rendering_surface")
+            distinctness = unit.get("distinctness")
+            if not isinstance(surface, str) or not surface.strip():
+                raise PromptPackV3Error("text-question certified evidence is missing")
+            raw_segments = (
+                distinctness.get("regeneration_evidence_segments")
+                if isinstance(distinctness, Mapping)
+                else None
+            )
+            if raw_segments is None:
+                segments = (surface,)
+            elif (
+                isinstance(raw_segments, list)
+                and raw_segments
+                and all(
+                    isinstance(segment, str) and segment.strip() and segment in surface
+                    for segment in raw_segments
+                )
+            ):
+                segments = tuple(raw_segments)
+            else:
+                raise PromptPackV3Error("text-question certified evidence segments are malformed")
+            rows.append(
+                {
+                    "activity_type": activity_type,
+                    "category": (
+                        distinctness.get("question_category")
+                        if isinstance(distinctness, Mapping)
+                        else None
+                    ),
+                    "evidence_segments": list(segments),
+                    "item_index": index,
+                    "learner_prompt": question,
+                    "regeneration_lens": (
+                        distinctness.get("regeneration_lens")
+                        if isinstance(distinctness, Mapping)
+                        else None
+                    ),
+                    "source_context": (
+                        distinctness.get("regeneration_source_context")
+                        if isinstance(distinctness, Mapping)
+                        else None
+                    ),
+                    "teacher_sample": sample,
+                }
+            )
+        return tuple(rows)
+    if activity_type == "short-writing":
+        prompt = payload.get("prompt")
+        unit = units[0] if len(units) == 1 else None
+        distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
+        surface = unit.get("rendering_surface") if isinstance(unit, Mapping) else None
+        specs = distinctness.get("constraint_specs") if isinstance(distinctness, Mapping) else None
+        if (
+            not isinstance(prompt, str)
+            or not isinstance(surface, str)
+            or not isinstance(specs, list)
+        ):
+            raise PromptPackV3Error("short-writing semantic review input is malformed")
+        return (
+            {
+                "activity_type": activity_type,
+                "category": "communicative-writing",
+                "constraint_specs": deepcopy(specs),
+                "evidence_segments": [surface],
+                "item_index": 0,
+                "learner_prompt": prompt,
+                "regeneration_lens": None,
+                "source_context": None,
+                "teacher_sample": _short_writing_teacher_sample(activity),
+            },
+        )
+    return ()
+
+
+def validate_teacher_sample_constraints(
+    activity: Mapping[str, Any], kit: Mapping[str, Any]
+) -> None:
+    """Require reviewable teacher samples and enforce productive-task length."""
+    payload = activity.get("payload")
+    activity_type = payload.get("type") if isinstance(payload, Mapping) else None
+    if activity_type == "text-questions":
+        try:
+            samples = _text_question_teacher_samples(activity, kit)
+        except PromptPackV3Error as error:
+            raise RuleNamedRejection(
+                "teacher_sample_constraints", suffix="text_question_sample_shape"
+            ) from error
+        normalized = [" ".join(sample.casefold().split()) for sample in samples]
+        duplicate_indexes = {
+            index
+            for index, sample in enumerate(normalized)
+            if normalized.count(sample) > 1
+        }
+        if duplicate_indexes:
+            rejections = tuple(
+                RuleNamedRejection(
+                    "teacher_sample_constraints", suffix=f"duplicate_sample:item={index}"
+                )
+                for index in sorted(duplicate_indexes)
+            )
+            if len(rejections) == 1:
+                raise rejections[0]
+            raise RuleNamedRejectionGroup(rejections)
+        teacher_sample_review_inputs(activity, kit)
+        return
+    if activity_type == "short-writing":
+        try:
+            sample = _short_writing_teacher_sample(activity)
+            minimum, maximum = _writing_word_count_range(kit)
+        except PromptPackV3Error as error:
+            raise RuleNamedRejection(
+                "teacher_sample_constraints", suffix="short_writing_sample_shape"
+            ) from error
+        word_count = len(_TEACHER_SAMPLE_UKRAINIAN_WORD_RE.findall(sample))
+        if not minimum <= word_count <= maximum:
+            raise RuleNamedRejection(
+                "teacher_sample_constraints", suffix="short_writing_word_count"
+            )
+        teacher_sample_review_inputs(activity, kit)
 
 
 # Closed-class parts of speech.  Words belonging to these classes have no

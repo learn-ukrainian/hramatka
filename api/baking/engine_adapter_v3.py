@@ -60,6 +60,7 @@ from hramatka.engine.prompt_pack_v3 import (
     validate_exemplar_contamination,
     validate_gap_construction,
     validate_non_revealing_sequence,
+    validate_teacher_sample_constraints,
     validate_verbatim_answer_ban,
     validate_visible_writing_constraints,
 )
@@ -507,6 +508,10 @@ _FLAG_REASON_UK_BY_PREFIX: tuple[tuple[str, str], ...] = (
     (
         "short_writing_visible_constraints:",
         "У завданні на письмо не видно всіх обов'язкових умов.",
+    ),
+    (
+        "teacher_sample_constraints:",
+        "Зразок відповіді відсутній або не відповідає умовам завдання.",
     ),
     ("serialization_exactness:", "Двигун виявив помилку в цій вправі."),
     ("raw_contract:", "Двигун виявив помилку в цій вправі."),
@@ -2417,6 +2422,7 @@ class EngineLessonBaker:
                                 validate_non_revealing_sequence,
                                 validate_activity_purpose,
                                 validate_visible_writing_constraints,
+                                validate_teacher_sample_constraints,
                             ),
                             raw_contract_validator=_raw_activity_contract,
                             repair_renderer=lambda request: self._render_repair(
@@ -2790,6 +2796,7 @@ class EngineLessonBaker:
                             validate_non_revealing_sequence,
                             validate_activity_purpose,
                             validate_visible_writing_constraints,
+                            validate_teacher_sample_constraints,
                         ),
                         raw_contract_validator=_raw_activity_contract,
                         repair_renderer=lambda request: self._render_regeneration_repair(

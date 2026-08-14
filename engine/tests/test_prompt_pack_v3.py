@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 
 import pytest
@@ -15,11 +16,13 @@ from hramatka.engine.prompt_pack_v3 import (
     TYPE_KIT_IDENTITY,
     PromptPackV3Error,
     RuleNamedRejection,
+    RuleNamedRejectionGroup,
     build_phase_context,
     compact_schema_exemplars,
     one_slot_context,
     render_phase_prompt,
     six_item_negative_exemplar,
+    teacher_sample_review_inputs,
     validate_activity_purpose,
     validate_distractor_adjacency,
     validate_elicitation_shape,
@@ -27,6 +30,7 @@ from hramatka.engine.prompt_pack_v3 import (
     validate_non_revealing_sequence,
     validate_response,
     validate_slot_deterministic_gates,
+    validate_teacher_sample_constraints,
     validate_verbatim_answer_ban,
     validate_visible_writing_constraints,
 )
@@ -101,6 +105,14 @@ def test_v34_context_uses_the_new_template_and_type_kit_identity() -> None:
     assert kit["scheduled_unit_count"] == 8
     assert len(kit["scheduled_unit_ids"]) == 8
     assert kit["scheduled_unit_ids"] == [unit["unit_id"] for unit in kit["certified_units"]]
+
+
+def test_prompt_states_the_teacher_sample_wire_contract_for_both_open_types() -> None:
+    prompt = render_phase_prompt(_context("text-questions", "short-writing"))
+
+    assert "N. Зразок відповіді: <concrete Ukrainian sample>" in prompt
+    assert "exactly one `Зразок відповіді:` marker" in prompt
+    assert "inside the certified word range" in prompt
 
 
 def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
@@ -893,7 +905,12 @@ def test_error_correction_uninflectable_target_with_same_class_wrong_word_passes
     validate_distractor_adjacency(activity, kit)
 
 
-def test_short_writing_visible_constraints_and_generic_guidance_pass() -> None:
+def _ukrainian_sample(word_count: int) -> str:
+    words = "Я уважно читаю текст і послідовно пояснюю власну думку".split()
+    return " ".join(words[index % len(words)] for index in range(word_count))
+
+
+def test_short_writing_visible_constraints_and_bounded_teacher_sample_pass() -> None:
     """Every certified constraint belongs in learner-visible prompt prose."""
     from hramatka.api.baking.engine_adapter_v3 import _activity_gate
 
@@ -907,13 +924,200 @@ def test_short_writing_visible_constraints_and_generic_guidance_pass() -> None:
             "type": "short-writing",
             "prompt": ("Напишіть текст про ваш щоденний розклад: " + ", ".join(target_forms) + "."),
         },
-        "answer_key": {"guidance": "Перевірте виконання всіх умов."},
+        "answer_key": {
+            "guidance": "Перевірте виконання всіх умов. Зразок відповіді: "
+            + _ukrainian_sample(60)
+        },
     }
     _activity_gate(activity, kit)
     validate_visible_writing_constraints(activity, kit)
+    validate_teacher_sample_constraints(activity, kit)
     validate_verbatim_answer_ban(activity, kit)
     validate_elicitation_shape(activity, kit)
     validate_exemplar_contamination(activity, kit)
+
+
+@pytest.mark.parametrize(
+    ("word_count", "passes"), ((59, False), (60, True), (80, True), (81, False))
+)
+def test_short_writing_teacher_sample_enforces_certified_boundaries(
+    word_count: int, passes: bool
+) -> None:
+    kit = _context("short-writing")["type_kits"][0]
+    activity = {
+        "payload": {"type": "short-writing", "prompt": "Напишіть короткий текст."},
+        "answer_key": {"guidance": "Зразок відповіді: " + _ukrainian_sample(word_count)},
+    }
+
+    if passes:
+        validate_teacher_sample_constraints(activity, kit)
+    else:
+        with pytest.raises(RuleNamedRejection) as rejection:
+            validate_teacher_sample_constraints(activity, kit)
+        assert rejection.value.rule_key == "teacher_sample_constraints"
+        assert rejection.value.suffix == "short_writing_word_count"
+
+
+def test_retained_56_word_short_writing_failure_is_rejected() -> None:
+    """Redacted reproduction of the observed 56-word answer for a 60–80 word task."""
+    kit = _context("short-writing")["type_kits"][0]
+    activity = {
+        "payload": {"type": "short-writing", "prompt": "Напишіть короткий текст."},
+        "answer_key": {"guidance": "Зразок відповіді: " + _ukrainian_sample(56)},
+    }
+
+    with pytest.raises(
+        RuleNamedRejection,
+        match=r"teacher_sample_constraints: short_writing_word_count",
+    ):
+        validate_teacher_sample_constraints(activity, kit)
+
+
+def test_short_writing_punctuation_cannot_pad_a_short_teacher_sample() -> None:
+    kit = _context("short-writing")["type_kits"][0]
+    activity = {
+        "payload": {"type": "short-writing", "prompt": "Напишіть короткий текст."},
+        "answer_key": {
+            "guidance": "Зразок відповіді: " + _ukrainian_sample(59) + " ---"
+        },
+    }
+
+    with pytest.raises(
+        RuleNamedRejection,
+        match=r"teacher_sample_constraints: short_writing_word_count",
+    ):
+        validate_teacher_sample_constraints(activity, kit)
+
+
+@pytest.mark.parametrize(
+    "guidance",
+    (
+        "Перевірте виконання умов.",
+        "Зразок відповіді:",
+        "Зразок відповіді: Один. Зразок відповіді: Два.",
+    ),
+)
+def test_short_writing_missing_empty_or_duplicate_teacher_sample_fails(guidance: str) -> None:
+    kit = _context("short-writing")["type_kits"][0]
+    activity = {
+        "payload": {"type": "short-writing", "prompt": "Напишіть короткий текст."},
+        "answer_key": {"guidance": guidance},
+    }
+
+    with pytest.raises(RuleNamedRejection) as rejection:
+        validate_teacher_sample_constraints(activity, kit)
+    assert rejection.value.rule_key == "teacher_sample_constraints"
+    assert rejection.value.suffix == "short_writing_sample_shape"
+
+
+def _text_question_activity(kit: dict) -> dict:
+    units = kit["certified_units"]
+    return {
+        "payload": {
+            "type": "text-questions",
+            "instruction": "Дайте відповідь.",
+            "items": [f"Що повідомляє фрагмент {index}?" for index in range(1, len(units) + 1)],
+        },
+        "answer_key": {
+            "guidance": "\n".join(
+                f"{index}. Зразок відповіді: {unit['rendering_surface']}"
+                for index, unit in enumerate(units, start=1)
+            )
+        },
+    }
+
+
+def test_text_question_review_inputs_use_only_matching_host_certified_evidence() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    first_surface = kit["certified_units"][0]["rendering_surface"]
+    certified_segment = first_surface.split(",", maxsplit=1)[0]
+    kit["certified_units"][0]["distinctness"]["regeneration_evidence_segments"] = [
+        certified_segment
+    ]
+    activity = _text_question_activity(kit)
+    activity["answer_key"]["evidence_quote"] = "Підроблений доказ від генератора."
+    frozen_activity = deepcopy(activity)
+
+    validate_teacher_sample_constraints(activity, kit)
+    inputs = teacher_sample_review_inputs(activity, kit)
+
+    assert len(inputs) == len(kit["certified_units"])
+    assert inputs[0]["evidence_segments"] == [certified_segment]
+    assert inputs[1]["evidence_segments"] == [
+        kit["certified_units"][1]["rendering_surface"]
+    ]
+    assert all("evidence_quote" not in row for row in inputs)
+    assert "Підроблений доказ" not in repr(inputs)
+    assert activity == frozen_activity
+    assert set(activity) == {"payload", "answer_key"}
+    assert isinstance(activity["answer_key"]["guidance"], str)
+
+
+def test_text_question_malformed_host_evidence_segments_fail_closed() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    kit["certified_units"][0]["distinctness"]["regeneration_evidence_segments"] = [
+        "Рядок, якого немає в сертифікованому фрагменті."
+    ]
+    activity = _text_question_activity(kit)
+    record = {
+        "slot_id": kit["slot_id"],
+        "type": kit["type"],
+        "activity": activity,
+        "serialized_units": [
+            {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
+        ],
+    }
+
+    with pytest.raises(RuleNamedRejection) as rejection:
+        validate_slot_deterministic_gates(
+            record,
+            kit,
+            deterministic_gates=(validate_teacher_sample_constraints,),
+        )
+    assert rejection.value.rule_key == "teacher_sample_constraints"
+    assert rejection.value.suffix is None
+
+
+@pytest.mark.parametrize(
+    "guidance_transform",
+    (
+        lambda lines: "\n".join(lines[:-1]),
+        lambda lines: "\n".join(reversed(lines)),
+        lambda lines: "\n".join([lines[0].replace("1.", "перший."), *lines[1:]]),
+    ),
+    ids=("missing", "misordered", "malformed"),
+)
+def test_text_question_missing_misordered_or_malformed_samples_fail_closed(
+    guidance_transform: Callable[[list[str]], str],
+) -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    activity = _text_question_activity(kit)
+    lines = activity["answer_key"]["guidance"].splitlines()
+    activity["answer_key"]["guidance"] = guidance_transform(lines)
+
+    with pytest.raises(RuleNamedRejection) as rejection:
+        validate_teacher_sample_constraints(activity, kit)
+    assert rejection.value.rule_key == "teacher_sample_constraints"
+    assert rejection.value.suffix == "text_question_sample_shape"
+
+
+def test_text_question_duplicate_samples_report_each_item_locally() -> None:
+    kit = _context("text-questions")["type_kits"][0]
+    activity = _text_question_activity(kit)
+    duplicate = kit["certified_units"][0]["rendering_surface"]
+    activity["answer_key"]["guidance"] = "\n".join(
+        f"{index}. Зразок відповіді: {duplicate}"
+        for index in range(1, len(kit["certified_units"]) + 1)
+    )
+
+    with pytest.raises(RuleNamedRejectionGroup) as rejection:
+        validate_teacher_sample_constraints(activity, kit)
+    assert tuple(item.rule_key for item in rejection.value.rejections) == (
+        "teacher_sample_constraints",
+    ) * len(kit["certified_units"])
+    assert tuple(item.suffix for item in rejection.value.rejections) == tuple(
+        f"duplicate_sample:item={index}" for index in range(len(kit["certified_units"]))
+    )
 
 
 def test_short_writing_prompt_missing_one_constraint_fails() -> None:

@@ -112,6 +112,9 @@ def test_cause_vocabulary_covers_every_bake_path_rejection_stage() -> None:
         "short_writing_visible_constraints": (
             "short_writing_visible_constraints: learner_facing_requirements"
         ),
+        "teacher_sample_constraints": (
+            "teacher_sample_constraints: host_certified_teacher_answer"
+        ),
         "serialization_exactness": "serialization_exactness: scheduled_unit_references",
         "raw_contract": "raw_contract: pilot_activity_schema",
         "repair_renderer": "repair_renderer: slot_response_unavailable",
