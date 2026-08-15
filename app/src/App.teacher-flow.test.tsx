@@ -228,6 +228,19 @@ describe('teacher lesson creation and list chrome', () => {
     expect(screen.queryByTestId('catalog-delete-btn')).not.toBeInTheDocument();
   });
 
+  it('marks only the current header navigation item as active', async () => {
+    installFetch();
+    renderApp();
+
+    const lessons = await screen.findByRole('button', { name: 'Мої заняття' });
+    const newLesson = screen.getByRole('button', { name: '+ Нове заняття' });
+    const settings = screen.getByRole('button', { name: 'Налаштування' });
+
+    expect(lessons).not.toHaveClass('on');
+    expect(settings).not.toHaveClass('on');
+    expect(newLesson).toHaveClass('on');
+  });
+
   it('lists the teacher lesson metadata and its two drive paths', async () => {
     installFetch([{
       id: 'lesson-1',
