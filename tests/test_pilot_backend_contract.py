@@ -25,12 +25,14 @@ from fastapi.testclient import TestClient
 
 from hramatka.api.app import create_app
 from hramatka.api.baking.engine_adapter import EngineLessonBaker
+from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker as EngineLessonBakerV3
 from hramatka.api.baking.port import BakeError, FloorUnmetError, ProviderUnavailable
 from hramatka.api.config import Settings
 from hramatka.engine import data
 from hramatka.engine.content_density import (
     FLOOR_SHORTFALL_UA_MESSAGE,
 )
+from hramatka.qualification import harness as qualification_harness
 
 ORIGIN = "https://pilot.example.test"
 CSRF_KEY = b"test-only-hmac-key-that-is-not-a-deployment-secret"
@@ -1913,6 +1915,47 @@ def test_floor_bakeerror_on_insufficient_anchor_uses_source_capacity_code_and_ex
     assert "private source diagnostic" not in (failed["failure_message"] or "")
     # Must not fall back to the generic safe message.
     assert failed["failure_message"] != "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
+
+
+def test_v3_preflight_rejection_never_projects_generation_progress_or_calls(
+    tmp_path: Path,
+) -> None:
+    """A valid but too-thin source fails before either provider or generation chrome.
+
+    The status assertion deliberately catches both ways the regression can
+    return: restoring the eager initial progress write, or recording a
+    preflight trace through a persistence path that also writes its provisional
+    ``generation`` snapshot.
+    """
+    provider_calls = 0
+
+    def should_not_run(_prompt: str) -> str:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("v3 preflight must refuse before a provider call")
+
+    baker = EngineLessonBakerV3(
+        generator=should_not_run,
+        bundle=qualification_harness._qualification_fixture_bundle(tmp_path / "data"),
+    )
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        lesson_id = str(uuid.uuid4())
+        response = client.post(
+            "/api/lessons",
+            headers=_mutation_headers(session["csrf_token"]),
+            json=_lesson_request(lesson_id),
+        )
+        assert response.status_code == 202, response.text
+        failed = _wait_for_status(client, lesson_id, "failed")
+
+    assert provider_calls == 0
+    assert failed["failure_code"] == "insufficient_anchor_capacity"
+    # Absent is the only honest public projection before allocation: every
+    # progress shape currently includes a generation phase and a call plan.
+    assert "progress" not in failed
 
 
 def test_floor_bakeerror_after_generation_uses_retry_compatible_floor_code_and_message(

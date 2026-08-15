@@ -2392,7 +2392,6 @@ class EngineLessonBaker:
             logical_model_id=self._logical_model_id,
         )
         context_token = telemetry_ctx.set(context)
-        context.update_progress_db()
         try:
             try:
                 anchor_text = _anchor_text(anchor)
@@ -2417,9 +2416,12 @@ class EngineLessonBaker:
                         builders=_slot_builders(slots),
                     )
                     if preflight.allocation is None:
-                        context.record_event(
-                            {"event": "v3_preflight", "outcome": "insufficient_anchor_capacity"}
-                        )
+                        # Do not project the provisional telemetry context to a
+                        # teacher before deterministic allocation succeeds.
+                        # In particular, ``generation``/phase/call-plan chrome
+                        # would falsely imply that a provider bake started.
+                        # The durable runner turns this typed source refusal
+                        # into the safe ``insufficient_anchor_capacity`` result.
                         raise FloorUnmetError(
                             "Bake failed: insufficient_anchor_capacity before generation.",
                             blames_source=True,

@@ -107,6 +107,51 @@ def _qualified_test_registry() -> Any:
 
 
 def _fixture_baker(runtime_dir: Path) -> Any:
+    if os.environ.get("HRAMATKA_E2E_UNDER_CAPACITY") == "1":
+        # This dedicated browser fixture crosses the normal FastAPI queue and
+        # v3 preflight path, but cannot make a provider request.  A short delay
+        # inside preflight gives the browser one status-poll interval in which
+        # to expose any accidental generation projection.
+        from hramatka.api.baking import engine_adapter_v3
+        from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker as V3EngineLessonBaker
+        from hramatka.qualification import harness as qualification_harness
+
+        class UnderCapacityFixtureBaker(V3EngineLessonBaker):
+            def __init__(self, runtime_dir: Path) -> None:
+                self._preflight_delay_seconds = 1.2
+
+                def provider_must_not_run(_prompt: str) -> str:
+                    raise AssertionError("under-capacity preflight called a provider")
+
+                super().__init__(
+                    generator=provider_must_not_run,
+                    bundle=qualification_harness._qualification_fixture_bundle(
+                        runtime_dir / "data"
+                    ),
+                )
+
+            def for_logical_model(self, logical_model_id: str | None) -> Any:
+                if logical_model_id != TEST_LOGICAL_MODEL_ID:
+                    raise ValueError("real-backend fixture requires its qualified logical model")
+                return self
+
+            def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
+                original_preflight = engine_adapter_v3.preflight_lesson
+
+                def delayed_preflight(*args: Any, **kwargs: Any) -> Any:
+                    import time
+
+                    time.sleep(self._preflight_delay_seconds)
+                    return original_preflight(*args, **kwargs)
+
+                engine_adapter_v3.preflight_lesson = delayed_preflight
+                try:
+                    return super().bake(anchor, duration, focus)
+                finally:
+                    engine_adapter_v3.preflight_lesson = original_preflight
+
+        return UnderCapacityFixtureBaker(runtime_dir)
+
     from hramatka.api.baking.engine_adapter import EngineLessonBaker
     from hramatka.engine import fixtures
     from hramatka.engine.providers import telemetry_ctx
