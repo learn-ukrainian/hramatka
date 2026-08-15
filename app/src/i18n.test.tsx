@@ -153,6 +153,7 @@ describe('i18n translation layer', () => {
 
     // default Ukrainian chrome + Ukrainian content
     expect(screen.getByTestId('lang').textContent).toBe('uk');
+    expect(document.documentElement.lang).toBe('uk');
     const contentUk = screen.getByTestId('content').textContent ?? '';
     expect(contentUk.length).toBeGreaterThan(0);
     expect(screen.getByTestId('chrome-phase').textContent).toBe('Фаза 1');
@@ -161,6 +162,7 @@ describe('i18n translation layer', () => {
     // toggle → EN: chrome flips, lesson content is byte-identical (content never translated)
     fireEvent.click(screen.getByTestId('toggle'));
     expect(screen.getByTestId('lang').textContent).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
     expect(screen.getByTestId('chrome-phase').textContent).toBe('Phase 1');
     expect(screen.getByTestId('chrome-answerkey').textContent).toBe('Answer key:');
     expect(screen.getByTestId('content').textContent).toBe(contentUk);
@@ -168,6 +170,7 @@ describe('i18n translation layer', () => {
     // toggle back → UA restored exactly (reversible)
     fireEvent.click(screen.getByTestId('toggle'));
     expect(screen.getByTestId('lang').textContent).toBe('uk');
+    expect(document.documentElement.lang).toBe('uk');
     expect(screen.getByTestId('chrome-phase').textContent).toBe('Фаза 1');
     expect(screen.getByTestId('content').textContent).toBe(contentUk);
   });

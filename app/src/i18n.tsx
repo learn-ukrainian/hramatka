@@ -942,9 +942,10 @@ export function LangProvider({ children }: { children: ReactNode }) {
     clearLang();
   }, []);
 
-  // Keep the browser tab title in the chosen language (head is chrome too).
+  // Keep browser-level chrome in the chosen language for assistive technology.
   useEffect(() => {
     document.title = translate(lang, 'doc.title');
+    document.documentElement.lang = lang;
   }, [lang]);
 
   const value = useMemo<LangValue>(
