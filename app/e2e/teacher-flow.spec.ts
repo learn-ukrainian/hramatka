@@ -937,6 +937,59 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(Math.abs(createEdges.right - headerEdges.right)).toBeLessThanOrEqual(1);
   });
 
+  test('primary navigation remains visible and reachable at 375px', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    const navButtons = page.locator('.appnav button');
+    await expect(navButtons).toHaveCount(3);
+    const navBox = await page.locator('.appnav').boundingBox();
+    expect(navBox).not.toBeNull();
+    const navMetrics = await page.locator('.appnav').evaluate((nav) => ({
+      clientWidth: nav.clientWidth,
+      scrollWidth: nav.scrollWidth,
+    }));
+    expect(navMetrics.scrollWidth).toBeLessThanOrEqual(navMetrics.clientWidth);
+    for (let index = 0; index < 3; index += 1) {
+      const button = navButtons.nth(index);
+      await expect(button).toBeVisible();
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(navBox!.x);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(navBox!.x + navBox!.width);
+      const buttonMetrics = await button.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      expect(buttonMetrics.scrollWidth).toBeLessThanOrEqual(buttonMetrics.clientWidth);
+    }
+
+    const bannerRelationship = await page.evaluate(() => {
+      if (!document.querySelector('[data-testid="local-auth-disabled-banner"]')) {
+        const banner = document.createElement('div');
+        banner.className = 'banner honest local-auth-disabled-banner';
+        banner.dataset.testid = 'local-auth-disabled-banner';
+        banner.textContent = 'Локальний режим: вхід і ключі доступу вимкнено.';
+        document.querySelector('.appbar')!.after(banner);
+      }
+      const header = document.querySelector('.appbar')!.getBoundingClientRect();
+      const bannerElement = document.querySelector('[data-testid="local-auth-disabled-banner"]')!;
+      const banner = bannerElement.getBoundingClientRect();
+      return {
+        position: getComputedStyle(bannerElement).position,
+        bannerTop: banner.top,
+        headerBottom: header.bottom,
+      };
+    });
+    expect(bannerRelationship.position).toBe('static');
+    expect(bannerRelationship.bannerTop).toBeGreaterThanOrEqual(bannerRelationship.headerBottom);
+
+    await page.getByRole('button', { name: 'Налаштування' }).click();
+    await expect(page.getByRole('heading', { name: 'Налаштування' })).toBeVisible();
+  });
+
   test('create page has no body scroll at 1440x900 and 1568x774 with empty form', async ({ page }) => {
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1568, height: 774 }]) {
       await page.setViewportSize(viewport);

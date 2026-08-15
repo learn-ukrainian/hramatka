@@ -270,9 +270,34 @@ button.pedcard .d { display: block; font-size: 12.5px; color: var(--ink-soft); }
 .settings-card { max-width: 640px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 18px 20px; }
 .settings-card .field { margin-top: 16px; }
 @media (max-width: 650px) {
-  .appbar { flex-wrap: wrap; gap: 8px; }
-  .appnav { order: 3; width: 100%; margin: 0; overflow-x: auto; }
-  .session { margin-left: auto; }
+  .appbar > .page-shell { flex-wrap: wrap; gap: 8px; }
+  .appnav {
+    order: 2;
+    flex: 1 1 100%;
+    width: 100%;
+    margin: 0;
+    /* Keep every destination visible at the narrowest supported phone width.
+       Linux's fallback sans-serif is wider than macOS's, so this deliberately
+       leaves more room than the 375px macOS rendering alone requires. */
+    gap: 2px;
+    overflow-x: hidden;
+    font-size: 12px;
+  }
+  .appnav button {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-inline: 1px;
+    white-space: nowrap;
+  }
+  .session {
+    order: 3;
+    min-width: 0;
+    max-width: 100%;
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .local-auth-disabled-banner { position: static; }
   .lessons-page-head { align-items: flex-start; flex-wrap: wrap; }
   .lessons-page-actions { margin-left: 0; }
   .lesson-list-row > button { align-items: flex-start !important; flex-wrap: wrap; }
