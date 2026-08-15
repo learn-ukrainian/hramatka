@@ -248,6 +248,7 @@ For daemon-style lifecycle management, use the repository runner from the reposi
 ./services.sh stop      # stop it cleanly (no orphans, no stale runtime state)
 ./services.sh restart   # stop then start
 ./services.sh build     # frontend build using the existing dependency tree
+./services.sh rebuild   # stage/build the frontend, swap it, then start under one lock
 ./services.sh clean     # stop, then remove dist/log/pid state
 ./services.sh help      # full usage
 ```
@@ -266,6 +267,10 @@ Hard rules (same as the foreground launcher, plus runner-specific ones):
   the runner prints exactly what to restore instead of installing.
 - Restart leaves no orphaned processes and no stale runtime state: a stale
   `hramatka/app/.real-e2e` directory is removed before every start.
+- Rebuild preflights tools, credentials, data, and the existing dependency tree;
+  it builds and CSP-checks a staged artifact before stopping a healthy service
+  or replacing `dist`, then swaps and starts under one lifecycle lock. A failed
+  start restores the previous artifact, and foreign listeners are never killed.
 - Missing prerequisites (repository `.venv`, credentials, data release, unbuilt frontend) fail
   with a specific message naming the missing item and the fix, never a stack trace or a hang.
 - Loopback ports default to 8443 (https) / 8788 (api); override with
