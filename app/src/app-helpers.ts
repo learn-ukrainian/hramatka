@@ -30,6 +30,7 @@ export interface BakeProgress {
   phases_total: number;
   step: BakeProgressStep;
   calls_done: number | null;
+  /** Legacy provider-plan field; conditional checks make it non-total. */
   calls_planned: number | null;
   updated_at: string;
 }
@@ -87,15 +88,8 @@ export function formatBakeProgressLine(progress: BakeProgress, t: BakeStatusTran
   };
   const stepLabel = stepKey ? stepLabels[stepKey] : t('bake.step.prep');
   let line = t('bake.progressLine', { phase: String(phase), total: String(total), step: stepLabel });
-  if (
-    progress.calls_done != null &&
-    progress.calls_planned != null &&
-    progress.calls_planned > 0
-  ) {
-    line += t('bake.progressCalls', {
-      done: String(progress.calls_done),
-      planned: String(progress.calls_planned),
-    });
+  if (progress.calls_done != null) {
+    line += t('bake.providerCalls', { count: String(progress.calls_done) });
   }
   return line;
 }

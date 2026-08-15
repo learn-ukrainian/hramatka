@@ -83,7 +83,7 @@ describe('app-helpers', () => {
     expect(bakeStatusSubline('failed', 'готовий', 'Збій генерації.')).toBe('Збій генерації.');
   });
 
-  it('formatBakeProgressLine renders honest phase/step copy (no percent)', () => {
+  it('formatBakeProgressLine renders phase progress and provider-call count separately', () => {
     expect(
       formatBakeProgressLine({
         phase: 2,
@@ -93,7 +93,17 @@ describe('app-helpers', () => {
         calls_planned: 12,
         updated_at: '2026-07-14T10:00:00Z',
       }, tUk),
-    ).toBe('Фаза 2 із 3 — створення завдань… (4 з 12)');
+    ).toBe('Фаза 2 із 3 — створення завдань… (виклики постачальника: 4)');
+    expect(
+      formatBakeProgressLine({
+        phase: 3,
+        phases_total: 3,
+        step: 'gates',
+        calls_done: 5,
+        calls_planned: 4,
+        updated_at: '2026-07-14T10:00:00Z',
+      }, tUk),
+    ).toBe('Фаза 3 із 3 — перевірка… (виклики постачальника: 5)');
     expect(
       formatBakeProgressLine({
         phase: 3,

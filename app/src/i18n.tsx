@@ -726,7 +726,10 @@ const DICT = {
   'bake.step.assembly': { uk: 'збирання заняття', en: 'assembling the lesson' },
   'bake.step.prep': { uk: 'приготування', en: 'preparing' },
   'bake.progressLine': { uk: 'Фаза {phase} із {total} — {step}…', en: 'Phase {phase} of {total} — {step}…' },
-  'bake.progressCalls': { uk: ' ({done} з {planned})', en: ' ({done} of {planned})' },
+  'bake.providerCalls': {
+    uk: ' (виклики постачальника: {count})',
+    en: ' (provider calls: {count})',
+  },
   'bake.elapsed.lt2': {
     uk: 'Текст отримано — складаємо завдання з вашого тексту.',
     en: 'Text received — building tasks from your text.',
