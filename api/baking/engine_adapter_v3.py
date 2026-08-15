@@ -2381,8 +2381,30 @@ class EngineLessonBaker:
 
     def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
         job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
+        telemetry_identity = anchor.get("telemetry") if isinstance(anchor, dict) else None
+        teacher_id = (
+            telemetry_identity.get("teacher_id")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("teacher_id"), str)
+            else None
+        )
+        attempt = (
+            telemetry_identity.get("attempt")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("attempt"), int)
+            else None
+        )
+        attempt_token = (
+            telemetry_identity.get("attempt_token")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("attempt_token"), str)
+            else None
+        )
         context = TelemetryContext(
             job_id=job_id if isinstance(job_id, str) else None,
+            teacher_id=teacher_id,
+            attempt=attempt,
+            attempt_token=attempt_token,
             store=self.store,
             phases_total=3,
             calls_planned=4,
@@ -2575,7 +2597,10 @@ class EngineLessonBaker:
         regeneration_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
         context = TelemetryContext(
             job_id=regeneration_id if isinstance(regeneration_id, str) else None,
-            store=self.store,
+            # Activity-regeneration telemetry has a distinct durable aggregate;
+            # it must not call the lesson-job progress writer without a lesson
+            # claim identity.
+            store=None,
             phases_total=1,
             calls_planned=(
                 2 if block.get("type") in {"text-questions", "short-writing"} else 1

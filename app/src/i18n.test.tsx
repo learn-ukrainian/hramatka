@@ -80,11 +80,12 @@ describe('i18n translation layer', () => {
       },
       {
         code: 'provider_unavailable',
-        mustIncludeUk: 'перевантажений',
+        mustIncludeUk: 'Постачальник не зміг завершити',
+        mustNotIncludeUk: 'перевантажений',
       },
       {
         code: 'bake_timeout',
-        mustIncludeUk: 'час очікування',
+        mustIncludeUk: 'Час очікування',
         mustNotIncludeUk: 'перевантажений',
       },
       {

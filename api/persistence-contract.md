@@ -99,7 +99,7 @@ remains the sole pilot label in `pilot_teachers`.
 | `id TEXT NOT NULL` | Browser UUID; second half of `PRIMARY KEY (teacher_id, id)` |
 | `request_json TEXT NOT NULL` | Canonical original paste request, including text/source/level/duration/focus |
 | `request_hash BLOB NOT NULL` | SHA-256 of canonical UTF-8 `request_json` |
-| `status TEXT NOT NULL` | `draft`, `baking`, `ready`, or `failed` |
+| `status TEXT NOT NULL` | `draft`, `baking`, `ready`, `failed`, or terminal `cancelled` |
 | `step TEXT NOT NULL` | Frozen status step from OpenAPI |
 | `failure_code`, `failure_message TEXT NULL` | Sanitized durable failure only; no raw exception/provider text |
 | `lesson_json TEXT NULL` | Validated pilot-constrained `lu.lesson.v1`; never a partial lesson |
@@ -110,6 +110,12 @@ remains the sole pilot label in `pilot_teachers`.
 | `revision INTEGER NOT NULL` | Starts at 1 and increases by exactly 1 per durable aggregate transition |
 | `created_at`, `updated_at TEXT NOT NULL` | UTC RFC 3339 |
 | `started_at`, `completed_at TEXT NULL` | Bake lifecycle timestamps |
+| `attempt INTEGER NOT NULL` | Starts at 1; increments only when a failed/cancelled aggregate is retried in place |
+| `attempt_history_json TEXT NOT NULL` | Canonical safe terminal history, including the current attempt once terminal; no provider text or lesson content |
+| `retry_requested_revision INTEGER NULL` | Durable source revision of the current retry intent, used to make lost-response retries idempotent |
+| `attempt_token TEXT NULL` | Immutable opaque claim token; every worker publication and telemetry write predicates on it |
+| `provider_started_at TEXT NULL` | Durable provider-call lease linearization point for the current claim |
+| `attempt_quiesced_at TEXT NULL` | Present only once the current terminal worker/provider attempt has exited; retry and DELETE require it |
 
 The canonical request is exactly the OpenAPI request after JSON validation: object keys
 sorted; compact UTF-8 JSON; `focus` present as `null` when omitted; anchor source fixed
@@ -133,8 +139,30 @@ step change, ready/failure completion, a newly persisted warning acknowledgement
 lesson acceptance, and return to draft. Repeating an already-recorded warning
 acknowledgement with the current revision is a successful idempotent no-op: it returns
 the current revision and does not update the row or timestamp. A stale expected revision
-always returns `409 revision_conflict`, including a retry whose prior success response
-was lost.
+returns `409 revision_conflict` except for the documented durable replay keys of cancel
+and retry.
+
+Cancellation is an owner-scoped `BEGIN IMMEDIATE` compare-and-swap at
+`expected_revision`. It applies only to `draft` or `baking`, changes the aggregate to
+terminal `cancelled`, records a safe `cancelled` disposition in attempt history, and
+increments revision once. Repeating the acknowledgement with the returned revision is
+an idempotent no-op. Completion and failure writes predicate on `status = 'baking'`,
+so a cancellation committed first can never publish a result. DELETE refuses active
+jobs; it never removes a row while provider work may still be in flight. Every worker
+claim receives an immutable attempt token. A provider call first acquires an atomic,
+attempt-bound lease that races with cancellation: if cancellation commits first, no
+call starts; if the lease commits first, cancellation truthfully treats that call as
+already started and waits for the same token to acknowledge quiescence before DELETE.
+Every terminal provider attempt (including a timeout) retains that quiescence marker;
+retry returns `409 lesson_state_conflict` until it is present, so a newer attempt never
+overlaps or forgets an older worker/provider call. Queued cancellation has no worker
+token and may delete immediately.
+
+Retry is one in-place transition from `failed` or `cancelled` to `draft` at the exact
+revision. It retains the job ID, archives the terminal current attempt, increments
+`attempt`, and records `retry_requested_revision`. Replaying that same source revision
+returns the same current attempt without adding another queue entry, including after a
+worker has claimed it. A later terminal revision may start one subsequent attempt.
 
 Every browser lesson mutation body supplies `expected_revision`. The update predicate
 must include owner, lesson ID, state, and revision. Zero updated rows are resolved with
@@ -161,7 +189,9 @@ currently accepted ready lesson; set `accepted = 0` in metadata and lesson JSON;
 does not discard the validated lesson or warning acknowledgements.
 
 The real baker validates the complete lesson against the digest-pinned public contract
-and the private nine-type constraint before the completion transaction. On validation
+and the private nine-type constraint before the completion transaction. Workers check
+the durable baking state before provider/phase work, after provider return, and before
+complete/fail publication. On validation
 failure, it persists only `failed`, a safe failure code/message, and timestamps—never
 the partial document or internal IR. Mock output is never substituted.
 

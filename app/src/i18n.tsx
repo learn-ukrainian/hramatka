@@ -196,7 +196,8 @@ const DICT = {
   'status.baking': { uk: 'готується', en: 'baking' }, // T_EXACT «готується…»
   'status.ready': { uk: 'готово', en: 'ready' }, // T_EXACT
   'status.failed': { uk: 'помилка', en: 'error' },
-  'status.draft': { uk: 'чернетка', en: 'draft' }, // T_EXACT
+  'status.draft': { uk: 'у черзі', en: 'queued' },
+  'status.cancelled': { uk: 'скасовано', en: 'cancelled' },
 
   // ---- lesson view toolbar ----
   'lesson.back': { uk: '← До списку', en: '← To the list' },
@@ -269,12 +270,12 @@ const DICT = {
     en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
   },
   'recovery.body.provider_unavailable': {
-    uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
-    en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
+    uk: 'Постачальник не зміг завершити складання уроку. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
+    en: 'The provider could not complete the lesson build. Retry in this same lesson — its text, identity, and attempt history are preserved.',
   },
   'recovery.body.bake_timeout': {
-    uk: 'Не вдалося створити урок — перевищено час очікування. Спробуйте ще раз — текст уже збережено.',
-    en: 'Could not create the lesson — the wait time was exceeded. Try again — your text is already saved.',
+    uk: 'Час очікування складання уроку минув. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
+    en: 'The lesson build timed out. Retry in this same lesson — its text, identity, and attempt history are preserved.',
   },
   'recovery.body.lesson_schema_invalid': {
     uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
@@ -297,10 +298,24 @@ const DICT = {
     en: 'Could not select exercises for this text. Add more detail or choose different text — your text is already saved.',
   },
   'recovery.retry': {
-    uk: 'Створити урок ще раз із цим текстом',
-    en: 'Create the lesson again from this text',
+    uk: 'Повторити в цьому самому занятті',
+    en: 'Retry in this same lesson',
   },
   'recovery.back': { uk: 'Повернутися до списку', en: 'Back to the list' },
+  'bake.cancel': { uk: 'Скасувати складання', en: 'Cancel lesson build' },
+  'bake.cancelling': { uk: 'Скасовуємо…', en: 'Cancelling…' },
+  'bake.retrying': { uk: 'Повторюємо…', en: 'Retrying…' },
+  'bake.cancelHint': {
+    uk: 'Скасування може трохи затриматися. Якщо робота постачальника вже почалася, вона може завершитися віддалено, але результат не буде опубліковано.',
+    en: 'Cancellation can take a moment. If provider work has already started, it may finish remotely, but its result cannot be published.',
+  },
+  'bake.cancelledBody': {
+    uk: 'Складання скасовано. Ви можете повторити спробу в цьому самому занятті: ідентифікатор і попередні спроби збережено.',
+    en: 'The build was cancelled. You can retry in this same lesson: its identity and previous attempts are preserved.',
+  },
+  'bake.attempt': { uk: 'Спроба {attempt}', en: 'Attempt {attempt}' },
+  'bake.history': { uk: 'Історія спроб', en: 'Attempt history' },
+  'bake.historyEmpty': { uk: 'Завершених спроб ще немає.', en: 'No completed attempts yet.' },
   'bake.updating': { uk: 'Оновлення…', en: 'Updating…' },
   'bake.checkNow': { uk: 'Перевірити зараз', en: 'Check now' },
   'bake.elapsed': { uk: 'Минуло {clock}', en: 'Elapsed {clock}' }, // #112 honest live wait clock (no demo equivalent)
@@ -886,7 +901,7 @@ export function translate(lang: Lang, key: ChromeKey, params?: Params): string {
 }
 
 /** UA status chip label → dictionary key (chip label is chrome; the chip class stays data-driven). */
-export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed'): ChromeKey {
+export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed' | 'cancelled'): ChromeKey {
   switch (status) {
     case 'baking':
       return 'status.baking';
@@ -894,6 +909,8 @@ export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed'): Chro
       return 'status.ready';
     case 'failed':
       return 'status.failed';
+    case 'cancelled':
+      return 'status.cancelled';
     default:
       return 'status.draft';
   }

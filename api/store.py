@@ -51,6 +51,7 @@ _FAILURE_CODES = frozenset(
         "lesson_floor_unmet",
         "generation_failed",
         "no_eligible_activities",
+        "cancelled",
     }
 )
 _STEP_RECEIVED = "текст отримано"
@@ -89,6 +90,10 @@ class RevisionConflict(ValueError):
 
 class LessonStateConflict(ValueError):
     """The aggregate exists but its current state disallows that transition."""
+
+
+class AttemptQuiescing(LessonStateConflict):
+    """A terminal attempt still has a worker/provider call in flight."""
 
 
 class WarningBlockNotFound(ValueError):
@@ -248,6 +253,13 @@ class JobRecord:
     accepted_at: str | None
     accepted_revision: int | None
     revision: int
+    attempt: int
+    attempt_history: tuple[dict[str, object], ...]
+    retry_requested_revision: int | None
+    attempt_token: str | None
+    provider_started_at: str | None
+    cancelled_acknowledged_at: str | None
+    attempt_quiesced_at: str | None
     created_at: str
     updated_at: str
     started_at: str | None
@@ -429,6 +441,34 @@ def canonical_json(value: Any) -> str:
         separators=(",", ":"),
         allow_nan=False,
     )
+
+
+def _attempt_history_json(
+    job: JobRecord,
+    *,
+    status: str,
+    failure_code: str | None,
+    completed_at: str,
+    retry_requested_revision: int | None = None,
+) -> str:
+    """Append this attempt's terminal disposition exactly once."""
+    history = [dict(item) for item in job.attempt_history]
+    for item in history:
+        if item["attempt"] == job.attempt:
+            if retry_requested_revision is not None:
+                item["retry_requested_revision"] = retry_requested_revision
+            return canonical_json(history)
+    history.append(
+        {
+            "attempt": job.attempt,
+            "status": status,
+            "failure_code": failure_code,
+            "started_at": job.started_at,
+            "completed_at": completed_at,
+            "retry_requested_revision": retry_requested_revision,
+        }
+    )
+    return canonical_json(history)
 
 
 def canonical_request_json(
@@ -1405,10 +1445,14 @@ class JobStore:
         return job, created
 
     def delete_lesson(self, teacher_id: str, lesson_id: str) -> bool:
-        """Delete one owner-scoped lesson job row regardless of status."""
+        """Delete only an inactive owner-scoped job; active work must be cancelled."""
         with self._write_transaction() as connection:
             cursor = connection.execute(
-                "DELETE FROM lesson_jobs WHERE teacher_id = ? AND id = ?",
+                """
+                DELETE FROM lesson_jobs
+                WHERE teacher_id = ? AND id = ? AND status NOT IN ('draft', 'baking')
+                  AND attempt_quiesced_at IS NOT NULL
+                """,
                 (teacher_id, lesson_id),
             )
         return cursor.rowcount == 1
@@ -1457,6 +1501,7 @@ class JobStore:
     def claim_next_draft(self) -> JobRecord | None:
         """Atomically claim the next queued job for one in-process pool worker."""
         timestamp = now_iso()
+        attempt_token = str(uuid.uuid4())
         with self._write_transaction() as connection:
             row = connection.execute(
                 """
@@ -1470,6 +1515,8 @@ class JobStore:
                 """
                 UPDATE lesson_jobs
                 SET status = 'baking', step = ?, started_at = ?, updated_at = ?,
+                    attempt_token = ?, provider_started_at = NULL,
+                    cancelled_acknowledged_at = NULL, attempt_quiesced_at = NULL,
                     revision = revision + 1
                 WHERE teacher_id = ? AND id = ? AND status = 'draft' AND revision = ?
                 """,
@@ -1477,6 +1524,7 @@ class JobStore:
                     _STEP_COMPOSED,
                     timestamp,
                     timestamp,
+                    attempt_token,
                     row["teacher_id"],
                     row["id"],
                     row["revision"],
@@ -1490,7 +1538,208 @@ class JobStore:
             ).fetchone()
         return self._record(claimed) if claimed is not None else None
 
-    def set_step(self, teacher_id: str, lesson_id: str, step: str) -> bool:
+    def is_current_attempt(
+        self, teacher_id: str, lesson_id: str, *, attempt: int, attempt_token: str
+    ) -> bool:
+        """Return whether this exact worker claim may still publish its attempt."""
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM lesson_jobs
+                WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token = ?
+                """,
+                (teacher_id, lesson_id, attempt, attempt_token),
+            ).fetchone()
+        return row is not None
+
+    def begin_provider_call(
+        self, teacher_id: str, lesson_id: str, *, attempt: int, attempt_token: str
+    ) -> bool:
+        """Atomically lease one provider call for the current worker attempt.
+
+        The transaction is the check/use boundary: cancellation either commits
+        first and no provider call is leased, or the lease commits first and a
+        concurrently requested cancellation truthfully reports work already
+        started.  The lease is internal state, so it does not revise browser
+        aggregate state.
+        """
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET provider_started_at = COALESCE(provider_started_at, ?)
+                WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token = ?
+                """,
+                (timestamp, teacher_id, lesson_id, attempt, attempt_token),
+            )
+        return cursor.rowcount == 1
+
+    def acknowledge_cancelled_attempt(
+        self, teacher_id: str, lesson_id: str, *, attempt: int, attempt_token: str
+    ) -> bool:
+        """Backward-compatible cancelled-attempt alias for generic quiescence."""
+        return self.acknowledge_attempt_quiescence(
+            teacher_id, lesson_id, attempt=attempt, attempt_token=attempt_token
+        )
+
+    def acknowledge_attempt_quiescence(
+        self, teacher_id: str, lesson_id: str, *, attempt: int, attempt_token: str
+    ) -> bool:
+        """Confirm one terminal worker attempt cannot make another durable write."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs SET
+                    attempt_quiesced_at = COALESCE(attempt_quiesced_at, ?),
+                    cancelled_acknowledged_at = CASE
+                        WHEN status = 'cancelled'
+                        THEN COALESCE(cancelled_acknowledged_at, ?)
+                        ELSE cancelled_acknowledged_at
+                    END
+                WHERE teacher_id = ? AND id = ? AND status IN ('cancelled', 'failed')
+                  AND attempt = ? AND attempt_token = ?
+                """,
+                (timestamp, timestamp, teacher_id, lesson_id, attempt, attempt_token),
+            )
+        return cursor.rowcount == 1
+
+    def cancel(
+        self, teacher_id: str, lesson_id: str, *, expected_revision: int
+    ) -> tuple[JobRecord, bool]:
+        """Terminally cancel draft/baking work with owner-scoped CAS semantics.
+
+        Repeating a cancellation acknowledgement at the returned revision is an
+        idempotent no-op.  A stale revision remains a conflict, so a browser
+        cannot accidentally cancel a later retry attempt.
+        """
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            self._require_expected_revision(job, expected_revision)
+            if job.status == "cancelled":
+                return job, False
+            if job.status not in {"draft", "baking"}:
+                raise LessonStateConflict("The lesson is not in a state that allows cancellation.")
+            history_json = _attempt_history_json(
+                job,
+                status="cancelled",
+                failure_code="cancelled",
+                completed_at=timestamp,
+            )
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET status = 'cancelled', step = ?, failure_code = 'cancelled',
+                    failure_message = ?, lesson_json = NULL, accepted = 0,
+                    accepted_at = NULL, accepted_revision = NULL,
+                    attempt_history_json = ?, completed_at = ?, updated_at = ?,
+                    cancelled_acknowledged_at = ?,
+                    attempt_quiesced_at = ?,
+                    revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status IN ('draft', 'baking')
+                  AND revision = ?
+                """,
+                (
+                    _STEP_COMPLETE,
+                    (
+                        "Складання уроку скасовано. Уже запущена відповідь може завершитися "
+                        "в сервісі, але урок не буде опубліковано."
+                    ),
+                    history_json,
+                    timestamp,
+                    timestamp,
+                    timestamp if job.status == "draft" or job.attempt_token is None else None,
+                    timestamp if job.status == "draft" or job.attempt_token is None else None,
+                    teacher_id,
+                    lesson_id,
+                    expected_revision,
+                ),
+            )
+            self._resolve_mutation(
+                cursor.rowcount, connection, teacher_id, lesson_id, expected_revision
+            )
+            row = connection.execute(
+                "SELECT * FROM lesson_jobs WHERE teacher_id = ? AND id = ?",
+                (teacher_id, lesson_id),
+            ).fetchone()
+        assert row is not None
+        return self._record(row), True
+
+    def retry(
+        self, teacher_id: str, lesson_id: str, *, expected_revision: int
+    ) -> tuple[JobRecord, bool]:
+        """Queue a failed/cancelled aggregate in place without duplicating its identity.
+
+        The retry source revision is durable.  Replaying the same request after
+        a lost response returns that same attempt even if a worker has already
+        claimed or completed it; a later terminal revision starts a new attempt.
+        """
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            if job.retry_requested_revision == expected_revision and job.attempt > 1:
+                return job, False
+            self._require_expected_revision(job, expected_revision)
+            if job.status not in {"failed", "cancelled"}:
+                raise LessonStateConflict("The lesson is not in a state that allows retry.")
+            if job.attempt_quiesced_at is None:
+                raise AttemptQuiescing(
+                    "The terminal provider attempt has not yet acknowledged quiescence."
+                )
+            history_json = _attempt_history_json(
+                job,
+                status=job.status,
+                failure_code=job.failure_code,
+                completed_at=job.completed_at or timestamp,
+                retry_requested_revision=expected_revision,
+            )
+            cursor = connection.execute(
+                """
+                UPDATE lesson_jobs
+                SET status = 'draft', step = ?, failure_code = NULL, failure_message = NULL,
+                    lesson_json = NULL, accepted = 0, accepted_at = NULL,
+                    accepted_revision = NULL, progress_json = NULL, started_at = NULL,
+                    completed_at = NULL, attempt = attempt + 1,
+                    attempt_history_json = ?, retry_requested_revision = ?,
+                    attempt_token = NULL, provider_started_at = NULL,
+                    cancelled_acknowledged_at = NULL, attempt_quiesced_at = NULL,
+                    updated_at = ?, revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status IN ('failed', 'cancelled')
+                  AND revision = ?
+                """,
+                (
+                    _STEP_RECEIVED,
+                    history_json,
+                    expected_revision,
+                    timestamp,
+                    teacher_id,
+                    lesson_id,
+                    expected_revision,
+                ),
+            )
+            self._resolve_mutation(
+                cursor.rowcount, connection, teacher_id, lesson_id, expected_revision
+            )
+            row = connection.execute(
+                "SELECT * FROM lesson_jobs WHERE teacher_id = ? AND id = ?",
+                (teacher_id, lesson_id),
+            ).fetchone()
+        assert row is not None
+        return self._record(row), True
+
+    def set_step(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        step: str,
+        *,
+        attempt: int,
+        attempt_token: str,
+    ) -> bool:
         if step not in {_STEP_COMPOSED, _STEP_CHECKING, _STEP_COMPLETE}:
             raise ValueError("Unknown frozen lesson step.")
         timestamp = now_iso()
@@ -1499,12 +1748,21 @@ class JobStore:
                 """
                 UPDATE lesson_jobs SET step = ?, updated_at = ?, revision = revision + 1
                 WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token = ?
                 """,
-                (step, timestamp, teacher_id, lesson_id),
+                (step, timestamp, teacher_id, lesson_id, attempt, attempt_token),
             )
         return cursor.rowcount == 1
 
-    def complete(self, teacher_id: str, lesson_id: str, lesson: Mapping[str, Any]) -> bool:
+    def complete(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        lesson: Mapping[str, Any],
+        *,
+        attempt: int,
+        attempt_token: str,
+    ) -> bool:
         """Persist one complete validated lesson; partial documents are never written."""
         materialized = dict(lesson)
         if materialized.get("accepted") is not False:
@@ -1512,19 +1770,50 @@ class JobStore:
         lesson_json = canonical_json(materialized)
         timestamp = now_iso()
         with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            if (
+                job.status != "baking"
+                or job.attempt != attempt
+                or job.attempt_token != attempt_token
+            ):
+                return False
             cursor = connection.execute(
                 """
                 UPDATE lesson_jobs
                 SET status = 'ready', step = ?, failure_code = NULL, failure_message = NULL,
                     lesson_json = ?, accepted = 0, accepted_at = NULL, accepted_revision = NULL,
-                    completed_at = ?, updated_at = ?, revision = revision + 1
+                    attempt_history_json = ?, completed_at = ?, updated_at = ?,
+                    attempt_quiesced_at = ?,
+                    revision = revision + 1
                 WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token = ?
                 """,
-                (_STEP_COMPLETE, lesson_json, timestamp, timestamp, teacher_id, lesson_id),
+                (
+                    _STEP_COMPLETE,
+                    lesson_json,
+                    _attempt_history_json(
+                        job, status="ready", failure_code=None, completed_at=timestamp
+                    ),
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                    teacher_id,
+                    lesson_id,
+                    attempt,
+                    attempt_token,
+                ),
             )
         return cursor.rowcount == 1
 
-    def update_progress(self, lesson_id: str, progress: dict[str, Any]) -> bool:
+    def update_progress(
+        self,
+        teacher_id: str,
+        lesson_id: str,
+        progress: dict[str, Any],
+        *,
+        attempt: int,
+        attempt_token: str | None,
+    ) -> bool:
         """Update progress telemetry for a lesson job."""
         timestamp = now_iso()
         progress = dict(progress)
@@ -1535,9 +1824,21 @@ class JobStore:
             cursor = connection.execute(
                 """
                 UPDATE lesson_jobs SET progress_json = ?, updated_at = ?
-                WHERE id = ?
+                WHERE teacher_id = ? AND id = ? AND attempt = ?
+                  AND (
+                    (status = 'baking' AND attempt_token = ?)
+                    OR (status = 'draft' AND attempt_token IS NULL AND ? IS NULL)
+                  )
                 """,
-                (progress_json, timestamp, lesson_id),
+                (
+                    progress_json,
+                    timestamp,
+                    teacher_id,
+                    lesson_id,
+                    attempt,
+                    attempt_token,
+                    attempt_token,
+                ),
             )
         return cursor.rowcount == 1
 
@@ -1549,6 +1850,8 @@ class JobStore:
         failure_message: str,
         *,
         step: str = _STEP_COMPLETE,
+        attempt: int,
+        attempt_token: str,
     ) -> bool:
         """Durably fail a baking job with an allowlisted safe code/message only."""
         _validate_failure(failure_code, failure_message)
@@ -1556,22 +1859,41 @@ class JobStore:
             raise ValueError("Unknown frozen lesson step.")
         timestamp = now_iso()
         with self._write_transaction() as connection:
+            job = self._require_owned(connection, teacher_id, lesson_id)
+            if (
+                job.status != "baking"
+                or job.attempt != attempt
+                or job.attempt_token != attempt_token
+            ):
+                return False
             cursor = connection.execute(
                 """
                 UPDATE lesson_jobs
                 SET status = 'failed', step = ?, failure_code = ?, failure_message = ?,
                     lesson_json = NULL, accepted = 0, accepted_at = NULL, accepted_revision = NULL,
-                    completed_at = ?, updated_at = ?, revision = revision + 1
+                    attempt_history_json = ?, completed_at = ?, updated_at = ?,
+                    attempt_quiesced_at = ?,
+                    revision = revision + 1
                 WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token = ?
                 """,
                 (
                     step,
                     failure_code,
                     failure_message,
+                    _attempt_history_json(
+                        job,
+                        status="failed",
+                        failure_code=failure_code,
+                        completed_at=timestamp,
+                    ),
+                    timestamp,
                     timestamp,
                     timestamp,
                     teacher_id,
                     lesson_id,
+                    attempt,
+                    attempt_token,
                 ),
             )
         return cursor.rowcount == 1
@@ -1581,26 +1903,60 @@ class JobStore:
         del hard_timeout_seconds  # Recovery is a restart boundary, not a timeout calculation.
         timestamp = now_iso()
         with self._write_transaction() as connection:
-            cursor = connection.execute(
+            # A fresh process has no inherited worker/provider call. Any
+            # cancelled claim left without an acknowledgement is quiescent at
+            # this restart boundary and may become deletable.
+            connection.execute(
                 """
+                UPDATE lesson_jobs
+                SET attempt_quiesced_at = COALESCE(attempt_quiesced_at, ?),
+                    cancelled_acknowledged_at = CASE
+                        WHEN status = 'cancelled'
+                        THEN COALESCE(cancelled_acknowledged_at, ?)
+                        ELSE cancelled_acknowledged_at
+                    END
+                WHERE status IN ('cancelled', 'failed') AND attempt_quiesced_at IS NULL
+                """,
+                (timestamp, timestamp),
+            )
+            rows = connection.execute(
+                "SELECT * FROM lesson_jobs WHERE status = 'baking'"
+            ).fetchall()
+            for row in rows:
+                job = self._record(row)
+                connection.execute(
+                    """
                 UPDATE lesson_jobs
                 SET status = 'failed', step = ?, failure_code = 'worker_restarted',
                     failure_message = ?, lesson_json = NULL, accepted = 0,
                     accepted_at = NULL, accepted_revision = NULL, completed_at = ?,
-                    updated_at = ?, revision = revision + 1
-                WHERE status = 'baking'
+                    attempt_history_json = ?, updated_at = ?, attempt_quiesced_at = ?,
+                    revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status = 'baking'
+                  AND attempt = ? AND attempt_token IS ?
                 """,
-                (
-                    _STEP_COMPLETE,
                     (
-                        "Складання уроку перервалося через перезапуск сервісу. "
-                        "Спробуйте, будь ласка, ще раз."
+                        _STEP_COMPLETE,
+                        (
+                            "Складання уроку перервалося через перезапуск сервісу. "
+                            "Спробуйте, будь ласка, ще раз."
+                        ),
+                        timestamp,
+                        _attempt_history_json(
+                            job,
+                            status="failed",
+                            failure_code="worker_restarted",
+                            completed_at=timestamp,
+                        ),
+                        timestamp,
+                        timestamp,
+                        job.teacher_id,
+                        job.id,
+                        job.attempt,
+                        job.attempt_token,
                     ),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-        return cursor.rowcount
+                )
+        return len(rows)
 
     def sweep_expired_bakes(self, hard_timeout_seconds: int) -> int:
         if hard_timeout_seconds <= 0:
@@ -1608,24 +1964,41 @@ class JobStore:
         cutoff = _add_seconds(now_iso(), -hard_timeout_seconds)
         timestamp = now_iso()
         with self._write_transaction() as connection:
-            cursor = connection.execute(
-                """
+            rows = connection.execute(
+                "SELECT * FROM lesson_jobs WHERE status = 'baking' AND started_at < ?", (cutoff,)
+            ).fetchall()
+            for row in rows:
+                job = self._record(row)
+                connection.execute(
+                    """
                 UPDATE lesson_jobs
                 SET status = 'failed', step = ?, failure_code = 'bake_timeout',
                     failure_message = ?, lesson_json = NULL, accepted = 0,
                     accepted_at = NULL, accepted_revision = NULL, completed_at = ?,
-                    updated_at = ?, revision = revision + 1
-                WHERE status = 'baking' AND started_at < ?
+                    attempt_history_json = ?, updated_at = ?, attempt_quiesced_at = NULL,
+                    revision = revision + 1
+                WHERE teacher_id = ? AND id = ? AND status = 'baking' AND started_at < ?
+                  AND attempt = ? AND attempt_token IS ?
                 """,
-                (
-                    _STEP_COMPLETE,
-                    "Час на складання уроку вичерпано. Спробуйте, будь ласка, ще раз.",
-                    timestamp,
-                    timestamp,
-                    cutoff,
-                ),
-            )
-        return cursor.rowcount
+                    (
+                        _STEP_COMPLETE,
+                        "Час на складання уроку вичерпано. Спробуйте, будь ласка, ще раз.",
+                        timestamp,
+                        _attempt_history_json(
+                            job,
+                            status="failed",
+                            failure_code="bake_timeout",
+                            completed_at=timestamp,
+                        ),
+                        timestamp,
+                        job.teacher_id,
+                        job.id,
+                        cutoff,
+                        job.attempt,
+                        job.attempt_token,
+                    ),
+                )
+        return len(rows)
 
     def fail_queued_drafts(
         self,
@@ -1637,18 +2010,41 @@ class JobStore:
         _validate_failure(failure_code, failure_message)
         timestamp = now_iso()
         with self._write_transaction() as connection:
-            cursor = connection.execute(
-                """
+            rows = connection.execute("SELECT * FROM lesson_jobs WHERE status = 'draft'").fetchall()
+            for row in rows:
+                job = self._record(row)
+                connection.execute(
+                    """
                 UPDATE lesson_jobs
                 SET status = 'failed', step = ?, failure_code = ?, failure_message = ?,
                     lesson_json = NULL, accepted = 0, accepted_at = NULL,
-                    accepted_revision = NULL, completed_at = ?, updated_at = ?,
+                    accepted_revision = NULL, completed_at = ?, attempt_history_json = ?,
+                    updated_at = ?, attempt_quiesced_at = ?,
                     revision = revision + 1
-                WHERE status = 'draft'
+                WHERE teacher_id = ? AND id = ? AND status = 'draft'
                 """,
-                (_STEP_COMPLETE, failure_code, failure_message, timestamp, timestamp),
-            )
-        return cursor.rowcount
+                    (
+                        _STEP_COMPLETE,
+                        failure_code,
+                        failure_message,
+                        timestamp,
+                        _attempt_history_json(
+                            job,
+                            status="failed",
+                            failure_code=failure_code,
+                            completed_at=timestamp,
+                        ),
+                        timestamp,
+                        # A queued draft has neither a claimed token nor a
+                        # provider lease. Quarantine is therefore its terminal
+                        # process boundary: no acknowledgement can arrive and
+                        # retry/delete must not remain blocked forever.
+                        timestamp,
+                        job.teacher_id,
+                        job.id,
+                    ),
+                )
+        return len(rows)
 
     # -- Durable one-block regeneration jobs (#418) -----------------------
 
@@ -2668,6 +3064,7 @@ class JobStore:
         try:
             lesson = json.loads(row["lesson_json"]) if row["lesson_json"] is not None else None
             acknowledgements = json.loads(row["warning_acknowledgements_json"])
+            attempt_history = json.loads(row["attempt_history_json"])
             progress = (
                 json.loads(row["progress_json"])
                 if ("progress_json" in row.keys() and row["progress_json"] is not None)
@@ -2677,6 +3074,32 @@ class JobStore:
             raise PersistenceUnavailable("SQLite contains unreadable durable data.") from error
         if not isinstance(acknowledgements, list) or any(
             not isinstance(value, str) for value in acknowledgements
+        ):
+            raise PersistenceUnavailable("SQLite contains unreadable durable data.")
+        if not isinstance(attempt_history, list) or any(
+            not isinstance(item, dict)
+            or set(item)
+            != {
+                "attempt",
+                "status",
+                "failure_code",
+                "started_at",
+                "completed_at",
+                "retry_requested_revision",
+            }
+            or not isinstance(item["attempt"], int)
+            or item["attempt"] < 1
+            or item["status"] not in {"ready", "failed", "cancelled"}
+            or item["failure_code"] not in {*_FAILURE_CODES, None}
+            or item["started_at"] is not None
+            and not isinstance(item["started_at"], str)
+            or not isinstance(item["completed_at"], str)
+            or item["retry_requested_revision"] is not None
+            and (
+                not isinstance(item["retry_requested_revision"], int)
+                or item["retry_requested_revision"] < 1
+            )
+            for item in attempt_history
         ):
             raise PersistenceUnavailable("SQLite contains unreadable durable data.")
         return JobRecord(
@@ -2694,6 +3117,13 @@ class JobStore:
             accepted_at=row["accepted_at"],
             accepted_revision=row["accepted_revision"],
             revision=row["revision"],
+            attempt=row["attempt"],
+            attempt_history=tuple(attempt_history),
+            retry_requested_revision=row["retry_requested_revision"],
+            attempt_token=row["attempt_token"],
+            provider_started_at=row["provider_started_at"],
+            cancelled_acknowledged_at=row["cancelled_acknowledged_at"],
+            attempt_quiesced_at=row["attempt_quiesced_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             started_at=row["started_at"],

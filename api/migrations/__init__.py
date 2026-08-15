@@ -16,6 +16,9 @@ from .v008_teacher_passkeys import apply as apply_v008
 from .v009_activity_feedback import apply as apply_v009
 from .v010_activity_regenerations import apply as apply_v010
 from .v011_anchor_capacity_failure_code import apply as apply_v011
+from .v012_cancellation_retry import apply as apply_v012
+from .v013_attempt_leases import apply as apply_v013
+from .v014_attempt_quiescence import apply as apply_v014
 
 
 class MigrationError(RuntimeError):
@@ -36,6 +39,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     (9, "activity_feedback", apply_v009),
     (10, "activity_regenerations", apply_v010),
     (11, "anchor_capacity_failure_code", apply_v011),
+    (12, "cancellation_retry", apply_v012),
+    (13, "attempt_leases", apply_v013),
+    (14, "attempt_quiescence", apply_v014),
 )
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

@@ -54,7 +54,7 @@ const URL_IMPORT_ERROR_KEYS: Readonly<Record<string, ChromeKey>> = {
 };
 
 // ===== Types derived from openapi + lesson contract =====
-type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
+type LessonState = 'draft' | 'baking' | 'ready' | 'failed' | 'cancelled';
 type PilotActivityType =
   | 'true-false' | 'cloze' | 'match-up' | 'quiz' | 'mark-the-words'
   | 'fill-in' | 'error-correction' | 'text-questions' | 'short-writing';
@@ -149,6 +149,43 @@ interface LessonCatalogItem {
   failure_code: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface LessonAttempt {
+  attempt: number;
+  status: 'ready' | 'failed' | 'cancelled';
+  failure_code: string | null;
+  started_at: string | null;
+  completed_at: string;
+  retry_requested_revision: number | null;
+}
+
+interface LessonStatus {
+  id: string;
+  status: LessonState;
+  step: string;
+  revision: number;
+  attempt: number;
+  attempt_history: LessonAttempt[];
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: string;
+  updated_at: string;
+  progress?: BakeProgress;
+}
+
+function statusCardFromApi(status: LessonStatus, previous?: { startedAt?: string }) {
+  return {
+    status: status.status,
+    step: status.step || '',
+    revision: status.revision,
+    attempt: status.attempt,
+    attempt_history: status.attempt_history || [],
+    failure: status.failure_message || undefined,
+    failure_code: status.failure_code ?? null,
+    progress: status.progress || undefined,
+    startedAt: previous?.startedAt || status.created_at,
+  };
 }
 
 const API_BASE = ''; // same-origin in prod; in dev we proxy or use full for stub via fetch override in E2E
@@ -285,6 +322,9 @@ export default function TeacherApp() {
   const [bakeStatus, setBakeStatus] = useState<{
     status: LessonState;
     step: string;
+    revision: number;
+    attempt: number;
+    attempt_history: LessonAttempt[];
     failure?: string;
     failure_code?: string | null;
     progress?: BakeProgress;
@@ -309,6 +349,10 @@ export default function TeacherApp() {
   const currentLessonIdRef = useRef<string | null>(null);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
+  // UI disables immediately, while the exact revision sent below makes a
+  // repeated click from another tab a server-side idempotent replay.
+  const bakeMutationInFlightRef = useRef<'cancel' | 'retry' | null>(null);
+  const [bakeMutation, setBakeMutation] = useState<'cancel' | 'retry' | null>(null);
 
   // Last bake request: sessionStorage (+ in-memory fallback when storage unavailable).
   // Recovery path: API status does not expose anchor on failed lessons — see app-helpers.
@@ -758,7 +802,10 @@ export default function TeacherApp() {
         setGrammarFocus(source.grammarFocus?.trim() || '');
         setCurrentLessonId(id);
         const startedAt = new Date().toISOString();
-        setBakeStatus({ status: data.status || 'baking', step: 'bake.step.textReceived', startedAt });
+        setBakeStatus({
+          status: data.status || 'baking', step: 'bake.step.textReceived',
+          revision: data.revision || 1, attempt: 1, attempt_history: [], startedAt,
+        });
         setBakeElapsedMs(0);
         navigate({ view: 'lesson', lessonId: id, mode: 'review' });
         pollStatus(id);
@@ -821,55 +868,61 @@ export default function TeacherApp() {
     }
   };
 
-  const beginRecreateFromServer = async (sourceLessonId: string, data: { id: string; status?: string }) => {
-    const newId = data.id;
-    setCurrentLessonId(newId);
-    const startedAt = new Date().toISOString();
-    setBakeStatus({
-      status: (data.status as LessonState) || 'baking',
-      step: 'bake.step.textReceived',
-      startedAt,
-    });
-    setBakeElapsedMs(0);
-    setLesson(null);
-    navigate({ view: 'lesson', lessonId: newId, mode: 'review' });
-    pollStatus(newId);
-    void sourceLessonId;
-  };
-
-  const retryFailedLesson = async () => {
+  const mutateBake = async (operation: 'cancel' | 'retry') => {
     const lid = currentLessonId || route.lessonId || null;
-    if (!lid) return;
+    const current = bakeStatus;
+    if (
+      !lid || !current || bakeMutationInFlightRef.current
+      || (operation === 'cancel' && !['draft', 'baking'].includes(current.status))
+      || (operation === 'retry' && !['failed', 'cancelled'].includes(current.status))
+    ) return;
     if (!session || !csrf) {
       setError(errKey('err.sessionRequired'));
       return;
     }
+    bakeMutationInFlightRef.current = operation;
+    setBakeMutation(operation);
     setError(null);
-    setLoading(true);
     try {
-      const res = await apiFetch(`/api/lessons/${lid}/recreate`, {
+      const res = await apiFetch(`/api/lessons/${lid}/${operation}`, {
         method: 'POST',
-        headers: { 'X-CSRF-Token': csrf },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        // The backend's revision CAS is the cross-tab guard.  Replaying this
+        // exact value is intentionally safe for both cancel and retry.
+        body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 202) {
-        await beginRecreateFromServer(lid, data);
+      if (res.ok) {
+        const next = statusCardFromApi(data as LessonStatus, current);
+        setBakeStatus(next);
+        setCurrentLessonId(lid);
+        setLesson(null);
+        await loadCatalog();
+        if (next.status === 'draft' || next.status === 'baking') {
+          setBakeElapsedMs(0);
+          pollStatus(lid);
+        } else {
+          clearPoll();
+        }
         return;
       }
-      if (res.status === 422) {
-        // Server is the source of truth for the stored request. If it has none,
-        // surface the server's Ukrainian error — do NOT recreate from client cache
-        // (that would bypass the missing-request_json contract). (review #127)
-        const e: ErrorEnvelope = data;
-        setError(errOr(e.message, 'err.noRetrySource'));
-        return;
+      // Another tab may have completed the same idempotent intent or advanced
+      // the revision.  Re-read before offering the next valid action.
+      if (res.status === 409) {
+        const statusRes = await apiFetch(`/api/lessons/${lid}/status`);
+        if (statusRes.ok) {
+          const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
+          setBakeStatus(refreshed);
+          if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
+        }
       }
       const e: ErrorEnvelope = data;
       handleApiError(e);
     } catch {
       setError(errKey('err.bakeFailed'));
     } finally {
-      setLoading(false);
+      bakeMutationInFlightRef.current = null;
+      setBakeMutation(null);
     }
   };
 
@@ -960,21 +1013,14 @@ export default function TeacherApp() {
         if (activePollIdRef.current !== id) {
           return;
         }
-        setBakeStatus((prev) => ({
-          status: st.status,
-          step: st.step || '',
-          failure: st.failure_message || undefined,
-          failure_code: st.failure_code ?? null,
-          progress: st.progress || undefined,
-          startedAt: prev?.startedAt || st.created_at,
-        }));
+        setBakeStatus((prev) => statusCardFromApi(st as LessonStatus, prev || undefined));
         if (st.status === 'ready') {
           clearPoll();
           await openLesson(id, 'review');
           await loadCatalog();
           return;
         }
-        if (st.status === 'failed') {
+        if (st.status === 'failed' || st.status === 'cancelled') {
           clearPoll();
           return;
         }
@@ -982,13 +1028,15 @@ export default function TeacherApp() {
         if (activePollIdRef.current !== id) {
           return;
         }
-        setBakeStatus((prev) => prev || { status: 'baking', step: 'bake.step.updating' });
+        setBakeStatus((prev) => prev || {
+          status: 'baking', step: 'bake.step.updating', revision: 1, attempt: 1, attempt_history: [],
+        });
       }
       if (attempts < max) {
         schedule(attempts < 30 ? 800 : 2500);
       } else {
         clearPoll();
-        if (st && st.status !== 'ready' && st.status !== 'failed') {
+        if (st && st.status !== 'ready' && st.status !== 'failed' && st.status !== 'cancelled') {
           setError(errKey('err.longWait'));
         }
       }
@@ -1039,15 +1087,8 @@ export default function TeacherApp() {
           const statusRes = await apiFetch(`/api/lessons/${id}/status`);
           if (statusRes.ok) {
             const st = await statusRes.json();
-            if (st.status === 'failed') {
-              setBakeStatus({
-                status: 'failed',
-                step: st.step || '',
-                failure: st.failure_message || undefined,
-                failure_code: st.failure_code ?? null,
-                progress: st.progress || undefined,
-                startedAt: st.created_at,
-              });
+            if (st.status === 'failed' || st.status === 'cancelled') {
+              setBakeStatus(statusCardFromApi(st as LessonStatus));
               setBakeElapsedMs(0);
               return;
             }
@@ -1055,6 +1096,9 @@ export default function TeacherApp() {
             setBakeStatus({
               status: st.status === 'ready' ? 'baking' : (st.status as LessonState),
               step: st.step || 'bake.step.tasksComposed',
+              revision: st.revision || 1,
+              attempt: st.attempt || 1,
+              attempt_history: st.attempt_history || [],
               progress: st.progress || undefined,
               startedAt,
             });
@@ -1066,7 +1110,9 @@ export default function TeacherApp() {
           // fall through to generic baking poll
         }
         const startedAt = new Date().toISOString();
-        setBakeStatus({ status: 'baking', step: 'bake.step.tasksComposed', startedAt });
+        setBakeStatus({
+          status: 'baking', step: 'bake.step.tasksComposed', revision: 1, attempt: 1, attempt_history: [], startedAt,
+        });
         setBakeElapsedMs(0);
         pollStatus(id);
       } else if (res.status === 404) {
@@ -1235,6 +1281,7 @@ export default function TeacherApp() {
   const bakingSubline = () => {
     if (!bakeStatus) return '';
     const step = resolveBakeStep(bakeStatus.step);
+    if (bakeStatus.status === 'cancelled') return t('bake.cancelledBody');
     if (bakeStatus.status === 'failed') {
       return bakeStatusSubline(bakeStatus.status, step, bakeStatus.failure, t('bake.failFallback'));
     }
@@ -1906,7 +1953,7 @@ export default function TeacherApp() {
                 <section className="catalog lessons-catalog" aria-label={t('catalog.title')}>
                   <ul>
                     {catalog.map(item => {
-                      const chipClass = item.status === 'ready' ? 'ok' : item.status === 'baking' ? 'warn' : item.status === 'failed' ? 'bad' : 'muted';
+                      const chipClass = item.status === 'ready' ? 'ok' : item.status === 'baking' ? 'warn' : item.status === 'failed' ? 'bad' : item.status === 'cancelled' ? 'muted cancelled' : 'muted';
                       const snippet = item.anchor_snippet?.trim();
                       return (
                         <li key={item.id} className="listrow lesson-list-row">
@@ -2054,10 +2101,11 @@ export default function TeacherApp() {
               {bakeStatus && !lesson && (
                 <div className="baking" data-testid="baking-status-view">
                   <div className="steps">
-                    <div className={`step ${bakeStatus.status === 'baking' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
-                      <div className="dot">{bakeStatus.status === 'baking' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
+                    <div className={`step ${bakeStatus.status === 'baking' || bakeStatus.status === 'draft' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
+                      <div className="dot">{bakeStatus.status === 'baking' || bakeStatus.status === 'draft' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
                       <div>
                         <b>{t('bake.statusPrefix')}{t(statusKey(bakeStatus.status))}</b>
+                        <div className="sd" data-testid="bake-attempt">{t('bake.attempt', { attempt: bakeStatus.attempt })}</div>
                         <div className="sd" data-testid="baking-subline">{bakingSubline()}</div>
                         {bakeStatus.status === 'baking' && (
                           <div className="sd bake-elapsed" data-testid="baking-elapsed">
@@ -2067,22 +2115,22 @@ export default function TeacherApp() {
                       </div>
                     </div>
                   </div>
-                  {bakeStatus.status === 'failed' && (
+                  {(bakeStatus.status === 'failed' || bakeStatus.status === 'cancelled') && (
                     <div className="recovery-card banner fail" data-testid="failure-recovery">
                       <span className="ic">!</span>
                       <div className="recovery-body">
                         <p data-testid="failure-recovery-body" data-failure-code={bakeStatus.failure_code || ''}>
-                          {t(recoveryBodyKey(bakeStatus.failure_code))}
+                          {bakeStatus.status === 'cancelled' ? t('bake.cancelledBody') : t(recoveryBodyKey(bakeStatus.failure_code))}
                         </p>
                         <div className="recovery-actions">
                           <button
                             type="button"
                             className="btn primary"
-                            onClick={retryFailedLesson}
-                            disabled={loading}
+                            onClick={() => void mutateBake('retry')}
+                            disabled={bakeMutation !== null}
                             data-testid="failure-retry-btn"
                           >
-                            {t('recovery.retry')}
+                            {bakeMutation === 'retry' ? t('bake.retrying') : t('recovery.retry')}
                           </button>
                           <button
                             type="button"
@@ -2095,11 +2143,37 @@ export default function TeacherApp() {
                       </div>
                     </div>
                   )}
-                  {bakeStatus.status === 'baking' && polling && (
+                  {(bakeStatus.status === 'baking' || bakeStatus.status === 'draft') && polling && (
                     <p className="hint" style={{marginTop:6}} data-testid="baking-polling">{t('bake.updating')}</p>
                   )}
-                  {bakeStatus.status === 'baking' && (
-                    <button className="btn ghost" style={{marginTop:8}} onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)}>{t('bake.checkNow')}</button>
+                  {(bakeStatus.status === 'baking' || bakeStatus.status === 'draft') && (
+                    <div className="bake-actions">
+                      <button
+                        type="button"
+                        className="btn danger"
+                        onClick={() => void mutateBake('cancel')}
+                        disabled={bakeMutation !== null}
+                        data-testid="bake-cancel-btn"
+                      >
+                        {bakeMutation === 'cancel' ? t('bake.cancelling') : t('bake.cancel')}
+                      </button>
+                      <button className="btn ghost" onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)} disabled={bakeMutation !== null}>{t('bake.checkNow')}</button>
+                      <p className="hint bake-cancel-hint">{t('bake.cancelHint')}</p>
+                    </div>
+                  )}
+                  {(bakeStatus.status === 'failed' || bakeStatus.status === 'cancelled') && (
+                    <section className="bake-attempt-history" aria-label={t('bake.history')}>
+                      <h3>{t('bake.history')}</h3>
+                      {bakeStatus.attempt_history.length === 0 ? <p>{t('bake.historyEmpty')}</p> : (
+                        <ol>
+                          {bakeStatus.attempt_history.map((entry) => (
+                            <li key={`${entry.attempt}-${entry.completed_at}`}>
+                              {t('bake.attempt', { attempt: entry.attempt })} — {t(statusKey(entry.status))}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
                   )}
                 </div>
               )}

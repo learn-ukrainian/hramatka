@@ -440,7 +440,8 @@ paths:
     delete:
       tags: [Lessons]
       operationId: deleteLesson
-      summary: Delete one owner-scoped lesson job
+      summary: Delete one inactive owner-scoped lesson job
+      description: Active `draft` and `baking` jobs must first use `cancelLesson`; a cancelled claimed bake remains temporarily undeletable until its worker acknowledges quiescence. Deletion never detaches in-flight provider work.
       security:
         - PilotSession: []
       parameters:
@@ -456,6 +457,83 @@ paths:
           $ref: '#/components/responses/CsrfRejected'
         '404':
           $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/cancel:
+    post:
+      tags: [Lessons]
+      operationId: cancelLesson
+      summary: Terminally cancel the exact active lesson revision
+      description: |
+        Cancels only `draft` or `baking` work. A provider call already in flight
+        may finish remotely, but its result cannot publish after cancellation.
+        Repeating the returned cancelled revision is an idempotent no-op.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '200':
+          description: Durable cancellation status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lessons/{lesson_id}/retry:
+    post:
+      tags: [Lessons]
+      operationId: retryLesson
+      summary: Queue one new attempt for a failed or cancelled lesson
+      description: |
+        Retry preserves the job ID and records the terminal prior attempt. A
+        replay with the same source revision is idempotent and cannot create a
+        second attempt, even if the first retry has already been claimed. A
+        cancelled or timed-out provider attempt must first acknowledge
+        quiescence; until then retry returns `409 lesson_state_conflict` and
+        cannot overlap hidden provider work with a new attempt.
+      security:
+        - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/RevisionMutation'
+      responses:
+        '202':
+          description: Retry queued or same retry intent replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          $ref: '#/components/responses/LessonNotFound'
+        '409':
+          $ref: '#/components/responses/MutationConflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons/{lesson_id}/recreate:
@@ -1272,7 +1350,7 @@ components:
           description: True only when the UUID was already bound to the identical request.
     LessonState:
       type: string
-      enum: [draft, baking, ready, failed]
+      enum: [draft, baking, ready, failed, cancelled]
     LessonStep:
       type: string
       enum: [текст отримано, завдання складено, перевірка, готово]
@@ -1290,6 +1368,7 @@ components:
         - unknown_safe_failure
         - generation_failed
         - no_eligible_activities
+        - cancelled
     LessonStatus:
       type: object
       additionalProperties: false
@@ -1298,6 +1377,8 @@ components:
         - status
         - step
         - revision
+        - attempt
+        - attempt_history
         - failure_code
         - failure_message
         - created_at
@@ -1313,6 +1394,24 @@ components:
         revision:
           type: integer
           minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        attempt_history:
+          type: array
+          description: Completed attempts in attempt order, including the current attempt once it is terminal.
+          items:
+            type: object
+            additionalProperties: false
+            required: [attempt, status, failure_code, started_at, completed_at, retry_requested_revision]
+            properties:
+              attempt: {type: integer, minimum: 1}
+              status: {type: string, enum: [ready, failed, cancelled]}
+              failure_code:
+                $ref: '#/components/schemas/FailureCode'
+              started_at: {type: [string, 'null'], format: date-time}
+              completed_at: {type: string, format: date-time}
+              retry_requested_revision: {type: [integer, 'null'], minimum: 1}
         failure_code:
           $ref: '#/components/schemas/FailureCode'
         failure_message:

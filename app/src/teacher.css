@@ -111,6 +111,14 @@
   padding: 6px 0;
 }
 .recovery-actions .link-back:hover { background: transparent; opacity: .85; }
+.bake-actions { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn.danger { color: var(--bad); border-color: var(--bad); background: var(--card); }
+.btn.danger:hover:not(:disabled) { background: var(--bad-soft); }
+.bake-cancel-hint { flex: 1 1 100%; margin: 2px 0 0; max-width: 62ch; }
+.bake-attempt-history { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; font-size: 13px; }
+.bake-attempt-history h3 { margin: 0 0 6px; font-size: 14px; }
+.bake-attempt-history p, .bake-attempt-history ol { margin: 0; }
+.bake-attempt-history ol { padding-left: 20px; }
 
 /* banners now use demo .banner (honest=wheat, fail=bad). .error kept for role=alert */
 .banner { display: flex; gap: 10px; align-items: flex-start; border-radius: 10px; padding: 12px 14px; font-size: 14px; margin: 8px 16px; }

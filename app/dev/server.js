@@ -221,10 +221,16 @@ const QUALIFIED_LOGICAL_MODEL = Object.freeze({
   description: 'Детермінована тестова модель.',
 });
 const SLOW_BAKE_MARKER = '__SLOW_BAKE__';
+const FAIL_BAKE_MARKER = '__FAIL_BAKE__';
 
 function isSlowBake(l) {
   const text = l?._anchor?.text || '';
   return text.includes(SLOW_BAKE_MARKER);
+}
+
+function isFailBake(l) {
+  const text = l?._anchor?.text || '';
+  return text.includes(FAIL_BAKE_MARKER);
 }
 
 function slowBakePollsRequired() {
@@ -248,6 +254,28 @@ function bakeProgressFor(l) {
     calls_planned: planned,
     updated_at: new Date().toISOString(),
   };
+}
+
+function lessonStatusPayload(lid, l) {
+  const step = l.status === 'failed' || l.status === 'cancelled'
+    ? ''
+    : l.status === 'baking'
+      ? 'завдання складено'
+      : (l.status === 'ready' ? 'готово' : 'текст отримано');
+  const payload = {
+    id: lid,
+    status: l.status,
+    step,
+    revision: l.revision,
+    attempt: l.attempt || 1,
+    attempt_history: l.attempt_history || [],
+    failure_code: l.failure_code || null,
+    failure_message: l.failure_message || null,
+    created_at: l.created_at,
+    updated_at: l.updated_at,
+  };
+  if (l.status === 'baking') payload.progress = bakeProgressFor(l);
+  return payload;
 }
 
 const REVIEW_PHASE_BUDGETS = {
@@ -655,19 +683,85 @@ const server = http.createServer(async (req, res) => {
       updated_at: now,
       failure_code: null,
       failure_message: null,
+      attempt: 1,
+      attempt_history: [],
       _bakeCounter: 0,
       _anchor: anchor,
       _duration: body.duration || 60,
       _focus: body.focus || null,
       _logicalModelId: logicalModelId,
     };
-    // Scripted: special id for errors
-    if (id === '00000000-0000-0000-0000-000000000bad') {
+    // Scripted deterministic failures; never a real provider.
+    if (id === '00000000-0000-0000-0000-000000000bad' || isFailBake(state.lessons[id])) {
       state.lessons[id].status = 'failed';
       state.lessons[id].failure_code = 'provider_unavailable';
       state.lessons[id].failure_message = 'Постачальник тимчасово недоступний.';
+      state.lessons[id]._attemptQuiesced = true;
     }
     return sendJSON(res, 202, { id, status: 'baking', revision: 1, reused: false });
+  }
+
+  // #415 terminal cancel and in-place retry.  This remains a dev-only fake
+  // provider, but mirrors the public revision/idempotency contract so browser
+  // tests exercise the same requests as the real API.
+  const cancelMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/cancel$/);
+  if (cancelMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = cancelMatch[1];
+    const l = state.lessons[lid];
+    if (!l) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (!Number.isInteger(body?.expected_revision)) return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    if (l.status === 'cancelled' && body.expected_revision === l.revision) {
+      return sendJSON(res, 200, lessonStatusPayload(lid, l));
+    }
+    if (body.expected_revision !== l.revision) return sendJSON(res, 409, errorBody('revision_conflict', 'Урок змінено; оновіть його перед повторною спробою.'));
+    if (l.status !== 'draft' && l.status !== 'baking') return sendJSON(res, 409, errorBody('lesson_state_conflict', 'Стан уроку не дозволяє скасування.'));
+    l.status = 'cancelled';
+    l.failure_code = 'cancelled';
+    l.failure_message = null;
+    // A slow fake bake mirrors the real durable runner: retry/delete must wait
+    // until the old worker observes cancellation and acknowledges quiescence.
+    l._attemptQuiesced = !isSlowBake(l);
+    l.revision += 1;
+    l.updated_at = new Date().toISOString();
+    l.attempt_history = [...(l.attempt_history || []), {
+      attempt: l.attempt || 1, status: 'cancelled', failure_code: 'cancelled',
+      started_at: l.created_at, completed_at: l.updated_at, retry_requested_revision: null,
+    }];
+    return sendJSON(res, 200, lessonStatusPayload(lid, l));
+  }
+
+  const retryMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/retry$/);
+  if (retryMatch && method === 'POST') {
+    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
+    if (!requireCsrf(req, res, state.session)) return;
+    const lid = retryMatch[1];
+    const l = state.lessons[lid];
+    if (!l) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const body = await parseBody(req);
+    if (!Number.isInteger(body?.expected_revision)) return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    if ((l.status === 'draft' || l.status === 'baking') && l._retryRequestedRevision === body.expected_revision) {
+      return sendJSON(res, 202, lessonStatusPayload(lid, l));
+    }
+    if (body.expected_revision !== l.revision) return sendJSON(res, 409, errorBody('revision_conflict', 'Урок змінено; оновіть його перед повторною спробою.'));
+    if (l.status !== 'failed' && l.status !== 'cancelled') return sendJSON(res, 409, errorBody('lesson_state_conflict', 'Стан уроку не дозволяє повторне складання.'));
+    if (!l._attemptQuiesced) {
+      return sendJSON(res, 409, errorBody('lesson_state_conflict', 'Скасування ще завершує запущену роботу; зачекайте перед повторною спробою.'));
+    }
+    l.attempt_history = (l.attempt_history || []).map((entry) => (
+      entry.attempt === l.attempt ? { ...entry, retry_requested_revision: body.expected_revision } : entry
+    ));
+    l._retryRequestedRevision = body.expected_revision;
+    l.attempt = (l.attempt || 1) + 1;
+    l.status = 'baking';
+    l.failure_code = null;
+    l.failure_message = null;
+    l._bakeCounter = 0;
+    l.revision += 1;
+    l.updated_at = new Date().toISOString();
+    return sendJSON(res, 202, lessonStatusPayload(lid, l));
   }
 
   // Status
@@ -677,6 +771,11 @@ const server = http.createServer(async (req, res) => {
     const lid = statusMatch[1];
     const l = state.lessons[lid];
     if (!l) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    if (l.status === 'cancelled' && !l._attemptQuiesced) {
+      // The status refresh issued after the typed 409 is the observable
+      // acknowledgement boundary for this deterministic local fake.
+      l._attemptQuiesced = true;
+    }
     // Simulate progress: after 1 poll -> ready (covers E2E polling)
     l._bakeCounter = (l._bakeCounter || 0) + 1;
     if (l.status === 'baking' && l._bakeCounter >= bakeReadyAfterPolls(l) && !l.failure_code) {
@@ -689,25 +788,7 @@ const server = http.createServer(async (req, res) => {
       l.status = 'ready';
       l.updated_at = new Date().toISOString();
     }
-    const step = l.status === 'failed'
-      ? ''
-      : l.status === 'baking'
-        ? 'завдання складено'
-        : (l.status === 'ready' ? 'готово' : 'текст отримано');
-    const payload = {
-      id: lid,
-      status: l.status,
-      step,
-      revision: l.revision,
-      failure_code: l.failure_code || null,
-      failure_message: l.failure_message || null,
-      created_at: l.created_at,
-      updated_at: l.updated_at,
-    };
-    if (l.status === 'baking') {
-      payload.progress = bakeProgressFor(l);
-    }
-    return sendJSON(res, 200, payload);
+    return sendJSON(res, 200, lessonStatusPayload(lid, l));
   }
 
   // Recreate from stored request
@@ -736,6 +817,8 @@ const server = http.createServer(async (req, res) => {
       updated_at: now,
       failure_code: null,
       failure_message: null,
+      attempt: 1,
+      attempt_history: [],
       _bakeCounter: 0,
       _anchor: source._anchor,
       _duration: source._duration || 60,
@@ -751,7 +834,11 @@ const server = http.createServer(async (req, res) => {
     if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
     if (!requireCsrf(req, res, state.session)) return;
     const lid = lessonMatch[1];
-    if (!state.lessons[lid]) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    const l = state.lessons[lid];
+    if (!l) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
+    if (l.status === 'draft' || l.status === 'baking' || ((l.status === 'failed' || l.status === 'cancelled') && !l._attemptQuiesced)) {
+      return sendJSON(res, 409, errorBody('lesson_state_conflict', 'Попередня спроба ще завершує запущену роботу.'));
+    }
     delete state.lessons[lid];
     res.writeHead(204);
     return res.end();

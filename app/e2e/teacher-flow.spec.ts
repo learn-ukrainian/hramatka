@@ -3,7 +3,7 @@
  * Covers redeem → paste → bake polling → lesson with all 9 blocks → ack warnings → accept → draft.
  * Also: fragment scrub, no token in storage, 401/410 paths.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Request } from '@playwright/test';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -37,6 +37,11 @@ async function stopStub() {
 }
 
 test.describe('Hramatka teacher frontend E2E (stub)', () => {
+  // The suite intentionally owns one stateful fake-provider server on 8787.
+  // Keep its lifecycle single-worker even when the outer Playwright config is
+  // fully parallel, otherwise one worker can tear the shared stub down while
+  // another still polls a lesson.
+  test.describe.configure({ mode: 'serial' });
   test.beforeAll(async () => {
     await startStub();
   });
@@ -193,6 +198,76 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(bad).toBe(0);
   });
 
+  test('cancels and retries in place once across two tabs, with accessible responsive bilingual chrome', async ({ page, context }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await expect(page.getByPlaceholder(/Вставте український текст/)).toBeVisible({ timeout: 10_000 });
+    await page.setViewportSize({ width: 375, height: 760 });
+    await page.getByPlaceholder(/Вставте український текст/).fill(
+      `Тест повільного фейкового складання ${'__SLOW_BAKE__'}.`,
+    );
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    const cancel = page.getByTestId('bake-cancel-btn');
+    await expect(cancel).toBeVisible();
+    await expect(cancel).toHaveAccessibleName('Скасувати складання');
+    await expect(page.getByText(/результат не буде опубліковано/i)).toBeVisible();
+
+    const lessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
+    expect(lessonId).toBeTruthy();
+    const secondTab = await context.newPage();
+    await secondTab.goto(`${APP}/teacher/#/lessons/${lessonId}`);
+    await expect(secondTab.getByTestId('bake-cancel-btn')).toBeVisible();
+
+    const cancelled = page.waitForResponse(response => response.url().endsWith(`/api/lessons/${lessonId}/cancel`) && response.status() === 200);
+    await cancel.click();
+    expect((await cancelled).request().postDataJSON()).toEqual({ expected_revision: 1 });
+    await expect(page.getByTestId('failure-recovery')).toContainText('Складання скасовано');
+    await expect(page.getByRole('heading', { name: 'Історія спроб' })).toBeVisible();
+
+    const retryFirst = page.getByTestId('failure-retry-btn');
+    const quiescingRetry = page.waitForResponse(response => response.url().endsWith(`/api/lessons/${lessonId}/retry`) && response.status() === 409);
+    await retryFirst.click();
+    expect((await quiescingRetry).request().postDataJSON()).toEqual({ expected_revision: 2 });
+    await expect(page.getByText(/ще завершує запущену роботу/i)).toBeVisible();
+
+    // The typed 409 causes the UI to refresh terminal status; that is the
+    // deterministic fake's worker-quiescence acknowledgement. Both tabs can
+    // then replay the exact retry intent, creating only attempt 2.
+    await secondTab.reload();
+    const retrySecond = secondTab.getByTestId('failure-retry-btn');
+    await expect(retrySecond).toBeVisible();
+    const retryBodies: unknown[] = [];
+    const recordRetry = (request: Request) => {
+      if (request.url().endsWith(`/api/lessons/${lessonId}/retry`)) retryBodies.push(request.postDataJSON());
+    };
+    context.on('request', recordRetry);
+    await Promise.all([retryFirst.click(), retrySecond.click()]);
+    await expect.poll(() => retryBodies.length).toBe(2);
+    expect(retryBodies).toEqual([{ expected_revision: 2 }, { expected_revision: 2 }]);
+    const aggregate = await page.evaluate(async (id) => (await (await fetch(`/api/lessons/${id}/status`)).json()), lessonId!);
+    expect(aggregate).toMatchObject({ id: lessonId, attempt: 2, status: 'baking' });
+    expect(aggregate.attempt_history).toHaveLength(1);
+    expect(aggregate.attempt_history[0]).toMatchObject({ attempt: 1, status: 'cancelled', retry_requested_revision: 2 });
+    context.off('request', recordRetry);
+
+    await page.getByTestId('lang-toggle').click();
+    await expect(page.getByTestId('bake-cancel-btn')).toHaveAccessibleName('Cancel lesson build');
+    await expect(page.getByText(/may finish remotely, but its result cannot be published/i)).toBeVisible();
+  });
+
+  test('retries a deterministic provider failure in the same lesson', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await expect(page.getByPlaceholder(/Вставте український текст/)).toBeVisible({ timeout: 10_000 });
+    await page.getByPlaceholder(/Вставте український текст/).fill('Тест збою фейкового постачальника __FAIL_BAKE__.');
+    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
+    await expect(page.getByTestId('failure-recovery')).toContainText('Постачальник не зміг завершити');
+    const lessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
+    const retried = page.waitForResponse(response => response.url().endsWith(`/api/lessons/${lessonId}/retry`) && response.status() === 202);
+    await page.getByTestId('failure-retry-btn').click();
+    expect((await retried).request().postDataJSON()).toEqual({ expected_revision: 1 });
+    await expect(page.getByTestId('bake-attempt')).toContainText('Спроба 2');
+    expect(new URL(page.url()).hash).toContain(`/lessons/${lessonId}`);
+  });
+
   test('ack warnings, accept blocked until acks, then accept succeeds, then draft', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs
@@ -326,12 +401,13 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     const recovery = page.getByTestId('failure-recovery');
     await expect(recovery).toBeVisible({ timeout: 10000 });
-    await expect(recovery).toContainText(/Не вдалося створити урок/);
-    await expect(recovery).toContainText(/Постачальник тимчасово недоступний|текст уже збережено/i);
-    await expect(page.locator('.step.fail .sd')).not.toContainText(/готово|завдання складено/i);
+    await expect(recovery).toContainText(/Не вдалося створити урок|Постачальник не зміг завершити/);
+    await expect(recovery).toContainText(/Постачальник тимчасово недоступний|текст уже збережено|історія спроб збережено/i);
+    await expect(page.getByTestId('baking-subline')).not.toContainText(/готово|завдання складено/i);
 
     const en = await page.locator('text=The lesson bake could not be completed').count();
     expect(en).toBe(0);
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
   });
 
   test('session boundary: logout then new invite clears form and saved request (cross-teacher leak)', async ({ page }) => {
@@ -364,7 +440,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(storageCleared).toBe(true);
   });
 
-  test('failure recovery: retry button creates a new lesson from saved text', async ({ page }) => {
+  test('failure recovery: retry button keeps the failed lesson identity', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
     await page.waitForURL(/\/teacher\/?$/);
@@ -381,15 +457,12 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
     await expect(page.getByTestId('failure-recovery')).toBeVisible({ timeout: 10000 });
 
-    // restore real UUID for the retry
-    await page.evaluate(() => {
-      // @ts-ignore
-      delete crypto.randomUUID;
-    });
-
-    await page.getByRole('button', { name: /Створити урок ще раз із цим текстом/ }).click();
+    const lessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
+    await page.getByRole('button', { name: /Повторити в цьому самому занятті/ }).click();
     await page.waitForSelector('.dblock, .block', { timeout: 15000 });
     await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(9, { timeout: 5000 });
+    expect(new URL(page.url()).hash).toContain(`/lessons/${lessonId}`);
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
   });
 
   test('help overlay opens from header and shows Ukrainian guidance', async ({ page }) => {
@@ -720,7 +793,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByText(/готується|статус/i).first()).toBeVisible();
   });
 
-  test('open failed lesson from catalog shows failure card + re-submit wired', async ({ page }) => {
+  test('open failed lesson from catalog shows failure card + in-place retry', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
     await page.waitForURL(/\/teacher\/?$/);
@@ -755,7 +828,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     const recovery2 = page.getByTestId('failure-recovery');
     await expect(recovery2).toBeVisible({ timeout: 8000 });
     await expect(page.getByTestId('baking-polling')).toHaveCount(0);
-    await expect(recovery2).toContainText('Створити урок ще раз із цим текстом');
+    await expect(recovery2).toContainText('Повторити в цьому самому занятті');
 
     // retry via server recreate with EMPTY localStorage (no client-side source)
     await page.evaluate(() => localStorage.clear());
@@ -763,14 +836,12 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(retryBtn).toBeVisible();
     await expect(retryBtn).toBeEnabled();
 
-    // restore real uuid; click re-submit -> should produce a new ready lesson from server request
-    await page.evaluate(() => {
-      // @ts-ignore
-      delete crypto.randomUUID;
-    });
+    const failedLessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
     await retryBtn.click();
     await page.waitForSelector('.block', { timeout: 15000 });
     await expect(page.locator('.lesson-view .block')).toHaveCount(9, { timeout: 5000 });
+    expect(new URL(page.url()).hash).toContain(`/lessons/${failedLessonId}`);
+    await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
   });
 
   // Sol P1-5: clipboard lesson export — student variant never includes answers/«Ключ відповіді».

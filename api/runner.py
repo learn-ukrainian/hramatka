@@ -316,16 +316,50 @@ class BakeRunner:
         lesson = None
         template = None
         try:
+            # Cancellation is durable and cannot interrupt a provider transport
+            # already in progress. Check before each provider/phase boundary so
+            # no later local work or publication follows a committed cancel.
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
             template = self._bake_with_one_provider_retry(job)
-            if not self._store.set_step(job.teacher_id, job.id, "перевірка"):
+            if template is None or not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
+            if not self._store.set_step(
+                job.teacher_id,
+                job.id,
+                "перевірка",
+                attempt=job.attempt,
+                attempt_token=job.attempt_token,
+            ):
+                self._acknowledge_cancelled_attempt(job)
                 return
             lesson = materialize_lesson(template, job)
             validate_lesson(lesson)
-            self._store.complete(job.teacher_id, job.id, lesson)
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
+            self._store.complete(
+                job.teacher_id,
+                job.id,
+                lesson,
+                attempt=job.attempt,
+                attempt_token=job.attempt_token,
+            )
         except BakeError as error:
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
             self._log_safe_bake_error(job, error)
-            self._fail_bake_error(job.teacher_id, job.id, error)
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
+            self._fail_bake_error(job, error)
         except (ValidationError, ValueError) as error:
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
             self._log_safe_bake_error(job, error)
             try:
                 latest_job = self._store.get(job.teacher_id, job.id)
@@ -380,25 +414,41 @@ class BakeRunner:
                         }
                     )
                 progress["failure_detail"] = {"errors": errors_list}
-                self._store.update_progress(job.id, progress)
+                self._store.update_progress(
+                    job.teacher_id,
+                    job.id,
+                    progress,
+                    attempt=job.attempt,
+                    attempt_token=job.attempt_token,
+                )
             except Exception as capture_exc:
                 log.exception("Failed to capture validation error details: %s", capture_exc)
+            if not self._attempt_is_current(job):
+                self._acknowledge_cancelled_attempt(job)
+                return
             self._store.fail(
                 job.teacher_id,
                 job.id,
                 "lesson_schema_invalid",
                 _SAFE_FAILURE_MESSAGE,
+                attempt=job.attempt,
+                attempt_token=job.attempt_token,
             )
         except Exception:
             # Never persist an exception, trace, provider response, original
             # anchor, or filesystem path.  The durable aggregate carries only a
             # frozen allowlisted code and teacher-safe wording.
             try:
+                if not self._attempt_is_current(job):
+                    self._acknowledge_cancelled_attempt(job)
+                    return
                 self._store.fail(
                     job.teacher_id,
                     job.id,
                     "unknown_safe_failure",
                     _SAFE_FAILURE_MESSAGE,
+                    attempt=job.attempt,
+                    attempt_token=job.attempt_token,
                 )
             except Exception:
                 log.exception(
@@ -406,12 +456,27 @@ class BakeRunner:
                     "job stays baking, restart sweep will convert to durable timeout.",
                     job.id,
                 )
+        finally:
+            # A timeout/cancellation may commit after the final current-attempt
+            # check but before complete/fail publishes. The terminal write then
+            # loses its exact-token predicate; this exiting worker is still the
+            # only party that can acknowledge the already-started provider
+            # stack as quiescent. The store accepts this only for the matching
+            # terminal attempt, so a stale worker cannot touch a retry.
+            self._acknowledge_cancelled_attempt(job)
 
     def _bake_with_one_provider_retry(self, job) -> dict:  # JobRecord is deliberately duck-typed.
         request = {
             "anchor_id": job.id,
             "body_uk": job.anchor_text,
             "source": job.anchor_source,
+            # Internal-only identity for attempt-bound telemetry writes. The
+            # engine reads these fields before it renders provider prompts.
+            "telemetry": {
+                "teacher_id": job.teacher_id,
+                "attempt": job.attempt,
+                "attempt_token": job.attempt_token,
+            },
             # The adapter reads this durable request value. Keeping the baker
             # method signature stable preserves injected test/legacy bakers.
             "grammar_focus": job.grammar_focus,
@@ -424,8 +489,18 @@ class BakeRunner:
             else self._baker
         )
         for attempt in range(2):
+            if not self._store.begin_provider_call(
+                job.teacher_id,
+                job.id,
+                attempt=job.attempt,
+                attempt_token=job.attempt_token,
+            ):
+                return None
             try:
-                return baker.bake(request, job.duration, job.focus)
+                template = baker.bake(request, job.duration, job.focus)
+                if not self._attempt_is_current(job):
+                    return None
+                return template
             except ProviderUnavailable as error:
                 # The adapter preserves the underlying transport signal: retry
                 # a fresh bake only after its own bounded retry/failover path
@@ -462,7 +537,7 @@ class BakeRunner:
             bool(getattr(error, "retry_exhausted", False)),
         )
 
-    def _fail_bake_error(self, teacher_id: str, lesson_id: str, error: BakeError) -> None:
+    def _fail_bake_error(self, job, error: BakeError) -> None:
         # Classification uses only typed exceptions (isinstance). Never inspect
         # message text for code selection. FloorUnmetError carries blames_source.
         if isinstance(error, ProviderUnavailable):
@@ -485,7 +560,33 @@ class BakeRunner:
         else:
             failure_code = "engine_unavailable"
             failure_message = _SAFE_FAILURE_MESSAGE
-        self._store.fail(teacher_id, lesson_id, failure_code, failure_message)
+        self._store.fail(
+            job.teacher_id,
+            job.id,
+            failure_code,
+            failure_message,
+            attempt=job.attempt,
+            attempt_token=job.attempt_token,
+        )
+
+    def _attempt_is_current(self, job) -> bool:
+        token = getattr(job, "attempt_token", None)
+        return isinstance(token, str) and self._store.is_current_attempt(
+            job.teacher_id,
+            job.id,
+            attempt=job.attempt,
+            attempt_token=token,
+        )
+
+    def _acknowledge_cancelled_attempt(self, job) -> None:
+        token = getattr(job, "attempt_token", None)
+        if isinstance(token, str):
+            self._store.acknowledge_cancelled_attempt(
+                job.teacher_id,
+                job.id,
+                attempt=job.attempt,
+                attempt_token=token,
+            )
 
     def _watchdog_loop(self) -> None:
         interval = max(0.05, min(self._hard_timeout_seconds / 4, 5))

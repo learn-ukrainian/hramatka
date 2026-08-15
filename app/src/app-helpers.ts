@@ -1,6 +1,6 @@
 import { translate, statusKey, type ChromeKey } from './i18n';
 
-export type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
+export type LessonState = 'draft' | 'baking' | 'ready' | 'failed' | 'cancelled';
 
 export interface CatalogLessonItem {
   id: string;

@@ -185,7 +185,7 @@ all unredeemed invites and active sessions in the same transaction.
 Every non-empty error response is exactly
 `{code, message, retryable, lesson_id?}` with no additional properties. Messages are
 safe teacher-facing text. `retryable` is true only for transient service/readiness or
-persistence failures; retrying a failed bake creates a new browser UUID.
+persistence failures; failed/cancelled bakes use the explicit in-place retry endpoint.
 
 | HTTP | Required code(s) | Meaning |
 |---|---|---|
@@ -199,5 +199,12 @@ persistence failures; retrying a failed bake creates a new browser UUID.
 
 Bake timeout, API restart while baking, provider failure, engine failure, and public-
 schema failure become a durable `failed` job with a sanitized `failure_code` and
-message. They are returned by the status resource, not as a partial lesson and never
-by substituting the mock baker.
+message. Teacher cancellation becomes the separate terminal `cancelled` disposition.
+It is acknowledged at an exact revision; a repeated acknowledgement at the returned
+revision is a no-op. A cancelled or timed-out attempt must first acknowledge worker
+quiescence before an in-place retry; while that acknowledgement is pending, retry is a
+safe `409 lesson_state_conflict` and no new provider call starts. A cancelled or failed
+job may otherwise be retried in place at its exact terminal revision: it preserves the
+lesson ID and exposes safe attempt history. DELETE refuses active or unquiesced work so
+it cannot hide a provider call. Status returns these durable outcomes, never a partial
+lesson and never mock-substituted output.

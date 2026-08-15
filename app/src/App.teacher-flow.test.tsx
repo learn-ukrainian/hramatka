@@ -18,6 +18,18 @@ function errorResponse(status: number, body: unknown) {
   return { ok: false, status, json: async () => body } as Response;
 }
 
+function jobStatus(status: 'draft' | 'baking' | 'failed' | 'cancelled', revision: number, attempt = 1) {
+  return {
+    id: 'lesson-1', status, step: status === 'baking' ? 'завдання складено' : '', revision, attempt,
+    attempt_history: status === 'cancelled'
+      ? [{ attempt: 1, status: 'cancelled', failure_code: 'cancelled', started_at: '2026-08-13T00:00:00Z', completed_at: '2026-08-13T00:00:02Z', retry_requested_revision: null }]
+      : [],
+    failure_code: status === 'cancelled' ? 'cancelled' : null,
+    failure_message: null,
+    created_at: '2026-08-13T00:00:00Z', updated_at: '2026-08-13T00:00:02Z',
+  };
+}
+
 function generatedLessonResource(lessonId: string, title = 'Урок для перевірки') {
   return {
     lesson_id: lessonId,
@@ -309,6 +321,100 @@ describe('teacher lesson creation and list chrome', () => {
 
     fireEvent.click(await screen.findByTestId('enter-student-mode-btn'));
     expect(await screen.findByTestId('anchor-panel-run')).toHaveTextContent('Квартира була світліша за іншу.');
+  });
+});
+
+describe('cancel and retry in place (#415)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+  });
+
+  it('cancels once and retries the same job at its returned revision', async () => {
+    let cancelRequests = 0;
+    let retryRequests = 0;
+    const mutationBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      if (url.endsWith('/api/lessons/lesson-1') && (!init?.method || init.method === 'GET')) return errorResponse(409, { code: 'lesson_not_ready', message: 'Ще не готово.' });
+      if (url.endsWith('/api/lessons/lesson-1/status')) return response(jobStatus('baking', 7));
+      if (url.endsWith('/api/lessons/lesson-1/cancel') && init?.method === 'POST') {
+        cancelRequests += 1;
+        mutationBodies.push(JSON.parse(String(init.body)));
+        return response(jobStatus('cancelled', 8));
+      }
+      if (url.endsWith('/api/lessons/lesson-1/retry') && init?.method === 'POST') {
+        retryRequests += 1;
+        mutationBodies.push(JSON.parse(String(init.body)));
+        return { ok: true, status: 202, json: async () => jobStatus('baking', 9, 2) } as Response;
+      }
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+
+    renderApp();
+    const cancel = await screen.findByTestId('bake-cancel-btn');
+    fireEvent.click(cancel);
+    fireEvent.click(cancel);
+    await screen.findByTestId('failure-recovery');
+    expect(cancelRequests).toBe(1);
+    expect(mutationBodies[0]).toEqual({ expected_revision: 7 });
+    expect(screen.getByTestId('failure-retry-btn')).toHaveTextContent('Повторити в цьому самому занятті');
+    expect(screen.getByRole('heading', { name: 'Історія спроб' })).toBeVisible();
+
+    const retry = screen.getByTestId('failure-retry-btn');
+    fireEvent.click(retry);
+    fireEvent.click(retry);
+    await waitFor(() => expect(retryRequests).toBe(1));
+    expect(mutationBodies[1]).toEqual({ expected_revision: 8 });
+    expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2');
+    expect(window.location.hash).toContain('/lessons/lesson-1');
+  });
+
+  it('keeps cancellation guidance and status understandable after switching chrome locale', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      if (url.endsWith('/api/lessons/lesson-1') && (!init?.method || init.method === 'GET')) return errorResponse(409, { code: 'lesson_not_ready', message: 'Ще не готово.' });
+      if (url.endsWith('/api/lessons/lesson-1/status')) return response(jobStatus('baking', 7));
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+    renderApp();
+    await screen.findByTestId('bake-cancel-btn');
+    fireEvent.click(screen.getByTestId('lang-toggle'));
+    expect(screen.getByTestId('bake-cancel-btn')).toHaveTextContent('Cancel lesson build');
+    expect(screen.getByText(/may finish remotely, but its result cannot be published/i)).toBeVisible();
+    fireEvent.click(screen.getByTestId('lang-toggle'));
+  });
+
+  it('retries a failed job in place instead of creating a replacement lesson', async () => {
+    const retryBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      if (url.endsWith('/api/lessons/lesson-1') && (!init?.method || init.method === 'GET')) return errorResponse(409, { code: 'lesson_not_ready', message: 'Ще не готово.' });
+      if (url.endsWith('/api/lessons/lesson-1/status')) return response({ ...jobStatus('failed', 12), failure_code: 'bake_timeout' });
+      if (url.endsWith('/api/lessons/lesson-1/retry') && init?.method === 'POST') {
+        retryBodies.push(JSON.parse(String(init.body)));
+        return { ok: true, status: 202, json: async () => jobStatus('baking', 13, 2) } as Response;
+      }
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+    renderApp();
+    const retry = await screen.findByTestId('failure-retry-btn');
+    fireEvent.click(retry);
+    await waitFor(() => expect(retryBodies).toEqual([{ expected_revision: 12 }]));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/recreate'))).toBe(false);
+    expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2');
   });
 });
 

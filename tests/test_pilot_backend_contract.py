@@ -361,6 +361,9 @@ def _valid_teacher_progress() -> dict[str, object]:
 
 
 def _create_progress_job(app, client):
+    # These status-projection cases own durable telemetry directly; stop the
+    # asynchronous baker so their intentionally draft aggregate cannot advance.
+    app.state.runner.stop()
     teacher, _, token = _issue_invite(app)
     lesson_id = str(uuid.uuid4())
     job, created = app.state.store.create_or_get(
@@ -384,9 +387,7 @@ def _write_raw_progress(app, lesson_id: str, progress: object) -> None:
 
 
 def _teacher_progress_openapi_contract() -> tuple[set[str], set[str], str]:
-    source = (Path(__file__).parents[1] / "hramatka/api/openapi.yaml").read_text(
-        encoding="utf-8"
-    )
+    source = (Path(__file__).parents[1] / "hramatka/api/openapi.yaml").read_text(encoding="utf-8")
     schema_block = source.split("    TeacherSafeProgress:\n", maxsplit=1)[1].split(
         "    LessonCatalogItem:\n", maxsplit=1
     )[0]
@@ -424,7 +425,13 @@ def test_status_projects_only_teacher_safe_durable_progress(app, client) -> None
         "failure_detail": {"errors": ["raw failure detail"]},
         "future_internal_key": {"reflection": {"nested": "must not echo"}},
     }
-    assert app.state.store.update_progress(job.id, rich_progress)
+    assert app.state.store.update_progress(
+        teacher.id,
+        job.id,
+        rich_progress,
+        attempt=job.attempt,
+        attempt_token=job.attempt_token,
+    )
 
     response = client.get(f"/api/lessons/{lesson_id}/status")
     assert response.status_code == 200, response.text
@@ -455,14 +462,20 @@ def test_status_projects_only_teacher_safe_durable_progress(app, client) -> None
 
 
 def test_status_omits_mixed_validity_progress_instead_of_partial_subset(app, client) -> None:
-    _, lesson_id, job = _create_progress_job(app, client)
+    teacher, lesson_id, job = _create_progress_job(app, client)
     mixed_progress = {
         **_valid_teacher_progress(),
         "step": {"raw": "generation"},
         "calls_done": True,
         "future_internal_key": {"provider_host": "private.example"},
     }
-    assert app.state.store.update_progress(job.id, mixed_progress)
+    assert app.state.store.update_progress(
+        teacher.id,
+        job.id,
+        mixed_progress,
+        attempt=job.attempt,
+        attempt_token=job.attempt_token,
+    )
 
     malformed = client.get(f"/api/lessons/{lesson_id}/status")
     assert malformed.status_code == 200, malformed.text
@@ -485,9 +498,15 @@ def test_status_omits_progress_when_any_safe_field_is_missing(
 
 @pytest.mark.parametrize("integer_field", ["phase", "phases_total", "calls_done", "calls_planned"])
 def test_status_rejects_boolean_progress_integers(app, client, integer_field: str) -> None:
-    _, lesson_id, job = _create_progress_job(app, client)
+    teacher, lesson_id, job = _create_progress_job(app, client)
     progress = {**_valid_teacher_progress(), integer_field: True}
-    assert app.state.store.update_progress(job.id, progress)
+    assert app.state.store.update_progress(
+        teacher.id,
+        job.id,
+        progress,
+        attempt=job.attempt,
+        attempt_token=job.attempt_token,
+    )
 
     response = client.get(f"/api/lessons/{lesson_id}/status")
     assert response.status_code == 200, response.text
@@ -501,9 +520,15 @@ def test_status_rejects_boolean_progress_integers(app, client, integer_field: st
 def test_status_omits_progress_with_invalid_updated_at(
     app, client, invalid_updated_at: object
 ) -> None:
-    _, lesson_id, job = _create_progress_job(app, client)
+    teacher, lesson_id, job = _create_progress_job(app, client)
     progress = {**_valid_teacher_progress(), "updated_at": invalid_updated_at}
-    assert app.state.store.update_progress(job.id, progress)
+    assert app.state.store.update_progress(
+        teacher.id,
+        job.id,
+        progress,
+        attempt=job.attempt,
+        attempt_token=job.attempt_token,
+    )
 
     response = client.get(f"/api/lessons/{lesson_id}/status")
     assert response.status_code == 200, response.text
@@ -525,8 +550,14 @@ def test_status_omits_none_and_non_object_durable_progress(app, client) -> None:
 
 
 def test_teacher_progress_openapi_and_runtime_contracts_are_exactly_aligned(app, client) -> None:
-    _, lesson_id, job = _create_progress_job(app, client)
-    assert app.state.store.update_progress(job.id, _valid_teacher_progress())
+    teacher, lesson_id, job = _create_progress_job(app, client)
+    assert app.state.store.update_progress(
+        teacher.id,
+        job.id,
+        _valid_teacher_progress(),
+        attempt=job.attempt,
+        attempt_token=job.attempt_token,
+    )
     response = client.get(f"/api/lessons/{lesson_id}/status")
     assert response.status_code == 200, response.text
 
@@ -1670,9 +1701,7 @@ def test_error_correction_key_survives_api_edit_remove_restore_round_trip(
         _wait_for_status(client, lesson_id, "ready")
         resource = client.get(f"/api/lessons/{lesson_id}").json()
         block = next(
-            item
-            for item in resource["lesson"]["blocks"]
-            if item["id"] == "block-error-correction"
+            item for item in resource["lesson"]["blocks"] if item["id"] == "block-error-correction"
         )
         corrections = copy.deepcopy(block["answer_key"]["corrections"])
         assert len(corrections) == 2
@@ -2082,6 +2111,7 @@ def test_startup_recovers_an_orphaned_baking_aggregate_without_partial_lesson(
 
 # --- P2-6: teacher preferences (default duration) persistence, ownership, CSRF ---
 
+
 def test_teacher_preferences_defaults_to_60_and_persists_per_teacher(app, client) -> None:
     """Persist/GET roundtrip; absent row yields 60. Quotes raw from contract."""
     teacher, _invite, token = _issue_invite(app)
@@ -2196,6 +2226,7 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
         apply_migrations,
         current_schema_version,
     )
+
     db_path = tmp_path / "populated-v2.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -2286,20 +2317,19 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
         assert lrow is not None
         # prefs table exists (from v3), no row yet -> get yields 60
         prow = conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='teacher_preferences'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='teacher_preferences'"
         ).fetchone()
         assert prow is not None
         # simulate store usage: direct select default
         d = conn.execute(
-            "SELECT default_duration FROM teacher_preferences "
-            "WHERE teacher_id='t-pop-1'"
+            "SELECT default_duration FROM teacher_preferences WHERE teacher_id='t-pop-1'"
         ).fetchone()
         assert d is None  # absent row
     finally:
         conn.close()
     # Now via store: init will have migrated already, but re-open confirms
     from hramatka.api.store import JobStore
+
     store = JobStore(db_path)
     store.initialize()
     assert store.get_teacher_default_duration("t-pop-1") == 60
@@ -2428,9 +2458,7 @@ def test_migration_v005_extends_failure_code_check_and_preserves_data(tmp_path: 
             "no_eligible_activities",
             "insufficient_anchor_capacity",
         ):
-            conn.execute(
-                "UPDATE lesson_jobs SET failure_code=? WHERE id='l-v4'", (failure_code,)
-            )
+            conn.execute("UPDATE lesson_jobs SET failure_code=? WHERE id='l-v4'", (failure_code,))
             conn.commit()
             updated = conn.execute(
                 "SELECT failure_code FROM lesson_jobs WHERE id='l-v4'"
@@ -2562,6 +2590,149 @@ def test_delete_lesson_returns_204_and_removes_row(app) -> None:
                 "SELECT 1 FROM lesson_jobs WHERE id = ?", (lesson_id,)
             ).fetchone()
         assert row is None
+
+
+def test_submit_refusal_quarantines_unclaimed_attempts_for_retry_or_delete(
+    tmp_path: Path,
+) -> None:
+    app = create_app(settings=_settings(tmp_path), baker=FixtureBaker())
+    # Exercise the production API fallback rather than calling the store: a
+    # runner that cannot admit work must terminally fail untouched drafts.
+    app.state.runner.submit = lambda _lesson_id: False
+    with TestClient(app, base_url=ORIGIN) as client:
+        _, _, token = _issue_invite(app)
+        session = _redeem(client, token)
+        headers = _mutation_headers(session["csrf_token"])
+        retry_id, delete_id = str(uuid.uuid4()), str(uuid.uuid4())
+
+        refused_retry = client.post("/api/lessons", headers=headers, json=_lesson_request(retry_id))
+        refused_delete = client.post(
+            "/api/lessons", headers=headers, json=_lesson_request(delete_id)
+        )
+        assert refused_retry.status_code == refused_delete.status_code == 202
+        assert refused_retry.json()["status"] == refused_delete.json()["status"] == "failed"
+        retry_status = client.get(f"/api/lessons/{retry_id}/status").json()
+        delete_status = client.get(f"/api/lessons/{delete_id}/status").json()
+        assert retry_status["attempt"] == delete_status["attempt"] == 1
+
+        # If fail_queued_drafts leaves quiescence NULL, both mutations return
+        # 409 forever because no worker token exists to acknowledge it.
+        retried = client.post(
+            f"/api/lessons/{retry_id}/retry",
+            headers=headers,
+            json={"expected_revision": retry_status["revision"]},
+        )
+        assert retried.status_code == 202, retried.text
+        assert retried.json()["status"] == "failed"
+        assert retried.json()["attempt"] == 2
+        deleted = client.delete(f"/api/lessons/{delete_id}", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+
+
+def test_cancel_is_owner_scoped_idempotent_and_retry_preserves_job_history(tmp_path: Path) -> None:
+    baker = BlockingBaker()
+    app = create_app(settings=_settings(tmp_path), baker=baker)
+    try:
+        with TestClient(app, base_url=ORIGIN) as client:
+            _, _, token = _issue_invite(app)
+            session = _redeem(client, token)
+            headers = _mutation_headers(session["csrf_token"])
+            lesson_id = str(uuid.uuid4())
+            created = client.post("/api/lessons", headers=headers, json=_lesson_request(lesson_id))
+            assert created.status_code == 202, created.text
+            assert baker.started.wait(timeout=1)
+            active = client.get(f"/api/lessons/{lesson_id}/status").json()
+            assert active["status"] == "baking"
+
+            # Active DELETE must not make the provider operation invisible.
+            _error(
+                client.delete(f"/api/lessons/{lesson_id}", headers=headers),
+                409,
+                "lesson_state_conflict",
+            )
+
+            cancelled = client.post(
+                f"/api/lessons/{lesson_id}/cancel",
+                headers=headers,
+                json={"expected_revision": active["revision"]},
+            )
+            assert cancelled.status_code == 200, cancelled.text
+            cancelled_body = cancelled.json()
+            assert cancelled_body["status"] == "cancelled"
+            assert cancelled_body["attempt"] == 1
+            assert cancelled_body["attempt_history"][-1]["status"] == "cancelled"
+            assert cancelled_body["attempt_history"][-1]["failure_code"] == "cancelled"
+            _error(
+                client.delete(f"/api/lessons/{lesson_id}", headers=headers),
+                409,
+                "lesson_state_conflict",
+                lesson_id=lesson_id,
+            )
+            pending_retry = client.post(
+                f"/api/lessons/{lesson_id}/retry",
+                headers=headers,
+                json={"expected_revision": cancelled_body["revision"]},
+            )
+            pending_error = _error(
+                pending_retry,
+                409,
+                "lesson_state_conflict",
+                lesson_id=lesson_id,
+            )
+            assert "ще завершує" in pending_error["message"]
+
+            repeated_cancel = client.post(
+                f"/api/lessons/{lesson_id}/cancel",
+                headers=headers,
+                json={"expected_revision": cancelled_body["revision"]},
+            )
+            assert repeated_cancel.status_code == 200, repeated_cancel.text
+            assert repeated_cancel.json() == cancelled_body
+
+            # Let the already-started baker return: cancellation wins its later publish race.
+            baker.release.set()
+            time.sleep(0.05)
+            after_provider = client.get(f"/api/lessons/{lesson_id}/status").json()
+            assert after_provider["status"] == "cancelled"
+            _error(client.get(f"/api/lessons/{lesson_id}"), 409, "lesson_not_ready")
+
+            retried = client.post(
+                f"/api/lessons/{lesson_id}/retry",
+                headers=headers,
+                json={"expected_revision": cancelled_body["revision"]},
+            )
+            assert retried.status_code == 202, retried.text
+            assert retried.json()["id"] == lesson_id
+            assert retried.json()["attempt"] == 2
+
+            # A lost retry response may be replayed after the new attempt is claimed or ready.
+            replay = client.post(
+                f"/api/lessons/{lesson_id}/retry",
+                headers=headers,
+                json={"expected_revision": cancelled_body["revision"]},
+            )
+            assert replay.status_code == 202, replay.text
+            assert replay.json()["attempt"] == 2
+            ready = _wait_for_status(client, lesson_id, "ready")
+            assert ready["attempt"] == 2
+            assert [entry["attempt"] for entry in ready["attempt_history"]] == [1, 2]
+            assert ready["attempt_history"][0]["status"] == "cancelled"
+            assert ready["attempt_history"][0]["retry_requested_revision"] == cancelled_body[
+                "revision"
+            ]
+
+            _error(
+                client.post(
+                    f"/api/lessons/{lesson_id}/cancel",
+                    headers=headers,
+                    json={"expected_revision": ready["revision"]},
+                ),
+                409,
+                "lesson_state_conflict",
+                lesson_id=lesson_id,
+            )
+    finally:
+        baker.release.set()
 
 
 def test_delete_foreign_teacher_lesson_returns_404(app) -> None:

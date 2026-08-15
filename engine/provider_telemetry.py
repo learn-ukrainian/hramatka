@@ -304,6 +304,9 @@ class _TelemetryState:
 @dataclass
 class TelemetryContext:
     job_id: str | None = None
+    teacher_id: str | None = None
+    attempt: int | None = None
+    attempt_token: str | None = None
     store: Any | None = None
     phases_total: int = 0
     calls_planned: int | None = None
@@ -376,6 +379,9 @@ class TelemetryContext:
         """Make a phase-local context that shares safe aggregate telemetry."""
         return TelemetryContext(
             job_id=self.job_id,
+            teacher_id=self.teacher_id,
+            attempt=self.attempt,
+            attempt_token=self.attempt_token,
             store=self.store,
             phases_total=self.phases_total,
             phase=phase,
@@ -462,10 +468,23 @@ class TelemetryContext:
                     datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
                 )
                 snapshot["updated_at"] = timestamp
-                try:
+                if (
+                    self.teacher_id is not None
+                    and self.attempt is not None
+                    and self.attempt_token is not None
+                ):
+                    self.store.update_progress(
+                        self.teacher_id,
+                        self.job_id,
+                        snapshot,
+                        attempt=self.attempt,
+                        attempt_token=self.attempt_token,
+                    )
+                else:
+                    # Legacy non-lesson telemetry stores retain their narrow
+                    # two-argument contract. Production lesson bakes must
+                    # always carry the complete immutable claim identity.
                     self.store.update_progress(self.job_id, snapshot)
-                except Exception as exc:
-                    log.warning("Failed to update progress in DB for job %s: %s", self.job_id, exc)
 
     def increase_calls_planned(self, count: int = 1) -> int | None:
         """Atomically account for dependent requests and return their shared total."""

@@ -19,6 +19,7 @@ import logging
 import re
 import time
 from collections import Counter
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from math import ceil
@@ -658,6 +659,25 @@ class EngineLessonBaker:
         from hramatka.engine.providers import TelemetryContext, telemetry_ctx
 
         job_id = anchor.get("anchor_id") if isinstance(anchor, dict) else None
+        telemetry_identity = anchor.get("telemetry") if isinstance(anchor, dict) else None
+        teacher_id = (
+            telemetry_identity.get("teacher_id")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("teacher_id"), str)
+            else None
+        )
+        attempt = (
+            telemetry_identity.get("attempt")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("attempt"), int)
+            else None
+        )
+        attempt_token = (
+            telemetry_identity.get("attempt_token")
+            if isinstance(telemetry_identity, Mapping)
+            and isinstance(telemetry_identity.get("attempt_token"), str)
+            else None
+        )
         phases_total = len(phase_count_plans)
 
         if _tel_ctx is not None:
@@ -668,6 +688,9 @@ class EngineLessonBaker:
         else:
             tel_ctx = TelemetryContext(
                 job_id=job_id,
+                teacher_id=teacher_id,
+                attempt=attempt,
+                attempt_token=attempt_token,
                 store=self.store,
                 phases_total=phases_total,
                 calls_planned=phases_total,

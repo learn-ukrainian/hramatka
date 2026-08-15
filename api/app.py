@@ -70,6 +70,7 @@ from .store import (
     ActivityRegenerationNotFound,
     ActivityRegenerationRecord,
     ActivityRegenerationStateConflict,
+    AttemptQuiescing,
     FeedbackNotApplicable,
     IdempotencyConflict,
     InviteUnavailable,
@@ -249,6 +250,8 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
         "status": job.status,
         "step": job.step,
         "revision": job.revision,
+        "attempt": job.attempt,
+        "attempt_history": list(job.attempt_history),
         "failure_code": job.failure_code,
         "failure_message": job.failure_message,
         "created_at": job.created_at,
@@ -1035,9 +1038,101 @@ def create_app(
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> Response:
         lesson_key = _lesson_id(lesson_id)
+        job = owner_job(session.teacher_id, lesson_key)
+        if job.status in {"draft", "baking"}:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Спочатку скасуйте складання уроку; активне завдання не можна видалити.",
+                lesson_id=lesson_key,
+            )
+        if job.status in {"cancelled", "failed"} and job.attempt_quiesced_at is None:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Попередня спроба ще завершує запущену роботу; зачекайте перед видаленням.",
+                lesson_id=lesson_key,
+            )
         if not store.delete_lesson(session.teacher_id, lesson_key):
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post("/api/lessons/{lesson_id}/cancel")
+    def cancel_lesson(
+        lesson_id: UUID,
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job, _ = store.cancel(
+                session.teacher_id,
+                lesson_key,
+                expected_revision=request_body.expected_revision,
+            )
+        except LessonNotFound as error:
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
+        except RevisionConflict as error:
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "Урок змінено; оновіть його перед повторною спробою.",
+                lesson_id=lesson_key,
+            ) from error
+        except LessonStateConflict as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Стан уроку не дозволяє скасування.",
+                lesson_id=lesson_key,
+            ) from error
+        return _status_payload(job)
+
+    @app.post("/api/lessons/{lesson_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    def retry_lesson(
+        lesson_id: UUID,
+        request_body: RevisionMutation,
+        _: None = Depends(require_json),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> dict[str, object]:
+        lesson_key = _lesson_id(lesson_id)
+        try:
+            job, queued = store.retry(
+                session.teacher_id,
+                lesson_key,
+                expected_revision=request_body.expected_revision,
+            )
+        except LessonNotFound as error:
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
+        except RevisionConflict as error:
+            raise PilotError(
+                409,
+                "revision_conflict",
+                "Урок змінено; оновіть його перед повторною спробою.",
+                lesson_id=lesson_key,
+            ) from error
+        except AttemptQuiescing as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Скасування ще завершує запущену роботу; зачекайте перед повторною спробою.",
+                lesson_id=lesson_key,
+            ) from error
+        except LessonStateConflict as error:
+            raise PilotError(
+                409,
+                "lesson_state_conflict",
+                "Стан уроку не дозволяє повторне складання.",
+                lesson_id=lesson_key,
+            ) from error
+        if queued and not runner.submit(job.id):
+            store.fail_queued_drafts(
+                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
+                failure_code="engine_unavailable",
+            )
+            job = owner_job(session.teacher_id, lesson_key)
+        return _status_payload(job)
 
     @app.post("/api/lessons/{lesson_id}/recreate", status_code=status.HTTP_202_ACCEPTED)
     def recreate_lesson(
