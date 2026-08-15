@@ -617,6 +617,21 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(textarea).toHaveValue(/Текст, отриманий із посилання/);
   });
 
+  test('invalid URL recovery copy follows the selected interface language', async ({ page }) => {
+    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
+    await page.reload();
+    await page.waitForURL(/\/teacher\/?$/);
+
+    await page.getByTestId('lang-toggle').click();
+    await page.getByRole('tab', { name: 'From a link' }).click();
+    await page.getByTestId('anchor-url-input').fill('not-a-url');
+    await page.getByTestId('fetch-anchor-url-btn').click();
+
+    await expect(page.getByRole('alert')).toContainText('The link must be a valid HTTPS address.');
+    await expect(page.getByRole('alert')).not.toContainText(/[А-Яа-яІіЇїЄєҐґ]/);
+    await expect(page.getByTestId('anchor-url-input')).toHaveValue('not-a-url');
+  });
+
   test('failed status subline never shows stale «готово» step (regression)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();

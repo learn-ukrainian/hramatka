@@ -46,6 +46,13 @@ const errKey = (key: ChromeKey): { key: ChromeKey } => ({ key });
 const errOr = (serverMsg: string | null | undefined, key: ChromeKey): AppError =>
   serverMsg ? { raw: serverMsg } : { key };
 
+const URL_IMPORT_ERROR_KEYS: Readonly<Record<string, ChromeKey>> = {
+  url_invalid: 'err.urlInvalid',
+  url_blocked: 'err.urlBlocked',
+  url_fetch_failed: 'err.urlFetchFailed',
+  url_rate_limited: 'err.urlRateLimited',
+};
+
 // ===== Types derived from openapi + lesson contract =====
 type LessonState = 'draft' | 'baking' | 'ready' | 'failed';
 type PilotActivityType =
@@ -805,7 +812,7 @@ export default function TeacherApp() {
         setAnchorTab('text');
       } else {
         const e: ErrorEnvelope = data;
-        setError(errOr(e.message, 'err.urlFetchFailed'));
+        setError(errKey(URL_IMPORT_ERROR_KEYS[e.code] ?? 'err.urlFetchFailed'));
       }
     } catch {
       setError(errKey('err.urlFetchFailed'));

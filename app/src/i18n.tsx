@@ -423,7 +423,7 @@ const DICT = {
   'err.draftFailed': { uk: 'Не вдалося повернути в чернетку.', en: 'Could not return to draft.' },
   'err.sessionExpired': { uk: 'Сесія закінчилась. Увійдіть знову.', en: 'Your session has ended. Sign in again.' },
 
-  // ---- URL import (#118) client-set errors (server e.message flows through as raw) ----
+  // ---- URL import (#118) stable API error codes mapped to localized chrome ----
   'err.urlSourceRequired': {
     uk: 'Потрібна адреса джерела для уроку з посилання.',
     en: 'A source address is required for a lesson from a link.',
@@ -435,6 +435,18 @@ const DICT = {
   'err.urlFetchFailed': {
     uk: 'Не вдалося отримати текст із посилання.',
     en: 'Could not fetch text from the link.',
+  },
+  'err.urlInvalid': {
+    uk: 'Посилання має бути коректною HTTPS-адресою.',
+    en: 'The link must be a valid HTTPS address.',
+  },
+  'err.urlBlocked': {
+    uk: 'Ця адреса недоступна для імпорту.',
+    en: 'This address is unavailable for import.',
+  },
+  'err.urlRateLimited': {
+    uk: 'Забагато спроб імпорту. Спробуйте пізніше.',
+    en: 'Too many import attempts. Please try again later.',
   },
 
   // =====================================================================

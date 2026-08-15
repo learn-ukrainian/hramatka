@@ -578,16 +578,18 @@ const server = http.createServer(async (req, res) => {
     if (!rawUrl.trim()) {
       return sendJSON(res, 422, errorBody('url_invalid', 'Вставте адресу сторінки — і ми дістанемо з неї текст.'));
     }
+    if (!rawUrl.startsWith('https://')) {
+      return sendJSON(res, 422, errorBody('url_invalid', 'Посилання має бути коректною HTTPS-адресою.'));
+    }
     if (/localhost|127\.0\.0\.1|192\.168\.|10\./i.test(rawUrl)) {
       return sendJSON(res, 422, errorBody('url_blocked', 'Ця адреса недоступна для імпорту.'));
     }
     if (rawUrl === 'https://stub.example.test/fail-fetch') {
       return sendJSON(res, 502, errorBody('url_fetch_failed', 'Не вдалося отримати текст із цієї адреси. Перевірте посилання.', true));
     }
-    const normalized = rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`;
     return sendJSON(res, 200, {
       text: 'Текст, отриманий із посилання для перевірки вчителем. Він містить речення для вправ.',
-      source_url: normalized,
+      source_url: rawUrl,
     });
   }
 
