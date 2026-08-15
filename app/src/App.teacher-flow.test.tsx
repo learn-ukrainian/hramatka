@@ -186,6 +186,39 @@ describe('teacher lesson creation and list chrome', () => {
     });
   });
 
+  it('explains the required paste input for empty and whitespace-only text without starting a bake', async () => {
+    installFetch();
+    renderApp();
+
+    const textarea = await screen.findByTestId('anchor-text-input');
+    const submit = screen.getByRole('button', { name: 'Згенерувати урок' });
+    const postRequests = () => vi.mocked(fetch).mock.calls.filter(([url, init]) =>
+      String(url).endsWith('/api/lessons') && (init as RequestInit | undefined)?.method === 'POST',
+    );
+
+    expect(submit).toBeDisabled();
+    expect(textarea).toBeRequired();
+    expect(textarea).toHaveAttribute('aria-describedby', 'paste-text-required-guidance');
+    expect(screen.getByTestId('paste-text-required-guidance')).toHaveTextContent(
+      'Щоб згенерувати урок, вставте український текст.',
+    );
+
+    fireEvent.change(textarea, { target: { value: '   ' } });
+    expect(submit).toBeDisabled();
+    expect(screen.getByTestId('paste-text-required-guidance')).toBeVisible();
+    expect(postRequests()).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId('lang-toggle'));
+    expect(screen.getByTestId('paste-text-required-guidance')).toHaveTextContent(
+      'To generate a lesson, paste Ukrainian text.',
+    );
+
+    fireEvent.click(screen.getByTestId('lang-toggle'));
+    expect(screen.getByTestId('paste-text-required-guidance')).toHaveTextContent(
+      'Щоб згенерувати урок, вставте український текст.',
+    );
+  });
+
   it('renders My Lessons as a separate empty page with no delete affordance', async () => {
     installFetch();
     renderApp();

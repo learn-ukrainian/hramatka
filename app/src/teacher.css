@@ -212,6 +212,12 @@ button.choice.on { border-color: var(--accent); background: var(--accent-soft); 
   overflow: hidden;
 }
 .create-right label { font-size: 13px; font-weight: 600; margin-bottom: 6px; flex: none; }
+.create-right .paste-required-guidance {
+  margin: -2px 0 6px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  flex: none;
+}
 .create-right .restored-notice { margin: 0 0 8px; font-size: 12px; padding: 8px 10px; }
 .create-right textarea {
   flex: 1 1 auto;

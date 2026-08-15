@@ -269,6 +269,7 @@ export default function TeacherApp() {
   const [qualifiedModels, setQualifiedModels] = useState<QualifiedModelChoice[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [modelUnavailableMessage, setModelUnavailableMessage] = useState<string | null>(null);
+  const pasteTextMissing = !pasteText.trim();
 
   // Baking / lesson state
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
@@ -1820,7 +1821,7 @@ export default function TeacherApp() {
                     onClick={startBake}
                     disabled={
                       loading
-                      || !pasteText.trim()
+                      || pasteTextMissing
                       || !qualifiedModels.some(model => model.id === selectedModelId)
                     }
                   >
@@ -1832,6 +1833,16 @@ export default function TeacherApp() {
                   <label htmlFor="anchor-text-input">
                     {t(anchorTab === 'url' ? 'paste.textLabelReview' : 'paste.textLabel')}
                   </label>
+                  {anchorTab === 'text' && pasteTextMissing && (
+                    <p
+                      id="paste-text-required-guidance"
+                      className="paste-required-guidance"
+                      role="status"
+                      data-testid="paste-text-required-guidance"
+                    >
+                      {t('paste.textRequired')}
+                    </p>
+                  )}
                   {restoredTextNotice && (
                     <div
                       className="banner honest restored-notice"
@@ -1859,6 +1870,9 @@ export default function TeacherApp() {
                       if (!e.target.value.trim()) setSourceUrl(null);
                     }}
                     placeholder={t('paste.textPh')}
+                    required
+                    aria-required="true"
+                    aria-describedby={anchorTab === 'text' && pasteTextMissing ? 'paste-text-required-guidance' : undefined}
                     data-testid="anchor-text-input"
                   />
                 </div>

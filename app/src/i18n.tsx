@@ -170,6 +170,10 @@ const DICT = {
     en: 'Text from the previous request restored',
   },
   'paste.textPh': { uk: 'Вставте український текст...', en: 'Paste Ukrainian text...' },
+  'paste.textRequired': {
+    uk: 'Щоб згенерувати урок, вставте український текст.',
+    en: 'To generate a lesson, paste Ukrainian text.',
+  },
   'paste.submit': { uk: 'Згенерувати урок', en: 'Generate lesson' },
   'paste.submitting': { uk: 'Надсилаємо…', en: 'Sending…' },
   'close.aria': { uk: 'Закрити', en: 'Close' }, // T_EXACT
