@@ -66,8 +66,13 @@ describe('i18n translation layer', () => {
     const cases: Array<{ code: string | null; mustIncludeUk: string; mustNotIncludeUk?: string }> = [
       {
         code: 'lesson_floor_unmet',
-        mustIncludeUk: 'Додайте 2–3 речення',
-        mustNotIncludeUk: 'перевантажений',
+        mustIncludeUk: 'Спробуйте ще раз',
+        mustNotIncludeUk: 'Опорного матеріалу',
+      },
+      {
+        code: 'insufficient_anchor_capacity',
+        mustIncludeUk: 'Опорного матеріалу недостатньо',
+        mustNotIncludeUk: '2–3',
       },
       {
         code: 'engine_unavailable',
@@ -128,14 +133,32 @@ describe('i18n translation layer', () => {
       // dual-lang: EN is non-empty and not the raw key
       expect(en.length).toBeGreaterThan(10);
       expect(en).not.toBe(key);
-      // floor stays non-blaming (no "your text is bad" framing)
+      // Only a deterministic anchor-capacity result may ask for more source
+      // material; generic post-generation floors must keep the retry wording.
+      if (c.code === 'insufficient_anchor_capacity') {
+        expect(uk).not.toMatch(/поганий|тонк/i);
+        expect(uk).toContain('повного уроку');
+        expect(uk).toContain('довший і різноманітніший текст із конкретними деталями');
+        expect(uk).toContain('ваш текст уже збережено');
+        expect(uk).not.toMatch(/2[–-]3/);
+        expect(en.toLowerCase()).toContain('supported material');
+        expect(en.toLowerCase()).toContain('complete lesson');
+        expect(en.toLowerCase()).toContain('longer, more varied source with concrete details');
+        expect(en.toLowerCase()).toContain('your text is already saved');
+        expect(en).not.toMatch(/2[–-]3/);
+      }
       if (c.code === 'lesson_floor_unmet') {
-        expect(uk).not.toMatch(/поганий|недостатн|тонк/i);
-        expect(en.toLowerCase()).toContain('add 2–3 sentences');
+        expect(uk).toContain('Спробуйте ще раз');
+        expect(uk).not.toMatch(/опорного матеріалу|довший|різноманітніший/i);
+        expect(en.toLowerCase()).toContain('try again');
+        expect(en.toLowerCase()).not.toContain('source does not contain');
       }
     }
 
-    // floor ≠ overload
+    // Source-capacity, post-generation floor, and overload remain distinct.
+    expect(translate('uk', recoveryBodyKey('insufficient_anchor_capacity'))).not.toBe(
+      translate('uk', recoveryBodyKey('lesson_floor_unmet')),
+    );
     expect(translate('uk', recoveryBodyKey('lesson_floor_unmet'))).not.toBe(
       translate('uk', recoveryBodyKey('engine_unavailable')),
     );

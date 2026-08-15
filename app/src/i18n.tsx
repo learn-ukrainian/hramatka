@@ -254,10 +254,15 @@ const DICT = {
     uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
     en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
   },
-  // Per-failure_code recovery copy (#185). VESUM-checked forms: додайте, речення, деталей, спробуйте, збережено…
+  // Per-failure_code recovery copy (#185). Source-capacity guidance is reserved
+  // for the deterministic preflight code; post-generation floors keep a retry CTA.
+  'recovery.body.insufficient_anchor_capacity': {
+    uk: 'Опорного матеріалу недостатньо для повного уроку. Спробуйте довший і різноманітніший текст із конкретними деталями — ваш текст уже збережено.',
+    en: 'The source does not contain enough supported material for a complete lesson. Use a longer, more varied source with concrete details — your text is already saved.',
+  },
   'recovery.body.lesson_floor_unmet': {
-    uk: 'Не вдалося скласти повний урок. Додайте 2–3 речення або більше деталей і спробуйте ще раз — текст уже збережено.',
-    en: 'Could not build a full lesson. Add 2–3 sentences or more detail and try again — your text is already saved.',
+    uk: 'Цього разу не вдалося скласти повний урок. Спробуйте ще раз — ваш текст уже збережено.',
+    en: 'A complete lesson could not be created this time. Try again — your text is already saved.',
   },
   'recovery.body.engine_unavailable': {
     uk: 'Не вдалося створити урок. Таке інколи трапляється, коли сервіс перевантажений. Спробуйте ще раз — текст уже збережено.',
@@ -888,6 +893,8 @@ export function statusKey(status: 'draft' | 'baking' | 'ready' | 'failed'): Chro
  */
 export function recoveryBodyKey(failureCode: string | null | undefined): ChromeKey {
   switch (failureCode) {
+    case 'insufficient_anchor_capacity':
+      return 'recovery.body.insufficient_anchor_capacity';
     case 'lesson_floor_unmet':
       return 'recovery.body.lesson_floor_unmet';
     case 'engine_unavailable':

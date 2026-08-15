@@ -52,9 +52,16 @@ class GenerationFailed(BakeError):
 class FloorUnmetError(BakeError):
     """Floor failure (lesson cannot reach 45-min density target).
 
-    Carries blames_source so the runner can classify without string inspection:
-    - blames_source=True (thin anchor): surface THIN_SOURCE_UA_MESSAGE
-    - blames_source=False (sufficient anchor): surface non-blaming FLOOR_SHORTFALL_UA_MESSAGE
+    Carries source attribution so the runner can classify without string
+    inspection:
+    - blames_source=True: the supplied anchor cannot support the certified
+      lesson plan, so surface ``insufficient_anchor_capacity``.
+    - blames_source=False: a post-generation, validation, or serialization
+      floor was not met, so retain the retry-compatible ``lesson_floor_unmet``.
+
+    ``blames_source`` describes the failure cause, not whether retry is safe.
+    The durable failure code is the teacher-facing projection of that typed
+    cause; raw engine messages never cross the API boundary.
     """
 
     def __init__(self, message: str, *, blames_source: bool) -> None:

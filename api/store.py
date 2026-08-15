@@ -47,6 +47,7 @@ _FAILURE_CODES = frozenset(
         "engine_unavailable",
         "lesson_schema_invalid",
         "unknown_safe_failure",
+        "insufficient_anchor_capacity",
         "lesson_floor_unmet",
         "generation_failed",
         "no_eligible_activities",

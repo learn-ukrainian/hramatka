@@ -1284,6 +1284,7 @@ components:
         - worker_restarted
         - provider_unavailable
         - engine_unavailable
+        - insufficient_anchor_capacity
         - lesson_floor_unmet
         - lesson_schema_invalid
         - unknown_safe_failure

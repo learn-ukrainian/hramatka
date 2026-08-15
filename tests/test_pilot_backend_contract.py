@@ -30,7 +30,6 @@ from hramatka.api.config import Settings
 from hramatka.engine import data
 from hramatka.engine.content_density import (
     FLOOR_SHORTFALL_UA_MESSAGE,
-    THIN_SOURCE_UA_MESSAGE,
 )
 
 ORIGIN = "https://pilot.example.test"
@@ -182,8 +181,8 @@ class TransientProviderBaker:
         raise ProviderUnavailable("provider 500: private trace must not be served")
 
 
-# Floor-specific bakers for #174: exercise the typed FloorUnmetError path
-# (blames_source) from engine_adapter through runner classification.
+# Floor-specific bakers exercise typed cause classification from the engine
+# boundary through the durable runner projection.
 class ThinSourceFloorBaker:
     """Raises FloorUnmetError with blames_source=True (thin source)."""
 
@@ -191,7 +190,7 @@ class ThinSourceFloorBaker:
         self, anchor: str | dict[str, Any], duration: int, focus: str | None
     ) -> dict[str, Any]:
         del anchor, duration, focus
-        raise FloorUnmetError(THIN_SOURCE_UA_MESSAGE, blames_source=True)
+        raise FloorUnmetError("private source diagnostic must not surface", blames_source=True)
 
 
 class SufficientAnchorFloorBaker:
@@ -1888,10 +1887,10 @@ def test_provider_unavailability_retries_once_then_persists_a_ukrainian_failure(
     assert "private trace" not in (failed["failure_message"] or "")
 
 
-def test_floor_bakeerror_on_thin_source_uses_dedicated_code_and_exact_thin_message(
+def test_floor_bakeerror_on_insufficient_anchor_uses_source_capacity_code_and_exact_message(
     tmp_path: Path,
 ) -> None:
-    """Thin-source floor path: dedicated code + the exact thin UA blame message (no generic)."""
+    """Source capacity receives its own safe durable code, never the generic floor."""
     baker = ThinSourceFloorBaker()
     app = create_app(settings=_settings(tmp_path), baker=baker)
     with TestClient(app, base_url=ORIGIN) as client:
@@ -1906,16 +1905,20 @@ def test_floor_bakeerror_on_thin_source_uses_dedicated_code_and_exact_thin_messa
         assert response.status_code == 202, response.text
         failed = _wait_for_status(client, lesson_id, "failed")
 
-    assert failed["failure_code"] == "lesson_floor_unmet"
-    assert failed["failure_message"] == THIN_SOURCE_UA_MESSAGE
+    assert failed["failure_code"] == "insufficient_anchor_capacity"
+    assert failed["failure_message"] == (
+        "Опорного матеріалу недостатньо для повного уроку. "
+        "Спробуйте довший і різноманітніший текст із конкретними деталями."
+    )
+    assert "private source diagnostic" not in (failed["failure_message"] or "")
     # Must not fall back to the generic safe message.
     assert failed["failure_message"] != "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
 
 
-def test_floor_bakeerror_on_sufficient_anchor_uses_dedicated_code_and_nonblaming_message(
+def test_floor_bakeerror_after_generation_uses_retry_compatible_floor_code_and_message(
     tmp_path: Path,
 ) -> None:
-    """Sufficient anchor floor path: dedicated code + non-blaming UA retry message."""
+    """Post-generation floor remains non-blaming and retry-compatible."""
     baker = SufficientAnchorFloorBaker()
     app = create_app(settings=_settings(tmp_path), baker=baker)
     with TestClient(app, base_url=ORIGIN) as client:
@@ -2377,7 +2380,11 @@ def test_migration_v005_extends_failure_code_check_and_preserves_data(tmp_path: 
         conn.commit()
         updated = conn.execute("SELECT failure_code FROM lesson_jobs WHERE id='l-v4'").fetchone()
         assert updated["failure_code"] == "lesson_floor_unmet"
-        for failure_code in ("generation_failed", "no_eligible_activities"):
+        for failure_code in (
+            "generation_failed",
+            "no_eligible_activities",
+            "insufficient_anchor_capacity",
+        ):
             conn.execute(
                 "UPDATE lesson_jobs SET failure_code=? WHERE id='l-v4'", (failure_code,)
             )

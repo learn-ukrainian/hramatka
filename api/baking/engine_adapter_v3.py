@@ -2422,7 +2422,7 @@ class EngineLessonBaker:
                         )
                         raise FloorUnmetError(
                             "Bake failed: insufficient_anchor_capacity before generation.",
-                            blames_source=False,
+                            blames_source=True,
                         )
                     try:
                         validate_degree_lesson_plan(preflight.allocation)

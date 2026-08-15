@@ -22,6 +22,10 @@ from .validation import validate_lesson
 log = logging.getLogger(__name__)
 
 _SAFE_FAILURE_MESSAGE = "Не вдалося скласти урок. Спробуйте, будь ласка, ще раз."
+_SAFE_INSUFFICIENT_ANCHOR_CAPACITY_MESSAGE = (
+    "Опорного матеріалу недостатньо для повного уроку. "
+    "Спробуйте довший і різноманітніший текст із конкретними деталями."
+)
 _SAFE_GENERATION_FAILURE_MESSAGE = (
     "Не вдалося обробити відповідь генератора. Спробуйте, будь ласка, ще раз."
 )
@@ -465,8 +469,12 @@ class BakeRunner:
             failure_code = "provider_unavailable"
             failure_message = _SAFE_FAILURE_MESSAGE
         elif isinstance(error, FloorUnmetError):
-            failure_code = "lesson_floor_unmet"
-            failure_message = str(error) if error.blames_source else FLOOR_SHORTFALL_UA_MESSAGE
+            if error.blames_source:
+                failure_code = "insufficient_anchor_capacity"
+                failure_message = _SAFE_INSUFFICIENT_ANCHOR_CAPACITY_MESSAGE
+            else:
+                failure_code = "lesson_floor_unmet"
+                failure_message = FLOOR_SHORTFALL_UA_MESSAGE
         elif isinstance(error, BakeError) and getattr(error, "generation_error_type", None):
             if error.generation_error_type == "NoEligibleActivities":
                 failure_code = "no_eligible_activities"
