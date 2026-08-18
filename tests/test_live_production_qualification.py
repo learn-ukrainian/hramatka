@@ -673,6 +673,7 @@ def test_pinned_route_refuses_port_without_receipt_provenance() -> None:
         provider.receipt_provenance()
 
 
+@pytest.mark.slow
 def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate(
     tmp_path, v2_delivery_flags, monkeypatch
 ) -> None:
@@ -736,6 +737,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     )
 
 
+@pytest.mark.slow
 def test_live_mode_can_qualify_the_complete_flash_target_without_other_credentials(
     tmp_path, v2_delivery_flags
 ) -> None:

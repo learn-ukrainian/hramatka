@@ -49,6 +49,7 @@ def test_atlas_fixture_trimming_keeps_normal_regeneration_stable() -> None:
     assert _trim_payload(payload, include_antonyms=True)["sections"] == payload["sections"]
 
 
+@pytest.mark.slow
 def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs(tmp_path) -> None:
     """Every cell retains v3 slot receipts; aggregates remain secondary evidence."""
     harness = ProductionQualificationHarness(tmp_path / "qualification")
@@ -244,6 +245,7 @@ def test_qualification_linguistics_records_its_pinned_public_bundle() -> None:
     }
 
 
+@pytest.mark.slow
 def test_aggregate_refuses_api_observed_provenance_for_subscription_cell(tmp_path) -> None:
     harness = ProductionQualificationHarness(tmp_path / "qualification")
     run = harness.run(deterministic_runtime_anchors())
@@ -263,6 +265,7 @@ def test_aggregate_refuses_api_observed_provenance_for_subscription_cell(tmp_pat
         harness.aggregate_cells(forged)
 
 
+@pytest.mark.slow
 def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_credentials(
     tmp_path,
 ) -> None:
@@ -292,6 +295,7 @@ def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_crede
         harness.aggregate_cells(run.receipts[:-1])
 
 
+@pytest.mark.slow
 def test_targeted_transcription_requires_recorded_target_metadata(tmp_path) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(
@@ -341,6 +345,7 @@ def test_manifest_and_receipt_schema_are_content_free_and_fail_closed() -> None:
         SlotTelemetry.from_dict(telemetry)
 
 
+@pytest.mark.slow
 def test_provider_must_pass_its_actual_v3_serialization_to_qualify(tmp_path) -> None:
     """A failed live V3 serialization cannot produce a qualified receipt."""
 
@@ -385,6 +390,7 @@ def test_provider_must_pass_its_actual_v3_serialization_to_qualify(tmp_path) -> 
         harness.aggregates(run)
 
 
+@pytest.mark.slow
 def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
@@ -405,6 +411,7 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
     assert "prompt hash is stale" in capsys.readouterr().err
 
 
+@pytest.mark.slow
 def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     tmp_path, monkeypatch
 ) -> None:
@@ -483,6 +490,7 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
     assert completed.stdout == f"{block}\n"
 
 
+@pytest.mark.slow
 def test_transcription_refuses_missing_failed_or_stale_aggregate_input(tmp_path) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
@@ -523,6 +531,7 @@ def test_transcription_refuses_missing_failed_or_stale_aggregate_input(tmp_path)
         transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("literal_name", "drifted_value"),
     (
@@ -548,6 +557,7 @@ def test_transcription_keeps_each_live_selector_literal_fail_closed(
         _assert_registry_literals(aggregates)
 
 
+@pytest.mark.slow
 def test_transcription_refuses_routes_with_different_aggregate_prompt_digests(tmp_path) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
