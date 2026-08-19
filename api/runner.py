@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import contextmanager
 
 from jsonschema import ValidationError
 
@@ -77,8 +78,9 @@ class BakeRunner:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._poisoned = threading.Event()
+        self._admission_closed = threading.Event()
         self._state_lock = threading.Lock()
-        self._claim_lock = threading.Lock()
+        self._claim_lock = threading.RLock()
         self._prefer_regeneration = False
         self._workers: list[threading.Thread] = []
         self._watchdog: threading.Thread | None = None
@@ -151,10 +153,29 @@ class BakeRunner:
     def submit(self, lesson_id: str) -> bool:
         """Wake the shared pool; requests never create bake threads."""
         del lesson_id
-        if self._poisoned.is_set() or self._stop.is_set():
+        if not self._accepting_work():
             return False
         self._wake.set()
         return True
+
+    def close_admission(self) -> None:
+        """Stop claiming queued work while workers stay alive for in-flight bakes.
+
+        ``submit`` returning false means the pool cannot admit this request. The
+        1s idle poll would otherwise still claim a just-inserted draft, leaving
+        the HTTP fallback's ``fail_queued_drafts`` looking at a ``baking`` row.
+        Close admission under the claim lock so no worker can pass the gate and
+        claim between check and CAS, then the caller persists the refused drafts.
+        """
+        with self._claim_lock:
+            self._admission_closed.set()
+        self._wake.set()
+
+    @contextmanager
+    def hold_admission(self):
+        """Block worker claims while a draft row is inserted and submit is decided."""
+        with self._claim_lock:
+            yield
 
     def expire_and_quarantine(self) -> bool:
         """Durably fail every individually expired in-flight task, never siblings.
@@ -170,7 +191,9 @@ class BakeRunner:
 
     def quarantine(self) -> None:
         """Stop and fail queued work only for an explicit systemic condition."""
+        self.close_admission()
         self._poisoned.set()
+        self._wake.set()
         self._store.fail_queued_drafts(
             "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
             failure_code="engine_unavailable",
@@ -178,7 +201,6 @@ class BakeRunner:
         self._store.fail_queued_activity_regenerations(
             "Сервіс створення варіантів недоступний. Попередній блок збережено."
         )
-        self._wake.set()
 
     def _work(self) -> None:
         while not self._stop.is_set() and not self._poisoned.is_set():
@@ -203,9 +225,18 @@ class BakeRunner:
                     (job or regeneration).id,
                 )
 
+    def _accepting_work(self) -> bool:
+        return (
+            not self._poisoned.is_set()
+            and not self._stop.is_set()
+            and not self._admission_closed.is_set()
+        )
+
     def _claim_next_work(self):
         """Alternate queue priority so neither durable work class can starve."""
         with self._claim_lock:
+            if not self._accepting_work():
+                return None, None
             prefer_regeneration = self._prefer_regeneration
             self._prefer_regeneration = not prefer_regeneration
             if prefer_regeneration:
@@ -221,6 +252,8 @@ class BakeRunner:
     def _claim_next_job(self):
         """Retry optimistic CAS losers promptly so a wake fills the whole pool."""
         for _ in range(self._worker_count):
+            if not self._accepting_work():
+                return None
             job = self._store.claim_next_draft()
             if job is not None:
                 return job
@@ -229,6 +262,8 @@ class BakeRunner:
     def _claim_next_activity_regeneration(self):
         """Retry optimistic CAS losers so replacement work fills an idle pool seat."""
         for _ in range(self._worker_count):
+            if not self._accepting_work():
+                return None
             regeneration = self._store.claim_next_activity_regeneration()
             if regeneration is not None:
                 return regeneration

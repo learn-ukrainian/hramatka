@@ -418,6 +418,12 @@ def create_app(
         worker_count=settings.bake_workers,
     )
 
+    def refuse_unclaimed_admission() -> None:
+        # submit() returning false must close the pool before fail_queued_*
+        # otherwise the 1s idle poll can claim the just-inserted draft and
+        # leave the HTTP fallback projecting ``baking``.
+        runner.close_admission()
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # In-process engine work is not resumable after a process exit.  Mark it
@@ -981,19 +987,27 @@ def create_app(
                     "Обрана модель не налаштована на цьому сервері. Оновіть список моделей.",
                 ) from error
         try:
-            job, created = store.create_or_get(
-                session.teacher_id,
-                lesson_id,
-                anchor_text=prepared_anchor_text,
-                anchor_source=request_body.anchor.source,
-                anchor_source_url=request_body.anchor.source_url,
-                level=request_body.level,
-                duration=request_body.duration,
-                focus=request_body.focus,
-                methodology=request_body.methodology,
-                grammar_focus=request_body.grammar_focus,
-                logical_model_id=logical_model_id,
-            )
+            with runner.hold_admission():
+                job, created = store.create_or_get(
+                    session.teacher_id,
+                    lesson_id,
+                    anchor_text=prepared_anchor_text,
+                    anchor_source=request_body.anchor.source,
+                    anchor_source_url=request_body.anchor.source_url,
+                    level=request_body.level,
+                    duration=request_body.duration,
+                    focus=request_body.focus,
+                    methodology=request_body.methodology,
+                    grammar_focus=request_body.grammar_focus,
+                    logical_model_id=logical_model_id,
+                )
+                if created and not runner.submit(job.id):
+                    refuse_unclaimed_admission()
+                    store.fail_queued_drafts(
+                        "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
+                        failure_code="engine_unavailable",
+                    )
+                    job = owner_job(session.teacher_id, lesson_id)
         except IdempotencyConflict as error:
             raise PilotError(
                 409,
@@ -1003,12 +1017,6 @@ def create_app(
             ) from error
         except SessionUnavailable as error:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
-        if created and not runner.submit(job.id):
-            store.fail_queued_drafts(
-                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
-                failure_code="engine_unavailable",
-            )
-            job = owner_job(session.teacher_id, lesson_id)
         return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
 
     @app.get("/api/lessons")
@@ -1098,11 +1106,19 @@ def create_app(
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
-            job, queued = store.retry(
-                session.teacher_id,
-                lesson_key,
-                expected_revision=request_body.expected_revision,
-            )
+            with runner.hold_admission():
+                job, queued = store.retry(
+                    session.teacher_id,
+                    lesson_key,
+                    expected_revision=request_body.expected_revision,
+                )
+                if queued and not runner.submit(job.id):
+                    refuse_unclaimed_admission()
+                    store.fail_queued_drafts(
+                        "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
+                        failure_code="engine_unavailable",
+                    )
+                    job = owner_job(session.teacher_id, lesson_key)
         except LessonNotFound as error:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
         except RevisionConflict as error:
@@ -1126,12 +1142,6 @@ def create_app(
                 "Стан уроку не дозволяє повторне складання.",
                 lesson_id=lesson_key,
             ) from error
-        if queued and not runner.submit(job.id):
-            store.fail_queued_drafts(
-                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
-                failure_code="engine_unavailable",
-            )
-            job = owner_job(session.teacher_id, lesson_key)
         return _status_payload(job)
 
     @app.post("/api/lessons/{lesson_id}/recreate", status_code=status.HTTP_202_ACCEPTED)
@@ -1202,19 +1212,27 @@ def create_app(
             ) from error
         new_lesson_id = str(uuid.uuid4())
         try:
-            job, created = store.create_or_get(
-                session.teacher_id,
-                new_lesson_id,
-                anchor_text=anchor_text,
-                anchor_source=anchor_source,
-                anchor_source_url=anchor_source_url,
-                level=level,
-                duration=duration,
-                focus=focus,
-                methodology=methodology,
-                grammar_focus=grammar_focus,
-                logical_model_id=logical_model_id,
-            )
+            with runner.hold_admission():
+                job, created = store.create_or_get(
+                    session.teacher_id,
+                    new_lesson_id,
+                    anchor_text=anchor_text,
+                    anchor_source=anchor_source,
+                    anchor_source_url=anchor_source_url,
+                    level=level,
+                    duration=duration,
+                    focus=focus,
+                    methodology=methodology,
+                    grammar_focus=grammar_focus,
+                    logical_model_id=logical_model_id,
+                )
+                if created and not runner.submit(job.id):
+                    refuse_unclaimed_admission()
+                    store.fail_queued_drafts(
+                        "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
+                        failure_code="engine_unavailable",
+                    )
+                    job = owner_job(session.teacher_id, new_lesson_id)
         except IdempotencyConflict as error:
             raise PilotError(
                 409,
@@ -1226,12 +1244,6 @@ def create_app(
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
         except ValueError:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from None
-        if created and not runner.submit(job.id):
-            store.fail_queued_drafts(
-                "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
-                failure_code="engine_unavailable",
-            )
-            job = owner_job(session.teacher_id, new_lesson_id)
         return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
 
     @app.post(
@@ -1268,16 +1280,29 @@ def create_app(
                 "Модель цього уроку більше не доступна. Створіть новий урок.",
             ) from error
         try:
-            regeneration, created = store.create_or_get_activity_regeneration(
-                session.teacher_id,
-                str(request_body.id),
-                lesson_id=lesson_key,
-                block_id=block_id,
-                expected_revision=request_body.expected_revision,
-                feedback=request_body.feedback,
-                prompt_version=REGENERATION_PROMPT_VERSION,
-                prompt_sha256=REGENERATION_PROMPT_SHA256,
-            )
+            with runner.hold_admission():
+                regeneration, created = store.create_or_get_activity_regeneration(
+                    session.teacher_id,
+                    str(request_body.id),
+                    lesson_id=lesson_key,
+                    block_id=block_id,
+                    expected_revision=request_body.expected_revision,
+                    feedback=request_body.feedback,
+                    prompt_version=REGENERATION_PROMPT_VERSION,
+                    prompt_sha256=REGENERATION_PROMPT_SHA256,
+                )
+                if created and not runner.submit(regeneration.id):
+                    refuse_unclaimed_admission()
+                    store.fail_activity_regeneration(
+                        session.teacher_id,
+                        regeneration.id,
+                        "engine_unavailable",
+                        "Сервіс створення варіантів недоступний. Попередній блок збережено.",
+                    )
+                    regeneration = (
+                        store.get_activity_regeneration(session.teacher_id, regeneration.id)
+                        or regeneration
+                    )
         except (
             LessonNotFound,
             LessonBlockNotFound,
@@ -1288,16 +1313,6 @@ def create_app(
             ValueError,
         ) as error:
             raise_regeneration_error(error, lesson_key)
-        if created and not runner.submit(regeneration.id):
-            store.fail_activity_regeneration(
-                session.teacher_id,
-                regeneration.id,
-                "engine_unavailable",
-                "Сервіс створення варіантів недоступний. Попередній блок збережено.",
-            )
-            regeneration = (
-                store.get_activity_regeneration(session.teacher_id, regeneration.id) or regeneration
-            )
         return {**_activity_regeneration_payload(regeneration), "reused": not created}
 
     @app.get("/api/lessons/{lesson_id}/regenerations/{regeneration_id}")
@@ -1343,13 +1358,25 @@ def create_app(
                 "Модель цього уроку більше не доступна. Створіть новий урок.",
             ) from error
         try:
-            retried = store.retry_activity_regeneration(
-                session.teacher_id,
-                str(regeneration_id),
-                expected_revision=request_body.expected_revision,
-                prompt_version=REGENERATION_PROMPT_VERSION,
-                prompt_sha256=REGENERATION_PROMPT_SHA256,
-            )
+            with runner.hold_admission():
+                retried = store.retry_activity_regeneration(
+                    session.teacher_id,
+                    str(regeneration_id),
+                    expected_revision=request_body.expected_revision,
+                    prompt_version=REGENERATION_PROMPT_VERSION,
+                    prompt_sha256=REGENERATION_PROMPT_SHA256,
+                )
+                if not runner.submit(retried.id):
+                    refuse_unclaimed_admission()
+                    store.fail_activity_regeneration(
+                        session.teacher_id,
+                        retried.id,
+                        "engine_unavailable",
+                        "Сервіс створення варіантів недоступний. Попередній блок збережено.",
+                    )
+                    retried = (
+                        store.get_activity_regeneration(session.teacher_id, retried.id) or retried
+                    )
         except (
             ActivityRegenerationNotFound,
             ActivityRegenerationInProgress,
@@ -1361,14 +1388,6 @@ def create_app(
             ValueError,
         ) as error:
             raise_regeneration_error(error, lesson_key)
-        if not runner.submit(retried.id):
-            store.fail_activity_regeneration(
-                session.teacher_id,
-                retried.id,
-                "engine_unavailable",
-                "Сервіс створення варіантів недоступний. Попередній блок збережено.",
-            )
-            retried = store.get_activity_regeneration(session.teacher_id, retried.id) or retried
         return _activity_regeneration_payload(retried)
 
     @app.post("/api/lessons/{lesson_id}/blocks/{block_id}/accept")
