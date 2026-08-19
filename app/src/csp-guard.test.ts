@@ -80,28 +80,13 @@ describe('CSP regression guard (simulated unsafe-eval block)', () => {
     }
   });
 
-  it('would have thrown on the pre-fix eval-based compile (documenting the bug)', () => {
-    // This documents intent: if review-helpers still contained the top level
-    //   const activityValidator = new Ajv({ allErrors: true, strict: false }).compile(activitySchema);
-    // then the previous test's dynamic import (under patch) would set threwDuringImport=true and fail.
-    // The source change + precompile makes the "would fail" into "passes".
-    expect(true).toBe(true);
-  });
-
   it('generated validator (and by extension its bundles) must contain ZERO CommonJS require/module.exports', () => {
-    // MANDATORY GUARD (unit test level): the csp-guard.mjs already greps generated+dist at build time.
-    // This test provides a fast, pre-build check that runs in vitest portion of `npm test`.
-    // It directly greps the committed/generated source so a require( regression is caught even
-    // if someone hand-edits the .js or the generator post-process regresses.
+    // Fast pre-build check. scripts/csp-guard.mjs still greps generated+dist after build.
+    // Fail closed if the generated validator is missing so a deleted file cannot pass.
     const genPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), './generated/activityValidator.js');
-    if (!fs.existsSync(genPath)) {
-      // If not present (rare), skip hard; build will enforce.
-      return;
-    }
+    expect(fs.existsSync(genPath), `missing generated validator at ${genPath}`).toBe(true);
     const content = fs.readFileSync(genPath, 'utf8');
     expect(content).not.toMatch(/require\s*\(/);
     expect(content).not.toMatch(/module\.exports/);
-    // Also document that we accept "use strict"; at head (harmless in ESM) but no CJS calls.
-    // The generator strips it; if present it's ok for this check as long as no require.
   });
 });
