@@ -1,13 +1,8 @@
-"""Private production-qualification protocol.
+"""Private production-qualification protocol with lazy compatibility exports."""
 
-The package contains only contracts, hashes, and deterministic harness code.
-It deliberately ships no teacher source text, lesson output, provider secret,
-database, or telemetry receipt.
-"""
+from __future__ import annotations
 
-from .harness import ProductionQualificationHarness, deterministic_runtime_anchors
-from .manifest import QualificationManifest, RuntimeAnchor, load_manifest
-from .receipts import CellReceipt, QualificationError, aggregate_receipts
+from importlib import import_module
 
 __all__ = [
     "CellReceipt",
@@ -19,3 +14,24 @@ __all__ = [
     "deterministic_runtime_anchors",
     "load_manifest",
 ]
+
+_EXPORTS = {
+    "CellReceipt": (".receipts", "CellReceipt"),
+    "ProductionQualificationHarness": (".harness", "ProductionQualificationHarness"),
+    "QualificationError": (".receipts", "QualificationError"),
+    "QualificationManifest": (".manifest", "QualificationManifest"),
+    "RuntimeAnchor": (".manifest", "RuntimeAnchor"),
+    "aggregate_receipts": (".receipts", "aggregate_receipts"),
+    "deterministic_runtime_anchors": (".harness", "deterministic_runtime_anchors"),
+    "load_manifest": (".manifest", "load_manifest"),
+}
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(name) from exc
+    value = getattr(import_module(module_name, __name__), attribute)
+    globals()[name] = value
+    return value

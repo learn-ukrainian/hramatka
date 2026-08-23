@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
@@ -45,6 +44,7 @@ from hramatka.engine.lesson_capacity_v3 import (
     preflight_lesson,
     replacement_plan_can_coexist,
 )
+from hramatka.engine.lesson_profile_45_v1 import lesson_profile_45, slot_builders_45
 from hramatka.engine.prompt_pack_v3 import (
     RepairableSerializationError,
     RuleNamedRejection,
@@ -447,6 +447,8 @@ _TITLES = {
     "text-questions": "Питання до тексту",
     "short-writing": "Коротке письмо",
 }
+
+
 def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
     """Return learner choice surfaces that must be honest about outside text."""
     surfaces: list[str] = []
@@ -553,17 +555,13 @@ def _mode(phase: int, activity_type: str) -> str:
 
 def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]:
     """Return the one deterministic v3 schedule for a supported phase shape."""
+    if duration == 45:
+        # 45-minute schedule/fallback policy belongs to the shared immutable
+        # profile consumed by both runtime and qualification.
+        return tuple(slot.requested_type for slot in lesson_profile_45().slots)
     if duration == 60 and degree_focus_requested(focus):
         return tuple(activity_type for _slot_id, activity_type, _role in DEGREE_60_SCHEDULE)
     by_duration = {
-        45: (
-            "quiz",
-            "cloze",
-            "match-up",
-            "error-correction",
-            "text-questions",
-            "short-writing",
-        ),
         60: (
             "quiz",
             "cloze",
@@ -595,6 +593,10 @@ def _scheduled_types(duration: int, focus: str | None = None) -> tuple[str, ...]
 
 
 def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, ...]:
+    if duration == 45:
+        # Focus never changes the approved 45-minute source-comprehension
+        # schedule; it is already represented in the immutable profile.
+        return lesson_profile_45().slots
     shape = phase_shape_for(duration)
     scheduled = _scheduled_types(duration, focus)
     if len(scheduled) != sum(shape.phase_slots.values()):  # pragma: no cover - static guard
@@ -603,12 +605,6 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
     replacement_policy = {
         "match-up": ("quiz", "fill-in"),
     }
-    if duration == 45:
-        # 45-minute lessons keep the narrative schedule even when the teacher
-        # typed a degree-like focus. Fill-in fallbacks follow that shape, not
-        # the 60-minute degree table (#453).
-        replacement_policy["match-up"] = ("fill-in",)
-        replacement_policy["error-correction"] = ("fill-in",)
     index = 0
     for phase, count in sorted(shape.phase_slots.items()):
         for position in range(1, count + 1):
@@ -626,18 +622,25 @@ def _lesson_slots(duration: int, focus: str | None = None) -> tuple[LessonSlot, 
 
 def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., object]]:
     """Bind slots to pre-certified groups, including one exact-cover-shared fallback."""
-    occurrence_by_slot_type: dict[tuple[str, str], int] = {}
-    occurrences: Counter[str] = Counter()
     source_comprehension_45 = tuple(slot.requested_type for slot in slots) == _scheduled_types(
         45, None
     )
+    if source_comprehension_45:
+        # The extracted profile owns all 45-minute occurrence/group/fallback
+        # behavior.  Keeping no parallel closure here prevents qualification
+        # and the live adapter from slowly acquiring different schedules.
+        return slot_builders_45()
+    occurrence_by_slot_type: dict[tuple[str, str], int] = {}
+    # 60/90-minute schedules retain their established per-type occurrence
+    # numbering; only the 45-minute profile was extracted.
+    occurrences: dict[str, int] = {}
     for slot in slots:
         activity_type = slot.requested_type
-        occurrences[activity_type] += 1
+        occurrences[activity_type] = occurrences.get(activity_type, 0) + 1
         occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
     for slot in slots:
         for activity_type in slot.replacement_types:
-            occurrences[activity_type] += 1
+            occurrences[activity_type] = occurrences.get(activity_type, 0) + 1
             occurrence_by_slot_type[(slot.slot_id, activity_type)] = occurrences[activity_type]
 
     def builder_for(activity_type: str) -> Callable[..., object]:
@@ -651,22 +654,6 @@ def _slot_builders(slots: tuple[LessonSlot, ...]) -> Mapping[str, Callable[..., 
                 group_number=occurrence,
             )
             plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
-            if (
-                source_comprehension_45
-                and activity_type == "fill-in"
-                and occurrence > 1
-                and not plan.floor_met
-            ):
-                # Match-up and error-correction alternatives are mutually
-                # exclusive with their own primaries. A short narrative may
-                # certify only one spare fill-in board; let either slot claim
-                # it, while exact cover still forbids both from sharing it.
-                selected = inventory_for_group(
-                    inventory,  # type: ignore[arg-type]
-                    activity_type=activity_type,
-                    group_number=1,
-                )
-                plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
             return plan
 
         return build
@@ -909,12 +896,12 @@ def _token_jaccard(left: Sequence[str], right: Sequence[str]) -> float:
     return len(left_set & right_set) / len(union) if union else 1.0
 
 
-def _materially_simplifies_question(
-    candidate: Sequence[str], prior: Sequence[str]
-) -> bool:
+def _materially_simplifies_question(candidate: Sequence[str], prior: Sequence[str]) -> bool:
     """Treat removing at least 30% of an overlong prior question as real change."""
-    return len(candidate) >= 8 and len(candidate) <= len(prior) - 4 and (
-        len(candidate) / len(prior) <= 0.7
+    return (
+        len(candidate) >= 8
+        and len(candidate) <= len(prior) - 4
+        and (len(candidate) / len(prior) <= 0.7)
     )
 
 
@@ -970,9 +957,7 @@ def _unsupported_regeneration_sample_tokens(
     return frozenset(unsupported)
 
 
-def _regeneration_sample_segment_count(
-    sample: object, evidence_segments: object
-) -> int:
+def _regeneration_sample_segment_count(sample: object, evidence_segments: object) -> int:
     """Count exact source sentences that contribute content to one teacher sample."""
     if (
         not isinstance(sample, str)
@@ -1061,9 +1046,7 @@ def _personal_sample_copies_source_comparison(sample: object, source: object) ->
         re.IGNORECASE,
     ):
         comparison = match.group("comparison")
-        comparison_tokens = {
-            token for token in _learner_tokens(comparison) if len(token) >= 4
-        }
+        comparison_tokens = {token for token in _learner_tokens(comparison) if len(token) >= 4}
         if (
             len(source_tokens.intersection(comparison_tokens)) >= 2
             or _source_content_overlap_count(comparison, source) >= 2
@@ -1075,9 +1058,7 @@ def _personal_sample_copies_source_comparison(sample: object, source: object) ->
 def _unnatural_sound_shift_sample(sample: object) -> bool:
     if not isinstance(sample, str):
         return True
-    if _SOUND_OBJECT_AS_SOUND_RE.search(sample) or _UNNATURAL_SOUND_SHIFT_SAMPLE_RE.search(
-        sample
-    ):
+    if _SOUND_OBJECT_AS_SOUND_RE.search(sample) or _UNNATURAL_SOUND_SHIFT_SAMPLE_RE.search(sample):
         return True
     tokens = _learner_tokens(sample)
     mentions_gun = any(token.startswith("рушниц") for token in tokens)
@@ -1134,9 +1115,7 @@ def _regeneration_quality_gate(
         abstract_impression_position: int | None = None
         item_rejections: list[RuleNamedRejection] = []
         filler_positions = tuple(
-            index
-            for index, item in enumerate(items)
-            if "саме" in _learner_tokens(item)
+            index for index, item in enumerate(items) if "саме" in _learner_tokens(item)
         )
         for item_index, (item, unit) in enumerate(zip(items, units, strict=True)):
             tokens = _learner_tokens(item)
@@ -1173,12 +1152,12 @@ def _regeneration_quality_gate(
                 )
                 continue
             if any(
-                    (
-                        _token_jaccard(tokens, prior_tokens) >= 0.68
-                        or len(set(tokens) - set(prior_tokens)) < 3
-                    )
-                    and not _materially_simplifies_question(tokens, prior_tokens)
-                    for prior_tokens in prior_token_rows
+                (
+                    _token_jaccard(tokens, prior_tokens) >= 0.68
+                    or len(set(tokens) - set(prior_tokens)) < 3
+                )
+                and not _materially_simplifies_question(tokens, prior_tokens)
+                for prior_tokens in prior_token_rows
             ):
                 item_rejections.append(
                     RuleNamedRejection(
@@ -1202,19 +1181,13 @@ def _regeneration_quality_gate(
                 continue
             distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
             category = (
-                distinctness.get("question_category")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
             )
             focus_alignment = (
-                distinctness.get("focus_alignment")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
             )
             regeneration_lens = (
-                distinctness.get("regeneration_lens")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("regeneration_lens") if isinstance(distinctness, Mapping) else None
             )
             regeneration_grounding_terms = (
                 distinctness.get("regeneration_grounding_terms")
@@ -1231,9 +1204,7 @@ def _regeneration_quality_gate(
                 for token in _learner_tokens(value)
             }
             topic = (
-                distinctness.get("question_topic")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
             )
             topic_tokens = {
                 token
@@ -1244,9 +1215,7 @@ def _regeneration_quality_gate(
                 for token in _learner_tokens(value)
             }
             topic_lemma = topic.get("lemma") if isinstance(topic, Mapping) else None
-            topic_lemmas = (
-                {topic_lemma.casefold()} if isinstance(topic_lemma, str) else set()
-            )
+            topic_lemmas = {topic_lemma.casefold()} if isinstance(topic_lemma, str) else set()
             if (
                 focus_alignment == "source-comprehension"
                 and category == "comprehension"
@@ -1275,8 +1244,7 @@ def _regeneration_quality_gate(
                         plan_mode == "source-proposition-replan"
                         and (
                             regeneration_lens not in _REGENERATION_LENS_PATTERNS
-                            or _REGENERATION_LENS_PATTERNS[regeneration_lens].search(item)
-                            is None
+                            or _REGENERATION_LENS_PATTERNS[regeneration_lens].search(item) is None
                         )
                     )
                 )
@@ -1299,10 +1267,7 @@ def _regeneration_quality_gate(
                     item_rejections.append(
                         RuleNamedRejection(
                             "activity_binding",
-                            suffix=(
-                                "regeneration_question_repetition:"
-                                f"item={item_index}"
-                            ),
+                            suffix=(f"regeneration_question_repetition:item={item_index}"),
                         )
                     )
                     continue
@@ -1320,8 +1285,7 @@ def _regeneration_quality_gate(
                             or not grounding_term_tokens.intersection(tokens)
                         )
                     )
-                    or
-                    topic_tokens.intersection(tokens)
+                    or topic_tokens.intersection(tokens)
                     or topic_lemmas.intersection(_learner_lemmas(item))
                     or _application_detail_answer_leak(item, surface)
                 )
@@ -1330,17 +1294,13 @@ def _regeneration_quality_gate(
                     RuleNamedRejection(
                         "activity_binding",
                         suffix=(
-                            "regeneration_application_too_narrow_or_revealing:"
-                            f"item={item_index}"
+                            f"regeneration_application_too_narrow_or_revealing:item={item_index}"
                         ),
                     )
                 )
         guidance = answer_key.get("guidance")
         prior_guidance = prior_answer_key.get("guidance")
-        if (
-            not isinstance(guidance, str)
-            or guidance.strip() == str(prior_guidance).strip()
-        ):
+        if not isinstance(guidance, str) or guidance.strip() == str(prior_guidance).strip():
             raise RuleNamedRejection("activity_binding", suffix="regeneration_guidance_must_differ")
         guidance_lines = tuple(line.strip() for line in guidance.splitlines() if line.strip())
         if len(guidance_lines) != len(items):
@@ -1355,19 +1315,13 @@ def _regeneration_quality_gate(
             source_lemmas = _learner_lemmas(surface)
             distinctness = unit.get("distinctness") if isinstance(unit, Mapping) else None
             category = (
-                distinctness.get("question_category")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_category") if isinstance(distinctness, Mapping) else None
             )
             focus_alignment = (
-                distinctness.get("focus_alignment")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
             )
             regeneration_lens = (
-                distinctness.get("regeneration_lens")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("regeneration_lens") if isinstance(distinctness, Mapping) else None
             )
             regeneration_evidence_segments = (
                 distinctness.get("regeneration_evidence_segments")
@@ -1380,9 +1334,7 @@ def _regeneration_quality_gate(
                 else None
             )
             topic = (
-                distinctness.get("question_topic")
-                if isinstance(distinctness, Mapping)
-                else None
+                distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
             )
             topic_tokens = {
                 token
@@ -1393,9 +1345,7 @@ def _regeneration_quality_gate(
                 for token in _learner_tokens(value)
             }
             topic_lemma = topic.get("lemma") if isinstance(topic, Mapping) else None
-            topic_lemmas = (
-                {topic_lemma.casefold()} if isinstance(topic_lemma, str) else set()
-            )
+            topic_lemmas = {topic_lemma.casefold()} if isinstance(topic_lemma, str) else set()
             begins_sequentially = bool(sample_tokens and sample_tokens[0] == "спочатку")
             repeated_sequential_sample = (
                 begins_sequentially and sequential_sample_position is not None
@@ -1457,10 +1407,7 @@ def _regeneration_quality_gate(
                             )
                         )
                         < 2
-                        or _source_content_overlap_count(
-                            sample, regeneration_source_context
-                        )
-                        >= 6
+                        or _source_content_overlap_count(sample, regeneration_source_context) >= 6
                         or _copies_source_content_run(sample, regeneration_source_context)
                     )
                 )
@@ -1480,9 +1427,7 @@ def _regeneration_quality_gate(
                     focus_alignment == "source-comprehension"
                     and category == "comprehension"
                     and plan_mode == "source-proposition-replan"
-                    and _regeneration_sample_segment_count(
-                        sample, regeneration_evidence_segments
-                    )
+                    and _regeneration_sample_segment_count(sample, regeneration_evidence_segments)
                     < 2
                 )
                 or (
@@ -2602,9 +2547,7 @@ class EngineLessonBaker:
             # claim identity.
             store=None,
             phases_total=1,
-            calls_planned=(
-                2 if block.get("type") in {"text-questions", "short-writing"} else 1
-            ),
+            calls_planned=(2 if block.get("type") in {"text-questions", "short-writing"} else 1),
             calls_done=0,
             phase=block.get("phase") if block.get("phase") in {1, 2, 3} else 1,
             step="generation",
@@ -2745,9 +2688,7 @@ class EngineLessonBaker:
                     target = original_target
                     plan_mode = "same-plan-open-realization"
                     if allocated.scheduled_type == "text-questions":
-                        original_unit_ids = tuple(
-                            unit.unit_id for unit in allocated.plan.units
-                        )
+                        original_unit_ids = tuple(unit.unit_id for unit in allocated.plan.units)
                         original_comprehension_sentence_ids = {
                             answer_span.get("sentence_id")
                             for unit in allocated.plan.units
@@ -2786,19 +2727,14 @@ class EngineLessonBaker:
                                     answer_span := unit.distinctness.get("answer_span"),
                                     Mapping,
                                 )
-                                and isinstance(
-                                    sentence_id := answer_span.get("sentence_id"), str
-                                )
+                                and isinstance(sentence_id := answer_span.get("sentence_id"), str)
                                 and sentence_id not in original_comprehension_sentence_ids
-                                and sentence_id
-                                not in excluded_comprehension_sentence_ids
+                                and sentence_id not in excluded_comprehension_sentence_ids
                             )
                             if not replacement_sentence_ids:
                                 proposition_plan = None
                                 break
-                            excluded_comprehension_sentence_ids.add(
-                                replacement_sentence_ids[0]
-                            )
+                            excluded_comprehension_sentence_ids.add(replacement_sentence_ids[0])
                         if proposition_plan is not None and replacement_plan_can_coexist(
                             preflight.allocation,
                             target_slot_id=allocated.slot_id,
@@ -3167,11 +3103,7 @@ class EngineLessonBaker:
         rendered_answer_key = dict(answer_key)
         gates = [
             "v3",
-            *(
-                ["teacher-sample-semantic-v1"]
-                if teacher_sample_semantically_approved
-                else []
-            ),
+            *(["teacher-sample-semantic-v1"] if teacher_sample_semantically_approved else []),
         ]
         # Truthful provenance only.  A missing generator identity is stamped as
         # "unknown" rather than the old silent GEMMA default that made every

@@ -16,6 +16,12 @@ from typing import Final
 from urllib.parse import quote
 
 from . import data
+from .candidate_bank_receipt_v1 import (
+    BankReceiptContext,
+    ReceiptSink,
+    receipts_for_inventory,
+    seal_complete_inventory,
+)
 from .gates import vesum_tags
 from .linguistics import verify_lemma
 from .retrieval import build_atlas_lookup
@@ -1550,9 +1556,8 @@ def _contextual_error_replacements(
     # Explicit subject--finite-verb agreement.  Noun subjects license third
     # person; personal pronouns also contribute their attested person.
     if any(parse.get("pos") == "verb" for parse in token.vesum_parses):
-        subject_frames = (
-            _subject_frames_before(sentence, token_index)
-            or _subject_frames_after(sentence, token_index)
+        subject_frames = _subject_frames_before(sentence, token_index) or _subject_frames_after(
+            sentence, token_index
         )
         if len(subject_frames) != 1:
             subject_frames = set()
@@ -1663,8 +1668,7 @@ def _contextual_error_replacements(
         )
         source_rows = _token_tag_sets(token, pos="noun")
         source_is_nominative_singular = any(
-            "v_naz" in tags and ("s" in tags or bool(tags & _GENDER_TAGS))
-            for tags in source_rows
+            "v_naz" in tags and ("s" in tags or bool(tags & _GENDER_TAGS)) for tags in source_rows
         )
         if following_is_name and source_is_nominative_singular:
             for form, pos, _source_tags, _replacement_tags in safe_rows:
@@ -1765,15 +1769,12 @@ def _contextual_choice_bank(
         token,
         one_per_mismatch_class=False,
     )
-    best_by_signature: dict[
-        tuple[tuple[str, ...], ...], tuple[str, str, str]
-    ] = {}
+    best_by_signature: dict[tuple[tuple[str, ...], ...], tuple[str, str, str]] = {}
     for row in rows:
         form = row[0]
         signature = tuple(
             sorted(
-                tuple(sorted(tags))
-                for tags in _replacement_tag_sets(token, form, pos=identity[1])
+                tuple(sorted(tags)) for tags in _replacement_tag_sets(token, form, pos=identity[1])
             )
         )
         if not signature:
@@ -1902,9 +1903,7 @@ _APPLICATION_PERSONAL_FORMS: Final[frozenset[str]] = frozenset(
         "вами",
     }
 )
-_APPLICATION_GROUNDING_EXCLUDED_LEMMAS: Final[frozenset[str]] = frozenset(
-    {"людина", "світ"}
-)
+_APPLICATION_GROUNDING_EXCLUDED_LEMMAS: Final[frozenset[str]] = frozenset({"людина", "світ"})
 
 
 def _application_question_grounding_terms(sentence: AnchorSentence) -> tuple[str, ...]:
@@ -2399,9 +2398,7 @@ def _cross_gap_choice_banks(
         def is_synonym(left: str, right: str) -> bool:
             return frozenset((left, right)) in synonym_pairs
 
-        fixture_result: dict[
-            str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]
-        ] = {}
+        fixture_result: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
         for index, (token, lemma, pos) in enumerate(typed):
             rotated = (*typed[index + 1 :], *typed[:index])
             same_pos = tuple(
@@ -2890,9 +2887,7 @@ def _narrative_application_carriers(
     return (personal, evidence)
 
 
-def _regeneration_span_supports(
-    lens: str, context: Sequence[AnchorSentence]
-) -> bool:
+def _regeneration_span_supports(lens: str, context: Sequence[AnchorSentence]) -> bool:
     """Certify that a multi-sentence span can honestly support its B1 move."""
     predicate_count = sum(
         1 for sentence in context for token in sentence.tokens if _finite_predicate(token)
@@ -2900,9 +2895,10 @@ def _regeneration_span_supports(
     if predicate_count < 2:
         return False
     if lens == "change-comparison":
-        return _REGENERATION_CHANGE_MARKER_RE.search(
-            " ".join(sentence.text for sentence in context)
-        ) is not None
+        return (
+            _REGENERATION_CHANGE_MARKER_RE.search(" ".join(sentence.text for sentence in context))
+            is not None
+        )
     return lens in {"episode-synthesis", "evidence-details"}
 
 
@@ -2929,9 +2925,7 @@ def regeneration_text_question_inventory(
         if candidate.activity_type == "text-questions"
     }
     original = tuple(
-        original_by_id[unit_id]
-        for unit_id in original_unit_ids
-        if unit_id in original_by_id
+        original_by_id[unit_id] for unit_id in original_unit_ids if unit_id in original_by_id
     )
     minimum = floor_for("text-questions").minimum_units
     comprehension = tuple(
@@ -2998,8 +2992,7 @@ def regeneration_text_question_inventory(
                 else tuple(
                     inventory.sentences[context_position]
                     for offset in offsets
-                    if 0 <= (context_position := position + offset)
-                    < len(inventory.sentences)
+                    if 0 <= (context_position := position + offset) < len(inventory.sentences)
                 )
             )
             context_ids = {item.sentence_id for item in context}
@@ -3007,14 +3000,8 @@ def regeneration_text_question_inventory(
                 len(context) < 2
                 or sentence.sentence_id in comprehension_sentence_ids
                 or sentence.sentence_id in excluded_carriers
-                or (
-                    not narrative_profile
-                    and not context_ids.isdisjoint(comprehension_context_ids)
-                )
-                or (
-                    not narrative_profile
-                    and not _regeneration_span_supports(lens, context)
-                )
+                or (not narrative_profile and not context_ids.isdisjoint(comprehension_context_ids))
+                or (not narrative_profile and not _regeneration_span_supports(lens, context))
                 or not _safe_source_proposition_carrier(sentence)
                 or not any(_finite_predicate(token) for token in sentence.tokens)
                 or (topic := _topic_token(sentence)) is None
@@ -3028,9 +3015,7 @@ def regeneration_text_question_inventory(
         comprehension_carriers[lens] = carrier
         comprehension_sentence_ids.add(carrier[0].sentence_id)
         if not narrative_profile:
-            comprehension_context_ids.update(
-                item.sentence_id for item in carrier[3]
-            )
+            comprehension_context_ids.update(item.sentence_id for item in carrier[3])
     if len(comprehension_carriers) != TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension:
         return replace(
             inventory,
@@ -3084,8 +3069,7 @@ def regeneration_text_question_inventory(
                 literal_evidence=sentence.text,
                 expected_key=rendering_surface,
                 semantic_target=(
-                    f"source-span-regeneration:{sentence.sentence_id}:"
-                    f"comprehension:{position}"
+                    f"source-span-regeneration:{sentence.sentence_id}:comprehension:{position}"
                 ),
                 category="comprehension",
                 question_intent="fact-recovery",
@@ -3099,9 +3083,7 @@ def regeneration_text_question_inventory(
                 rendering_surface=rendering_surface,
                 question_basis="source-span",
                 question_lens=lens,
-                question_context_sentence_ids=tuple(
-                    item.sentence_id for item in context
-                ),
+                question_context_sentence_ids=tuple(item.sentence_id for item in context),
             )
         )
     application_lenses = ("personal-example", "evidence-evaluation")
@@ -3584,10 +3566,14 @@ def _diverse_group(
     target_units = floor_for(activity_type).minimum_units
     pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
     operation = focus_mode or COGNITIVE_OPERATION.get(activity_type, activity_type)
-    consumes_evidence_capacity = activity_type != "match-up" and (
-        activity_type,
-        operation,
-    ) not in EVIDENCE_CAPACITY_OVERLAYS
+    consumes_evidence_capacity = (
+        activity_type != "match-up"
+        and (
+            activity_type,
+            operation,
+        )
+        not in EVIDENCE_CAPACITY_OVERLAYS
+    )
 
     def cloze_capacity_after(
         sentence: AnchorSentence, *, excluded_token_id: str | None = None
@@ -3676,9 +3662,7 @@ def _diverse_group(
         target_pos = next(
             (
                 pos
-                for pos, _count in sorted(
-                    pos_capacity.items(), key=lambda row: (-row[1], row[0])
-                )
+                for pos, _count in sorted(pos_capacity.items(), key=lambda row: (-row[1], row[0]))
                 if pos_capacity[pos] >= target_units
             ),
             None,
@@ -3759,8 +3743,7 @@ def _diverse_group(
             (
                 1
                 if activity_type == "fill-in"
-                and row[0].sentence_id
-                in sentence_activity_uses.get("text-questions", set())
+                and row[0].sentence_id in sentence_activity_uses.get("text-questions", set())
                 else 0
             ),
             (
@@ -3880,9 +3863,7 @@ def _diverse_group(
     if activity_type == "cloze":
         # Prefer four consecutive eligible source pools so the excerpt board
         # remains narratively compact without claiming unselected sentences.
-        ordered_pools = sorted(
-            pools, key=lambda row: int(row[0].sentence_id.removeprefix("s-"))
-        )
+        ordered_pools = sorted(pools, key=lambda row: int(row[0].sentence_id.removeprefix("s-")))
         compact_windows = []
         for start in range(max(0, len(ordered_pools) - 3)):
             window = ordered_pools[start : start + 4]
@@ -3901,9 +3882,7 @@ def _diverse_group(
                 )
                 for sentence in sentences[first - 1 : last]
             )
-            compact_windows.append(
-                ((contextual_carriers, last - first, first), window)
-            )
+            compact_windows.append(((contextual_carriers, last - first, first), window))
         if compact_windows:
             _score, best_window = min(compact_windows, key=lambda row: row[0])
             pools = [
@@ -3922,10 +3901,10 @@ def _diverse_group(
     # source pool can therefore become unusable after an earlier pair is
     # selected; keep later pools available instead of failing the whole group
     # merely because one of the first eight pools collides semantically.
-    if activity_type in {"cloze", "match-up", "error-correction"} or (
-        activity_type == "fill-in" and focus_mode == _FOCUS_REINFORCEMENT
-    ) or (
-        activity_type == "text-questions" and focus_mode == "source-comprehension"
+    if (
+        activity_type in {"cloze", "match-up", "error-correction"}
+        or (activity_type == "fill-in" and focus_mode == _FOCUS_REINFORCEMENT)
+        or (activity_type == "text-questions" and focus_mode == "source-comprehension")
     ):
         chosen_pools = pools
     else:
@@ -4345,6 +4324,8 @@ def inventory_from_anchor(
     replacement_types: Sequence[str] = (),
     duration_minutes: int = 45,
     focus: str | None = None,
+    receipt_context: BankReceiptContext | None = None,
+    receipt_sink: ReceiptSink | None = None,
 ) -> CertificationInventory:
     """Build only literal-evidence candidates required by one v3 lesson shape.
 
@@ -4352,6 +4333,8 @@ def inventory_from_anchor(
     allocator will return ``insufficient_anchor_capacity`` before any model
     call rather than lowering a type's floor or inventing source material.
     """
+    if (receipt_context is None) != (receipt_sink is None):
+        raise ValueError("Candidate-bank receipt capture requires context and sink together.")
     sentences = _sentences(anchor)
     writing_ranges = {45: (60, 80), 60: (80, 110), 90: (120, 160)}
     if duration_minutes not in writing_ranges:
@@ -4379,8 +4362,7 @@ def inventory_from_anchor(
         else tuple((activity_type, None, None) for activity_type in scheduled_types)
     )
     source_comprehension_45 = (
-        duration_minutes == 45
-        and tuple(scheduled_types) == _SOURCE_COMPREHENSION_45
+        duration_minutes == 45 and tuple(scheduled_types) == _SOURCE_COMPREHENSION_45
     )
     groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
     group_numbers_by_type: dict[str, list[int]] = defaultdict(list)
@@ -4449,11 +4431,7 @@ def inventory_from_anchor(
             slot_id: str | None,
             _lane_index: int = lane_index,
         ) -> int:
-            if (
-                source_comprehension_45
-                and _lane_index == 0
-                and activity_type == "text-questions"
-            ):
+            if source_comprehension_45 and _lane_index == 0 and activity_type == "text-questions":
                 # Choose literal questions only after all language-drill
                 # carriers have consumed capacity. This makes unused source
                 # propositions the deterministic first choice.
@@ -4514,11 +4492,7 @@ def inventory_from_anchor(
             if activity_type == "short-writing" and groups_by_type[activity_type]:
                 continue
             focus_mode = None
-            if (
-                source_comprehension_45
-                and lane_index == 0
-                and activity_type == "text-questions"
-            ):
+            if source_comprehension_45 and lane_index == 0 and activity_type == "text-questions":
                 focus_mode = "source-comprehension"
             elif lane_index == 0 and degree_focus_requested(focus):
                 focus_mode = degree_role(slot_id, activity_type) if slot_id is not None else None
@@ -4553,7 +4527,8 @@ def inventory_from_anchor(
             )
             selection_token_ids = (
                 set()
-                if activity_type in {
+                if activity_type
+                in {
                     "mark-the-words",
                     "text-questions",
                     # A dependency-diagnosis item may intentionally revisit a
@@ -4690,14 +4665,10 @@ def inventory_from_anchor(
                             sentence,
                             candidate_number=candidate_number,
                             category=(
-                                "comprehension"
-                                if literal_recovery
-                                else "anchored_application"
+                                "comprehension" if literal_recovery else "anchored_application"
                             ),
                             intent=(
-                                "fact-recovery"
-                                if literal_recovery
-                                else "anchored-application.v1"
+                                "fact-recovery" if literal_recovery else "anchored-application.v1"
                             ),
                             answer_start=0,
                             answer_end=len(sentence.text),
@@ -4709,15 +4680,12 @@ def inventory_from_anchor(
                 if (
                     len(question_candidates) != floor_for("text-questions").minimum_units
                     or sum(
-                        candidate.category == "comprehension"
-                        for candidate in question_candidates
+                        candidate.category == "comprehension" for candidate in question_candidates
                     )
                     < TEXT_QUESTION_COMPREHENSION_FLOOR.comprehension
                 ):
                     continue
-                prebuilt_candidates[(activity_type, group_number)] = tuple(
-                    question_candidates
-                )
+                prebuilt_candidates[(activity_type, group_number)] = tuple(question_candidates)
             ready_candidates = prebuilt_candidates.get((activity_type, group_number))
             if ready_candidates is not None:
                 candidates.extend(ready_candidates)
@@ -4732,9 +4700,7 @@ def inventory_from_anchor(
                 sentence_numbers = sorted(
                     {int(token.sentence_id.removeprefix("s-")) for token in group}
                 )
-                cloze_sentences = tuple(
-                    by_id[f"s-{index}"] for index in sentence_numbers
-                )
+                cloze_sentences = tuple(by_id[f"s-{index}"] for index in sentence_numbers)
                 cursor = 0
                 for passage_sentence in cloze_sentences:
                     cloze_sentence_starts[passage_sentence.sentence_id] = cursor
@@ -4953,7 +4919,7 @@ def inventory_from_anchor(
                         target_token_ids=tuple(token.token_id for token in group),
                     )
                 )
-    return CertificationInventory(
+    inventory = CertificationInventory(
         source_id=_source_id(anchor),
         sentences=sentences,
         candidates=tuple(candidates),
@@ -4962,6 +4928,17 @@ def inventory_from_anchor(
         mark_requests=tuple(mark_requests),
         writing_tasks=tuple(writing_tasks),
     )
+    # Receipt issue is an explicit qualification-only creation hook.  It sees
+    # the complete ordered inventory before callers can request a bank.
+    if receipt_context is not None and receipt_sink is not None:
+        receipt_sink(
+            receipts_for_inventory(
+                inventory,
+                context=receipt_context,
+                seal=seal_complete_inventory(inventory, context=receipt_context),
+            )
+        )
+    return inventory
 
 
 def inventory_for_group(
