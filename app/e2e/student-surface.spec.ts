@@ -74,6 +74,16 @@ async function useTrueFalseActivity(scope: ReturnType<Page['locator']>) {
   await expect(scope.locator('[data-activity="tf-row-feedback"]')).toBeVisible({ timeout: 3000 });
 }
 
+async function useMatchUpActivity(scope: ReturnType<Page['locator']>) {
+  const left = scope.locator('[data-activity="match-left-tile"]').first();
+  const matchingRight = scope.locator('[data-activity="match-right-tile"][data-original-index="0"]');
+  await expect(left).toBeVisible();
+  await left.click();
+  await expect(left).toHaveAttribute('data-selected', 'true');
+  await matchingRight.click();
+  await expect(left).toHaveAttribute('data-matched', 'true');
+}
+
 async function assertStudentSurfaceClean(page: Page) {
   await expect(page.getByTestId('student-surface')).toBeVisible();
   await expect(page.getByTestId('student-mode-badge')).toContainText(/учень/i);
@@ -148,7 +158,9 @@ test.describe('Student sharing surface (P0-3)', () => {
 
     const shared = page.locator('.cond-shared');
     await expect(shared).toBeVisible();
-    await useTrueFalseActivity(shared);
+    // The qualified 45-minute plan starts with match-up; true/false remains
+    // available in the reserve but is not a conductor-plan assumption.
+    await useMatchUpActivity(shared);
 
     await page.getByTestId('teacher-return-btn').click();
     await expect(page.getByTestId('teacher-surface')).toBeVisible();

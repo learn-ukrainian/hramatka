@@ -51,7 +51,7 @@ npm run build     # tsc + vite build → dist/ (static bundle)
 - CSRF: GET /api/session yields csrf_token; every mutation sends `X-CSRF-Token` + exact Origin.
 - 401 → show invite screen. 403/409/410/422/503 → teacher-facing messages from envelope.
 - Paste disclosure: "Вставлений текст буде надіслано зовнішньому провайдеру Gemma. Не використовуйте чутливі або персональні дані."
-- Level fixed to B1. Durations 45/60/90. Focus optional.
+- Level fixed to B1. New lessons use the human-qualified 45-minute format only; stored 60/90-minute lessons remain viewable and exportable. Focus optional.
 - Lesson view groups by phase (1,2,3). REVIEW shows answer keys + warnings + provenance + ack UI (accept blocked until all visible warns acked). RUN uses learner player view.
 - Every block: `<ActivityPlayer activity={block.activity} ... />`
 - Accept / draft use revision check (409 on stale).

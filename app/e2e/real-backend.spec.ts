@@ -18,12 +18,14 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   const modelPicker = page.getByLabel('Модель для уроку');
   await expect(modelPicker).toHaveValue('gemini-3.7-flash');
   await modelPicker.selectOption('gemini-3.7-flash');
-  await page.locator('.field').filter({ hasText: 'Тривалість' }).locator('select').selectOption('45');
+  await expect(page.getByTestId('qualified-duration')).toContainText('45');
   const submittedLesson = page.waitForRequest(
     request => request.url().endsWith('/api/lessons') && request.method() === 'POST',
   );
   await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-  expect((await submittedLesson).postDataJSON().logical_model_id).toBe('gemini-3.7-flash');
+  const submittedPayload = (await submittedLesson).postDataJSON();
+  expect(submittedPayload.logical_model_id).toBe('gemini-3.7-flash');
+  expect(submittedPayload.duration).toBe(45);
   // The live v3 45-minute profile is six exact slots, not the retired eight-block plan.
   const expectedTypes = [
     'match-up', 'quiz', 'fill-in', 'error-correction', 'mark-the-words', 'cloze',

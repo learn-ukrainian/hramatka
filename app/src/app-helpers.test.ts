@@ -127,10 +127,10 @@ describe('app-helpers', () => {
     expect(formatBakeElapsedClock(125_000)).toBe('2:05');
   });
 
-  it('persists last bake request in sessionStorage for failure recovery', () => {
+  it('persists a qualified last bake request for failure recovery', () => {
     const payload = {
       text: 'Тестовий текст',
-      duration: 60 as const,
+      duration: 45 as const,
       focus: 'граматика',
       lessonId: '00000000-0000-0000-0000-000000000bad',
     };
@@ -150,14 +150,21 @@ describe('app-helpers', () => {
     expect(loadLastBakeRequest()).toBeNull();
   });
 
-  it('resolveDefaultDurationFromPref preselects from teacher pref (falls back to 60)', () => {
+  it('always preselects the qualified 45-minute duration, including stale preferences', () => {
     expect(resolveDefaultDurationFromPref({ default_duration: 45 })).toBe(45);
-    expect(resolveDefaultDurationFromPref({ default_duration: 60 })).toBe(60);
-    expect(resolveDefaultDurationFromPref({ default_duration: 90 })).toBe(90);
-    expect(resolveDefaultDurationFromPref({ default_duration: 30 })).toBe(60);
-    expect(resolveDefaultDurationFromPref(null)).toBe(60);
-    expect(resolveDefaultDurationFromPref({})).toBe(60);
-    expect(resolveDefaultDurationFromPref({ default_duration: '60' })).toBe(60);
+    expect(resolveDefaultDurationFromPref({ default_duration: 60 })).toBe(45);
+    expect(resolveDefaultDurationFromPref({ default_duration: 90 })).toBe(45);
+    expect(resolveDefaultDurationFromPref({ default_duration: 30 })).toBe(45);
+    expect(resolveDefaultDurationFromPref(null)).toBe(45);
+    expect(resolveDefaultDurationFromPref({})).toBe(45);
+    expect(resolveDefaultDurationFromPref({ default_duration: '60' })).toBe(45);
+  });
+
+  it('normalizes a pre-45-only saved request before it can be restored', () => {
+    sessionStorage.setItem('hramatka:last-bake-request', JSON.stringify({
+      text: 'Старий текст', duration: 90, lessonId: 'legacy-id',
+    }));
+    expect(loadLastBakeRequest('legacy-id')).toMatchObject({ duration: 45 });
   });
 });
 

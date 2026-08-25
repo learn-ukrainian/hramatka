@@ -492,6 +492,8 @@ def canonical_request_json(
         raise ValueError("teacher-paste anchors must not include source_url.")
     if level != "B1":
         raise ValueError("The pilot accepts only B1 lessons.")
+    # This canonicalizer also validates retained historical request JSON, so it
+    # continues to understand 60/90 rows. ``create_or_get`` is the creation gate.
     if duration not in {45, 60, 90}:
         raise ValueError("Unsupported lesson duration.")
     if not isinstance(anchor_text, str) or not anchor_text.strip():
@@ -1227,20 +1229,14 @@ class JobStore:
     # -- Teacher preferences (P2-6) ----------------------------------------
 
     def get_teacher_default_duration(self, teacher_id: str) -> int:
-        """Return persisted default_duration or 60 when absent (additive table)."""
-        with self._read_connection() as connection:
-            row = connection.execute(
-                "SELECT default_duration FROM teacher_preferences WHERE teacher_id = ?",
-                (teacher_id,),
-            ).fetchone()
-            if row is None:
-                return 60
-            return int(row["default_duration"])
+        """Return the qualified new-lesson duration, ignoring legacy rows."""
+        del teacher_id  # Historical rows are retained but never become a choice again.
+        return 45
 
     def set_teacher_default_duration(self, teacher_id: str, duration: int) -> None:
         """Upsert default_duration for owner; validates and commits before return."""
-        if duration not in (45, 60, 90):
-            raise ValueError("default_duration must be one of 45, 60, 90")
+        if duration != 45:
+            raise ValueError("default_duration must be the qualified 45-minute duration")
         ts = now_iso()
         with self._write_transaction() as connection:
             connection.execute(
@@ -1271,6 +1267,8 @@ class JobStore:
         anchor_source_url: str | None = None,
         logical_model_id: str | None = None,
     ) -> tuple[JobRecord, bool]:
+        if duration != 45:
+            raise ValueError("New lesson generation is qualified for 45 minutes only.")
         request_json = canonical_request_json(
             anchor_text=anchor_text,
             anchor_source=anchor_source,
@@ -2665,23 +2663,6 @@ class JobStore:
                 lesson_tools.restore_rejected_entry(lesson, rejected_index, phase)
             except IndexError as error:
                 raise RejectedEntryNotFound(rejected_index) from error
-
-        return self._mutate_review_lesson(
-            teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation
-        )
-
-    def select_duration(
-        self,
-        teacher_id: str,
-        lesson_id: str,
-        *,
-        duration: int,
-        expected_revision: int,
-    ) -> JobRecord:
-        from . import lesson as lesson_tools
-
-        def mutation(lesson: dict[str, Any], _: set[str]) -> None:
-            lesson_tools.select_duration(lesson, duration)
 
         return self._mutate_review_lesson(
             teacher_id, lesson_id, expected_revision=expected_revision, mutation=mutation

@@ -1043,7 +1043,7 @@ def test_methodology_and_grammar_focus_are_strict_durable_and_owner_scoped(app) 
         )
 
 
-def test_same_owner_idempotency_reuses_without_second_bake_and_conflicts_on_new_input(
+def test_same_owner_idempotency_reuses_without_second_bake_and_rejects_unqualified_duration(
     tmp_path: Path,
 ) -> None:
     baker = BlockingBaker()
@@ -1069,10 +1069,11 @@ def test_same_owner_idempotency_reuses_without_second_bake_and_conflicts_on_new_
             assert baker.calls == 1
 
             changed = _lesson_request(lesson_id, duration=60)
-            conflict = client.post(
+            rejected = client.post(
                 "/api/lessons", headers=_mutation_headers(session["csrf_token"]), json=changed
             )
-            _error(conflict, 409, "idempotency_conflict", lesson_id=lesson_id)
+            _error(rejected, 422, "invalid_input")
+            assert "45" in rejected.json()["message"]
     finally:
         baker.release.set()
 
@@ -1584,12 +1585,12 @@ def test_review_assembly_mutations_are_revision_guarded_owner_scoped_and_csrf_pr
         )
         _error(missing_csrf, 403, "csrf_rejected")
 
-        foreign = second.post(
+        retired_duration_control = second.post(
             f"/api/lessons/{lesson_id}/duration",
             headers=_mutation_headers(second_session["csrf_token"]),
             json={"expected_revision": revision, "duration": 60},
         )
-        _error(foreign, 404, "lesson_not_found")
+        assert retired_duration_control.status_code == 404
 
         moved = first.post(
             f"/api/lessons/{lesson_id}/blocks/block-1/move",
@@ -1754,7 +1755,7 @@ def test_error_correction_key_survives_api_edit_remove_restore_round_trip(
         assert "corrections" not in restored_block["activity"]["answer_key"]
 
 
-def test_duration_reserve_include_and_activity_replacement_preserve_review_safety(
+def test_reserve_include_and_activity_replacement_preserve_review_safety(
     tmp_path: Path,
 ) -> None:
     app = create_app(settings=_settings(tmp_path), baker=ReserveFixtureBaker())
@@ -1770,35 +1771,21 @@ def test_duration_reserve_include_and_activity_replacement_preserve_review_safet
         original_ids = {block["id"] for block in initial["lesson"]["blocks"]}
         assert "block-reserve" in original_ids
 
-        expanded = client.post(
+        retired_duration_control = client.post(
             f"/api/lessons/{lesson_id}/duration",
             headers=headers,
             json={"expected_revision": initial["revision"], "duration": 90},
         )
-        assert expanded.status_code == 200, expanded.text
-        assert expanded.json()["lesson"]["duration"] == 90
-        assert expanded.json()["revision"] == initial["revision"] + 1
-        assert {block["id"] for block in expanded.json()["lesson"]["blocks"]} == original_ids
-
-        trimmed = client.post(
-            f"/api/lessons/{lesson_id}/duration",
-            headers=headers,
-            json={"expected_revision": expanded.json()["revision"], "duration": 45},
-        )
-        assert trimmed.status_code == 200, trimmed.text
-        trimmed_resource = trimmed.json()
-        assert trimmed_resource["lesson"]["duration"] == 45
-        assert trimmed_resource["revision"] == expanded.json()["revision"] + 1
-        assert {block["id"] for block in trimmed_resource["lesson"]["blocks"]} == original_ids
+        assert retired_duration_control.status_code == 404
 
         included = client.post(
             f"/api/lessons/{lesson_id}/blocks/block-reserve/include",
             headers=headers,
-            json={"expected_revision": trimmed_resource["revision"]},
+            json={"expected_revision": initial["revision"]},
         )
         assert included.status_code == 200, included.text
         included_resource = included.json()
-        assert included_resource["revision"] == trimmed_resource["revision"] + 1
+        assert included_resource["revision"] == initial["revision"] + 1
         phase_two_ids = [
             block["id"] for block in included_resource["lesson"]["blocks"] if block["phase"] == 2
         ]
@@ -2112,27 +2099,21 @@ def test_startup_recovers_an_orphaned_baking_aggregate_without_partial_lesson(
 # --- P2-6: teacher preferences (default duration) persistence, ownership, CSRF ---
 
 
-def test_teacher_preferences_defaults_to_60_and_persists_per_teacher(app, client) -> None:
-    """Persist/GET roundtrip; absent row yields 60. Quotes raw from contract."""
+def test_teacher_preferences_are_fixed_to_the_qualified_45_minute_default(app, client) -> None:
     teacher, _invite, token = _issue_invite(app)
     sess = _redeem(client, token)
     csrf = sess["csrf_token"]
     # initial GET yields default
     r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
     assert r.status_code == 200
-    assert r.json() == {"default_duration": 60}
-    # PUT updates
+    assert r.json() == {"default_duration": 45}
+    # 60/90 cannot be persisted back into the new-lesson form.
     r = client.put(
         "/api/teacher/preferences",
         headers=_mutation_headers(csrf),
         json={"default_duration": 90},
     )
-    assert r.status_code == 200
-    assert r.json() == {"default_duration": 90}
-    # GET reflects
-    r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
-    assert r.json() == {"default_duration": 90}
-    # also test 45
+    _error(r, 422, "invalid_input")
     r = client.put(
         "/api/teacher/preferences",
         headers=_mutation_headers(csrf),
@@ -2143,29 +2124,52 @@ def test_teacher_preferences_defaults_to_60_and_persists_per_teacher(app, client
     assert r.json()["default_duration"] == 45
 
 
+@pytest.mark.parametrize("duration", [60, 90])
+def test_new_lesson_rejects_an_unqualified_duration_with_scope_guidance(
+    app, client, duration: int
+) -> None:
+    _teacher, _invite, token = _issue_invite(app)
+    session = _redeem(client, token)
+    response = client.post(
+        "/api/lessons",
+        headers=_mutation_headers(session["csrf_token"]),
+        json=_lesson_request(str(uuid.uuid4()), duration=duration),
+    )
+    _error(response, 422, "invalid_input")
+    assert "45" in response.json()["message"]
+    assert "вчителями" in response.json()["message"]
+
+
 def test_teacher_preferences_ownership_scoped(app, client) -> None:
     """Cross-teacher cannot read/write other's pref (owner-scoped like lessons)."""
     t1, _i1, tok1 = _issue_invite(app, display_name="T1")
     t2, _i2, tok2 = _issue_invite(app, display_name="T2")
     s1 = _redeem(client, tok1)
-    # set for t1 (client cookie is now t1's from redeem)
+    # An old direct database value is normalized before it can reach the UI.
+    app.state.store.set_teacher_default_duration(t1.id, 45)
+    with app.state.store._write_transaction() as connection:
+        connection.execute(
+            "UPDATE teacher_preferences SET default_duration = 90 WHERE teacher_id = ?", (t1.id,)
+        )
+    assert app.state.store.get_teacher_default_duration(t1.id) == 45
+    # t2 remains on the same qualified default.
+    assert app.state.store.get_teacher_default_duration(t2.id) == 45
+    # PUT for 45 stays owner-scoped.
     r_put = client.put(
         "/api/teacher/preferences",
         headers=_mutation_headers(s1["csrf_token"]),
-        json={"default_duration": 90},
+        json={"default_duration": 45},
     )
     assert r_put.status_code == 200, r_put.text
-    # t2 still default (verified via store; cookie sequencing handled by sequential redeem)
-    assert app.state.store.get_teacher_default_duration(t1.id) == 90
-    assert app.state.store.get_teacher_default_duration(t2.id) == 60
-    # t2 PUT does not affect t1
+    assert app.state.store.get_teacher_default_duration(t1.id) == 45
+    # t2 PUT does not affect t1.
     s2 = _redeem(client, tok2)
     client.put(
         "/api/teacher/preferences",
         headers=_mutation_headers(s2["csrf_token"]),
         json={"default_duration": 45},
     )
-    assert app.state.store.get_teacher_default_duration(t1.id) == 90
+    assert app.state.store.get_teacher_default_duration(t1.id) == 45
     assert app.state.store.get_teacher_default_duration(t2.id) == 45
     # GET under t2 session returns its value (owner-scoped read)
     r = client.get("/api/teacher/preferences", headers={"Origin": ORIGIN})
@@ -2197,13 +2201,13 @@ def test_teacher_preferences_requires_csrf_and_origin_for_put(app, client) -> No
     )
     assert r.status_code == 403
     assert r.json()["code"] == "csrf_rejected"
-    # good still works
+    # A valid origin + CSRF reaches the input validator; an unqualified duration is rejected.
     r = client.put(
         "/api/teacher/preferences",
         headers=_mutation_headers(csrf),
         json={"default_duration": 60},
     )
-    assert r.status_code == 200
+    _error(r, 422, "invalid_input")
 
 
 def test_teacher_preferences_invalid_input_is_422(app, client) -> None:
@@ -2332,9 +2336,9 @@ def test_migration_v003_on_populated_v2_db_preserves_data_and_adds_prefs(tmp_pat
 
     store = JobStore(db_path)
     store.initialize()
-    assert store.get_teacher_default_duration("t-pop-1") == 60
-    store.set_teacher_default_duration("t-pop-1", 90)
-    assert store.get_teacher_default_duration("t-pop-1") == 90
+    assert store.get_teacher_default_duration("t-pop-1") == 45
+    store.set_teacher_default_duration("t-pop-1", 45)
+    assert store.get_teacher_default_duration("t-pop-1") == 45
 
 
 def test_migration_v005_extends_failure_code_check_and_preserves_data(tmp_path: Path) -> None:

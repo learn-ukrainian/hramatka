@@ -73,7 +73,19 @@ class LessonCreate(FrozenModel):
     id: UUID
     anchor: AnchorInput
     level: Literal["B1"]
-    duration: Literal[45, 60, 90]
+    # New generation is limited to the human-qualified 45-minute lesson path.
+    # Stored 60/90-minute documents stay readable in response models.
+    duration: Literal[45]
+
+    @field_validator("duration", mode="before")
+    @classmethod
+    def require_qualified_duration(cls, value: object) -> object:
+        if type(value) is not int or value != 45:
+            raise ValueError(
+                "Нові уроки наразі доступні лише у 45-хвилинному форматі, "
+                "доки цей формат проходить перевірку вчителями."
+            )
+        return value
     # The pilot deliberately offers one methodology only. Keep the literal on
     # the wire now so a future expanded choice cannot silently alter a bake.
     methodology: Literal["ttt"] = "ttt"
@@ -139,11 +151,6 @@ class RestoreRejectedMutation(FrozenModel):
     phase: Literal[1, 2, 3] = 2
 
 
-class DurationMutation(FrozenModel):
-    expected_revision: int = Field(ge=1)
-    duration: Literal[45, 60, 90]
-
-
 class ActivityFeedbackMutation(FrozenModel):
     """PUT body for teacher feedback on an engine-flagged block (#402).
 
@@ -167,4 +174,14 @@ class ActivityFeedbackMutation(FrozenModel):
 class TeacherPreferences(FrozenModel):
     """GET response and PUT body for per-teacher defaults (owner-scoped)."""
 
-    default_duration: Literal[45, 60, 90]
+    # Legacy preference rows are never surfaced as new-lesson choices.
+    default_duration: Literal[45]
+
+    @field_validator("default_duration", mode="before")
+    @classmethod
+    def require_qualified_default_duration(cls, value: object) -> object:
+        if type(value) is not int or value != 45:
+            raise ValueError(
+                "Для нових уроків зараз доступна лише кваліфікована тривалість 45 хвилин."
+            )
+        return value

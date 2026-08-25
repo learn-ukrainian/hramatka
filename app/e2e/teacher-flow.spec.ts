@@ -421,8 +421,8 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     const teacherAText = 'Секретний текст викладача А — не повинен з’явитися у наступній сесії.';
     await page.getByPlaceholder(/Вставте український текст/).fill(teacherAText);
-    const durationPicker = page.locator('.field').filter({ hasText: 'Тривалість' }).locator('select');
-    await durationPicker.selectOption('90');
+    const qualifiedDuration = page.getByTestId('qualified-duration');
+    await expect(qualifiedDuration).toContainText('45');
     await page.getByPlaceholder(/вищий ступінь/).fill('майбутній час');
 
     await page.getByRole('button', { name: 'Вийти' }).click();
@@ -435,7 +435,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByPlaceholder(/Вставте український текст/)).toHaveValue('');
-    await expect(durationPicker).toHaveValue('60');
+    await expect(page.getByTestId('qualified-duration')).toContainText('45');
     await expect(page.getByPlaceholder(/вищий ступінь/)).toHaveValue('');
 
     const storageCleared = await page.evaluate(() => {
@@ -877,7 +877,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(captured.length).toBeGreaterThan(0);
     expect(captured).toContain('Золотий урок');
     expect(captured).toContain('ТЕКСТ ДЛЯ ЧИТАННЯ');
-    expect(captured).toContain('Тривалість: ≈ 60 хв');
+    expect(captured).toContain('Тривалість: ≈ 45 хв');
     // Sanity: any task chip header is present.
     expect(/\[true-false\]|\[cloze\]|\[quiz\]|\[match-up\]/.test(captured)).toBe(true);
 

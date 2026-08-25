@@ -339,13 +339,6 @@ def _preserved_error_correction_intent(
     return kept if kept else None
 
 
-def select_duration(lesson: dict[str, Any], duration: int) -> None:
-    """Change only the rendering budget; all block documents stay durable."""
-    if duration not in REVIEW_PHASE_BUDGETS:
-        raise ValueError("Unsupported lesson duration.")
-    lesson["duration"] = duration
-
-
 def _require_blocks(lesson: dict[str, Any]) -> list[dict[str, Any]]:
     blocks = lesson.get("blocks")
     if not isinstance(blocks, list) or any(not isinstance(block, dict) for block in blocks):

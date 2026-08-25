@@ -2,6 +2,10 @@ import { translate, statusKey, type ChromeKey } from './i18n';
 
 export type LessonState = 'draft' | 'baking' | 'ready' | 'failed' | 'cancelled';
 
+/** The sole duration currently qualified for newly generated lessons. */
+export const NEW_LESSON_DURATION = 45 as const;
+export type NewLessonDuration = typeof NEW_LESSON_DURATION;
+
 export interface CatalogLessonItem {
   id: string;
   title: string | null;
@@ -37,7 +41,7 @@ export interface BakeProgress {
 
 export interface BakeRequestPayload {
   text: string;
-  duration: 45 | 60 | 90;
+  duration: NewLessonDuration;
   grammarFocus?: string;
   /** Legacy sessionStorage field accepted when restoring a pre-wiring request. */
   focus?: string;
@@ -133,10 +137,12 @@ export function loadLastBakeRequest(lessonId?: string | null): BakeRequestPayloa
   try {
     const raw = sessionStorage.getItem(LAST_BAKE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as BakeRequestPayload;
+    const data = JSON.parse(raw) as Partial<BakeRequestPayload>;
     if (!data?.text) return null;
     if (lessonId && data.lessonId && data.lessonId !== lessonId) return null;
-    return data;
+    // A session can contain a pre-45-only request.  Its text remains useful
+    // for recovery, but its old duration must never revive a new 60/90 bake.
+    return { ...data, duration: NEW_LESSON_DURATION } as BakeRequestPayload;
   } catch {
     return null;
   }
@@ -213,12 +219,10 @@ export function mergeCatalogLessons(
 }
 
 /** Resolve persisted teacher pref to a valid duration (preselect for new-lesson form). */
-export function resolveDefaultDurationFromPref(pref: unknown): 45 | 60 | 90 {
-  if (pref && typeof pref === 'object') {
-    const d = (pref as { default_duration?: unknown }).default_duration;
-    if (d === 45 || d === 60 || d === 90) return d;
-  }
-  return 60;
+export function resolveDefaultDurationFromPref(_pref: unknown): NewLessonDuration {
+  // The server also normalizes historical preference rows. Keeping this
+  // client-side guard prevents a stale cached response from restoring 60/90.
+  return NEW_LESSON_DURATION;
 }
 
 // ===== Clipboard lesson export (Sol P1-5) =====

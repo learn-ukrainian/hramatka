@@ -12,6 +12,7 @@ import {
   clearLastBakeRequest,
   mergeCatalogLessons,
   loadLocalCatalogEntries,
+  NEW_LESSON_DURATION,
   resolveDefaultDurationFromPref,
   formatLessonForClipboard,
   type BakeRequestPayload,
@@ -31,7 +32,6 @@ import {
   blockNeedsReview,
   focusStatusNeedsReview,
   FOCUS_STATUS_ACK_ID,
-  type LessonDuration,
   type FocusStatus,
   type ActivityRegenerationEntry,
 } from './review-helpers';
@@ -308,7 +308,7 @@ export default function TeacherApp() {
   const [urlInput, setUrlInput] = useState('');
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [fetchingUrl, setFetchingUrl] = useState(false);
-  const [duration, setDuration] = useState<45 | 60 | 90>(60);
+  const [duration, setDuration] = useState(NEW_LESSON_DURATION);
   const [grammarFocus, setGrammarFocus] = useState('');
   const [qualifiedModels, setQualifiedModels] = useState<QualifiedModelChoice[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -391,7 +391,7 @@ export default function TeacherApp() {
     clearLastBakeRequest();
     lastBakeRef.current = null;
     setPasteText('');
-    setDuration(60);
+    setDuration(NEW_LESSON_DURATION);
     setGrammarFocus('');
     setQualifiedModels([]);
     setSelectedModelId('');
@@ -414,7 +414,7 @@ export default function TeacherApp() {
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
-    setDuration(payload.duration);
+    setDuration(NEW_LESSON_DURATION);
     setGrammarFocus(payload.grammarFocus ?? payload.focus ?? '');
     setSelectedModelId(resolveQualifiedModelId(qualifiedModels, payload.logicalModelId));
     setSourceUrl(payload.sourceUrl || null);
@@ -613,7 +613,7 @@ export default function TeacherApp() {
         setDuration(resolveDefaultDurationFromPref(p));
       }
     } catch {
-      /* silent; keep current/60 */
+      /* silent; keep the qualified 45-minute default */
     }
   }, []);
 
@@ -734,7 +734,7 @@ export default function TeacherApp() {
   // ===== Paste + Bake =====
   const submitNewLesson = async (source: {
     text: string;
-    duration: 45 | 60 | 90;
+    duration: typeof NEW_LESSON_DURATION;
     grammarFocus: string | null;
     anchorSource: 'teacher-paste' | 'teacher-url';
     sourceUrl?: string | null;
@@ -798,7 +798,7 @@ export default function TeacherApp() {
         saveLastBakeRequest(payload);
         lastBakeRef.current = payload;
         setPasteText(text);
-        setDuration(source.duration);
+        setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
         setCurrentLessonId(id);
         const startedAt = new Date().toISOString();
@@ -939,7 +939,7 @@ export default function TeacherApp() {
     setError(null);
     restoreFormFromPayload({
       text: anchorText,
-      duration: lesson.lesson.duration,
+      duration: NEW_LESSON_DURATION,
       grammarFocus: lesson.grammar_focus ?? lesson.lesson.focus ?? '',
       lessonId: lesson.lesson_id,
       anchorSource: lesson.lesson.anchor.source,
@@ -1466,13 +1466,6 @@ export default function TeacherApp() {
       body: JSON.stringify({ expected_revision: lesson!.revision, phase: 2 }),
     });
 
-  const selectDuration = (duration: LessonDuration) =>
-    reviewMutation(`/api/lessons/${currentLessonId}/duration`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf! },
-      body: JSON.stringify({ expected_revision: lesson!.revision, duration }),
-    });
-
   const replaceActivity = (blockId: string, activity: Record<string, unknown>) =>
     reviewMutation(`/api/lessons/${currentLessonId}/blocks/${blockId}/activity`, {
       method: 'PUT',
@@ -1838,22 +1831,9 @@ export default function TeacherApp() {
 
                     <div className="field">
                       <label>{t('paste.duration')}</label>
-                      <select className="inputbox" value={duration} onChange={e => {
-                        const d = Number(e.target.value) as 45 | 60 | 90;
-                        setDuration(d);
-                        // Silent persist (no extra UI, per P2-6); owner-scoped via csrf.
-                        if (csrf) {
-                          apiFetch('/api/teacher/preferences', {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-                            body: JSON.stringify({ default_duration: d }),
-                          }).catch(() => { /* silent */ });
-                        }
-                      }}>
-                        <option value={45}>45</option>
-                        <option value={60}>60</option>
-                        <option value={90}>90</option>
-                      </select>
+                      <output className="inputbox" data-testid="qualified-duration">
+                        {t('paste.qualifiedDuration')}
+                      </output>
                     </div>
 
                     <div className="field">
@@ -2264,7 +2244,6 @@ export default function TeacherApp() {
                       resource={lesson}
                       showAnswers={showAnswers}
                       loading={loading}
-                      onDurationChange={selectDuration}
                       onMoveBlock={moveBlock}
                       onRemoveBlock={removeBlock}
                       onIncludeReserve={includeReserveBlock}

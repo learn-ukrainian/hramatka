@@ -45,7 +45,6 @@ from .models import (
     ActivityRegenerationCreate,
     ActivityReplacementMutation,
     BlockMoveMutation,
-    DurationMutation,
     InviteRedeem,
     LessonCreate,
     RecoveryCodeRedeem,
@@ -464,12 +463,27 @@ def create_app(
         )
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_input(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def invalid_input(request: Request, error: RequestValidationError) -> JSONResponse:
+        # Most validation errors deliberately remain generic: a request can
+        # contain sensitive pasted text. Duration is the bounded exception —
+        # teachers need a clear scope explanation instead of a mysterious 422.
+        duration_rejected = request.url.path in {
+            "/api/lessons",
+            "/api/teacher/preferences",
+        } and any(
+            item.get("loc", ())[-1:] in {("duration",), ("default_duration",)}
+            for item in error.errors()
+        )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "code": "invalid_input",
-                "message": "Запит містить помилку.",
+                "message": (
+                    "Нові уроки наразі доступні лише у 45-хвилинному форматі, "
+                    "доки цей формат проходить перевірку вчителями."
+                    if duration_rejected
+                    else "Запит містить помилку."
+                ),
                 "retryable": False,
             },
         )
@@ -1163,7 +1177,9 @@ def create_app(
             anchor_source = anchor["source"]
             anchor_source_url = anchor.get("source_url")
             level = request["level"]
-            duration = request["duration"]
+            # A stored 60/90-minute lesson remains readable, but recreating it
+            # is a new generation and therefore enters only the qualified path.
+            duration = 45
             focus = request["focus"]
             methodology = request.get("methodology", "ttt")
             grammar_focus = request.get("grammar_focus")
@@ -1600,30 +1616,6 @@ def create_app(
         except (
             LessonNotFound,
             RejectedEntryNotFound,
-            RevisionConflict,
-            LessonStateConflict,
-            ReviewMutationInvalid,
-        ) as error:
-            raise_review_mutation_error(error, lesson_key)
-        return lesson_resource(job)
-
-    @app.post("/api/lessons/{lesson_id}/duration")
-    def select_duration(
-        lesson_id: UUID,
-        request_body: DurationMutation,
-        _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
-    ) -> dict[str, object]:
-        lesson_key = _lesson_id(lesson_id)
-        try:
-            job = store.select_duration(
-                session.teacher_id,
-                lesson_key,
-                duration=request_body.duration,
-                expected_revision=request_body.expected_revision,
-            )
-        except (
-            LessonNotFound,
             RevisionConflict,
             LessonStateConflict,
             ReviewMutationInvalid,

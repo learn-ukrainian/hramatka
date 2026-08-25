@@ -205,7 +205,7 @@ paths:
         - PilotSession: []
       responses:
         '200':
-          description: Current defaults (absent row yields server default 60)
+          description: Current qualified new-lesson default (45 minutes; legacy preference rows are normalized to 45)
           headers:
             Cache-Control:
               $ref: '#/components/headers/NoStore'
@@ -915,42 +915,6 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
-  /api/lessons/{lesson_id}/duration:
-    post:
-      tags: [Lessons]
-      operationId: selectLessonDuration
-      summary: Select the review duration without discarding reserve blocks
-      description: |
-        The complete `lesson.blocks[]` order is retained. The browser renders
-        the first phase budgets (45: 2/3/1, 60: 3/5/2, 90: 4/5/3) as the plan
-        and the remaining blocks as reserve or homework.
-      security:
-        - PilotSession: []
-      parameters:
-        - $ref: '#/components/parameters/LessonId'
-        - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
-      requestBody:
-        $ref: '#/components/requestBodies/DurationMutation'
-      responses:
-        '200':
-          description: Duration committed and the materialized lesson returned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LessonResource'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/CsrfRejected'
-        '404':
-          $ref: '#/components/responses/LessonNotFound'
-        '409':
-          $ref: '#/components/responses/MutationConflict'
-        '422':
-          $ref: '#/components/responses/InvalidInput'
-        '503':
-          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lessons/{lesson_id}/accept:
     post:
       tags: [Lessons]
@@ -1145,12 +1109,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RestoreRejectedMutation'
-    DurationMutation:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/DurationMutation'
     ActivityFeedbackMutation:
       required: true
       content:
@@ -1192,8 +1150,8 @@ components:
       properties:
         default_duration:
           type: integer
-          enum: [45, 60, 90]
-          description: Persisted default for new-lesson form; preselects and updates on change.
+          const: 45
+          description: The sole qualified default for a newly generated lesson.
     Session:
       type: object
       additionalProperties: false
@@ -1283,7 +1241,8 @@ components:
           const: B1
         duration:
           type: integer
-          enum: [45, 60, 90]
+          const: 45
+          description: New generation is qualified only for 45 minutes.
         methodology:
           type: string
           const: ttt
@@ -1491,6 +1450,7 @@ components:
         duration:
           type: integer
           enum: [45, 60, 90]
+          description: Stored legacy lessons can report 60 or 90; new lessons are 45 only.
         methodology:
           type: string
           const: ttt
@@ -1783,6 +1743,7 @@ components:
         duration:
           type: integer
           enum: [45, 60, 90]
+          description: Stored legacy lessons can report 60 or 90; new lessons are 45 only.
         version:
           type: integer
           const: 1
@@ -2036,17 +1997,6 @@ components:
           maxLength: 2000
           default: 2
           description: Phase to receive the restored warning; defaults to phase 2.
-    DurationMutation:
-      type: object
-      additionalProperties: false
-      required: [expected_revision, duration]
-      properties:
-        expected_revision:
-          type: integer
-          minimum: 1
-        duration:
-          type: integer
-          enum: [45, 60, 90]
     Error:
       type: object
       additionalProperties: false

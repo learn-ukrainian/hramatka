@@ -365,11 +365,11 @@ function nowLabel(){try{return 'сьогодні, '+new Date().toLocaleTimeStrin
 function toast(html){var w=$('#toasts');var t=document.createElement('div');t.className='toast';t.innerHTML=html;w.appendChild(t);try{trNode(t)}catch(e){}setTimeout(function(){t.remove()},5200)}
 function bubble(anchor,text){var old=document.body.querySelector('.bubble[data-float]');if(old)old.remove();var b=document.createElement('span');b.className='bubble';b.setAttribute('data-float','1');b.textContent=(uiLang&&uiLang()==='en')?trStr(text):text;document.body.appendChild(b);var r=anchor.getBoundingClientRect();b.style.position='fixed';b.style.zIndex='60';b.style.maxWidth='300px';b.style.left=Math.max(8,Math.min(r.left,window.innerWidth-320))+'px';b.style.top=(r.bottom+6)+'px';b.style.marginTop='0';setTimeout(function(){b.remove()},3800)}
 
-/* ============ lesson sizing (user decision 2026-07-10): duration → planned tasks + phase minutes Т1·Н·Т2 ============ */
-var DUR={45:{tasks:6,pd:[10,15,15]},60:{tasks:10,pd:[15,25,15]},90:{tasks:12,pd:[20,40,25]}};
+/* ============ qualified lesson sizing: 45 minutes → six planned tasks ============ */
+var DUR={45:{tasks:6,pd:[10,20,15]}};
 function durInfo(d){return DUR[d]||DUR[45]}
-/* скільки завдань видно у кожній частині Т1·Н·Т2; решта — «у запасі / на домашнє» */
-var PLAN={45:[2,3,1],60:[3,5,2],90:[4,5,3]};
+/* visible tasks by phase Т1·Н·Т2; the remainder is reserve / homework */
+var PLAN={45:[2,3,1]};
 function planSplit(d){return PLAN[d]||PLAN[45]}
 /* student-screen interface language: uk default, EN toggle (user 2026-07-10).
    INTERFACE ONLY — the lesson document (paper) is always Ukrainian. */
@@ -418,7 +418,7 @@ var T_EXACT={
  /* review */ 'Ще немає що переглядати':'Nothing to review yet','Коли заняття буде готове, тут зʼявиться документ із завданнями й позначками перевірки.':'When a lesson is ready, the document with tasks and verification marks will appear here.',
  'Факти перевірте.':'Verify the facts.','Мову й відповідність вашому тексту ми перевірили автоматично; зміст і доречність — за вами. Ви — вчитель, «Граматка» — помічниця.':'Language and fidelity to your text were checked automatically; meaning and fit are yours to judge. You are the teacher — Hramatka is the assistant.',
  'Заняття — це документ. Позначки перевірки — на полях. Усе можна редагувати просто тут.':'The lesson is a document. Verification marks live in the margins. Everything is editable right here.',
- 'Тривалість:':'Duration:','— план ріжеться й росте на очах; зрізане не зникає':'— the plan shrinks and grows live; nothing trimmed is lost',
+ 'Тривалість:':'Duration:','— кваліфікований формат уроку':'— qualified lesson format',
  '✓ перевірено':'✓ verified','⚠ погляньте':'⚠ take a look','✎ змінено вами':'✎ edited by you','✕ відхилено':'✕ rejected','прийняти':'accept',
  'редагувати':'edit','вгору':'up','вниз':'down','вилучити':'remove','включити в план':'include in the plan','повернути в заняття':'return to the lesson',
  '· підійде на домашнє або на довше заняття:':'· good as homework or for a longer lesson:',
@@ -442,20 +442,20 @@ var T_EXACT={
  /* settings */ 'Імʼя (показуємо у шапці)':'Name (shown in the header)','зміниться одразу — погляньте на шапку':'updates instantly — look at the header',
  'Типовий рівень':'Default level','у пілоті — лише B1; інші рівні після пілота':'B1 only in the pilot; other levels after',
  'Типова методика':'Default methodology','Типова тривалість заняття':'Default lesson duration',
- 'нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 10 · 90 → 12)':'new lessons start from this value (45 min → 6 tasks · 60 → 10 · 90 → 12)',
+ 'нові заняття мають 6 запланованих завдань':'new lessons have 6 planned tasks',
  /* login */ 'Вітаємо!':'Welcome!','Введіть код доступу, який ви отримали від нас.':'Enter the access code you received from us.','код доступу':'access code','Увійти':'Sign in',
  'У пілоті входу не буде: посилання + один код. Ця сторінка — запас на майбутнє.':'The pilot has no login: a link + one code. This page is a reserve for later.',
  /* hint bar + help */ 'сховати підказку':'hide this hint','Повернути підказки':'Restore hints','Зрозуміло':'Got it','Як користуватися «Граматкою»':'How to use Hramatka',
  'Приготування':'Baking','Перегляд':'Review','Готове заняття':'Ready lesson',
  '— усі ваші заняття; натисніть, щоб відкрити.':'— all your lessons; click one to open it.',
- '— вставте текст, оберіть тривалість, «Приготувати».':'— paste a text, pick a duration, “Bake”.',
+ '— вставте текст; 45 хв — кваліфікований формат; «Приготувати».':'— paste a text; 45 minutes is the qualified format; “Bake”.',
  '— чесні етапи; можна не чекати.':'— honest stages; no need to wait around.',
- '— редагуйте, пересувайте, ріжте тривалістю; «Прийняти».':'— edit, move, trim with the duration switch; “Accept”.',
+ '— редагуйте, пересувайте, додавайте із запасу; «Прийняти».':'— edit, move, include from reserve; “Accept”.',
  '— 🔑 відповіді лише вам · ⧉ копіювати · друк · 👩‍🎓 екран учня для Zoom.':'— 🔑 answers for you only · ⧉ copy · print · 👩‍🎓 student screen for Zoom.',
  'Натисніть на заняття, щоб відкрити його. «+ Нове заняття» — щоб створити.':'Click a lesson to open it. “+ New lesson” to create one.',
- 'Вставте чи напишіть текст на аркуші, оберіть тривалість праворуч — і «Приготувати заняття».':'Paste or write the text on the page, pick a duration on the right — then “Bake the lesson”.',
+ 'Вставте чи напишіть текст на аркуші; 45 хв — кваліфікований формат; тоді «Приготувати заняття».':'Paste or write the text on the page; 45 minutes is the qualified format; then “Bake the lesson”.',
  'Це справжні етапи роботи. Можна повернутися до «Моїх занять» — ми повідомимо, коли буде готово.':'These are the real working stages. You can go back to “My lessons” — we will tell you when it is done.',
- 'Тривалість — перемикач угорі. На полях: ✎ редагувати · ↑↓ пересунути · ✕ вилучити. Наприкінці — «Прийняти заняття».':'Duration — the switch up top. In the margins: ✎ edit · ↑↓ move · ✕ remove. At the end — “Accept the lesson”.',
+ '45 хв — кваліфікований формат. На полях: ✎ редагувати · ↑↓ пересунути · ✕ вилучити. Наприкінці — «Прийняти заняття».':'45 minutes is the qualified format. In the margins: ✎ edit · ↑↓ move · ✕ remove. At the end — “Accept the lesson”.',
  '🔑 відповіді — лише для вас · ⧉ Копіювати у свій документ · 👩‍🎓 «Показати як учневі» перед шерингом у Zoom · 🌐 на екрані учня можна перемкнути мову інтерфейсу (укр/EN) — завдання завжди українською.':'🔑 answers — for you only · ⧉ Copy into your document · 👩‍🎓 “Show as student” before sharing in Zoom · 🌐 the interface language can be switched (укр/EN) — tasks are always in Ukrainian.',
  /* toasts + bubbles */ 'Зміни збережено у занятті':'Changes saved to the lesson','⧉ Заняття скопійовано — вставте у свій документ':'⧉ Lesson copied — paste into your document','⧉ Заняття скопійовано':'⧉ Lesson copied',
  '✅ Заняття прийнято — можна друкувати':'✅ Lesson accepted — ready to print','Збережено як чернетку — знайдете в «Моїх заняттях»':'Saved as draft — find it in “My lessons”',
@@ -610,11 +610,11 @@ function seed(){return {
   seedV:SEED_V,
   uiLang:'uk',
   teacher:'Марія',
-  defaults:{level:'B1',method:'ttt',duration:60},
+  defaults:{level:'B1',method:'ttt',duration:45},
   failNext:false, nextId:5,
   lessons:[
-   {id:1,title:'Як ми шукали квартиру у Львові',level:'B1',focus:'вищий ступінь прикметників',duration:90,count:12,status:'ready',accepted:false,when:'сьогодні, 14:20',anchor:RENT_TEXT,blocks:rentBlocks(),rejected:rentRejected(),showRejected:false,bake:{step:4,failed:false}},
-   {id:2,title:'Подорож Карпатами',level:'B1',focus:'дієслова руху з прийменниками',duration:60,count:9,status:'baking',accepted:false,when:'щойно',anchor:KARP_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:1,failed:false},pending:karpBlocks},
+   {id:1,title:'Як ми шукали квартиру у Львові',level:'B1',focus:'вищий ступінь прикметників',duration:45,count:6,status:'ready',accepted:false,when:'сьогодні, 14:20',anchor:RENT_TEXT,blocks:rentBlocks(),rejected:rentRejected(),showRejected:false,bake:{step:4,failed:false}},
+   {id:2,title:'Подорож Карпатами',level:'B1',focus:'дієслова руху з прийменниками',duration:45,count:6,status:'baking',accepted:false,when:'щойно',anchor:KARP_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:1,failed:false},pending:karpBlocks},
    {id:3,title:'Українська кухня: вареники',level:'B1',focus:'наказовий спосіб',duration:45,count:6,status:'ready',accepted:false,when:'сьогодні, 11:05',anchor:VAR_TEXT,blocks:varBlocks(),rejected:varRejected(),showRejected:false,bake:{step:4,failed:false}},
    {id:4,title:'Львівський трамвай',level:'B1',focus:'',duration:45,count:6,status:'draft',accepted:false,when:'вчора',anchor:LINK_TEXT,blocks:[],rejected:[],showRejected:false,bake:{step:0,failed:false}}
   ]};
@@ -624,8 +624,8 @@ function seed(){return {
 var S;
 try{S=JSON.parse(sessionStorage.getItem('hramatka-demo')||'null')}catch(e){S=null}
 if(!S||!S.lessons||S.seedV!==SEED_V){S=seed()}
-S.lessons.forEach(function(l){if(l.status==='baking'&&!l.pending){l.pending=karpBlocks}if(!l.duration){l.duration=45}if(!l.count||l.count<6){l.count=durInfo(l.duration).tasks}});
-if(!S.defaults.duration){S.defaults.duration=60}
+S.lessons.forEach(function(l){if(l.status==='baking'&&!l.pending){l.pending=karpBlocks}l.duration=45;l.count=durInfo(45).tasks});
+S.defaults.duration=45;
 function save(){try{var c=Object.assign({},S);c=JSON.parse(JSON.stringify(S,function(k,v){return (k==='pending'||k==='_st')?undefined:v}));sessionStorage.setItem('hramatka-demo',JSON.stringify(c))}catch(e){}}
 function lesson(id){for(var i=0;i<S.lessons.length;i++)if(S.lessons[i].id===+id)return S.lessons[i];return null}
 function lastBy(st){for(var i=0;i<S.lessons.length;i++)if(S.lessons[i].status===st)return S.lessons[i];return null}
@@ -698,7 +698,7 @@ var draft=null; /* builder working copy */
 function go(name,id){
   route={name:name,id:id||null};
   if(name==='new'){var src=id?lesson(id):null;
-    draft={fromId:src?src.id:null,tab:'text',text:src?src.anchor:'',level:src?src.level:S.defaults.level,method:src?'ttt':S.defaults.method,focus:src?src.focus:'',duration:src?(src.duration||45):(S.defaults.duration||60),url:''};}
+    draft={fromId:src?src.id:null,tab:'text',text:src?src.anchor:'',level:src?src.level:S.defaults.level,method:src?'ttt':S.defaults.method,focus:src?src.focus:'',duration:45,url:''};}
   render();
   window.scrollTo({top:0});
 }
@@ -707,9 +707,9 @@ function renderIfVisible(names){if(names.indexOf(route.name)>=0){if(document.act
 /* ============ screen chrome (title + notes per screen) ============ */
 var CHROME={
  dash:{n:'1 · Мої заняття',role:'Домашня сторінка. Одна відповідь на одне питання: «що з моїми заняттями?» — і одна велика кнопка.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li>Порожній перший вхід: коротке привітання + та сама одна кнопка (кнопка «◻» ліворуч показує це).</li><li>Статуси лише три: <b>готово · готується · чернетка</b>. Без відсотків і прогрес-барів.</li><li>Кожен рядок клікається і веде туди, де заняття зараз «живе».</li><li class="q">Питання до вчительок: чого тут бракує, щоб це була ваша «домашня» сторінка?</li>'},
- new:{n:'2 · Нове заняття',role:'Головна сторінка продукту. Учителька дає текст-якір, обирає методику — все інше робить «Граматка».',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> якір — основа заняття, він домінує як аркуш документа; налаштування — вузька бічна панель.</li><li><b>Правка 2 (користувач, 2026-07-10):</b> замість лічильника завдань — <b>тривалість 45 / 60 / 90 хв</b>; «Граматка» сама планує <b>6 / 10 / 12</b> завдань (мінімум 6). На 90 хв — свідомо не подвоєння 45-ти: частина завдань довші (письмо, діалог), плюс перерва.</li><li>Пишіть або вставте будь-який текст — завдання буде складено лише з нього (спробуйте!).</li><li>Якір — завжди від учительки (текст або посилання). Фото сторінки — наступна версія.</li><li class="q">Питання до вчительок: чи зручно писати/вставляти текст саме так? Яких полів бракує праворуч?</li>'},
+ new:{n:'2 · Нове заняття',role:'Головна сторінка продукту. Учителька дає текст-якір, обирає методику — все інше робить «Граматка».',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> якір — основа заняття, він домінує як аркуш документа; налаштування — вузька бічна панель.</li><li><b>Якість:</b> нові заняття зараз мають лише <b>кваліфікований 45-хвилинний формат</b> із шістьма завданнями. Довші формати повернуться лише після окремої перевірки якості вчительками.</li><li>Пишіть або вставте будь-який текст — завдання буде складено лише з нього (спробуйте!).</li><li>Якір — завжди від учительки (текст або посилання). Фото сторінки — наступна версія.</li><li class="q">Питання до вчительок: чи зручно писати/вставляти текст саме так? Яких полів бракує праворуч?</li>'},
  bake:{n:'3 · Приготування',role:'Чесне очікування: показуємо справжні етапи, а не вигаданий відсоток. Можна піти — результат нікуди не дінеться.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li>Етапи справжні (так працює система) — не анімація для заспокоєння.</li><li>Перейдіть на іншу сторінку — приготування триває, і ви отримаєте сповіщення (спробуйте).</li><li>Кнопка «⚡» ліворуч показує, як виглядає збій: людське пояснення + «Спробувати ще раз». Без кодів помилок.</li>'},
- review:{n:'4 · Перегляд і збирання',role:'Серце продукту. Завдання розкладені за частинами методики; біля кожного — чесна позначка перевірки. Учителька пересуває, редагує, викидає — і приймає.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> заняття домінує на екрані як документ (аркуш Word); інструменти й позначки — на полях.</li><li><b>Правка 3 (користувач, 2026-07-10):</b> «Граматка» завжди готує повний 90-хвилинний план; перемикач тривалості просто тут ріже його до 10 чи 6 завдань на очах — і повертає назад. Зрізане не зникає: воно «у запасі» й пропонується на домашнє; кнопка «включити в план» повертає завдання. Покажіть це наживо!</li><li>Кожне завдання має позначку <b>усно / письмово / вдома</b> — для 1-на-1 видно потік заняття; «у парі» = учитель у ролі співрозмовника.</li><li>У прикладі — дванадцять завдань, кожне іншого типу (правда/ні ×7 тверджень · питання ×6 · пари ×6 · вибір ×4 · словничок ×8 · пропущені слова ×6 · утворіть форму ×6 · помилки ×5 · скажіть інакше ×5 · продовжте ×4 · діалог-сценарій · письмо), з відповідями. Повний каталог типів — питання до обох вчительок: яких бракує?</li><li>Три стани позначок: <span class="chip ok">✓ перевірено</span> <span class="chip warn">⚠ погляньте</span> <span class="chip bad">✕ відхилено</span>. «⚠» ніколи не приймається автоматично — натисніть «прийняти» самі.</li><li>✎ — редагувати просто в документі · ↑↓ — пересунути (і між частинами) · ✕ — вилучити (нічого не зникає мовчки).</li><li class="q">Питання до вчительок: чи зручні позначки на полях? Спробуйте відредагувати завдання.</li>'},
+ review:{n:'4 · Перегляд і збирання',role:'Серце продукту. Завдання розкладені за частинами методики; біля кожного — чесна позначка перевірки. Учителька пересуває, редагує, викидає — і приймає.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> заняття домінує на екрані як документ (аркуш Word); інструменти й позначки — на полях.</li><li><b>Кваліфікований формат:</b> 45 хв і шість запланованих завдань не змінюються під час перегляду. Запас не зникає й доступний для домашнього; «включити в план» повертає завдання.</li><li>Кожне завдання має позначку <b>усно / письмово / вдома</b> — для 1-на-1 видно потік заняття; «у парі» = учитель у ролі співрозмовника.</li><li>Три стани позначок: <span class="chip ok">✓ перевірено</span> <span class="chip warn">⚠ погляньте</span> <span class="chip bad">✕ відхилено</span>. «⚠» ніколи не приймається автоматично — натисніть «прийняти» самі.</li><li>✎ — редагувати просто в документі · ↑↓ — пересунути (і між частинами) · ✕ — вилучити (нічого не зникає мовчки).</li><li class="q">Питання до вчительок: чи зручні позначки на полях? Спробуйте відредагувати завдання.</li>'},
  final:{n:'5 · Готове заняття',role:'Те, що йде в клас: чиста сторінка заняття — на екран або на друк.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії</span><span class="tag frozen">До заморозки</span>',notes:'<li><b>Правка 1 (користувач):</b> готове заняття — аркуш по центру, як роздруківка; інтерфейс навколо зникає (у друці — буквально: спробуйте «Друк»).</li><li><b>🔑 Відповіді — для вчителя:</b> кнопка вгорі додає блок відповідей до кожного завдання (з `answer_key` у схемі). Сховайте перед друком для учнів.</li><li><b>Домашнє завдання</b> — те, що не влізло в обрану тривалість, автоматично пропонується наприкінці аркуша (за бажанням).</li><li><b>Два способи забрати заняття</b> (обидва в тулбарі — це прототипи для обговорення): <b>«⧉ Копіювати»</b> кладе все заняття чистим текстом для вашого документа (Word/Docs; з відповідями, якщо ввімкнені 🔑), а <b>«👩‍🎓 режим учня»</b> — прототип інтерактивного посилання: правда/ні і вибір клікаються, пропуски заповнюються з банку слів, пари зʼєднуються (готові віджети Learn Ukrainian); відкриті питання — поле відповіді + «показати відповідь».</li><li><b>Екрани вчителя і учня:</b> банер угорі каже, чий це екран; на «екрані учня» немає 🔑 відповідей і жодних підказок — безпечно ділитися в Zoom. Хедер теж показує роль (зелений бейдж УЧЕНЬ).</li><li class="q">Питання до вчительок: як ви насправді користуватиметеся готовим заняттям — друк · копіювання у свій документ · інтерактивне посилання? Що з цього зайве?</li>'},
  settings:{n:'6 · Налаштування',role:'Мінімум: типові значення, щоб «Нове заняття» щоразу не питало те саме.',tags:'<span class="tag live">живе демо</span><span class="tag v1">У першій версії — мінімальні</span>',notes:'<li>Змініть імʼя чи типовий рівень — і подивіться, як зміниться шапка та «Нове заняття».</li><li>Це все. Жодних тарифів, інтеграцій, сповіщень — поки продукт не заслужить на складніше.</li>'},
  login:{n:'7 · Вхід — відкладено',role:'У пілоті входу немає: посилання + один код доступу. Сторінка спроєктована, щоб потім не перемальовувати, але в POC її не буде.',tags:'<span class="tag later">Пізніше</span>',notes:'<li>Для демо: введіть будь-який код і натисніть «Увійти».</li>'},
@@ -717,9 +717,9 @@ var CHROME={
 };
 var CHROME_EN={
  dash:{n:'1 · My lessons',role:'The home page. One answer to one question — “how are my lessons doing?” — and one big button.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li>Empty first visit: a short greeting + the same single button (the “◻” button on the left shows it).</li><li>Only three statuses: <b>ready · baking · draft</b>. No percentages, no progress bars.</li><li>Every row is clickable and leads to where the lesson currently “lives”.</li><li class="q">Question for the teachers: what is missing for this to feel like your home page?</li>'},
- new:{n:'2 · New lesson',role:'The product’s main page. The teacher provides an anchor text and picks a methodology — Hramatka does the rest.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the anchor is the heart of the lesson — it dominates as a document sheet; settings are a narrow side panel.</li><li><b>Edit 2 (user, 2026-07-10):</b> instead of a task counter — <b>duration 45 / 60 / 90 min</b>; Hramatka plans <b>6 / 10 / 12</b> tasks itself (minimum 6). 90 min is deliberately not double 45: some tasks are longer (writing, dialogue), plus a break.</li><li>Write or paste any text — tasks are built from it only (try it!).</li><li>The anchor always comes from the teacher (text or link). Page photo — next version.</li><li class="q">Question for the teachers: is writing/pasting text like this convenient? What fields are missing on the right?</li>'},
+ new:{n:'2 · New lesson',role:'The product’s main page. The teacher provides an anchor text and picks a methodology — Hramatka does the rest.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the anchor is the heart of the lesson — it dominates as a document sheet; settings are a narrow side panel.</li><li><b>Quality:</b> new lessons currently use only the <b>qualified 45-minute format</b> with six tasks. Longer formats return only after a separate teacher quality review.</li><li>Write or paste any text — tasks are built from it only (try it!).</li><li>The anchor always comes from the teacher (text or link). Page photo — next version.</li><li class="q">Question for the teachers: is writing/pasting text like this convenient? What fields are missing on the right?</li>'},
  bake:{n:'3 · Baking',role:'Honest waiting: we show the real stages, not an invented percentage. You can leave — the result stays.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li>The stages are real (this is how the system works) — not a calming animation.</li><li>Go to another page — the bake continues and you get a notification (try it).</li><li>The “⚡” button on the left shows what a failure looks like: a human explanation + “Try again”. No error codes.</li>'},
- review:{n:'4 · Review & assembly',role:'The heart of the product. Tasks are laid out by methodology phases; each carries an honest verification mark. The teacher moves, edits, discards — and accepts.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the lesson dominates the screen as a document (a Word-like sheet); tools and marks live in the margins.</li><li><b>Edit 3 (user, 2026-07-10):</b> Hramatka always bakes the full 90-minute plan; the duration switch trims it to 10 or 6 tasks before your eyes — and brings it back. Nothing trimmed disappears: it goes “to reserve” and is offered as homework; “include in the plan” brings a task back. Show this live!</li><li>Every task carries an <b>oral / written / at home</b> mark — the 1-on-1 lesson flow is visible; “in pairs” = the teacher plays the partner.</li><li>The sample has twelve tasks, each of a different type (true/false ×7 statements · questions ×6 · pairs ×6 · choice ×4 · glossary ×8 · gaps ×6 · form-building ×6 · errors ×5 · paraphrase ×5 · continue ×4 · dialogue scenario · writing), with answer keys. The full type catalogue is a question for both teachers: which are missing?</li><li>Three mark states: <span class="chip ok">✓ verified</span> <span class="chip warn">⚠ take a look</span> <span class="chip bad">✕ rejected</span>. “⚠” is never accepted automatically — you press “accept” yourself.</li><li>✎ — edit right in the document · ↑↓ — move (also across phases) · ✕ — remove (nothing disappears silently).</li><li class="q">Question for the teachers: are the margin marks convenient? Try editing a task.</li>'},
+ review:{n:'4 · Review & assembly',role:'The heart of the product. Tasks are laid out by methodology phases; each carries an honest verification mark. The teacher moves, edits, discards — and accepts.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the lesson dominates the screen as a document (a Word-like sheet); tools and marks live in the margins.</li><li><b>Qualified format:</b> 45 minutes and six planned tasks do not change during review. Reserve material stays available for homework; “include in the plan” returns a task.</li><li>Every task carries an <b>oral / written / at home</b> mark — the 1-on-1 lesson flow is visible; “in pairs” = the teacher plays the partner.</li><li>Three mark states: <span class="chip ok">✓ verified</span> <span class="chip warn">⚠ take a look</span> <span class="chip bad">✕ rejected</span>. “⚠” is never accepted automatically — you press “accept” yourself.</li><li>✎ — edit right in the document · ↑↓ — move (also across phases) · ✕ — remove (nothing disappears silently).</li><li class="q">Question for the teachers: are the margin marks convenient? Try editing a task.</li>'},
  final:{n:'5 · Ready lesson',role:'What goes to class: a clean lesson sheet — for the screen or for print.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1</span><span class="tag frozen">To freeze</span>',notes:'<li><b>Edit 1 (user):</b> the ready lesson is a centered sheet, like a printout; the interface around it disappears (in print — literally: try “Print”).</li><li><b>🔑 Answers — for the teacher:</b> the button up top adds an answer block to every task (from the schema’s answer_key). Hide it before printing for students.</li><li><b>Homework</b> — whatever did not fit the chosen duration is offered automatically at the end of the sheet (optional).</li><li><b>Two ways to take the lesson away</b> (both in the toolbar — prototypes for discussion): <b>“⧉ Copy”</b> puts the whole lesson as clean text for your document (Word/Docs; with answers if 🔑 is on), and <b>“👩‍🎓 student mode”</b> — a prototype of the interactive link: true/false and choice are clickable, gaps fill from a word bank, pairs connect (ready Learn Ukrainian widgets); open questions get an answer box + “show the answer”.</li><li><b>Teacher and student screens:</b> the banner up top says whose screen it is; the “student screen” has no 🔑 answers and no hints — safe to share in Zoom. The header shows the role too (green STUDENT badge).</li><li class="q">Question for the teachers: how will you actually use the ready lesson — print · copy into your document · interactive link? Which of these is unnecessary?</li>'},
  settings:{n:'6 · Settings',role:'The minimum: default values, so “New lesson” stops asking the same things every time.',tags:'<span class="tag live">live demo</span><span class="tag v1">In v1 — minimal</span>',notes:'<li>Change the name or the default level — and watch the header and “New lesson” change.</li><li>That is all. No plans, integrations or notifications — until the product earns something more complex.</li>'},
  login:{n:'7 · Login — deferred',role:'The pilot has no login: a link + one access code. The page is designed so we do not redraw it later, but it is not in the POC.',tags:'<span class="tag later">Later</span>',notes:'<li>For the demo: enter any code and press “Sign in”.</li>'},
@@ -756,14 +756,13 @@ function vNew(){
     {k:'clil',b:'Через зміст (CLIL)',d:'для B2+ — скоро',on:false},
     {k:'own',b:'Власна',d:'ваш порядок частин — скоро в пілоті',on:false}
   ].map(function(m){return '<button class="pedcard'+(d.method===m.k?' on':'')+'" data-action="method" data-v="'+m.k+'" data-avail="'+(m.on?'1':'0')+'"><b>'+m.b+'</b><span class="d">'+m.d+'</span></button>'}).join('');
-  var durs=[45,60,90].map(function(v){return '<button class="choice'+(v===+d.duration?' on':'')+'" data-action="duration" data-v="'+v+'">'+v+' хв</button>'}).join('');
   return '<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px"><h3 style="margin:0">Нове заняття</h3><span class="sub" style="margin:0">якір — це основа заняття, тому він і є вся сторінка</span></div>'
    +'<div class="builder"><div>'+tabs+anchor+'</div>'
    +'<div class="sidepanel">'
    +'<div class="field"><label>Рівень</label><div class="choices">'+lv+'</div></div>'
    +'<div class="field"><label>Методика</label><div class="pedcards" style="grid-template-columns:1fr">'+methods+'</div></div>'
    +'<div class="field"><label>Граматичний фокус</label><input class="inputbox" id="focusin" placeholder="напр., вищий ступінь прикметників" value="'+esc(d.focus)+'"></div>'
-   +'<div class="field"><label>Тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">≈ '+durInfo(d.duration).tasks+' завдань — усі з вашого тексту</p></div>'
+   +'<div class="field"><label>Тривалість заняття</label><output class="inputbox">45 хв — єдиний кваліфікований формат</output><p class="hint">≈ 6 завдань — усі з вашого тексту</p></div>'
    +'<button class="btn primary" data-action="bake-now">Приготувати заняття</button>'
    +'<p class="hint">Від 20 секунд до 4 хвилин (у демо — швидше). Можна закрити сторінку — заняття дочекається вас.</p>'
    +'</div></div>';
@@ -855,7 +854,7 @@ function vReview(){
   if(!l||!l.blocks.length){return '<div class="emptystate"><h3>Ще немає що переглядати</h3><p>Коли заняття буде готове, тут зʼявиться документ із завданнями й позначками перевірки.</p><button class="btn primary" data-go="new">+ Нове заняття</button></div>'}
   route.id=l.id;
   var split=planSplit(l.duration||45), reserve=[];
-  var durSel='<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink-soft)">Тривалість:</span>'+[45,60,90].map(function(v){return '<button class="choice'+(v===+(l.duration||45)?' on':'')+'" style="padding:4px 10px;font-size:13px" data-action="review-duration" data-v="'+v+'">'+v+' хв</button>'}).join('')+'<span style="font-size:12px;color:var(--ink-soft)">— план ріжеться й росте на очах; зрізане не зникає</span></span>';
+  var durSel='<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink-soft)">Тривалість:</span><span class="choice on" style="padding:4px 10px;font-size:13px">45 хв</span><span style="font-size:12px;color:var(--ink-soft)">— кваліфікований формат уроку</span></span>';
   var left='<p class="docsheet-title">'+esc(l.title)+'</p><p style="margin:0 0 6px;color:var(--ink-soft);font-size:13px">'+esc(l.level)+' · Тест → Навчання → Тест · ≈ '+(l.duration||45)+' хв</p>';
   left+='<h4 class="dochead"><span class="pn">☰</span>Текст для читання</h4><div class="anchorbody">'+esc(l.anchor||'')+'</div>';
   [1,2,3].forEach(function(ph){
@@ -943,12 +942,11 @@ function vFinal(){
 }
 function vSettings(){
   var lv='<button class="choice on">'+esc(S.defaults.level)+'</button>';
-  var durs=[45,60,90].map(function(v){return '<button class="choice'+(v===+(S.defaults.duration||60)?' on':'')+'" data-action="def-duration" data-v="'+v+'">'+v+' хв</button>'}).join('');
   return '<h3>Налаштування</h3><div class="formgrid">'
    +'<div class="field"><label>Імʼя (показуємо у шапці)</label><input class="inputbox" id="namein" value="'+esc(S.teacher)+'"><p class="hint">зміниться одразу — погляньте на шапку</p></div>'
    +'<div class="field"><label>Типовий рівень</label><div class="choices">'+lv+'</div><p class="hint">у пілоті — лише B1; інші рівні після пілота</p></div>'
    +'<div class="field"><label>Типова методика</label><div class="choices"><button class="choice on">Тест → Навчання → Тест</button></div></div>'
-   +'<div class="field"><label>Типова тривалість заняття</label><div class="choices">'+durs+'</div><p class="hint">нові заняття починатимуться з цього значення (45 хв → 6 завдань · 60 → 10 · 90 → 12)</p></div>'
+   +'<div class="field"><label>Тривалість нового заняття</label><output class="inputbox">45 хв — єдиний кваліфікований формат</output><p class="hint">нові заняття мають 6 запланованих завдань</p></div>'
    +'</div>';
 }
 function vLogin(){
@@ -962,9 +960,9 @@ function vFreeze(){
   return '<div class="tablewrap"><table class="freeze">'
    +'<tr><th>№</th><th>Page</th><th>Status</th><th>What we lock</th></tr>'
    +'<tr><td>1</td><td>My lessons</td><td><span class="chip ok">v1</span></td><td>3 statuses, one main button, an empty state</td></tr>'
-   +'<tr><td>2</td><td>New lesson</td><td><span class="chip ok">v1</span></td><td>anchor = a full-screen sheet (the lesson’s foundation) · settings in a side panel · level B1 · methodology from cards · duration 45/60/90 min → 6/10/12 tasks · honest waiting</td></tr>'
+   +'<tr><td>2</td><td>New lesson</td><td><span class="chip ok">v1</span></td><td>anchor = a full-screen sheet (the lesson’s foundation) · settings in a side panel · level B1 · methodology from cards · qualified 45-minute format → 6 tasks · honest waiting</td></tr>'
    +'<tr><td>3</td><td>Baking</td><td><span class="chip ok">v1</span></td><td>real stages, no percentages · human error messages · you can leave, the result waits</td></tr>'
-   +'<tr><td>4</td><td>Review & assembly</td><td><span class="chip ok">v1</span></td><td>the document dominates, like Word · margin marks · 3 states · “⚠” never auto-accepts · rejected drafts stay visible · a “Verify the facts” banner · the duration switch trims/regrows the plan · trimmed goes “to reserve / homework” · oral/written/home marks</td></tr>'
+   +'<tr><td>4</td><td>Review & assembly</td><td><span class="chip ok">v1</span></td><td>the document dominates, like Word · margin marks · 3 states · “⚠” never auto-accepts · rejected drafts stay visible · a “Verify the facts” banner · reserve stays available for homework · oral/written/home marks</td></tr>'
    +'<tr><td>5</td><td>Ready lesson</td><td><span class="chip ok">v1</span></td><td>a centered sheet, like a printout · screen + print · teacher answers (🔑) · homework from the reserve · an honest footer · a place for the student link · 🌐 dual-language interface (uk/EN) — lesson content always Ukrainian</td></tr>'
    +'<tr><td>6</td><td>Settings</td><td><span class="chip ok">v1 min.</span></td><td>defaults only</td></tr>'
    +'<tr><td>7</td><td>Login</td><td><span class="chip warn">later</span></td><td>pilot = an access code; the page is in reserve</td></tr>'
@@ -973,9 +971,9 @@ function vFreeze(){
   return '<div class="tablewrap"><table class="freeze">'
    +'<tr><th>№</th><th>Сторінка</th><th>Статус</th><th>Що фіксуємо</th></tr>'
    +'<tr><td>1</td><td>Мої заняття</td><td><span class="chip ok">v1</span></td><td>3 статуси, одна головна кнопка, порожній стан</td></tr>'
-   +'<tr><td>2</td><td>Нове заняття</td><td><span class="chip ok">v1</span></td><td>якір = аркуш на весь екран (основа заняття) · налаштування бічною панеллю · рівень B1 · методика з карток · тривалість 45/60/90 хв → 6/10/12 завдань · чесне очікування</td></tr>'
+   +'<tr><td>2</td><td>Нове заняття</td><td><span class="chip ok">v1</span></td><td>якір = аркуш на весь екран (основа заняття) · налаштування бічною панеллю · рівень B1 · методика з карток · кваліфікований формат 45 хв → 6 завдань · чесне очікування</td></tr>'
    +'<tr><td>3</td><td>Приготування</td><td><span class="chip ok">v1</span></td><td>справжні етапи, без відсотків · людські помилки · можна піти, результат дочекається</td></tr>'
-   +'<tr><td>4</td><td>Перегляд і збирання</td><td><span class="chip ok">v1</span></td><td>документ домінує, як у Word · позначки на полях · 3 стани · «⚠» не приймається сам · відхилене видно · банер «Факти перевірте» · перемикач тривалості ріже/повертає план · зрізане — «у запасі / на домашнє» · позначки усно/письмово/вдома</td></tr>'
+   +'<tr><td>4</td><td>Перегляд і збирання</td><td><span class="chip ok">v1</span></td><td>документ домінує, як у Word · позначки на полях · 3 стани · «⚠» не приймається сам · відхилене видно · банер «Факти перевірте» · запас доступний для домашнього · позначки усно/письмово/вдома</td></tr>'
    +'<tr><td>5</td><td>Готове заняття</td><td><span class="chip ok">v1</span></td><td>аркуш по центру, як роздруківка · екран + друк · відповіді для вчителя (🔑) · домашнє з запасу · чесний підпис унизу · місце під учнівське посилання · 🌐 інтерфейс екрана учня укр/EN — перемикається; вміст заняття завжди українською</td></tr>'
    +'<tr><td>6</td><td>Налаштування</td><td><span class="chip ok">v1 мін.</span></td><td>лише типові значення</td></tr>'
    +'<tr><td>7</td><td>Вхід</td><td><span class="chip warn">пізніше</span></td><td>пілот = код доступу; сторінка в запасі</td></tr>'
@@ -1047,12 +1045,12 @@ function condBlk(id){var l=condLesson();if(!l)return null;for(var i=0;i<l.blocks
 function condCurBlk(){return condBlk(COND.plan[COND.i])}
 function condCurPhase(){var b=condCurBlk();return b?b.phase:3}
 function condInit(l){
-  var split=planSplit(l.duration||90),plan=[];
+  var split=planSplit(45),plan=[];
   [1,2,3].forEach(function(ph){
     l.blocks.filter(function(b){return b.phase===ph}).slice(0,split[ph-1]).forEach(function(b){plan.push(b.id)});
   });
   l.blocks.forEach(function(b){if(b._st)delete b._st;}); /* A2: fresh student widget state each run */
-  COND={lid:l.id,dur:(l.duration||90),pd:durInfo(l.duration||90).pd,i:0,plan:plan,
+  COND={lid:l.id,dur:45,pd:durInfo(45).pd,i:0,plan:plan,
         done:{},skip:{},easy:{},gate:{},showAns:false,showReceipt:false,stud:false,dropped:[],
         elapsed:{1:0,2:0,3:0},started:true,ended:false,ruleDone:null,pfOpen:false,hintOff:0};
 }
@@ -1328,10 +1326,6 @@ document.addEventListener('click',function(e){
     case 'method':
       if(act.getAttribute('data-avail')!=='1'){bubble(act,'Ця методика зʼявиться після пілота — у першій версії працює «Тест → Навчання → Тест».');break}
       draft.method=act.getAttribute('data-v');render();break;
-    case 'duration':
-      draft.duration=+act.getAttribute('data-v');render();break;
-    case 'def-duration':
-      S.defaults.duration=+act.getAttribute('data-v');save();render();toast('Збережено: типово '+S.defaults.duration+' хв ('+durInfo(S.defaults.duration).tasks+' завдань)');break;
     case 'bake-now':
       var txt=(draft.text||'').trim();
       if(txt.length<120){$('#anchorwarn').innerHTML='<span class="bubble">Додайте текст (щонайменше кілька речень) — завдання будуються лише з нього.</span>';break}
@@ -1378,8 +1372,6 @@ document.addEventListener('click',function(e){
       save();render();break;
     case 'toggle-rejected':
       l=lesson(route.id);l.showRejected=!l.showRejected;save();render();break;
-    case 'review-duration':
-      l=lesson(route.id);l.duration=+act.getAttribute('data-v');l.count=durInfo(l.duration).tasks;save();render();break;
     case 'b-include':
       l=lesson(route.id);
       var ii=l.blocks.findIndex(function(x){return x.id===+id});
@@ -1397,9 +1389,9 @@ document.addEventListener('click',function(e){
       var o=document.createElement('div');o.setAttribute('data-helpov','1');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;display:grid;place-items:center';
       o.innerHTML='<div style="background:var(--card);border-radius:12px;padding:20px 22px;max-width:520px;width:92%;font-size:14px;line-height:1.55"><p style="margin:0 0 10px;font-family:Georgia,serif;font-size:19px;font-weight:700">Як користуватися «Граматкою»</p>'
         +'<p style="margin:0 0 6px">1 · <b>Мої заняття</b> — усі ваші заняття; натисніть, щоб відкрити.</p>'
-        +'<p style="margin:0 0 6px">2 · <b>Нове заняття</b> — вставте текст, оберіть тривалість, «Приготувати».</p>'
+        +'<p style="margin:0 0 6px">2 · <b>Нове заняття</b> — вставте текст; 45 хв — кваліфікований формат; «Приготувати».</p>'
         +'<p style="margin:0 0 6px">3 · <b>Приготування</b> — чесні етапи; можна не чекати.</p>'
-        +'<p style="margin:0 0 6px">4 · <b>Перегляд</b> — редагуйте, пересувайте, ріжте тривалістю; «Прийняти».</p>'
+        +'<p style="margin:0 0 6px">4 · <b>Перегляд</b> — редагуйте, пересувайте, додавайте із запасу; «Прийняти».</p>'
         +'<p style="margin:0 0 10px">5 · <b>Готове заняття</b> — 🔑 відповіді лише вам · ⧉ копіювати · друк · 👩‍🎓 екран учня для Zoom.</p>'
         +'<p style="margin:0 0 6px;font-weight:600;font-size:13px;border-top:1px solid var(--line);padding-top:10px">Демо</p>'
         +'<p style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px"><button class="btn ghost" data-action="demo-reset">↺ Скинути демо</button><button class="btn ghost" data-action="demo-empty">◻ Порожній перший вхід</button><button class="btn ghost" id="failbtn" data-action="demo-fail">⚡ Симулювати збій</button></p>'

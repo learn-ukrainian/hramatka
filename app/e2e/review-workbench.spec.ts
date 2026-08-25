@@ -1,5 +1,5 @@
 /**
- * E2E: review workbench mutations (move, remove→tray→restore→ack, duration reserve, edit validate).
+ * E2E: review workbench mutations (move, remove→tray→restore→ack, reserve, edit validate).
  */
 import { test, expect } from '@playwright/test';
 import { spawn, ChildProcess } from 'child_process';
@@ -105,28 +105,11 @@ test.describe('Review workbench E2E (stub)', () => {
     expect(plannedAfter).toBeGreaterThanOrEqual(plannedBefore);
   });
 
-  test('duration switch keeps reserve tray visible', async ({ page }) => {
+  test('review shows the saved duration but provides no duration mutation control', async ({ page }) => {
     await loginAndBake(page);
-    const totalBlocks = await page.locator('.review-paper .dblock, .reserve-tray .dblock').count();
-
-    await page.locator('[data-action="review-duration"][data-v="45"]').click();
-    await page.waitForTimeout(300);
+    await expect(page.getByTestId('review-duration-readonly')).toContainText('45');
+    await expect(page.locator('[data-action="review-duration"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="reserve-tray"]')).toBeVisible();
-    const reserveAt45 = await page.locator('[data-testid="reserve-tray"] .dblock').count();
-    expect(reserveAt45).toBeGreaterThan(0);
-
-    const visibleAt45 = await page.locator('.review-paper .dblock:not(.empty-phase)').count();
-    const combined = visibleAt45 + reserveAt45;
-    expect(combined).toBeGreaterThanOrEqual(9);
-
-    await page.locator('[data-action="review-duration"][data-v="90"]').click();
-    await page.waitForTimeout(300);
-    const reserveAt90 = await page.locator('[data-testid="reserve-tray"] .dblock').count();
-    expect(reserveAt90).toBeLessThan(reserveAt45);
-
-    const afterTotal = await page.locator('.review-paper .dblock:not(.empty-phase), .reserve-tray .dblock').count();
-    expect(afterTotal).toBeGreaterThanOrEqual(9);
-    void totalBlocks;
   });
 
   test('edit validates and rejects empty instruction', async ({ page }) => {
@@ -170,19 +153,16 @@ test.describe('Review workbench E2E (stub)', () => {
   test('reserve warnings do not gate acceptance', async ({ page }) => {
     await loginAndBake(page);
 
-    // Push the trailing visible warn (text-questions) into reserve by moving it up
-    // (changing its phase) and then shrinking the duration budget to 45 min.
-    await page.locator('.review-paper .dblock.warn').last().locator('[data-action="b-up"]').click();
-    await page.waitForTimeout(200);
-    await page.locator('[data-action="review-duration"][data-v="45"]').click();
+    // Move a visible warning into the fixed 45-minute plan's reserve tray.
+    // Review may rearrange blocks, but must not offer a duration mutation.
+    await page.locator('.review-paper .dblock.warn').last().locator('[data-action="b-down"]').click();
     await expect(page.locator('[data-testid="reserve-tray"] [data-activity-type="text-questions"]')).toBeVisible();
 
     // The remaining visible warnings still need acknowledging — but the reserve
     // warn must NOT block acceptance. Ack each visible warn with a brief settle
     // pause so React's removal of the just-acked button doesn't race the next click.
     const ackButtons = page.locator('.review-paper .ack-btn');
-    const visibleAckCount = await ackButtons.count();
-    for (let i = 0; i < visibleAckCount; i++) {
+    while (await ackButtons.count()) {
       await ackButtons.first().click();
       await page.waitForTimeout(200);
     }

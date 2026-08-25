@@ -88,7 +88,7 @@ remains the sole pilot label in `pilot_teachers`.
 | Column | Contract |
 |---|---|
 | `teacher_id TEXT PRIMARY KEY` | FK to `pilot_teachers(id)`; owner scope |
-| `default_duration INTEGER NOT NULL` | 45 \| 60 \| 90; defaults to 60 when absent |
+| `default_duration INTEGER NOT NULL` | Historical rows may contain 45 \| 60 \| 90. The API always returns 45 and only accepts 45 for new-lesson preferences. |
 | `updated_at TEXT NOT NULL` | UTC RFC 3339 |
 
 ### `lesson_jobs`

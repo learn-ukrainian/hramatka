@@ -153,6 +153,10 @@ const DICT = {
   'paste.levelPre': { uk: 'Рівень: ', en: 'Level: ' }, // T_EXACT «Рівень»
   'paste.levelPost': { uk: ' (фіксовано для пілоту)', en: ' (fixed for the pilot)' },
   'paste.duration': { uk: 'Тривалість (хв)', en: 'Duration (min)' },
+  'paste.qualifiedDuration': {
+    uk: '45 хв — наразі єдиний кваліфікований формат уроку',
+    en: '45 min — currently the only qualified lesson format',
+  },
   'paste.model': { uk: 'Модель для уроку', en: 'Lesson model' },
   'paste.modelUnavailable': {
     uk: 'Немає моделей, кваліфікованих для поточних правил уроку.',
@@ -674,7 +678,7 @@ const DICT = {
   'review.banner': { uk: 'Мову й відповідність вашому тексту ми перевірили автоматично; зміст і доречність — за вами. Ви — вчитель, «Граматка» — помічниця.', en: 'We checked the language and fidelity to your text automatically; the content and appropriateness are up to you. You are the teacher, Hramatka is the assistant.' },
   'review.sub': { uk: 'Заняття — це документ. Позначки перевірки — на полях. Усе можна редагувати просто тут.', en: 'The lesson is a document. Verification marks are in the margins. Everything can be edited right here.' },
   'review.durationLabel': { uk: 'Тривалість:', en: 'Duration:' },
-  'review.durationHint': { uk: '— план ріжеться й росте на очах; зрізане не зникає', en: '— the plan shrinks and grows live; what is cut does not disappear' },
+  'review.durationReadOnly': { uk: '— тривалість уже збереженого уроку не змінюється', en: '— a saved lesson’s duration cannot be changed' },
   'review.emptyPhase': { uk: '— порожньо; пересуньте сюди завдання (↑↓) —', en: '— empty; move tasks here (↑↓) —' },
   'review.noWidget': { uk: 'Чернетка без віджета', en: 'Draft without widget' },
   'review.unavailable': { uk: 'Редагування цього типу недоступне.', en: 'Editing for this type is not available.' },

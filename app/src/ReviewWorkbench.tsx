@@ -45,7 +45,6 @@ export interface ReviewWorkbenchProps {
   resource: LessonResourceView;
   showAnswers: boolean;
   loading: boolean;
-  onDurationChange: (duration: LessonDuration) => void;
   onMoveBlock: (blockId: string, direction: 'up' | 'down') => void;
   onRemoveBlock: (blockId: string) => void;
   onIncludeReserve: (blockId: string) => void;
@@ -64,7 +63,6 @@ export default function ReviewWorkbench({
   resource,
   showAnswers,
   loading,
-  onDurationChange,
   onMoveBlock,
   onRemoveBlock,
   onIncludeReserve,
@@ -420,22 +418,10 @@ export default function ReviewWorkbench({
 
       <div className="noprint review-toolbar">
         <p className="sub">{t('review.sub')}</p>
-        <span className="duration-picker">
+        <span className="duration-picker" data-testid="review-duration-readonly">
           <span className="duration-label">{t('review.durationLabel')}</span>
-          {([45, 60, 90] as LessonDuration[]).map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={`choice ${v === lesson.duration ? 'on' : ''}`}
-              data-action="review-duration"
-              data-v={v}
-              onClick={() => onDurationChange(v)}
-              disabled={loading || v === lesson.duration}
-            >
-              {t('review.durationChip', { minutes: v })}
-            </button>
-          ))}
-          <span className="duration-hint">{t('review.durationHint')}</span>
+          <span className="choice on">{t('review.durationChip', { minutes: lesson.duration })}</span>
+          <span className="duration-hint">{t('review.durationReadOnly')}</span>
         </span>
       </div>
 

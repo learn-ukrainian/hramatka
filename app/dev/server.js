@@ -187,7 +187,7 @@ function buildGoldenLesson(id, opts = {}) {
       chars: anchorText.length,
       ...(opts.anchor?.source_url ? { source_url: opts.anchor.source_url } : {}),
     },
-    duration: opts.duration || 60,
+    duration: opts.duration || 45,
     version: 1,
     status: 'ready',
     last_error: null,
@@ -204,13 +204,25 @@ function loadPilotTypes() {
     const raw = fs.readFileSync(CONTRACTS_SCHEMA, 'utf8');
     const schema = JSON.parse(raw);
     const arr = schema.$defs?.pilotActivityType?.enum;
-    if (Array.isArray(arr) && arr.length === 9) return arr;
+    if (Array.isArray(arr) && arr.length === 9) return orderedGoldenTypes(arr);
   } catch {}
   // Fallback to the known frozen list (tests derive from schema; stub is dev aid)
-  return [
+  return orderedGoldenTypes([
     "true-false", "cloze", "match-up", "quiz", "mark-the-words",
     "fill-in", "error-correction", "text-questions", "short-writing"
+  ]);
+}
+
+// The stub retains one fixture for every registered player, but its planned
+// 45-minute document must mirror the qualified six-slot profile. The remaining
+// three types intentionally render as reserve/homework material.
+function orderedGoldenTypes(types) {
+  const qualified = [
+    'match-up', 'fill-in', 'cloze', 'quiz', 'error-correction',
+    'true-false', 'text-questions', 'mark-the-words', 'short-writing',
   ];
+  const known = qualified.filter((type) => types.includes(type));
+  return [...known, ...types.filter((type) => !known.includes(type))];
 }
 
 const PILOT_TYPES = loadPilotTypes();
@@ -280,15 +292,13 @@ function lessonStatusPayload(lid, l) {
 
 const REVIEW_PHASE_BUDGETS = {
   45: { 1: 2, 2: 3, 3: 1 },
-  60: { 1: 3, 2: 5, 3: 2 },
-  90: { 1: 4, 2: 5, 3: 3 },
 };
 const TEACHER_REMOVAL_REASON = 'вилучено вчителем';
 const RESTORED_WARNING_NOTE = 'повернено з відхилених — погляньте ще раз';
 const EDITED_WARNING_NOTE = 'змінено вчителем — підтвердьте ще раз перед прийняттям';
 
 function splitReviewBlocks(lesson) {
-  const budgets = REVIEW_PHASE_BUDGETS[lesson.duration] || REVIEW_PHASE_BUDGETS[60];
+  const budgets = REVIEW_PHASE_BUDGETS[lesson.duration] || REVIEW_PHASE_BUDGETS[45];
   const seen = { 1: 0, 2: 0, 3: 0 };
   const visible = [];
   const reserve = [];
@@ -628,7 +638,7 @@ const server = http.createServer(async (req, res) => {
       id: l.id,
       title: l.lesson ? l.lesson.title : null,
       status: l.status,
-      duration: l.lesson ? l.lesson.duration : 60,
+      duration: l.lesson ? l.lesson.duration : 45,
       focus: l.lesson ? l.lesson.focus : null,
       revision: l.revision || 1,
       accepted: !!l.accepted,
@@ -662,6 +672,9 @@ const server = http.createServer(async (req, res) => {
           : 'Оберіть доступну кваліфіковану модель.',
       ));
     }
+    if (body.duration !== 45) {
+      return sendJSON(res, 422, errorBody('invalid_input', 'Нові уроки наразі доступні лише у 45-хвилинному форматі.'));
+    }
     // Idempotency: same id + same request returns existing
     const existing = state.lessons[id];
     if (existing) {
@@ -687,7 +700,7 @@ const server = http.createServer(async (req, res) => {
       attempt_history: [],
       _bakeCounter: 0,
       _anchor: anchor,
-      _duration: body.duration || 60,
+      _duration: 45,
       _focus: body.focus || null,
       _logicalModelId: logicalModelId,
     };
@@ -821,7 +834,7 @@ const server = http.createServer(async (req, res) => {
       attempt_history: [],
       _bakeCounter: 0,
       _anchor: source._anchor,
-      _duration: source._duration || 60,
+      _duration: 45,
       _focus: source._focus || null,
       _logicalModelId: source._logicalModelId,
     };
@@ -988,26 +1001,6 @@ const server = http.createServer(async (req, res) => {
     } catch {
       return sendJSON(res, 404, errorBody('rejected_entry_not_found', 'Rejected entry not found.'));
     }
-  }
-
-  const durationMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/duration$/);
-  if (durationMatch && method === 'POST') {
-    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
-    if (!requireCsrf(req, res, state.session)) return;
-    const lid = durationMatch[1];
-    const l = state.lessons[lid];
-    if (!l || !l.lesson) return sendJSON(res, 404, errorBody('lesson_not_found', 'Lesson not found.'));
-    const body = await parseBody(req);
-    if (body.expected_revision !== l.revision) {
-      return sendJSON(res, 409, errorBody('revision_conflict', 'The lesson changed; reload it before trying again.', false, lid));
-    }
-    const duration = body.duration;
-    if (![45, 60, 90].includes(duration)) {
-      return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
-    }
-    l.lesson.duration = duration;
-    bumpLesson(l);
-    return sendJSON(res, 200, lessonResource(l));
   }
 
   // Accept lesson

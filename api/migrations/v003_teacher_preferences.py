@@ -15,7 +15,7 @@ def apply(connection: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS teacher_preferences (
             teacher_id TEXT PRIMARY KEY REFERENCES pilot_teachers(id),
-            default_duration INTEGER NOT NULL DEFAULT 60
+            default_duration INTEGER NOT NULL DEFAULT 45
                 CHECK (default_duration IN (45, 60, 90)),
             updated_at TEXT NOT NULL
         )

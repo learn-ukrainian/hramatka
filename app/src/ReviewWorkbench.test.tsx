@@ -166,7 +166,6 @@ describe('ReviewWorkbench deliberate-error affordance (#208 / #164)', () => {
           resource={resource}
           showAnswers={false}
           loading={false}
-          onDurationChange={vi.fn()}
           onMoveBlock={vi.fn()}
           onRemoveBlock={vi.fn()}
           onIncludeReserve={vi.fn()}
@@ -224,7 +223,6 @@ describe('ReviewWorkbench honesty flags', () => {
           resource={resource}
           showAnswers={false}
           loading={false}
-          onDurationChange={vi.fn()}
           onMoveBlock={vi.fn()}
           onRemoveBlock={vi.fn()}
           onIncludeReserve={vi.fn()}
@@ -254,7 +252,6 @@ describe('ReviewWorkbench answer key rendering', () => {
           resource={mockResource}
           showAnswers={true}
           loading={false}
-          onDurationChange={vi.fn()}
           onMoveBlock={vi.fn()}
           onRemoveBlock={vi.fn()}
           onIncludeReserve={vi.fn()}
@@ -323,7 +320,6 @@ function renderWorkbench(
     resource,
     showAnswers: false,
     loading: false,
-    onDurationChange: vi.fn(),
     onMoveBlock: vi.fn(),
     onRemoveBlock: vi.fn(),
     onIncludeReserve: vi.fn(),
@@ -597,7 +593,8 @@ describe('one-block regeneration (#418)', () => {
     expect((selected.querySelector('[data-action="b-del"]') as HTMLButtonElement).disabled).toBe(true);
     expect((unrelated.querySelector('[data-action="b-edit"]') as HTMLButtonElement).disabled).toBe(false);
     expect((unrelated.querySelector('[data-action="b-del"]') as HTMLButtonElement).disabled).toBe(false);
-    expect((document.querySelector('[data-v="45"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId('review-duration-readonly')).toHaveTextContent('60 хв');
+    expect(document.querySelector('[data-action="review-duration"]')).toBeNull();
     expect((document.querySelector('[data-action="accept-lesson"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });

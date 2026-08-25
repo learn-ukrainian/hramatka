@@ -168,7 +168,7 @@ describe('teacher lesson creation and list chrome', () => {
     expect(window.location.hash).toBe('');
   });
 
-  it('shows the fixed TTT methodology and the optional grammar-focus field on the new lesson form', async () => {
+  it('shows the qualified 45-minute path, fixed TTT methodology, and optional grammar focus', async () => {
     installFetch();
     renderApp();
 
@@ -176,6 +176,8 @@ describe('teacher lesson creation and list chrome', () => {
     expect(methodology).toBeDisabled();
     expect(methodology).toHaveTextContent('Тест → Навчання → Тест');
     expect(methodology).toHaveTextContent('перевірити → навчити → перевірити. Радимо для B1.');
+    expect(screen.getByTestId('qualified-duration')).toHaveTextContent('45 хв');
+    expect(screen.queryByRole('combobox', { name: 'Тривалість (хв)' })).not.toBeInTheDocument();
 
     const grammarFocus = screen.getByTestId('grammar-focus-input');
     expect(grammarFocus).toHaveAttribute('placeholder', 'напр., вищий ступінь прикметників');
@@ -193,6 +195,7 @@ describe('teacher lesson creation and list chrome', () => {
     expect(request).toBeDefined();
     const [, init] = request!;
     expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
+      duration: 45,
       methodology: 'ttt',
       grammar_focus: 'вищий ступінь прикметників',
     });

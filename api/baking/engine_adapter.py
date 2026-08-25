@@ -587,7 +587,7 @@ class EngineLessonBaker:
         resolved_duration, fallback_kind = resolve_duration(B1, duration)
         if fallback_kind is not None:
             log.warning(
-                "Invalid bake duration (%s); using the 60-minute B1 sizing plan.", fallback_kind
+                "Invalid bake duration (%s); using the 45-minute B1 sizing plan.", fallback_kind
             )
         plan = phase_plan(B1, resolved_duration)
         slot_repair_enabled = _allow_prompt_pack and repair.enabled()
