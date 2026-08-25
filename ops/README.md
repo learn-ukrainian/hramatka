@@ -216,14 +216,14 @@ Prerequisites:
 - an Antigravity subscription CLI. The wrapper first uses
   `$HOME/.local/bin/agy`, then `agy` on `PATH`, and passes the selected executable only to the
   backend process.
-- `HRAMATKA_GEMMA_FALLBACK_API_KEY`, or a local `~/.secret/openrouter.key` file, for the
-  local compatibility baker.
 
-The launcher enables the subscription route with OpenRouter, so the qualified Gemini 3.1 Pro
-route can be constructed while the legacy Gemma base baker remains available. Google AI Studio is
-not included in this local default because its unqualified Pro route would correctly fail the
-exact-route gate. If a requested provider credential or the required subscription CLI is absent,
-startup fails instead of silently showing an empty model picker.
+The launcher enables only the subscription route by default (#563): no OpenRouter, Google AI
+Studio, Vertex, or DeepInfra credential is required, constructed, or called. Google AI Studio is
+also excluded from this local default because its unqualified Flash route would correctly fail the
+exact-route gate. Set `HRAMATKA_BAKE_PROVIDERS` explicitly (see `PROVIDER_REQUIREMENTS` in
+`hramatka/ops/local_teacher.py`) to opt into an additional provider and its credential. If a
+requested provider credential or the required subscription CLI is absent, startup fails instead of
+silently showing an empty model picker.
 
 The model picker exposes only models that pass the separate qualification gate. `--api-port` and
 `--https-port` override the loopback ports when necessary.

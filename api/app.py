@@ -26,8 +26,8 @@ from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRe
 
 from hramatka.engine import data
 from hramatka.engine.providers import (
+    GeneratorUnavailable,
     configure_provider_concurrency,
-    make_bake_generator,
     make_logical_model_generator,
 )
 
@@ -38,7 +38,7 @@ from .baking.engine_adapter_v3 import (
     REGENERATION_PROMPT_VERSION,
     EngineLessonBaker,
 )
-from .baking.port import LessonBaker
+from .baking.port import LessonBaker, ProviderUnavailable
 from .config import Settings
 from .models import (
     ActivityFeedbackMutation,
@@ -361,6 +361,51 @@ def _github_bearer_token(authorization: str | None) -> str:
     return token
 
 
+def _refuse_model_less_generation(_prompt: str) -> str:
+    """Stand in for the removed process-global generator (#563).
+
+    ``_ProductionLessonBaker`` refuses a ``None`` logical-model route before
+    ever selecting a generator, so this callable is unreachable in normal
+    operation. It exists only so the top-level ``EngineLessonBaker`` always
+    has *some* generator, without eagerly constructing a real provider port
+    (and therefore without requiring a non-subscription credential, or an
+    OpenRouter/Google-AIS route the operator may have deliberately left
+    unconfigured) at process startup.
+    """
+    raise GeneratorUnavailable(
+        "No process-global provider route is configured; every lesson bakes "
+        "through a qualified per-lesson model."
+    )
+
+
+class _ProductionLessonBaker(EngineLessonBaker):
+    """The auto-constructed production baker refuses model-less legacy jobs.
+
+    Pre-#244 jobs and activity regenerations persisted no durable
+    ``logical_model_id``. ``EngineLessonBaker.for_logical_model(None)``
+    otherwise falls back to this instance's own process-global generator --
+    previously a legacy Gemma/OpenRouter route the operator may not have
+    (and, per #563, need not) configured.  Refuse that route explicitly here,
+    before the runner's ``begin_provider_call`` bookkeeping and before any
+    provider port is constructed, so a seeded legacy job reaches a safe
+    terminal failure instead of silently reaching for a forbidden provider.
+
+    This subclass exists only so tests that inject a plain
+    ``EngineLessonBaker`` directly (to exercise its own preflight/generation
+    behavior without qualified-model routing) keep their original semantics;
+    only the app factory's own default baker refuses this way.
+    """
+
+    def for_logical_model(self, logical_model_id: str | None) -> EngineLessonBaker:
+        if logical_model_id is None:
+            raise ProviderUnavailable(
+                "This job has no durable qualified-model route; legacy "
+                "model-less baking is no longer supported.",
+                retry_exhausted=True,
+            )
+        return super().for_logical_model(logical_model_id)
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -403,9 +448,9 @@ def create_app(
             qualified_routes=model.provider_routes,
         )
 
-    baker = baker or EngineLessonBaker(
+    baker = baker or _ProductionLessonBaker(
         store=store,
-        generator=make_bake_generator(settings.bake_providers),
+        generator=_refuse_model_less_generation,
         engine_out_dir=configured_engine_out_dir(),
         logical_generator_factory=logical_generator,
         semantic_reviewer_factory=logical_semantic_reviewer,

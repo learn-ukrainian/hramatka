@@ -133,6 +133,71 @@ def test_marked_local_launcher_lists_current_subscription_qualification(
     assert payload["unavailable_message"] is None
 
 
+def test_subscription_only_startup_serves_local_sign_in_and_qualified_models(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """#563: a scrubbed, subscription-only environment must not crash startup.
+
+    Regression coverage for the crash this fixes: with only the Antigravity
+    subscription route configured (no Google-AIS/OpenRouter/Vertex/DeepInfra
+    credential of any kind), ``create_app`` used to eagerly construct a
+    legacy process-global baker that required one of those non-subscription
+    providers and raised before the app object -- and therefore the local
+    sign-in route -- ever existed.
+    """
+    monkeypatch.setenv("HRAMATKA_SUBSCRIPTION_EXECUTABLE", "/usr/bin/true")
+    for name in (
+        "HRAMATKA_GEN_MODEL",
+        "HRAMATKA_AIS_API_KEY",
+        "HRAMATKA_AIS_API_KEY_FILE",
+        "HRAMATKA_GEMMA_FALLBACK_API_KEY",
+        "HRAMATKA_GEMMA_FALLBACK_API_KEY_FILE",
+        "HRAMATKA_VERTEX_API_KEY",
+        "HRAMATKA_VERTEX_API_KEY_FILE",
+        "DEEPINFRA_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    settings = replace(
+        _settings(tmp_path, static=True),
+        subscription_qualification_provenance_tier="cli_self_reported",
+        bake_providers=("antigravity",),
+    )
+    # The old crash came from an eager `make_bake_generator` call inside
+    # `create_app`. Fail loudly if that (or the route builders it drives)
+    # is ever reached again during app construction or these read-only
+    # requests -- proving zero OpenRouter/Google-AIS construction, not just
+    # an absence of crashes.
+    monkeypatch.setattr(
+        "hramatka.engine.provider_factories.make_bake_generator",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("the legacy process-global generator must not be constructed")
+        ),
+    )
+
+    app = create_app(settings=settings)
+
+    with TestClient(app, base_url=_LOOPBACK_ORIGIN) as client:
+        redirect = client.get(_STATIC_PATH, follow_redirects=False)
+        assert redirect.status_code == 303
+        assert "__Host-hramatka_session=" in redirect.headers["set-cookie"]
+
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        assert session.json()["local_auth_disabled"] is True
+
+        payload = client.get("/api/lesson-models").json()
+
+    assert payload["models"] == [
+        {
+            "id": "gemini-3.7-flash",
+            "label": "Gemini 3.7 Flash",
+            "description": "Швидке складання уроку.",
+        }
+    ]
+    assert payload["unavailable_message"] is None
+
+
 def test_static_link_reuses_one_teacher_across_app_restarts(tmp_path) -> None:
     settings = _settings(tmp_path, static=True)
     with TestClient(create_app(settings=settings), base_url=_LOOPBACK_ORIGIN) as first:

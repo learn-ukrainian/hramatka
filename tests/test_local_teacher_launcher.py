@@ -663,7 +663,7 @@ def test_invite_opt_out_keeps_runtime_private_and_each_run_gets_fresh_state(
     assert "HRAMATKA_PROMPT_PACK" not in first
     assert "HRAMATKA_SLOT_REPAIR" not in first
     assert first["HRAMATKA_GEN_JSON_MODE"] == "0"
-    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
+    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity"
 
 
 def test_local_launcher_defaults_to_one_persistent_database_and_bookmark_url(
@@ -688,7 +688,7 @@ def test_local_launcher_defaults_to_one_persistent_database_and_bookmark_url(
     assert first["HRAMATKA_LOCAL_LAUNCHER"] == "1"
     assert first["HRAMATKA_SERVER_BIND_HOST"] == "127.0.0.1"
     assert first["HRAMATKA_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER"] == "cli_self_reported"
-    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
+    assert first["HRAMATKA_BAKE_PROVIDERS"] == "antigravity"
     assert local_teacher._local_static_teacher_url(config) == (
         "https://127.0.0.1:9443/api/session/local-teacher"
     )
@@ -724,15 +724,17 @@ def test_skip_build_requires_an_existing_frontend_build(
         local_teacher.run(local_teacher.LaunchConfig(repo_root=tmp_path, build_frontend=False))
 
 
-def test_default_local_bakers_include_antigravity_and_openrouter(tmp_path: Path) -> None:
+def test_default_local_bakers_are_subscription_only(tmp_path: Path) -> None:
+    """#563: the default launch never constructs an OpenRouter route."""
     config = local_teacher.LaunchConfig(repo_root=REPO_ROOT)
     root = tmp_path / "runtime"
     root.mkdir()
     environment = _data_environment(tmp_path)
+    environment.pop("HRAMATKA_GEMMA_FALLBACK_API_KEY")
 
     resolved = local_teacher._runtime_environment(config, _runtime_paths(root), environment)
 
-    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "antigravity,openrouter"
+    assert resolved["HRAMATKA_BAKE_PROVIDERS"] == "antigravity"
 
 
 def test_google_ais_is_enabled_when_only_its_key_file_is_configured(tmp_path: Path) -> None:
