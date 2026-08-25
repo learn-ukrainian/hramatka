@@ -14,7 +14,11 @@ const __dirname = path.dirname(__filename);
 const STUB_PORT = 8787;
 const APP = 'http://localhost:5173';
 const TEST_TOKEN = 'A'.repeat(42) + 'Q'; // valid pattern
-const TEST_LOGICAL_MODEL_ID = 'gemini-3.6-flash';
+const TEST_LOGICAL_MODEL_ID = 'gemini-3.7-flash';
+// A successful redemption may finish at the scrubbed document URL or at the
+// hash router's canonical root. Both forms prove that no invite material
+// remains; individual security tests separately assert that invariant.
+const TEACHER_ROOT_URL = /\/teacher\/?(?:#\/?)?$/;
 
 let stubProc: ChildProcess | null = null;
 
@@ -63,7 +67,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs from initial hash
     // after redeem the hash should be scrubbed to /teacher/
-    await expect(page).toHaveURL(/\/teacher\/?$/);
+    await expect(page).toHaveURL(TEACHER_ROOT_URL);
 
     // no token remains
     const hash = await page.evaluate(() => location.hash);
@@ -89,7 +93,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('qualified model stub contract → paste → bake renders all 9 blocks', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
     // The invite token is scrubbed from the URL synchronously, before the
     // redeem POST resolves (contract: never let the token linger, even for a
     // failed exchange) — so waitForURL alone races the session cookie. Wait
@@ -107,7 +111,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
         registry_version: 'QualifiedLogicalModels.v1',
         models: [{
           id: TEST_LOGICAL_MODEL_ID,
-          label: 'Gemini 3.5 Flash',
+          label: 'Gemini 3.7 Flash',
           description: 'Детермінована тестова модель.',
         }],
         unavailable_message: null,
@@ -271,7 +275,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('ack warnings, accept blocked until acks, then accept succeeds, then draft', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload(); // ensure full mount with fragment so redeem effect runs
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Текст для перевірки ack та accept.';
     await page.getByPlaceholder(/Вставте/).fill(text);
@@ -326,7 +330,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('direct-link / refresh to lesson renders content (no blank, session gate)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Текст для прямого посилання.';
     await page.getByPlaceholder(/Вставте український текст/).fill(text);
@@ -347,7 +351,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('catalog auto-loads on session ready without clicking Оновити список', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     // create one lesson via UI flow (ensures session + lesson exists)
     const text = 'Текст для перевірки авто-каталогу.';
@@ -367,7 +371,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('pollStatus always converges to terminal state and refreshes step (no stale baking after ready)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Тест збіжності poll.';
     await page.getByPlaceholder(/Вставте/).fill(text);
@@ -385,7 +389,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('failure banner is Ukrainian (server message or fallback, no English leak)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'bad bake text';
     await page.getByPlaceholder(/Вставте/).fill(text);
@@ -413,7 +417,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('session boundary: logout then new invite clears form and saved request (cross-teacher leak)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const teacherAText = 'Секретний текст викладача А — не повинен з’явитися у наступній сесії.';
     await page.getByPlaceholder(/Вставте український текст/).fill(teacherAText);
@@ -443,7 +447,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('failure recovery: retry button keeps the failed lesson identity', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Текст для повторної спроби після збою.';
     await page.getByPlaceholder(/Вставте/).fill(text);
@@ -468,7 +472,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('help overlay opens from header and shows Ukrainian guidance', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByRole('button', { name: 'Довідка' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -482,7 +486,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('review mode toggles answer keys client-side', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Текст для перемикача відповідей.';
     await page.getByPlaceholder(/Вставте/).fill(text);
@@ -499,7 +503,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('conductor: accept stub lesson → start conduct → clock present → student screen (no answers) → skip → summary', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     // Create a lesson (stub produces ready blocks quickly)
     const text = 'Текст для перевірки Проведення заняття.';
@@ -583,7 +587,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     const anchorSnippet = 'Унікальний якірний текст для перевірки рендеру в каталозі.';
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill(anchorSnippet);
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -599,7 +603,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     const anchorSnippet = 'Текст для режиму запуску без виходу з перегляду.';
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill(anchorSnippet);
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -620,7 +624,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('resumed baking lesson from catalog shows live status view and polling', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const slowText = '__SLOW_BAKE__ Текст для перевірки відновленого статусу з каталогу.';
     await page.getByPlaceholder(/Вставте/).fill(slowText);
@@ -642,7 +646,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('student print variant has zero answer-key content in print DOM', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки друку для учня.');
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -666,7 +670,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('URL import flow creates lesson and failure keeps form state', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByRole('tab', { name: 'З посилання' }).click();
     await page.getByTestId('anchor-url-input').fill('https://stub.example.test/article');
@@ -693,7 +697,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('invalid URL recovery copy follows the selected interface language', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByTestId('lang-toggle').click();
     await page.getByRole('tab', { name: 'From a link' }).click();
@@ -708,7 +712,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('failed status subline never shows stale «готово» step (regression)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill('bad bake text');
     await page.evaluate(() => {
@@ -734,7 +738,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('open ready lesson from catalog', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     // ensure native uuid (previous tests may have left BAD override)
     await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
@@ -761,7 +765,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('open baking lesson from catalog (exercises 409 path reliably)', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     // ensure native uuid (previous tests may have left BAD override)
     await page.evaluate(() => { try { delete (crypto as any).randomUUID; } catch {} });
@@ -796,7 +800,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('open failed lesson from catalog shows failure card + in-place retry', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const text = 'Текст для failed-уроку з каталогу.';
     await page.getByPlaceholder(/Вставте український текст/).fill(text);
@@ -851,7 +855,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     // Use a distinct anchor phrase so we can assert the body is captured.
     await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки експорту в буфер обміну.');
@@ -888,7 +892,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки буфера в режимі учня.');
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -911,7 +915,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки вчительського буфера.');
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -927,7 +931,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('clone-to-form action is preserved as «Створити інший урок із цього тексту»', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     await page.getByPlaceholder(/Вставте/).fill('Текст для перевірки кнопки клонування.');
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
@@ -943,7 +947,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
   test('copy-as-new is not silently disabled while another lesson bakes and a review save is in flight', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const anchorOne = '__CLONE_BUSY__ Текст готового уроку для клонування під час бакінгу.';
     await page.getByPlaceholder(/Вставте/).fill(anchorOne);
@@ -997,7 +1001,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const headerShell = page.locator('.appbar > .page-shell');
     const createShell = page.locator('.hub.create-hub.page-shell');
@@ -1081,7 +1085,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
       await page.setViewportSize(viewport);
       await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
       await page.reload();
-      await page.waitForURL(/\/teacher\/?$/);
+      await page.waitForURL(TEACHER_ROOT_URL);
 
       const docScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
       const docClientHeight = await page.evaluate(() => document.documentElement.clientHeight);
@@ -1093,7 +1097,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const grid = page.locator('.create-shell');
     const textarea = page.getByTestId('anchor-text-input');
@@ -1118,7 +1122,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const longText = 'Текст для уроку.\n'.repeat(600);
     const textarea = page.getByTestId('anchor-text-input');
@@ -1142,7 +1146,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
-    await page.waitForURL(/\/teacher\/?$/);
+    await page.waitForURL(TEACHER_ROOT_URL);
 
     const headerShell = page.locator('.appbar > .page-shell');
     await expect(headerShell).toBeVisible();

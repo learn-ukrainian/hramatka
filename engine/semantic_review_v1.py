@@ -27,9 +27,7 @@ SEMANTIC_REVIEW_VERSION: Final[str] = "TeacherSampleSemanticReview.v1"
 SEMANTIC_REVIEW_PROMPT_VERSION: Final[str] = "teacher-sample-semantic-review.v1"
 SEMANTIC_REVIEW_RUBRIC_VERSION: Final[str] = "teacher-sample-rubric.b1.v1"
 _CACHE_LIMIT: Final[int] = 1024
-_RESULT_KEYS: Final[frozenset[str]] = frozenset(
-    {"failure_codes", "review_id", "verdict"}
-)
+_RESULT_KEYS: Final[frozenset[str]] = frozenset({"failure_codes", "review_id", "verdict"})
 _FAILURE_CODES: Final[frozenset[str]] = frozenset(
     {
         "answer_not_supported",
@@ -197,9 +195,7 @@ class _ReviewerRoute:
     observed_host_model: tuple[str, str] | None
 
 
-def reviewer_route_identity(
-    reviewer: object, explicit_route: str | None = None
-) -> _ReviewerRoute:
+def reviewer_route_identity(reviewer: object, explicit_route: str | None = None) -> _ReviewerRoute:
     """Resolve only a factory-sealed qualification route, never inferred attributes."""
     route_reader = getattr(reviewer, "semantic_review_route_identity", None)
     attested = route_reader() if callable(route_reader) else None
@@ -248,9 +244,7 @@ def build_review_request(
         set(code_provenance) != _CODE_PROVENANCE_KEYS
         or not all(isinstance(value, str) and value for value in code_provenance.values())
         or not all(
-            len(code_provenance[key]) == 64
-            for key in code_provenance
-            if key.endswith("_sha256")
+            len(code_provenance[key]) == 64 for key in code_provenance if key.endswith("_sha256")
         )
     ):
         raise ValueError("semantic review code provenance is incomplete")
@@ -275,7 +269,7 @@ def build_review_request(
             or not isinstance(review_id, str)
             or not review_id
             or review_id in seen
-            or activity_type not in {"text-questions", "short-writing"}
+            or activity_type not in {"quiz", "text-questions", "short-writing"}
             or category
             not in {
                 "comprehension",

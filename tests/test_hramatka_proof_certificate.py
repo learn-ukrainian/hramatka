@@ -169,7 +169,7 @@ def test_capture_and_independent_replay_cover_all_manifest_anchors(tmp_path) -> 
     assert [
         sum(len(slot["units"]) for slot in certificate.allocation["slots"])
         for certificate in certificates
-    ] == [27, 27, 27]
+    ] == [61, 57, 66]
     assert {
         certificate.anchor_id: (
             certificate.profile_digest,
@@ -179,19 +179,19 @@ def test_capture_and_independent_replay_cover_all_manifest_anchors(tmp_path) -> 
         for certificate in certificates
     } == {
         "b1-narrative": (
-            "18886d4c219c4394521b8ca300046c51cacd18c41c620597574b6718d1947599",
-            "d25ee41d0a1df626259cac11b87adfd50d8a753bc17bb6dece961c74d915b101",
-            "d25ee41d0a1df626259cac11b87adfd50d8a753bc17bb6dece961c74d915b101",
+            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
+            "a5101a45cc2a44a5707485bfad7bd5eb6dc67bf889de1a17c4f1ae3d502b05bc",
+            "a5101a45cc2a44a5707485bfad7bd5eb6dc67bf889de1a17c4f1ae3d502b05bc",
         ),
         "b1-dialogue": (
-            "18886d4c219c4394521b8ca300046c51cacd18c41c620597574b6718d1947599",
-            "fa9dca3bcf1d0f913c13150beb0e07846fd308925e55ad5651e21e92574abb0d",
-            "fa9dca3bcf1d0f913c13150beb0e07846fd308925e55ad5651e21e92574abb0d",
+            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
+            "956a7d0752710349e36bf52827145060d29e41b2a95d775d62564daf86c70165",
+            "956a7d0752710349e36bf52827145060d29e41b2a95d775d62564daf86c70165",
         ),
         "b1-informational": (
-            "18886d4c219c4394521b8ca300046c51cacd18c41c620597574b6718d1947599",
-            "2a14e5ed04cf06a90404c65645a9cb70ee2fb9c5667feb1919360f7bba322fb1",
-            "2a14e5ed04cf06a90404c65645a9cb70ee2fb9c5667feb1919360f7bba322fb1",
+            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
+            "d57ea826385bdb5160778132d66bf66b2da6cb6776f42f4e7f8490c4649b4e80",
+            "d57ea826385bdb5160778132d66bf66b2da6cb6776f42f4e7f8490c4649b4e80",
         ),
     }
     assert all(
@@ -718,14 +718,10 @@ def test_replay_rejects_self_consistent_reordered_or_reused_proof_domains(tmp_pa
     ]
     replay_rejects(missing_candidate)
 
-    reordered_placements = copy.deepcopy(original)
-    receipt = next(
-        item
-        for item in reordered_placements["bank_receipts"]
-        if len(item["eligible_placements"]) > 1
-    )
-    receipt["eligible_placements"].reverse()
-    replay_rejects(reordered_placements)
+    duplicated_placement = copy.deepcopy(original)
+    receipt = duplicated_placement["bank_receipts"][0]
+    receipt["eligible_placements"].append(copy.deepcopy(receipt["eligible_placements"][0]))
+    replay_rejects(duplicated_placement)
 
     reordered_slots = copy.deepcopy(original)
     reordered_slots["allocation"]["slots"].reverse()
@@ -756,6 +752,7 @@ def test_replay_rejects_self_consistent_reordered_or_reused_proof_domains(tmp_pa
     reordered_units["allocation"]["slots"][0]["units"].reverse()
     reordered_units["witness"]["rows"][0]["units"].reverse()
     replay_rejects(reordered_units)
+
 
 def test_wire_schema_rejects_duplicate_and_reordered_witness_geometry(tmp_path) -> None:
     """Closed slot/witness joins fail before replay when direct geometry breaks."""

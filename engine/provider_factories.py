@@ -131,7 +131,7 @@ _QUALIFICATION_ROUTE_SPECS: Mapping[str, tuple[str, str, str, str | None, str | 
         AIS_API_KEY_FILE_ENV,
     ),
     "gemini-flash-subscription": (
-        "gemini-3.6-flash",
+        "gemini-3.7-flash",
         SUBSCRIPTION_HOST,
         DEFAULT_SUBSCRIPTION_MODEL,
         None,
@@ -333,8 +333,10 @@ def make_qualification_pinned_generator(
                 max_attempts=1,
             ),
         )
-    observed_host = port.host if isinstance(port, SubscriptionGeneratorPort) else getattr(
-        port._transport, "host", ""
+    observed_host = (
+        port.host
+        if isinstance(port, SubscriptionGeneratorPort)
+        else getattr(port._transport, "host", "")
     )
     observed_model = port.model if isinstance(port, SubscriptionGeneratorPort) else port._model
     if observed_host != host or observed_model != model_id:
@@ -552,8 +554,7 @@ def make_bake_generator(
         selected = tuple(name for name in names if name in allowed)
         if not selected or unknown:
             raise ValueError(
-                "Gemini Flash bake providers must be one or more of "
-                f"{', '.join(sorted(allowed))}."
+                f"Gemini Flash bake providers must be one or more of {', '.join(sorted(allowed))}."
             )
         routes: dict[str, Callable[[str], str]] = {}
         if "google-ais" in selected:
@@ -590,6 +591,13 @@ def make_logical_model_generator(
     unqualified sibling route.
     """
     route_catalog: dict[str, dict[str, tuple[str, str, str]]] = {
+        "gemini-3.7-flash": {
+            SUBSCRIPTION_PROVIDER: (
+                "gemini-flash-subscription",
+                SUBSCRIPTION_HOST,
+                DEFAULT_SUBSCRIPTION_MODEL,
+            ),
+        },
         "gemini-3.6-flash": {
             "google-ais": (
                 "gemini-flash-ais",
@@ -629,17 +637,14 @@ def make_logical_model_generator(
 
     if provider_names is None:
         if qualified_routes is None:
-            requested = (
-                tuple(available)
-                if logical_model_id == "gemma-4-31b"
-                else ("google-ais",)
-            )
+            requested = tuple(available) if logical_model_id == "gemma-4-31b" else ("google-ais",)
         else:
             qualified_route_ids = {
                 getattr(route, "id", getattr(route, "route_id", None)) for route in qualified_routes
             }
             requested = tuple(
-                provider for provider, (route_id, _host, _model) in available.items()
+                provider
+                for provider, (route_id, _host, _model) in available.items()
                 if route_id in qualified_route_ids
             )
     else:
@@ -772,8 +777,7 @@ def make_generator(name: str) -> AISGeneratorPort:
     if key == SUBSCRIPTION_PROVIDER:
         if active_model != "google-ais/gemini-3.6-flash":
             raise ValueError(
-                "The subscription route requires HRAMATKA_GEN_MODEL="
-                "google-ais/gemini-3.6-flash."
+                "The subscription route requires HRAMATKA_GEN_MODEL=google-ais/gemini-3.6-flash."
             )
         return SubscriptionGeneratorPort(
             executable=os.environ.get(SUBSCRIPTION_EXECUTABLE_ENV, DEFAULT_SUBSCRIPTION_EXECUTABLE),

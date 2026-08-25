@@ -51,9 +51,9 @@ def _payload(allocation: LessonAllocation, *, unit_counts: dict[str, int] | None
                 "slot_id": kit["slot_id"],
                 "type": kit["type"],
                 "activity": {"type": kit["type"], "instruction": "fixture"},
-                "serialized_units": [
-                    {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-                ][: counts.get(kit["slot_id"])],
+                "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]][
+                    : counts.get(kit["slot_id"])
+                ],
             }
             for kit in context["type_kits"]
         ]
@@ -144,7 +144,7 @@ def test_dropped_block_stays_dropped_and_unaccepted_with_the_record_attached() -
         "disposition": "dropped",
         "units": 0,
         "floor_met": False,
-        "contract_version": "TeacherReadyDensity.v3",
+        "contract_version": "TeacherReadyDensity.v4",
     }
     # The lesson-level bar is unchanged: any non-accepted block keeps the
     # lesson a recoverable draft, record or no record.

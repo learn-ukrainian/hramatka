@@ -15,9 +15,10 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from .lesson_capacity_v3 import LessonSlot
+from .lesson_workload_45_v1 import workload_manifest
 from .teacher_ready_density_v3 import density_floor_fingerprint, floor_for, phase_shape_for
 
-PROFILE_VERSION: Final = "Hramatka45MinuteProfile.v1"
+PROFILE_VERSION: Final = "Hramatka45MinuteProfile.v2"
 ResponseDemandTier = Literal[
     "selected-response",
     "bounded-production",
@@ -34,19 +35,18 @@ _TIER_BY_TYPE: Final[Mapping[str, ResponseDemandTier]] = MappingProxyType(
         "error-correction": "bounded-production",
         "text-questions": "source-grounded-open-response",
         "short-writing": "extended-writing",
+        "mark-the-words": "bounded-production",
     }
 )
 _SCHEDULED_TYPES: Final = (
-    "quiz",
-    "cloze",
     "match-up",
+    "quiz",
+    "fill-in",
     "error-correction",
-    "text-questions",
-    "short-writing",
+    "mark-the-words",
+    "cloze",
 )
-_REPLACEMENTS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
-    {"match-up": ("fill-in",), "error-correction": ("fill-in",)}
-)
+_REPLACEMENTS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -69,15 +69,9 @@ class Profile45:
             raise ValueError("45-minute profile has an unknown slot activity.") from exc
 
     def fallback_to_group_one(self, slot_id: str, activity_type: str) -> bool:
-        return (
-            activity_type == "fill-in"
-            and self.group_number_for(slot_id, activity_type) > 1
-            and slot_id in {"P2-A1", "P2-A2"}
-        )
+        return False
 
     def placements_for(self, activity_type: str, group_number: int) -> tuple[tuple[str, bool], ...]:
-        if activity_type == "fill-in" and group_number == 1:
-            return (("P2-A1", True), ("P2-A2", True))
         rows = tuple(
             slot_id
             for (slot_id, kind), occurrence in self.occurrence_by_slot_type.items()
@@ -91,6 +85,7 @@ class Profile45:
         return {
             "version": PROFILE_VERSION,
             "density_floor_fingerprint": density_floor_fingerprint(),
+            "workload": workload_manifest(),
             "slots": [
                 {
                     "slot_id": slot.slot_id,
@@ -106,12 +101,6 @@ class Profile45:
                 {"slot_id": slot_id, "activity_type": activity_type, "group_number": number}
                 for (slot_id, activity_type), number in sorted(self.occurrence_by_slot_type.items())
             ],
-            "shared_fallback": {
-                "activity_type": "fill-in",
-                "group_number": 1,
-                "placements": ["P2-A1", "P2-A2"],
-                "mutually_exclusive": True,
-            },
         }
 
     def canonical_bytes(self) -> bytes:
@@ -182,13 +171,7 @@ def slot_builders_45() -> Mapping[str, Callable[..., object]]:
             selected = inventory_for_group(
                 inventory, activity_type=activity_type, group_number=group
             )
-            plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
-            if PROFILE_45.fallback_to_group_one(slot_id, activity_type) and not plan.floor_met:
-                selected = inventory_for_group(
-                    inventory, activity_type=activity_type, group_number=1
-                )
-                plan = BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
-            return plan
+            return BUILDERS[activity_type](selected, slot_id=slot_id, phase=phase)
 
         return build
 

@@ -39,9 +39,12 @@ from hramatka.engine.unit_plan_v3 import (
 )
 
 
-def test_source_comprehension_is_the_only_semantic_evidence_overlay() -> None:
+def test_reading_substrates_are_the_only_semantic_evidence_overlays() -> None:
     assert EVIDENCE_CAPACITY_OVERLAYS == frozenset(
-        {("text-questions", "source-comprehension")}
+        {
+            ("text-questions", "source-comprehension"),
+            ("cloze", "long-form-reconstruction"),
+        }
     )
 
 
@@ -99,7 +102,7 @@ def _certified_plan(activity_type: str, *, phase: int = 1):
 
 
 def test_floor_table_is_the_complete_immutable_v3_authority() -> None:
-    assert teacher_ready_density_v3.TEACHER_READY_DENSITY_VERSION == "TeacherReadyDensity.v3"
+    assert teacher_ready_density_v3.TEACHER_READY_DENSITY_VERSION == "TeacherReadyDensity.v4"
     assert set(FLOOR_TABLE) == set(PILOT_ACTIVITY_TYPES)
     assert {activity_type: floor.minimum_units for activity_type, floor in FLOOR_TABLE.items()} == {
         "true-false": 5,
@@ -112,10 +115,7 @@ def test_floor_table_is_the_complete_immutable_v3_authority() -> None:
         "mark-the-words": 5,
         "short-writing": 1,
     }
-    assert (
-        FLOOR_TABLE["text-questions"].category_minima
-        == TEXT_QUESTION_COMPREHENSION_FLOOR
-    )
+    assert FLOOR_TABLE["text-questions"].category_minima == TEXT_QUESTION_COMPREHENSION_FLOOR
     assert FLOOR_TABLE["short-writing"].minimum_registered_constraints == 2
     assert FLOOR_TABLE["error-correction"].certified_errors_per_unit == 1
     with pytest.raises(TypeError):
@@ -154,10 +154,7 @@ def test_incomplete_or_constraintless_builder_result_is_unavailable_before_gener
         slot_id="P1-A1",
         phase=1,
         activity_type="quiz",
-        units=tuple(
-            _unit("quiz", index)
-            for index in range(floor_for("quiz").minimum_units - 1)
-        ),
+        units=tuple(_unit("quiz", index) for index in range(floor_for("quiz").minimum_units - 1)),
     )
     writing_without_constraints = certify_unit_plan(
         slot_id="P1-A2",
@@ -265,7 +262,7 @@ def test_receipt_has_only_the_locked_content_free_shape_and_consumes_floor_autho
         "disposition": "ready",
         "units": floor_for("true-false").minimum_units,
         "floor_met": True,
-        "contract_version": "TeacherReadyDensity.v3",
+        "contract_version": "TeacherReadyDensity.v4",
     }
     assert "форма" not in json.dumps(receipt.to_dict(), ensure_ascii=False)
 
@@ -289,7 +286,7 @@ def test_45_minute_lone_phase_three_rejects_text_questions_without_full_budget()
 def test_density_floor_fingerprint_tracks_the_locked_v3_authority() -> None:
     assert (
         teacher_ready_density_v3.density_floor_fingerprint()
-        == "a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21"
+        == "dadffe48c7c7ff56be8128c8aca910b864ecc608b569e2d1b57989645b970710"
     )
 
 

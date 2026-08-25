@@ -47,9 +47,9 @@ def test_loopback_static_link_establishes_session_and_marks_banner(tmp_path) -> 
         assert payload["local_auth_disabled"] is True
         assert payload["teacher"]["display_name"] == "Локальний викладач"
         with sqlite3.connect(app.state.settings.database_path) as connection:
-            assert connection.execute(
-                "SELECT auth_method FROM pilot_sessions"
-            ).fetchone() == ("local",)
+            assert connection.execute("SELECT auth_method FROM pilot_sessions").fetchone() == (
+                "local",
+            )
 
 
 def test_non_loopback_binding_never_registers_static_link(tmp_path) -> None:
@@ -125,14 +125,12 @@ def test_marked_local_launcher_lists_current_subscription_qualification(
 
     assert payload["models"] == [
         {
-            "id": "gemini-3.1-pro",
-            "label": "Gemini 3.1 Pro",
-            "description": "Ретельне складання уроку.",
+            "id": "gemini-3.7-flash",
+            "label": "Gemini 3.7 Flash",
+            "description": "Швидке складання уроку.",
         }
     ]
-    assert payload["unavailable_message"] == (
-        "Показано лише моделі з повною кваліфікацією для поточних правил уроку."
-    )
+    assert payload["unavailable_message"] is None
 
 
 def test_static_link_reuses_one_teacher_across_app_restarts(tmp_path) -> None:

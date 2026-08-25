@@ -32,16 +32,16 @@ export interface ConductorProps {
   onStudentPreviewChange?: (preview: boolean) => void;
 }
 
-// Timing remains a UI concern; visible block counts come from the canonical
-// review sizing policy rather than a second local task-budget map.
-const DUR: Record<number, { pd: readonly [number, number, number] }> = {
-  45: { pd: [10, 15, 15] },
-  60: { pd: [15, 25, 15] },
-  90: { pd: [20, 40, 25] },
+// Mirrors hramatka.sizing_policy.PHASE_MINUTES_BY_LEVEL[B1].  Python tests
+// parse this literal so the browser never silently shows a shorter lesson.
+const PHASE_MINUTES: Record<number, readonly [number, number, number]> = {
+  45: [10, 20, 15],
+  60: [15, 30, 15],
+  90: [20, 45, 25],
 };
 
 function durInfo(d: number) {
-  return DUR[d] || DUR[45];
+  return { pd: PHASE_MINUTES[d] || PHASE_MINUTES[45] };
 }
 
 function condFmt(sec: number): string {

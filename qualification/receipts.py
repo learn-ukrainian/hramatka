@@ -139,7 +139,8 @@ def qualification_matrix(
     qualify one model without waiting for unrelated models' credentials.
     ``None`` retains the full catalog matrix used by the legacy command.
     """
-    model_ids = tuple(model.id for model in LOGICAL_MODELS)
+    active_models = tuple(model for model in LOGICAL_MODELS if not model.retired)
+    model_ids = tuple(model.id for model in active_models)
     if logical_model_ids is None:
         selected = frozenset(model_ids)
     else:
@@ -154,7 +155,7 @@ def qualification_matrix(
         selected = frozenset(requested)
     return tuple(
         (model.id, RouteBinding(route.id, route.host, route.model_id))
-        for model in LOGICAL_MODELS
+        for model in active_models
         if model.id in selected
         for route in model.provider_routes
     )
@@ -815,9 +816,8 @@ class RouteAggregate:
 
     @property
     def semantic_gate_passed(self) -> bool:
-        # The shadow-tier semantic gate remains advisory by the locked #305
-        # ruling.  A reported semantic failure is still not transcribable.
-        return all(cell.semantic_gate in {"not_run", "passed"} for cell in self.cells)
+        """Require evidence-backed teacher answers in every passing cell."""
+        return all(cell.semantic_gate == "passed" for cell in self.cells)
 
     @property
     def current_v3(self) -> bool:
@@ -982,17 +982,14 @@ def aggregate_receipts(
                 "A failed or non-deliverable qualification cell cannot aggregate."
             )
         expected_phase_slots = {"1": 2, "2": 3, "3": 1}
-        if (
-            receipt.density.slot_count < 6
-            or any(
-                receipt.density.ready_slots + receipt.density.tray_slots < 6
-                or sum(
-                    entry.disposition in {"ready", "tray"} and str(entry.phase) == phase
-                    for entry in receipt.slot_telemetry
-                )
-                < expected
-                for phase, expected in expected_phase_slots.items()
+        if receipt.density.slot_count < 6 or any(
+            receipt.density.ready_slots + receipt.density.tray_slots < 6
+            or sum(
+                entry.disposition in {"ready", "tray"} and str(entry.phase) == phase
+                for entry in receipt.slot_telemetry
             )
+            < expected
+            for phase, expected in expected_phase_slots.items()
         ):
             raise QualificationError(
                 "Receipt v3 unit totals do not meet the B1 45-minute contract."

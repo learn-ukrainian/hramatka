@@ -22,6 +22,7 @@ from hramatka.engine.lesson_profile_45_v1 import (
     lesson_profile_45,
     slot_builders_45,
 )
+from hramatka.engine.lesson_workload_45_v1 import validate_phase_pace
 
 from .manifest import RuntimeAnchor, load_manifest
 from .proof_schema_v1 import (
@@ -130,10 +131,9 @@ def _expected_bank_rows(
         grouped[("match-up", _bank_group(pair.pair_id, "match-up"))].append(pair.pair_id)
     for task in inventory.writing_tasks:
         grouped[("short-writing", _bank_group(task.task_id, "short-writing"))].append(task.task_id)
-    if ("short-writing", 1) not in grouped:
-        raise ProofReplayError("Rebuilt inventory is missing the required short-writing bank.")
-    if ("fill-in", 1) not in grouped:
-        raise ProofReplayError("Rebuilt inventory is missing the shared fallback bank.")
+    for request in inventory.mark_requests:
+        group = _bank_group(request.request_id, "mark-the-words")
+        grouped[("mark-the-words", group)].extend(request.target_token_ids)
     covered_slots: set[str] = set()
     for activity_type, group_number in grouped:
         try:
@@ -223,6 +223,11 @@ def _inventory_commitment(inventory: object) -> str:
             "candidate_ids": [candidate.candidate_id for candidate in inventory.candidates],
             "pair_ids": [pair.pair_id for pair in inventory.atlas_pairs],
             "writing_ids": [task.task_id for task in inventory.writing_tasks],
+            "mark_target_ids": [
+                token_id
+                for request in inventory.mark_requests
+                for token_id in request.target_token_ids
+            ],
             "sentence_ids": [sentence.sentence_id for sentence in inventory.sentences],
         }
     )
@@ -380,9 +385,7 @@ def _rebuilt_domain_commitments(
         "claim": claim_rows,
         "locator": locator_rows,
         "plan": [{"unit_id": unit["unit_id"], "digest": unit["plan_digest"]} for unit in unit_rows],
-        "reservation": [
-            reservation for unit in unit_rows for reservation in unit["reservations"]
-        ],
+        "reservation": [reservation for unit in unit_rows for reservation in unit["reservations"]],
         "allocation": [
             {
                 "slot_id": slot["slot_id"],
@@ -483,8 +486,10 @@ def replay_certificate(inputs: ReplayInputs) -> ProofCertificate:
         )
     if preflight.allocation is None:
         raise ProofReplayError("Rebuilt anchor cannot produce a complete deterministic lesson.")
-    if sum(len(slot.plan.units) for slot in preflight.allocation.slots) != 27:
-        raise ProofReplayError("Rebuilt allocation does not meet the pinned unit denominator.")
+    try:
+        validate_phase_pace(preflight.allocation.slots)
+    except ValueError as exc:
+        raise ProofReplayError("Rebuilt allocation does not meet the pinned phase pace.") from exc
     if certificate.inventory_commitment != _inventory_commitment(inventory):
         raise ProofReplayError("Certificate inventory membership does not match rebuilt authority.")
     if certificate.to_dict()["bank_receipts"] != expected_banks:

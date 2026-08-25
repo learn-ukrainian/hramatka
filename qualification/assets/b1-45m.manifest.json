@@ -5,13 +5,13 @@
   "anchors": [
     {
       "id": "b1-narrative",
-      "source_identity": "public-domain/kotsiubynsky/tini-zabutykh-predkiv/25ea8a3b-c0010-c0012",
-      "sha256": "f985bf674c8904acaf15dc157ab9b49e84092b385b5b5ab2c240a844f7b8d800"
+      "source_identity": "original/gemini-3.7-flash-high/sources-mcp/neighborhood-garden/2026-08-25",
+      "sha256": "cb15c62ffd7752d99e5725645f63d9ce84e5ee0ccfabb2d9056bf745056843fb"
     },
     {
       "id": "b1-dialogue",
-      "source_identity": "advisor-authored/fable/b1-reading-club-dialogue/2026-08-11",
-      "sha256": "b5df2b0ec36e42537da8f007e135855fe33d7ea33cccf4fd4cef4a0c46485d4d"
+      "source_identity": "original/gemini-3.7-flash-high/sources-mcp/reading-club/2026-08-25",
+      "sha256": "d1d0f709cfae61c3e93766b32a309147b9d08e219342a873c21d83642b13bf69"
     },
     {
       "id": "b1-informational",

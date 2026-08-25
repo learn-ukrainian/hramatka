@@ -20,27 +20,47 @@ from hramatka.qualification.manifest import load_manifest
 from hramatka.qualification.proof_replay_v1 import ProofReplayError, _expected_bank_rows
 
 
-def test_complete_creation_time_banks_are_receipted_once_with_shared_fallback(tmp_path) -> None:
+def _qualified_source() -> tuple[str, str]:
+    anchors = deterministic_runtime_anchors()
+    return (
+        "\n\n".join((anchors["b1-narrative"].text, anchors["b1-informational"].text)),
+        "+".join(
+            (
+                anchors["b1-narrative"].source_identity,
+                anchors["b1-informational"].source_identity,
+            )
+        ),
+    )
+
+
+def test_complete_creation_time_banks_are_receipted_once_for_every_profile_slot(tmp_path) -> None:
     bundle = _qualification_fixture_bundle(tmp_path / "bundle")
-    runtime = deterministic_runtime_anchors()["b1-narrative"]
+    source, source_identity = _qualified_source()
     manifest = load_manifest()
     slots = _lesson_slots(45)
     captured = []
 
     with data.use_bundle(bundle):
         inventory = inventory_from_anchor(
-            runtime.text,
+            source,
             scheduled_types=_inventory_candidate_types(slots),
             replacement_types=_inventory_replacement_types(slots),
-            receipt_context=BankReceiptContext(manifest.sha256, runtime.source_identity),
+            receipt_context=BankReceiptContext(manifest.sha256, source_identity),
             receipt_sink=captured.append,
         )
 
     assert inventory.candidates
     assert len(captured) == 1
     receipts = captured[0]
-    fallback = next(receipt for receipt in receipts if receipt.bank_id == "fill-in:1")
-    assert fallback.eligible_placements == (("P2-A1", True), ("P2-A2", True))
+    assert {receipt.bank_id for receipt in receipts} == {
+        "match-up:1",
+        "quiz:1",
+        "fill-in:1",
+        "error-correction:1",
+        "mark-the-words:1",
+        "cloze:1",
+    }
+    assert all(len(receipt.eligible_placements) == 1 for receipt in receipts)
     assert all("Теплим" not in receipt.digest for receipt in receipts)
 
 
@@ -58,23 +78,23 @@ def test_receipt_hook_rejects_partial_caller_capture() -> None:
         raise AssertionError("partial receipt capture unexpectedly succeeded")
 
 
-def test_short_writing_only_inventory_cannot_be_sealed_or_replayed(tmp_path) -> None:
+def test_partial_inventory_cannot_be_sealed_or_replayed(tmp_path) -> None:
     bundle = _qualification_fixture_bundle(tmp_path / "bundle")
-    runtime = deterministic_runtime_anchors()["b1-narrative"]
+    source, source_identity = _qualified_source()
     with data.use_bundle(bundle):
         complete = inventory_from_anchor(
-            runtime.text,
+            source,
             scheduled_types=_inventory_candidate_types(_lesson_slots(45)),
             replacement_types=_inventory_replacement_types(_lesson_slots(45)),
             duration_minutes=45,
         )
-    short_writing_only = replace(complete, candidates=(), atlas_pairs=())
-    context = BankReceiptContext("0" * 64, runtime.source_identity)
-    with pytest.raises(ValueError, match="shared fallback bank"):
-        seal_complete_inventory(short_writing_only, context=context)
-    with pytest.raises(ProofReplayError, match="shared fallback bank"):
+    partial = replace(complete, candidates=(), atlas_pairs=(), mark_requests=())
+    context = BankReceiptContext("0" * 64, source_identity)
+    with pytest.raises(ValueError, match="complete authorized bank set"):
+        seal_complete_inventory(partial, context=context)
+    with pytest.raises(ProofReplayError, match="complete authorized bank set"):
         _expected_bank_rows(
-            short_writing_only,
+            partial,
             manifest_digest="0" * 64,
-            source_identity=runtime.source_identity,
+            source_identity=source_identity,
         )

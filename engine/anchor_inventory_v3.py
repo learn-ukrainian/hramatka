@@ -23,8 +23,10 @@ from .candidate_bank_receipt_v1 import (
     seal_complete_inventory,
 )
 from .gates import vesum_tags
+from .lesson_workload_45_v1 import cloze_interaction_bounds, planned_interactions
 from .linguistics import verify_lemma
 from .retrieval import build_atlas_lookup
+from .sentence_segmentation_v1 import sentence_spans
 from .short_writing_constraints_v3 import ConstraintSpec, VesumToken
 from .teacher_ready_density_v3 import (
     COGNITIVE_OPERATION,
@@ -850,7 +852,6 @@ def ladder_for_lemma(lemma: str) -> DegreeLadder | None:
     return DEGREE_LEMMA_INDEX.get(lemma.casefold())
 
 
-_SENTENCE_RE = re.compile(r"[^\n.!?…]+[.!?…]?")
 _TOKEN_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ'’]+")
 _CONTENT_POS = frozenset({"noun", "verb", "adj", "adv"})
 _CLOSED_CLASS_POS = frozenset({"prep", "part", "conj", "intj"})
@@ -887,12 +888,12 @@ _TEXT_QUESTION_INTENTS = (
     "realistic-transfer",
 )
 _SOURCE_COMPREHENSION_45 = (
-    "quiz",
-    "cloze",
     "match-up",
+    "quiz",
+    "fill-in",
     "error-correction",
-    "text-questions",
-    "short-writing",
+    "mark-the-words",
+    "cloze",
 )
 _RELATION_PRIORITY = (
     "temporal-clause.v1",
@@ -1036,10 +1037,7 @@ def _token_parses(surface: str, *, sentence_initial: bool) -> tuple[dict[str, ob
 
 def _sentences(anchor: str) -> tuple[AnchorSentence, ...]:
     rows: list[AnchorSentence] = []
-    for text in _SENTENCE_RE.findall(anchor):
-        text = text.strip()
-        if not text:
-            continue
+    for text in sentence_spans(anchor):
         sentence_number = len(rows) + 1
         tokens: list[AnchorToken] = []
         for token_match in _TOKEN_RE.finditer(text):
@@ -2373,9 +2371,11 @@ def _cross_gap_choice_banks(
     """Build a complete gap bank for one cloze plan.
 
     Compact synthetic bundles retain their historical cross-gap lexical bank.
-    Production uses same-lemma forms whose visible sentence dependency proves
-    them wrong. This makes the cloze a contextual morphology task and prevents
-    semantically absurd cross-lemma choices from masquerading as difficulty.
+    Production prefers same-lemma forms whose visible sentence dependency
+    proves them wrong.  A long-form reconstruction may also use two thematic
+    lexical foils attested elsewhere in the same passage.  That second lane is
+    what lets a story test meaning as well as morphology without demanding an
+    artificial inflectional trap in every sentence.
     """
     identities = [_unambiguous_content_lemma_pos(token) for token in tokens]
     if len(tokens) < 3 or any(identity is None for identity in identities):
@@ -2385,7 +2385,7 @@ def _cross_gap_choice_banks(
         for token, identity in zip(tokens, identities, strict=True)
         if identity is not None
     )
-    if data.active_bundle().manifest.get("version") == "test":
+    if data.active_bundle().manifest.get("version") == "test" and len(tokens) < 18:
         lemmas = {lemma for _token, lemma, _pos in typed}
         atlas_lookup = build_atlas_lookup(lemmas, db_path=data.active_bundle().atlas_db)
         synonym_pairs = frozenset(
@@ -2426,12 +2426,49 @@ def _cross_gap_choice_banks(
 
     if sentences is None:
         return None
+    contextual_banks = {
+        token.token_id: (
+            _contextual_choice_bank(sentence, token)
+            if (sentence := sentences.get(token.sentence_id)) is not None
+            else None
+        )
+        for token, _lemma, _pos in typed
+    }
+    if all(bank is not None for bank in contextual_banks.values()):
+        return {token_id: bank for token_id, bank in contextual_banks.items() if bank is not None}
+    lemmas = {lemma for _token, lemma, _pos in typed}
+    atlas_lookup = build_atlas_lookup(lemmas, db_path=data.active_bundle().atlas_db)
+    synonym_pairs = frozenset(
+        frozenset((lemma, synonym.casefold()))
+        for lemma, record in atlas_lookup.items()
+        for synonym in record.get("synonyms", ())
+        if isinstance(synonym, str) and synonym.casefold() in lemmas
+    )
     result: dict[str, tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
-    for token, _lemma, _pos in typed:
-        sentence = sentences.get(token.sentence_id)
-        bank = _contextual_choice_bank(sentence, token) if sentence is not None else None
+    for index, (token, lemma, pos) in enumerate(typed):
+        bank = contextual_banks[token.token_id]
         if bank is None:
-            return None
+            rotated = (*typed[index + 1 :], *typed[:index])
+            foils = tuple(
+                row
+                for row in rotated
+                if row[2] == pos
+                and row[1] != lemma
+                and frozenset((lemma, row[1])) not in synonym_pairs
+                and row[0].surface.casefold() != token.surface.casefold()
+            )[:2]
+            if len(foils) != 2:
+                return None
+            bank = (
+                (token.surface, *(row[0].surface for row in foils)),
+                tuple(
+                    (
+                        row[0].surface,
+                        "the source passage attests this foil in a different proposition",
+                    )
+                    for row in foils
+                ),
+            )
         result[token.token_id] = bank
     return result
 
@@ -2494,6 +2531,30 @@ def _topic_lemma(token: AnchorToken) -> str | None:
         for parse in token.vesum_parses
         if parse.get("pos") in _CONTENT_POS
         and isinstance(parse.get("lemma"), str)
+        and not any(marker in str(parse.get("raw", "")) for marker in _TOPIC_UNSAFE_TAG_MARKERS)
+    ]
+    lemmas = {
+        str(parse["lemma"]).casefold()
+        for parse in rows
+        if isinstance(parse.get("lemma"), str) and str(parse["lemma"]).strip()
+    }
+    return next(iter(lemmas)) if len(lemmas) == 1 else None
+
+
+def _topic_noun_lemma(token: AnchorToken) -> str | None:
+    """Return the unambiguous safe noun lemma carried by ``token``.
+
+    A surface can have an incidental noun homonym while its only safe topic
+    reading is verbal (for example ``куплю``: future ``купити`` versus an
+    archaic noun). Such a token must not outrank the concrete nouns that follow
+    it merely because one discarded parse happened to be nominal.
+    """
+    rows = [
+        parse
+        for parse in token.vesum_parses
+        if parse.get("pos") == "noun"
+        and isinstance(parse.get("lemma"), str)
+        and ":pron" not in str(parse.get("raw", ""))
         and not any(marker in str(parse.get("raw", "")) for marker in _TOPIC_UNSAFE_TAG_MARKERS)
     ]
     lemmas = {
@@ -2573,10 +2634,16 @@ def _topic_token(
     prefer_nearest_verb: bool = False,
     excluded_lemmas: frozenset[str] = frozenset(),
 ) -> tuple[AnchorToken, str] | None:
+    speaker_prefix = re.match(
+        r"^\s*[А-ЯІЇЄҐ][А-Яа-яІіЇїЄєҐґ'’\- ]{0,39}:\s*",
+        sentence.text,
+    )
+    content_start = speaker_prefix.end() if speaker_prefix is not None else 0
     tokens = tuple(
         token
         for token in sentence.tokens
-        if before_offset is None or token.end_offset <= before_offset
+        if token.start_offset >= content_start
+        and (before_offset is None or token.end_offset <= before_offset)
     )
     if prefer_nearest_verb:
         ordered = (
@@ -2602,7 +2669,8 @@ def _topic_token(
                 parse.get("pos") == "noun"
                 and any(marker in str(parse.get("raw", "")) for marker in (":v_naz", ":v_zna"))
                 and ":pron" not in str(parse.get("raw", ""))
-                and _topic_lemma(token) is not None
+                and _topic_noun_lemma(token) is not None
+                and _topic_noun_lemma(token) == _topic_lemma(token)
                 for parse in token.vesum_parses
             )
         )
@@ -2610,7 +2678,8 @@ def _topic_token(
             token
             for token in tokens
             if any(parse.get("pos") == "noun" for parse in token.vesum_parses)
-            and _topic_lemma(token) is not None
+            and _topic_noun_lemma(token) is not None
+            and _topic_noun_lemma(token) == _topic_lemma(token)
         )
         predicative_infinitives = tuple(
             token
@@ -3475,23 +3544,42 @@ def _eligible_tokens(
         return rows
 
     if activity_type == "cloze":
-        # The complete multi-sentence excerpt board supplies right-side context for
-        # a sentence-final gap, but a gap still needs two visible words before
-        # it. Requiring untouched words on both sides consumed scarce drill
-        # carriers and contradicted the passage-level context gate.
-        interior = tokens[2:] if len(tokens) >= 3 else ()
+        if focus_mode != "long-form-reconstruction":
+            interior = tokens[2:] if len(tokens) >= 3 else ()
+            return focused(
+                tuple(
+                    token
+                    for token in interior
+                    if (identity := _unambiguous_content_lemma_pos(token)) is not None
+                    and identity[1] in {"noun", "verb", "adj"}
+                    and (
+                        data.active_bundle().manifest.get("version") == "test"
+                        or _contextual_choice_bank(sentence, token) is not None
+                    )
+                )
+            )
+        # The passage-level selector preserves visible context around every
+        # marker. Keep every unambiguous content word available so a natural
+        # story can carry one meaningful gap in every sentence; do not require
+        # every sentence to contain an artificial morphology trap.
         return focused(
             tuple(
                 token
-                for token in interior
+                for token in tokens
                 if (identity := _unambiguous_content_lemma_pos(token)) is not None
-                and identity[1] in {"noun", "verb", "adj"}
-                and (
-                    data.active_bundle().manifest.get("version") == "test"
-                    or _contextual_choice_bank(sentence, token) is not None
-                )
+                and identity[1] in _CONTENT_POS
             )
         )
+    if activity_type == "quiz" and focus_mode == "source-comprehension":
+        topic = (
+            _topic_token(
+                sentence,
+                excluded_lemmas=_UNSAFE_QUESTION_TOPIC_LEMMAS,
+            )
+            if _safe_source_proposition_carrier(sentence)
+            else None
+        )
+        return () if topic is None else (topic[0],)
     if activity_type in {"quiz", "fill-in"}:
         return focused(
             tuple(
@@ -3523,13 +3611,153 @@ def _eligible_tokens(
             )
         )
     if activity_type == "mark-the-words":
-        return focused(tokens)
+        if focus_mode is not None:
+            return focused(tokens)
+        return tuple(
+            token
+            for token in tokens
+            if any(parse.get("pos") == "noun" for parse in token.vesum_parses)
+        )
     if activity_type == "true-false":
         # Generic predicate negation produces formally different but
         # pedagogically trivial statements. Keep the closed mutation catalog
         # for explicit inventories, but do not schedule it in production.
         return ()
     return tokens
+
+
+_CLOZE_WORD_RE: Final = re.compile(r"[А-Яа-яІіЇїЄєҐґ][А-Яа-яІіЇїЄєҐґ'’\-]*")
+CLOZE_TOKENIZER_VERSION: Final = "ukrainian-word.v1"
+
+
+@dataclass(frozen=True)
+class ClozeGroup(Sequence[AnchorToken]):
+    """One certified gap per sentence plus the exact contiguous passage."""
+
+    tokens: tuple[AnchorToken, ...]
+    sentences: tuple[AnchorSentence, ...]
+
+    def __len__(self) -> int:
+        return len(self.tokens)
+
+    def __getitem__(self, index: int | slice) -> AnchorToken | tuple[AnchorToken, ...]:
+        return self.tokens[index]
+
+
+def _cloze_group(
+    sentences: Sequence[AnchorSentence],
+    used_token_ids: set[str],
+) -> ClozeGroup | None:
+    minimum_sentences, maximum_sentences = cloze_interaction_bounds()
+    eligible_by_sentence = {
+        sentence.sentence_id: tuple(
+            token
+            for token in _eligible_tokens("cloze", sentence, focus_mode="long-form-reconstruction")
+            if token.token_id not in used_token_ids
+        )
+        for sentence in sentences
+    }
+    for i in range(len(sentences)):
+        words = 0
+        end_idx = i
+        while end_idx < len(sentences):
+            words += len(_CLOZE_WORD_RE.findall(sentences[end_idx].text))
+            if words > 450:
+                break
+            if words >= 350:
+                if end_idx - i < 2:
+                    end_idx += 1
+                    continue
+                window = tuple(sentences[i : end_idx + 1])
+                if not minimum_sentences <= len(window) <= maximum_sentences:
+                    end_idx += 1
+                    continue
+                candidates_by_sentence: list[tuple[tuple[AnchorToken, str, str, int], ...]] = []
+                for s_idx in range(i, end_idx + 1):
+                    s_text = sentences[s_idx].text
+                    s_words = _CLOZE_WORD_RE.findall(s_text)
+                    rows: list[tuple[AnchorToken, str, str, int]] = []
+                    for token in eligible_by_sentence[sentences[s_idx].sentence_id]:
+                        identity = _unambiguous_content_lemma_pos(token)
+                        if identity is None:
+                            continue
+                        words_before = len(_CLOZE_WORD_RE.findall(s_text[: token.start_offset]))
+                        words_after = len(_CLOZE_WORD_RE.findall(s_text[token.end_offset :]))
+                        boundary_context_missing = (s_idx == i and words_before < 2) or (
+                            s_idx == end_idx and words_after < 2
+                        )
+                        if boundary_context_missing or words_before + words_after < 1:
+                            continue
+                        rows.append(
+                            (
+                                token,
+                                identity[1],
+                                identity[0],
+                                abs(words_before - len(s_words) // 2),
+                            )
+                        )
+                    if not rows:
+                        candidates_by_sentence = []
+                        break
+                    candidates_by_sentence.append(tuple(rows))
+
+                gaps: tuple[AnchorToken, ...] | None = None
+                # Long-form option banks are certified independently for each
+                # sentence. Let the passage use the natural POS mix of the
+                # story instead of applying compact-fixture composition rules.
+                lemmas_by_position: dict[str, set[str]] = defaultdict(set)
+                for rows in candidates_by_sentence:
+                    for _token, pos, lemma, _rank in rows:
+                        lemmas_by_position[pos].add(lemma)
+                position_sets = (
+                    tuple(
+                        pos
+                        for pos, lemmas in sorted(lemmas_by_position.items())
+                        if len(lemmas) >= 3
+                    ),
+                )
+                for allowed_positions in position_sets:
+                    selected: list[AnchorToken] = []
+                    used_lemmas: set[str] = set()
+                    pos_counts: Counter[str] = Counter()
+                    for rows in candidates_by_sentence:
+                        position_rows = [
+                            row
+                            for row in rows
+                            if not allowed_positions or row[1] in allowed_positions
+                        ]
+                        available = [
+                            row for row in position_rows if row[2] not in used_lemmas
+                        ] or position_rows
+                        if not available:
+                            selected = []
+                            break
+                        token, pos, lemma, _rank = min(
+                            available,
+                            key=lambda row: (pos_counts[row[1]], row[3], row[0].token_id),
+                        )
+                        selected.append(token)
+                        used_lemmas.add(lemma)
+                        pos_counts[pos] += 1
+                    if selected:
+                        candidate_gaps = tuple(selected)
+                        if (
+                            _cross_gap_choice_banks(
+                                candidate_gaps,
+                                sentences={sentence.sentence_id: sentence for sentence in window},
+                            )
+                            is not None
+                        ):
+                            gaps = candidate_gaps
+                            break
+
+                if gaps is not None and len(gaps) == len(window):
+                    return ClozeGroup(
+                        tokens=gaps,
+                        sentences=window,
+                    )
+            end_idx += 1
+    return None
 
 
 def _diverse_group(
@@ -3541,6 +3769,7 @@ def _diverse_group(
     sentence_operation_uses: dict[str, set[str]],
     sentence_phase_uses: dict[str, set[int]],
     sentence_activity_uses: dict[str, set[str]],
+    slot_id: str | None,
     phase: int | None,
     remaining_groups: int,
     focus: str | None,
@@ -3563,7 +3792,9 @@ def _diverse_group(
     is needed for a fallback lane is relabelled as anchored application after
     all candidate lanes have been planned.
     """
-    target_units = floor_for(activity_type).minimum_units
+    target_units = (
+        planned_interactions(slot_id, activity_type) if slot_id is not None else None
+    ) or floor_for(activity_type).minimum_units
     pools: list[tuple[AnchorSentence, tuple[AnchorToken, ...]]] = []
     operation = focus_mode or COGNITIVE_OPERATION.get(activity_type, activity_type)
     consumes_evidence_capacity = (
@@ -3901,7 +4132,24 @@ def _diverse_group(
     # source pool can therefore become unusable after an earlier pair is
     # selected; keep later pools available instead of failing the whole group
     # merely because one of the first eight pools collides semantically.
-    if (
+    if activity_type == "quiz" and focus_mode == "source-comprehension":
+        chosen_pools = []
+        chosen_topic_lemmas: set[str] = set()
+        for sentence, tokens in pools:
+            unique_tokens = tuple(
+                token
+                for token in tokens
+                if (_content_lemma(token) or token.surface.casefold()) not in chosen_topic_lemmas
+            )
+            if not unique_tokens:
+                continue
+            chosen_pools.append((sentence, unique_tokens))
+            chosen_topic_lemmas.add(
+                _content_lemma(unique_tokens[0]) or unique_tokens[0].surface.casefold()
+            )
+            if len(chosen_pools) == target_units:
+                break
+    elif (
         activity_type in {"cloze", "match-up", "error-correction"}
         or (activity_type == "fill-in" and focus_mode == _FOCUS_REINFORCEMENT)
         or (activity_type == "text-questions" and focus_mode == "source-comprehension")
@@ -4364,7 +4612,7 @@ def inventory_from_anchor(
     source_comprehension_45 = (
         duration_minutes == 45 and tuple(scheduled_types) == _SOURCE_COMPREHENSION_45
     )
-    groups_by_type: dict[str, list[tuple[AnchorToken, ...]]] = defaultdict(list)
+    groups_by_type: dict[str, list[Sequence[AnchorToken]]] = defaultdict(list)
     group_numbers_by_type: dict[str, list[int]] = defaultdict(list)
     group_focus_modes: dict[str, list[str | None]] = defaultdict(list)
     prebuilt_candidates: dict[tuple[str, int], tuple[EvidenceCandidate, ...]] = {}
@@ -4467,8 +4715,8 @@ def inventory_from_anchor(
                 # broadly eligible error-correction lane chooses sentences.
                 "text-questions": 4,
                 "quiz": 5,
-                "error-correction": 6,
-                "fill-in": 7,
+                "fill-in": 6,
+                "error-correction": 7,
                 "match-up": 8,
                 "true-false": 9,
             }.get(activity_type, 10)
@@ -4492,7 +4740,9 @@ def inventory_from_anchor(
             if activity_type == "short-writing" and groups_by_type[activity_type]:
                 continue
             focus_mode = None
-            if source_comprehension_45 and lane_index == 0 and activity_type == "text-questions":
+            if source_comprehension_45 and lane_index == 0 and activity_type == "quiz":
+                focus_mode = "source-comprehension"
+            elif source_comprehension_45 and lane_index == 0 and activity_type == "text-questions":
                 focus_mode = "source-comprehension"
             elif lane_index == 0 and degree_focus_requested(focus):
                 focus_mode = degree_role(slot_id, activity_type) if slot_id is not None else None
@@ -4577,6 +4827,11 @@ def inventory_from_anchor(
                     focus=focus,
                 )
                 if activity_type == "short-writing"
+                else _cloze_group(
+                    sentences,
+                    used_token_ids=selection_token_ids,
+                )
+                if activity_type == "cloze" and source_comprehension_45
                 else _diverse_group(
                     sentences,
                     activity_type=activity_type,
@@ -4585,6 +4840,7 @@ def inventory_from_anchor(
                     sentence_operation_uses=sentence_operation_uses,
                     sentence_phase_uses=sentence_phase_uses,
                     sentence_activity_uses=sentence_activity_uses,
+                    slot_id=slot_id if source_comprehension_45 else None,
                     phase=phase,
                     remaining_groups=len(planning_lane) - index,
                     focus=focus,
@@ -4596,6 +4852,11 @@ def inventory_from_anchor(
                 )
             )
             if group is not None:
+                if isinstance(group, ClozeGroup):
+                    # The final passage may reuse propositions from earlier
+                    # phases, but never the exact token already reserved as a
+                    # scored cloze gap.
+                    selection_token_ids.update(token.token_id for token in group)
                 groups_by_type[activity_type].append(group)
                 group_numbers_by_type[activity_type].append(group_number)
                 group_focus_modes[activity_type].append(focus_mode)
@@ -4697,10 +4958,13 @@ def inventory_from_anchor(
                 cloze_banks = _cross_gap_choice_banks(group, sentences=by_id)
                 if cloze_banks is None:
                     continue
-                sentence_numbers = sorted(
-                    {int(token.sentence_id.removeprefix("s-")) for token in group}
-                )
-                cloze_sentences = tuple(by_id[f"s-{index}"] for index in sentence_numbers)
+                if isinstance(group, ClozeGroup):
+                    cloze_sentences = group.sentences
+                else:
+                    sentence_numbers = sorted(
+                        {int(token.sentence_id.removeprefix("s-")) for token in group}
+                    )
+                    cloze_sentences = tuple(by_id[f"s-{index}"] for index in sentence_numbers)
                 cursor = 0
                 for passage_sentence in cloze_sentences:
                     cloze_sentence_starts[passage_sentence.sentence_id] = cursor
@@ -4712,10 +4976,57 @@ def inventory_from_anchor(
                     or cloze_passage.count("[") != cloze_passage.count("]")
                 ):
                     continue
+            source_quiz_sentences = (
+                tuple(by_id[token.sentence_id] for token in group)
+                if activity_type == "quiz" and focus_mode == "source-comprehension"
+                else ()
+            )
             for token_number, token in enumerate(group, start=1):
                 sentence = by_id[token.sentence_id]
                 candidate_id = f"{activity_type}:{group_number}:{token_number}"
-                if activity_type in {"quiz", "cloze", "fill-in", "error-correction"}:
+                if activity_type == "quiz" and focus_mode == "source-comprehension":
+                    topic = _topic_token(
+                        sentence,
+                        excluded_lemmas=_UNSAFE_QUESTION_TOPIC_LEMMAS,
+                    )
+                    distractors = tuple(
+                        candidate.text
+                        for candidate in (
+                            *source_quiz_sentences[token_number:],
+                            *source_quiz_sentences[: token_number - 1],
+                        )
+                        if candidate.sentence_id != sentence.sentence_id
+                    )[:2]
+                    if topic is None or len(distractors) != 2:
+                        continue
+                    candidates.append(
+                        EvidenceCandidate(
+                            activity_type="quiz",
+                            candidate_id=candidate_id,
+                            sentence_id=sentence.sentence_id,
+                            token_id=topic[0].token_id,
+                            literal_evidence=sentence.text,
+                            expected_key=sentence.text,
+                            semantic_target=f"source-quiz:{sentence.sentence_id}",
+                            category="comprehension",
+                            focus_alignment="source-comprehension",
+                            source_lemma=topic[1],
+                            choice_bank=(sentence.text, *distractors),
+                            exclusion_warrants=tuple(
+                                (
+                                    distractor,
+                                    "different certified source proposition",
+                                )
+                                for distractor in distractors
+                            ),
+                            question_intent="fact-recovery",
+                            topic_token_id=topic[0].token_id,
+                            topic_lemma=topic[1],
+                            question_basis="source-proposition",
+                            question_grounding_terms=(topic[0].surface,),
+                        )
+                    )
+                elif activity_type in {"quiz", "cloze", "fill-in", "error-correction"}:
                     bank_row = (
                         cloze_banks.get(token.token_id)
                         if activity_type == "cloze" and cloze_banks is not None
@@ -4737,6 +5048,12 @@ def inventory_from_anchor(
                         + sentence.text[token.end_offset :]
                         if replacement is not None and replacement != token.surface
                         else None
+                    )
+                    cloze_lexical_bank = bool(
+                        activity_type == "cloze"
+                        and bank_row is not None
+                        and set(bank_row[0])
+                        <= {candidate_token.surface for candidate_token in group}
                     )
                     candidates.append(
                         EvidenceCandidate(
@@ -4778,6 +5095,9 @@ def inventory_from_anchor(
                                 else (
                                     "cross-gap-lexical.v1"
                                     if data.active_bundle().manifest.get("version") == "test"
+                                    and len(group) < 18
+                                    else "source-context-lexical.v1"
+                                    if cloze_lexical_bank
                                     else "contextual-morphology-cloze.v3"
                                 )
                                 if activity_type == "cloze"
@@ -4915,7 +5235,7 @@ def inventory_from_anchor(
                             f"s-{index}"
                             for index in range(sentence_indexes[0], sentence_indexes[-1] + 1)
                         ),
-                        criterion="degree=comparison",
+                        criterion=("degree=comparison" if focus_mode is not None else "pos=noun"),
                         target_token_ids=tuple(token.token_id for token in group),
                     )
                 )

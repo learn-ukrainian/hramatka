@@ -90,10 +90,7 @@ def spend_acknowledgement(
             f"{logical_model_id}/{route.route_id}" for logical_model_id, route in matrix
         )
         label = f"{label}:{routes}"
-    return (
-        f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:"
-        f"{label}"
-    )
+    return f"{_ACK_PREFIX}:{source_commit}:{manifest_sha256}:{label}"
 
 
 def diagnostic_spend_acknowledgement(
@@ -253,11 +250,7 @@ def preflight_live_qualification(
     except QualificationError as error:
         raise LiveQualificationError("Qualification target is invalid.") from error
     route_keys = {(logical_model_id, route.route_id) for logical_model_id, route in matrix}
-    if (
-        not matrix
-        or len(route_keys) != len(matrix)
-        or matrix != expected_matrix
-    ):
+    if not matrix or len(route_keys) != len(matrix) or matrix != expected_matrix:
         raise LiveQualificationError(
             "Qualification matrix does not match current logical-model routes."
         )

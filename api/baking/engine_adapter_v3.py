@@ -45,6 +45,11 @@ from hramatka.engine.lesson_capacity_v3 import (
     replacement_plan_can_coexist,
 )
 from hramatka.engine.lesson_profile_45_v1 import lesson_profile_45, slot_builders_45
+from hramatka.engine.lesson_quality_v1 import (
+    LessonQualityError,
+    validate_teacher_lesson_plan_quality_45,
+    validate_teacher_lesson_quality_45,
+)
 from hramatka.engine.prompt_pack_v3 import (
     RepairableSerializationError,
     RuleNamedRejection,
@@ -548,6 +553,8 @@ def _persist_raw_parse_failure(raw: str, out_dir: str | Path, attempt: int) -> N
 
 
 def _mode(phase: int, activity_type: str) -> str:
+    if phase == 3 and activity_type == "cloze":
+        return "письмово"
     if phase == 3:
         return "вдома"
     return "письмово" if activity_type == "cloze" else "усно"
@@ -794,6 +801,168 @@ def _canonicalize_redundant_payload_fields(
                 }
             )
     return tuple(events)
+
+
+def _canonicalize_certified_cloze_slot(
+    parsed: object,
+    prompt_context: Mapping[str, Any],
+) -> tuple[dict[str, object], ...]:
+    """Compile one closed cloze response from its immutable certified kit.
+
+    A long cloze has no model-authored substrate: the marked passage, blank
+    identities, answers, option banks, and scheduled-unit references are all
+    fixed before generation.  The provider supplies only the learner-facing
+    instruction.  Requiring it to echo dozens of redundant immutable fields
+    made otherwise valid lessons fail when a long response omitted or
+    relabelled rows.  Canonicalize only the unambiguous one-slot cloze case and
+    leave malformed envelopes or unexpected fields to the ordinary fail-closed
+    gates.
+    """
+    if (
+        not isinstance(parsed, Mapping)
+        or set(parsed) != {"slots"}
+        or not isinstance(parsed.get("slots"), list)
+        or len(parsed["slots"]) != 1
+    ):
+        return ()
+    kits = prompt_context.get("type_kits")
+    if not isinstance(kits, list) or len(kits) != 1:
+        return ()
+    record = parsed["slots"][0]
+    kit = kits[0]
+    if not isinstance(record, dict) or not isinstance(kit, Mapping):
+        return ()
+    allowed_record_fields = {
+        "slot_id",
+        "type",
+        "activity",
+        "serialized_units",
+        "_generator_model_id",
+    }
+    if not set(record).issubset(allowed_record_fields) or not {
+        "slot_id",
+        "type",
+        "activity",
+        "serialized_units",
+    }.issubset(record):
+        return ()
+    activity = record.get("activity")
+    if not isinstance(activity, dict) or set(activity) != {"answer_key", "payload"}:
+        return ()
+    payload = activity.get("payload")
+    answer_key = activity.get("answer_key")
+    if (
+        record.get("type") != "cloze"
+        or kit.get("type") != "cloze"
+        or not isinstance(record.get("slot_id"), str)
+        or not isinstance(payload, dict)
+        or set(payload) != {"blanks", "instruction", "text", "type"}
+        or payload.get("type") != "cloze"
+        or not isinstance(payload.get("instruction"), str)
+        or not payload["instruction"].strip()
+        or not isinstance(payload.get("text"), str)
+        or not isinstance(payload.get("blanks"), list)
+        or not payload["blanks"]
+        or not isinstance(answer_key, dict)
+        or set(answer_key) != {"blanks"}
+        or not isinstance(answer_key.get("blanks"), list)
+        or not answer_key["blanks"]
+        or not isinstance(record.get("serialized_units"), list)
+        or not record["serialized_units"]
+    ):
+        return ()
+    if (
+        any(
+            not isinstance(blank, Mapping)
+            or set(blank) != {"answer", "id", "options"}
+            or not isinstance(blank.get("options"), list)
+            for blank in payload["blanks"]
+        )
+        or any(
+            not isinstance(blank, Mapping) or set(blank) != {"answer", "id"}
+            for blank in answer_key["blanks"]
+        )
+        or any(
+            not isinstance(unit, Mapping) or set(unit) != {"unit_id"}
+            for unit in record["serialized_units"]
+        )
+    ):
+        return ()
+
+    units = kit.get("certified_units")
+    unit_ids = kit.get("scheduled_unit_ids")
+    marked_surface = kit.get("marked_rendering_surface")
+    slot_id = kit.get("slot_id")
+    if (
+        not isinstance(units, list)
+        or not units
+        or not isinstance(unit_ids, list)
+        or len(unit_ids) != len(units)
+        or not isinstance(marked_surface, str)
+        or not marked_surface
+        or not isinstance(slot_id, str)
+        or not slot_id
+    ):
+        return ()
+
+    compiled_blanks: list[dict[str, object]] = []
+    compiled_keys: list[dict[str, object]] = []
+    for index, unit in enumerate(units, start=1):
+        if not isinstance(unit, Mapping):
+            return ()
+        allowed_forms = unit.get("allowed_forms")
+        distinctness = unit.get("distinctness")
+        bank = distinctness.get("choice_bank") if isinstance(distinctness, Mapping) else None
+        if (
+            not isinstance(allowed_forms, list)
+            or not allowed_forms
+            or not isinstance(allowed_forms[0], str)
+            or not isinstance(bank, list)
+            or len(bank) < 3
+            or any(not isinstance(option, str) or not option for option in bank)
+            or len(bank) != len(set(bank))
+            or allowed_forms[0] not in bank
+        ):
+            return ()
+        answer = allowed_forms[0]
+        options = [option for option in bank if option != answer]
+        options.insert((index - 1) % len(bank), answer)
+        compiled_blanks.append({"id": index, "answer": answer, "options": options})
+        compiled_keys.append({"id": index, "answer": answer})
+
+    record["slot_id"] = slot_id
+    record["serialized_units"] = [{"unit_id": unit_id} for unit_id in unit_ids]
+    activity["payload"] = {
+        "type": "cloze",
+        "instruction": payload["instruction"],
+        "text": marked_surface,
+        "blanks": compiled_blanks,
+    }
+    activity["answer_key"] = {"blanks": compiled_keys}
+    return (
+        {
+            "event": "v3_certified_cloze_canonicalized",
+            "slot_id": slot_id,
+            "activity_type": "cloze",
+            "field": "immutable_cloze_geometry",
+            "count": len(compiled_blanks),
+        },
+    )
+
+
+def _record_canonicalization_events(events: Sequence[Mapping[str, object]]) -> None:
+    """Attach content-free canonicalization facts to the active bake trace."""
+    context = telemetry_ctx.get()
+    if context is None:
+        return
+    for event in events:
+        context.record_event(dict(event))
+
+
+def _canonicalize_cloze_for_prompt(parsed: object, prompt_context: Mapping[str, Any]) -> object:
+    """Apply and trace the one-slot certified cloze compiler."""
+    _record_canonicalization_events(_canonicalize_certified_cloze_slot(parsed, prompt_context))
+    return parsed
 
 
 def _deterministic_quiz_replacement(request: ReplacementRequest) -> dict[str, object]:
@@ -1096,7 +1265,12 @@ def _regeneration_quality_gate(
     assert isinstance(prior_payload, Mapping)
     assert isinstance(prior_answer_key, Mapping)
     activity_type = payload.get("type")
-    if plan_mode == "same-plan-open-realization" and activity_type not in _OPEN_REGENERATION_TYPES:
+    source_quiz = activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension"
+    if (
+        plan_mode == "same-plan-open-realization"
+        and activity_type not in _OPEN_REGENERATION_TYPES
+        and not source_quiz
+    ):
         raise RuleNamedRejection("activity_binding", suffix="regeneration_requires_fresh_plan")
 
     if activity_type == "text-questions":
@@ -1618,6 +1792,44 @@ def _bind_learner_payload_to_certified_units(
     forms = _certified_forms(kit)
     primary = tuple(item[0] for item in forms)
     expected_keys = _expected_keys(kit)
+
+    if activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        banks = _certified_choice_banks(kit)
+        items = payload.get("items")
+        key_items = answer_key.get("items")
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_items, list)
+            or len(items) != len(primary)
+            or len(key_items) != len(primary)
+        ):
+            raise ValueError(
+                "v3 source quiz payload/answer_key count is detached from certified units."
+            )
+        for index, (item, form, bank) in enumerate(zip(items, primary, banks, strict=True)):
+            if (
+                not isinstance(item, Mapping)
+                or not isinstance(item.get("question"), str)
+                or "___" in item["question"]
+                or not isinstance(item.get("options"), list)
+                or not _options_match_bank(item["options"], bank)
+            ):
+                raise ValueError("v3 source quiz is detached from certified propositions.")
+            key_entry = key_items[index]
+            if not isinstance(key_entry, Mapping) or key_entry.get("index") != index:
+                raise ValueError("v3 source quiz answer key entry is malformed.")
+            declared_correct = key_entry.get("correct")
+            if not isinstance(declared_correct, int) or not (
+                0 <= declared_correct < len(item["options"])
+            ):
+                raise ValueError("v3 source quiz answer key correct index is invalid.")
+            if item["options"][declared_correct] != form:
+                raise ValueError(
+                    "v3 source quiz answer_key does not point to the certified proposition."
+                )
+            if item.get("correct") != declared_correct:
+                raise ValueError("v3 source quiz payload correct index disagrees with answer_key.")
+        return
 
     if activity_type == "quiz":
         surfaces = _certified_rendering_surfaces(kit)
@@ -2148,10 +2360,7 @@ class EngineLessonBaker:
             model_id = self._generator_model_id(generator)
             parsed = _parse_payload(raw)
             canonicalization_events = _canonicalize_redundant_payload_fields(parsed)
-            context = telemetry_ctx.get()
-            if context is not None:
-                for event in canonicalization_events:
-                    context.record_event(event)
+            _record_canonicalization_events(canonicalization_events)
             self._inject_model_provenance(parsed, model_id)
             return parsed, raw, attempt, model_id
         except GeneratorUnavailable as error:
@@ -2419,6 +2628,9 @@ class EngineLessonBaker:
                             raw_out_root=raw_out_root,
                             raw_bake_id=raw_bake_id,
                         )
+                        initial_payload = _canonicalize_cloze_for_prompt(
+                            initial_payload, phase_context
+                        )
                         evaluated = evaluate_phase_with_repair(
                             preflight.allocation,
                             phase=phase,
@@ -2494,6 +2706,25 @@ class EngineLessonBaker:
                             "Bake failed: v3 serialization did not produce every certified slot.",
                             blames_source=False,
                         )
+                    if duration == 45:
+                        try:
+                            validate_teacher_lesson_quality_45(
+                                preflight.allocation,
+                                tuple(
+                                    {
+                                        "slot_id": block.slot_id,
+                                        "type": block.activity_type,
+                                        "activity": block.activity,
+                                    }
+                                    for block, _allocated, _kit in accepted_candidates
+                                ),
+                            )
+                        except LessonQualityError as error:
+                            raise FloorUnmetError(
+                                "Bake failed: the complete lesson did not meet the "
+                                "teacher quality contract.",
+                                blames_source=False,
+                            ) from error
                     semantic_rows: list[dict[str, Any]] = []
                     reviewed_slots: set[str] = set()
                     for block, _allocated, kit in accepted_candidates:
@@ -2536,6 +2767,7 @@ class EngineLessonBaker:
         focus: str | None,
         *,
         block: dict[str, Any],
+        lesson_blocks: Sequence[Mapping[str, Any]],
         feedback: str | None,
     ) -> dict[str, Any]:
         """Regenerate one original engine slot without rebuilding the lesson."""
@@ -2547,7 +2779,9 @@ class EngineLessonBaker:
             # claim identity.
             store=None,
             phases_total=1,
-            calls_planned=(2 if block.get("type") in {"text-questions", "short-writing"} else 1),
+            calls_planned=(
+                2 if block.get("type") in {"quiz", "text-questions", "short-writing"} else 1
+            ),
             calls_done=0,
             phase=block.get("phase") if block.get("phase") in {1, 2, 3} else 1,
             step="generation",
@@ -2641,6 +2875,10 @@ class EngineLessonBaker:
                         original_target_allocation, phase=original_target.phase, focus=focus
                     )
                     original_kit = original_context["type_kits"][0]
+                    source_comprehension_quiz = (
+                        allocated.scheduled_type == "quiz"
+                        and original_kit.get("focus_alignment") == "source-comprehension"
+                    )
                     try:
                         _activity_gate(prior_activity_core, original_kit)
                     except ValueError as error:
@@ -2757,10 +2995,14 @@ class EngineLessonBaker:
                             else:
                                 target = proposition_target
                                 plan_mode = "source-proposition-replan"
-                    if plan_mode == "same-plan-open-realization" and replacement_plan_can_coexist(
-                        preflight.allocation,
-                        target_slot_id=allocated.slot_id,
-                        candidate=alternative_plan,
+                    if (
+                        plan_mode == "same-plan-open-realization"
+                        and not source_comprehension_quiz
+                        and replacement_plan_can_coexist(
+                            preflight.allocation,
+                            target_slot_id=allocated.slot_id,
+                            candidate=alternative_plan,
+                        )
                     ):
                         alternative_target = target_for_plan(alternative_plan)
                         alternative_complete = LessonAllocation(
@@ -2780,12 +3022,29 @@ class EngineLessonBaker:
                     if (
                         plan_mode == "same-plan-open-realization"
                         and allocated.scheduled_type not in _OPEN_REGENERATION_TYPES
+                        and not source_comprehension_quiz
                     ):
                         raise FloorUnmetError(
                             "Regeneration failed: no genuinely different certified "
                             "activity plan is available for this source.",
                             blames_source=False,
                         )
+                    if duration == 45:
+                        complete_target_allocation = LessonAllocation(
+                            paragraph_ids=preflight.allocation.paragraph_ids,
+                            slots=tuple(
+                                target if slot.slot_id == allocated.slot_id else slot
+                                for slot in preflight.allocation.slots
+                            ),
+                        )
+                        try:
+                            validate_teacher_lesson_plan_quality_45(complete_target_allocation)
+                        except LessonQualityError as error:
+                            raise FloorUnmetError(
+                                "Regeneration failed: replacement drifted from the teacher "
+                                "quality contract.",
+                                blames_source=False,
+                            ) from error
                     target_allocation = LessonAllocation(
                         paragraph_ids=preflight.allocation.paragraph_ids,
                         slots=(target,),
@@ -2807,6 +3066,7 @@ class EngineLessonBaker:
                         raw_out_root=raw_out_root,
                         raw_bake_id=raw_bake_id,
                     )
+                    initial_payload = _canonicalize_cloze_for_prompt(initial_payload, phase_context)
 
                     def require_meaningful_regeneration(
                         activity: Mapping[str, Any], _kit: Mapping[str, Any]
@@ -2853,6 +3113,49 @@ class EngineLessonBaker:
                             "Regeneration failed: no checked replacement was produced.",
                             blames_source=False,
                         )
+                    if duration == 45:
+                        try:
+                            if len(lesson_blocks) != len(complete_target_allocation.slots):
+                                raise LessonQualityError(
+                                    "Regeneration lost the current rendered lesson context."
+                                )
+                            rendered_slots: list[Mapping[str, object]] = []
+                            for sibling_index, (plan_slot, sibling_block) in enumerate(
+                                zip(
+                                    complete_target_allocation.slots,
+                                    lesson_blocks,
+                                    strict=True,
+                                )
+                            ):
+                                if (
+                                    sibling_block.get("id") != f"block-{sibling_index + 1}"
+                                    or sibling_block.get("type") != plan_slot.scheduled_type
+                                    or not isinstance(sibling_block.get("activity"), Mapping)
+                                ):
+                                    raise LessonQualityError(
+                                        "Regeneration sibling is detached from its certified slot."
+                                    )
+                                rendered_slots.append(
+                                    {
+                                        "slot_id": plan_slot.slot_id,
+                                        "type": plan_slot.scheduled_type,
+                                        "activity": (
+                                            evaluated.blocks[0].activity
+                                            if sibling_index == original_index
+                                            else sibling_block["activity"]
+                                        ),
+                                    }
+                                )
+                            validate_teacher_lesson_quality_45(
+                                complete_target_allocation,
+                                tuple(rendered_slots),
+                            )
+                        except LessonQualityError as error:
+                            raise FloorUnmetError(
+                                "Regeneration failed: replacement did not preserve the "
+                                "teacher quality contract.",
+                                blames_source=False,
+                            ) from error
                     review_rows = tuple(
                         {
                             "review_id": f"{target.slot_id}:{row.get('item_index')}",
@@ -3015,6 +3318,9 @@ class EngineLessonBaker:
             raw_out_root=raw_out_root,
             raw_bake_id=raw_bake_id,
         )
+        payload = _canonicalize_cloze_for_prompt(
+            payload, one_slot_context(request.prompt_context, slot_id=request.slot_id)
+        )
         if request.target_item_indexes:
             return self._targeted_question_patch(payload, request.target_item_indexes)
         return self._one_slot_record(payload, request.slot_id)
@@ -3051,6 +3357,9 @@ class EngineLessonBaker:
             raw_out_root=raw_out_root,
             raw_bake_id=raw_bake_id,
         )
+        payload = _canonicalize_cloze_for_prompt(
+            payload, one_slot_context(request.prompt_context, slot_id=request.slot_id)
+        )
         if request.target_item_indexes:
             return self._targeted_question_patch(payload, request.target_item_indexes)
         return self._one_slot_record(payload, request.slot_id)
@@ -3063,7 +3372,11 @@ class EngineLessonBaker:
         raw_out_root: str | Path | None,
         raw_bake_id: str | None,
     ) -> object:
-        if request.activity_type == "quiz":
+        source_quiz = request.activity_type == "quiz" and all(
+            unit.distinctness.get("focus_alignment") == "source-comprehension"
+            for unit in request.plan.units
+        )
+        if request.activity_type == "quiz" and not source_quiz:
             return _deterministic_quiz_replacement(request)
         payload, _raw, _attempt, _model_id = self._call_generator(
             self._repair_prompt(
@@ -3076,6 +3389,9 @@ class EngineLessonBaker:
             raw_attempt_counter=raw_attempt_counter,
             raw_out_root=raw_out_root,
             raw_bake_id=raw_bake_id,
+        )
+        payload = _canonicalize_cloze_for_prompt(
+            payload, one_slot_context(request.prompt_context, slot_id=request.slot_id)
         )
         return self._one_slot_record(payload, request.slot_id)
 

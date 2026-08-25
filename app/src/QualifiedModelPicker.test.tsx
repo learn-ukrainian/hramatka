@@ -9,9 +9,9 @@ const t = (key: ChromeKey) => translate('uk', key);
 describe('QualifiedModelPicker', () => {
   it('replaces a retired recovery value with a current qualified choice', () => {
     const models = [
-      { id: 'gemini-3.6-flash', label: 'Gemini 3.5 Flash', description: 'Швидко.' },
+      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', description: 'Швидко.' },
     ];
-    expect(resolveQualifiedModelId(models, 'retired-model')).toBe('gemini-3.6-flash');
+    expect(resolveQualifiedModelId(models, 'retired-model')).toBe('gemini-3.7-flash');
     expect(resolveQualifiedModelId([], 'retired-model')).toBe('');
   });
 
@@ -20,10 +20,10 @@ describe('QualifiedModelPicker', () => {
     render(
       <QualifiedModelPicker
         models={[
-          { id: 'gemini-3.6-flash', label: 'Gemini 3.5 Flash', description: 'Швидко.' },
+          { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', description: 'Швидко.' },
           { id: 'gemma-4-31b', label: 'Gemma 4 31B', description: 'Резервний маршрут.' },
         ]}
-        selectedId="gemini-3.6-flash"
+        selectedId="gemini-3.7-flash"
         unavailableMessage="Показано лише кваліфіковані моделі."
         onChange={onChange}
         t={t}
@@ -32,7 +32,7 @@ describe('QualifiedModelPicker', () => {
 
     const options = screen.getAllByRole('option');
     expect(options.map(option => option.textContent)).toEqual([
-      'Gemini 3.5 Flash',
+      'Gemini 3.7 Flash',
       'Gemma 4 31B',
     ]);
     expect(screen.queryByText(/DeepSeek/i)).toBeNull();

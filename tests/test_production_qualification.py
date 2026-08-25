@@ -43,9 +43,7 @@ def test_atlas_fixture_trimming_keeps_normal_regeneration_stable() -> None:
         },
     }
 
-    assert _trim_payload(payload)["sections"] == {
-        "synonyms": {"items": ["спокійний"]}
-    }
+    assert _trim_payload(payload)["sections"] == {"synonyms": {"items": ["спокійний"]}}
     assert _trim_payload(payload, include_antonyms=True)["sections"] == payload["sections"]
 
 
@@ -56,16 +54,14 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
     anchors = deterministic_runtime_anchors()
     run = harness.run(anchors)
 
-    assert len(run.cells) == 9
+    assert len(run.cells) == 3
     assert {cell.receipt.anchor_id for cell in run.cells} == {
         "b1-narrative",
         "b1-dialogue",
         "b1-informational",
     }
     assert {cell.receipt.expected_route.route_id for cell in run.cells} == {
-        "gemini-pro-subscription",
-        "gemma-openrouter",
-        "gemini-flash-subscription",
+        "gemini-flash-subscription"
     }
     forced_cell = next(
         cell
@@ -74,7 +70,7 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         and cell.receipt.expected_route.route_id == "gemini-flash-subscription"
     )
     assert any(trace.mode == "repair" for trace in forced_cell.receipt.repair_trace)
-    assert len(run.receipt_paths) == 9
+    assert len(run.receipt_paths) == 3
     assert all(path.is_file() for path in run.receipt_paths)
     assert all(
         all(anchor.text not in path.read_text(encoding="utf-8") for anchor in anchors.values())
@@ -92,8 +88,9 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         assert cell.receipt.semantic_gate == "passed"
         assert cell.receipt.prompt_pack_version == "PromptPackInput.v3.4"
         assert cell.receipt.template_version == "gemma-phase-pack.v3.15"
-        assert cell.receipt.density_contract_version == "TeacherReadyDensity.v3"
-        assert cell.receipt.density.lesson_units == 27
+        assert cell.receipt.density_contract_version == "TeacherReadyDensity.v4"
+        assert cell.receipt.density.lesson_units == cell.delivery.response_units
+        assert cell.receipt.density.lesson_units >= 57
         assert cell.receipt.density.slot_count == 6
         assert all(
             set(entry.as_dict())
@@ -120,10 +117,9 @@ def test_b1_qualification_harness_drives_all_cells_through_http_and_durable_jobs
         )
 
     aggregates = harness.aggregates(run)
-    assert len(aggregates) == 3
+    assert len(aggregates) == 1
     assert all(
-        aggregate.passed_anchors
-        == frozenset({"b1-narrative", "b1-dialogue", "b1-informational"})
+        aggregate.passed_anchors == frozenset({"b1-narrative", "b1-dialogue", "b1-informational"})
         for aggregate in aggregates
     )
     assert all(aggregate.as_model_receipt().passed for aggregate in aggregates)
@@ -272,14 +268,14 @@ def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_crede
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(
         runtime_root,
-        logical_model_ids=("gemini-3.6-flash",),
+        logical_model_ids=("gemini-3.7-flash",),
     )
     run = harness.run(deterministic_runtime_anchors())
 
     assert len(run.cells) == 3
     assert {
         (cell.receipt.logical_model_id, cell.receipt.expected_route.route_id) for cell in run.cells
-    } == {("gemini-3.6-flash", "gemini-flash-subscription")}
+    } == {("gemini-3.7-flash", "gemini-flash-subscription")}
     aggregates = harness.aggregates(run)
     assert len(aggregates) == 1
     assert aggregates[0].passed_anchors == frozenset(
@@ -288,7 +284,7 @@ def test_flash_target_aggregates_all_three_anchors_without_unrelated_model_crede
     assert aggregates[0].as_model_receipt().passed
     assert json.loads((runtime_root / "aggregation-targets.json").read_text(encoding="utf-8")) == {
         "schema_version": "ProductionQualificationTargets.v1",
-        "logical_model_ids": ["gemini-3.6-flash"],
+        "logical_model_ids": ["gemini-3.7-flash"],
     }
 
     with pytest.raises(QualificationError, match="requires every"):
@@ -300,7 +296,7 @@ def test_targeted_transcription_requires_recorded_target_metadata(tmp_path) -> N
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(
         runtime_root,
-        logical_model_ids=("gemini-3.6-flash",),
+        logical_model_ids=("gemini-3.7-flash",),
     )
     harness.run(deterministic_runtime_anchors())
     source_commit = subprocess.run(
@@ -309,7 +305,7 @@ def test_targeted_transcription_requires_recorded_target_metadata(tmp_path) -> N
 
     block = transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
     assert block.count("    QualificationReceipt(\n") == 1
-    assert 'logical_model_id="gemini-3.6-flash"' in block
+    assert 'logical_model_id="gemini-3.7-flash"' in block
 
     (runtime_root / "aggregation-targets.json").unlink()
     with pytest.raises(QualificationError, match="target metadata"):
@@ -398,8 +394,8 @@ def test_receipt_aggregation_cli_validates_persisted_matrix(tmp_path, capsys) ->
 
     assert receipt_main(["aggregate", "--receipt-dir", str(runtime_root / "receipts")]) == 0
     output = capsys.readouterr().out
-    assert "Qualification receipts aggregated: 3 routes" in output
-    assert "gemini-3.6-flash gemini-flash-subscription anchors=3/3" in output
+    assert "Qualification receipts aggregated: 1 routes" in output
+    assert "gemini-3.7-flash gemini-flash-subscription anchors=3/3" in output
 
     prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
     prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
@@ -434,11 +430,11 @@ def test_first_transcription_prints_the_run_derived_prompt_literal_and_receipts(
         "\n\nPRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (\n"
         in block
     )
-    assert block.count("    QualificationReceipt(\n") == 3
-    assert block.count("passed_anchors=frozenset({") == 3
+    assert block.count("    QualificationReceipt(\n") == 1
+    assert block.count("passed_anchors=frozenset({") == 1
     assert 'prompt_pack_version="PromptPackInput.v3.4"' in block
     assert 'template_version="gemma-phase-pack.v3.15"' in block
-    assert 'density_contract_version="TeacherReadyDensity.v3"' in block
+    assert 'density_contract_version="TeacherReadyDensity.v4"' in block
     assert "passed=True," in block
     emitted: dict[str, object] = {"Final": Final, "QualificationReceipt": QualificationReceipt}
     exec(block, emitted)  # noqa: S102 - verifies the review block is a paste-ready declaration.
@@ -558,25 +554,16 @@ def test_transcription_keeps_each_live_selector_literal_fail_closed(
 
 
 @pytest.mark.slow
-def test_transcription_refuses_routes_with_different_aggregate_prompt_digests(tmp_path) -> None:
+def test_transcription_emits_only_the_subscription_route(tmp_path) -> None:
     runtime_root = tmp_path / "qualification"
     harness = ProductionQualificationHarness(runtime_root)
     harness.run(deterministic_runtime_anchors())
     source_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    receipt_dir = runtime_root / "receipts"
-    for path in receipt_dir.glob("*.json"):
-        receipt = json.loads(path.read_text(encoding="utf-8"))
-        if receipt["expected_route"]["route_id"] == "gemini-flash-subscription":
-            receipt["prompt_sha256"] = "0" * 64
-            path.write_text(json.dumps(receipt), encoding="utf-8")
-    prompt_hashes_path = runtime_root / "aggregation-prompt-hashes.json"
-    prompt_hashes = json.loads(prompt_hashes_path.read_text(encoding="utf-8"))
-    for row in prompt_hashes["prompt_hashes"]:
-        if row["route_id"] == "gemini-flash-subscription":
-            row["sha256"] = "0" * 64
-    prompt_hashes_path.write_text(json.dumps(prompt_hashes), encoding="utf-8")
+    block = transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
 
-    with pytest.raises(QualificationError, match="Route aggregates have different prompt_sha256"):
-        transcribe(receipt_dir=runtime_root / "receipts", source_commit=source_commit)
+    assert block.count("    QualificationReceipt(\n") == 1
+    assert 'logical_model_id="gemini-3.7-flash"' in block
+    assert "gemini-3.1-pro" not in block
+    assert "gemma-4-31b" not in block

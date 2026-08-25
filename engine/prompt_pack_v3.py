@@ -216,9 +216,7 @@ _SOURCE_RELATION_INTENTS: Final[frozenset[str]] = frozenset(
         "licensed-vid-cause.v1",
     }
 )
-_FREQUENCY_SCALE_FORMS: Final[frozenset[str]] = frozenset(
-    {"рідше", "частіше", "рідко", "часто"}
-)
+_FREQUENCY_SCALE_FORMS: Final[frozenset[str]] = frozenset({"рідше", "частіше", "рідко", "часто"})
 _FREQUENCY_COMPARATIVES: Final[frozenset[str]] = frozenset({"рідше", "частіше"})
 _UNRESOLVED_QUESTION_DEIXIS_RE = re.compile(
     r"\b(?:цих|цьому|цього)\b",
@@ -228,19 +226,29 @@ _UNRESOLVED_TOPIC_PRONOUN_RE = re.compile(r"^(?:він|вона|вони|вон�
 
 _TYPE_PURPOSE_CONTRACTS: Final[dict[str, dict[str, object]]] = {
     "quiz": {
-        "purpose": "test one grammatical or lexical choice in meaningful context",
-        "required": "copy each certified_unit.gapped_rendering_surface byte for byte",
-        "reject": "successively blanking one sentence or exposing another unit answer",
-    },
-    "cloze": {
-        "purpose": "read coherent source excerpts and restore context-governed inflections",
+        "purpose": (
+            "check source comprehension when focus_alignment=source-comprehension; "
+            "otherwise test one grammatical or lexical choice in context"
+        ),
         "required": (
-            "copy marked_rendering_surface verbatim into payload.text and preserve each "
-            "same-lemma contextual morphology bank"
+            "for source-comprehension, ask one natural Ukrainian question about the "
+            "certified question_topic and use the complete certified choice_bank; "
+            "otherwise copy each certified_unit.gapped_rendering_surface byte for byte"
         ),
         "reject": (
-            "cross-lemma semantic oddities, repeated carriers, adjacent marker runs, or a "
-            "mostly blank passage"
+            "gap completion in a source-comprehension quiz, vague questions that fit "
+            "several options, or exposing the answer in the question"
+        ),
+    },
+    "cloze": {
+        "purpose": "read one coherent long text and restore meaning or context-governed forms",
+        "required": (
+            "copy marked_rendering_surface verbatim into payload.text, preserve every certified "
+            "choice bank, and keep exactly one gap in every sentence"
+        ),
+        "reject": (
+            "incoherent lexical foils, repeated carriers, adjacent marker runs, sparse gaps, "
+            "or a mostly blank passage"
         ),
     },
     "fill-in": {
@@ -449,7 +457,9 @@ def _type_kit(slot: object) -> dict[str, Any]:
     }
     if plan.activity_type == "cloze":
         kit["marked_rendering_surface"] = _marked_cloze_rendering_surface(units)
-    elif plan.activity_type in {"quiz", "fill-in"}:
+    elif plan.activity_type == "fill-in" or (
+        plan.activity_type == "quiz" and focus_alignment != "source-comprehension"
+    ):
         for unit in units:
             unit["gapped_rendering_surface"] = _gapped_rendering_surface(unit)
     elif plan.activity_type == "text-questions":
@@ -482,11 +492,7 @@ def _type_kit(slot: object) -> dict[str, Any]:
             answer_span = distinctness.get("answer_span")
             question_topic = distinctness.get("question_topic")
             question_basis = distinctness.get("question_basis")
-            if (
-                answer_span is not None
-                or question_topic is not None
-                or question_basis is not None
-            ):
+            if answer_span is not None or question_topic is not None or question_basis is not None:
                 surface = unit.get("rendering_surface")
                 forms = unit.get("allowed_forms")
                 start = (
@@ -502,8 +508,7 @@ def _type_kit(slot: object) -> dict[str, Any]:
                 proposition_basis = (
                     isinstance(question_basis, Mapping)
                     and isinstance(answer_span, Mapping)
-                    and question_basis.get("kind")
-                    in {"source-proposition", "source-span"}
+                    and question_basis.get("kind") in {"source-proposition", "source-span"}
                     and question_basis.get("sentence_id") == answer_span.get("sentence_id")
                     and category in {"comprehension", "anchored_application"}
                     and distinctness.get("focus_alignment") == "source-comprehension"
@@ -513,8 +518,7 @@ def _type_kit(slot: object) -> dict[str, Any]:
                             category == "comprehension"
                             and isinstance(question_basis.get("sentence_ids"), list)
                             and len(question_basis["sentence_ids"]) >= 2
-                            and question_basis.get("sentence_id")
-                            in question_basis["sentence_ids"]
+                            and question_basis.get("sentence_id") in question_basis["sentence_ids"]
                         )
                     )
                 )
@@ -716,8 +720,7 @@ def validate_degree_lesson_plan(allocation: LessonAllocation) -> None:
                 minimum_higher_forms = max(3, (len(degree_classes) + 1) // 2)
                 if (
                     counts["positive"] < 2
-                    or counts["comparative"] + counts["superlative"]
-                    < minimum_higher_forms
+                    or counts["comparative"] + counts["superlative"] < minimum_higher_forms
                 ):
                     raise PromptPackV3Error(
                         "Degree contrast plan lacks a mixed answer distribution."
@@ -1531,6 +1534,11 @@ def validate_verbatim_answer_ban(activity: Mapping[str, Any], kit: Mapping[str, 
         return
     activity_type = payload.get("type")
     answer_key = activity.get("answer_key")
+    if activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        # These options are complete source propositions. Exact-bank binding
+        # and question grounding are checked by the activity and purpose gates;
+        # a single-word VESUM adjacency rule is inapplicable to them.
+        return
     certified_forms = _certified_answer_forms(kit)
 
     # Each entry is (prose_field, answer_forms_that_must_not_occur_in_it).
@@ -1930,6 +1938,46 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
         else:
             raise PromptPackV3Error("match-up board mixes or omits certified relations")
         return
+    if payload.get("type") == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        items = payload.get("items")
+        units = kit.get("certified_units")
+        if not isinstance(items, list) or not isinstance(units, list) or len(items) != len(units):
+            raise PromptPackV3Error("source quiz lost its certified questions")
+        db_path = paths.vesum_db()
+        for index, (item, unit) in enumerate(zip(items, units, strict=True)):
+            if not isinstance(item, Mapping) or not isinstance(unit, Mapping):
+                raise PromptPackV3Error(f"source quiz item is malformed at items[{index}]")
+            question = item.get("question")
+            distinctness = unit.get("distinctness")
+            frame = (
+                distinctness.get("question_frame") if isinstance(distinctness, Mapping) else None
+            )
+            topic = (
+                distinctness.get("question_topic") if isinstance(distinctness, Mapping) else None
+            )
+            prefixes = frame.get("allowed_prefixes") if isinstance(frame, Mapping) else None
+            topic_lemma = topic.get("lemma") if isinstance(topic, Mapping) else None
+            if (
+                not isinstance(question, str)
+                or not question.rstrip().endswith("?")
+                or "___" in question
+                or len(_UKRAINIAN_WORD_RE.findall(question)) < 3
+                or not isinstance(prefixes, list)
+                or not any(
+                    question.strip().casefold().startswith(str(prefix).strip().casefold())
+                    for prefix in prefixes
+                )
+                or not isinstance(topic_lemma, str)
+                or not any(
+                    str(match.get("lemma", "")).casefold() == topic_lemma.casefold()
+                    for word in _UKRAINIAN_WORD_RE.findall(question)
+                    for match in _vesum_matches(word, db_path)
+                )
+            ):
+                raise PromptPackV3Error(
+                    f"source quiz question is not bound to its proposition at items[{index}]"
+                )
+        return
     if payload.get("type") != "text-questions":
         return
     items = payload.get("items")
@@ -2091,8 +2139,7 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             distinctness.get("focus_alignment") if isinstance(distinctness, Mapping) else None
         )
         broad_source_application = (
-            focus_alignment == "source-comprehension"
-            and category == "anchored_application"
+            focus_alignment == "source-comprehension" and category == "anchored_application"
         )
         if (
             isinstance(certified_topic_lemma, str)
@@ -2124,8 +2171,7 @@ def validate_activity_purpose(activity: Mapping[str, Any], kit: Mapping[str, Any
             for word in _UKRAINIAN_WORD_RE.findall(rendering_surface or "")
         )
         if source_frequency_comparative and not any(
-            word.casefold() in _FREQUENCY_SCALE_FORMS
-            for word in _UKRAINIAN_WORD_RE.findall(item)
+            word.casefold() in _FREQUENCY_SCALE_FORMS for word in _UKRAINIAN_WORD_RE.findall(item)
         ):
             raise PromptPackV3Error(
                 f"text question omits its certified comparison at items[{index}]"
@@ -2381,15 +2427,60 @@ def teacher_sample_review_inputs(
     units = kit.get("certified_units")
     if not isinstance(units, list):
         raise PromptPackV3Error("teacher samples require certified units")
+    if activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        items = payload.get("items")
+        answer_key = activity.get("answer_key")
+        key_items = answer_key.get("items") if isinstance(answer_key, Mapping) else None
+        if (
+            not isinstance(items, list)
+            or not isinstance(key_items, list)
+            or len(items) != len(units)
+            or len(key_items) != len(units)
+        ):
+            raise PromptPackV3Error("source quiz semantic inputs are detached from their units")
+        quiz_rows: list[dict[str, Any]] = []
+        for index, (item, key, unit) in enumerate(zip(items, key_items, units, strict=True)):
+            question = item.get("question") if isinstance(item, Mapping) else None
+            options = item.get("options") if isinstance(item, Mapping) else None
+            item_correct = item.get("correct") if isinstance(item, Mapping) else None
+            key_index = key.get("index") if isinstance(key, Mapping) else None
+            key_correct = key.get("correct") if isinstance(key, Mapping) else None
+            surface = unit.get("rendering_surface") if isinstance(unit, Mapping) else None
+            if (
+                not isinstance(question, str)
+                or not question.strip()
+                or not isinstance(options, list)
+                or not isinstance(item_correct, int)
+                or isinstance(item_correct, bool)
+                or key_index != index
+                or key_correct != item_correct
+                or not 0 <= item_correct < len(options)
+                or not isinstance(options[item_correct], str)
+                or not options[item_correct].strip()
+                or not isinstance(surface, str)
+                or not surface.strip()
+            ):
+                raise PromptPackV3Error("source quiz semantic review input is malformed")
+            quiz_rows.append(
+                {
+                    "activity_type": activity_type,
+                    "category": "comprehension",
+                    "evidence_segments": [surface],
+                    "item_index": index,
+                    "learner_prompt": question,
+                    "regeneration_lens": None,
+                    "source_context": None,
+                    "teacher_sample": options[item_correct],
+                }
+            )
+        return tuple(quiz_rows)
     if activity_type == "text-questions":
         items = payload.get("items")
         if not isinstance(items, list) or len(items) != len(units):
             raise PromptPackV3Error("text-question teacher samples are detached from their units")
         samples = _text_question_teacher_samples(activity, kit)
         rows: list[dict[str, Any]] = []
-        for index, (question, sample, unit) in enumerate(
-            zip(items, samples, units, strict=True)
-        ):
+        for index, (question, sample, unit) in enumerate(zip(items, samples, units, strict=True)):
             if not isinstance(question, str) or not isinstance(unit, Mapping):
                 raise PromptPackV3Error("text-question semantic review input is malformed")
             surface = unit.get("rendering_surface")
@@ -2473,6 +2564,14 @@ def validate_teacher_sample_constraints(
     """Require reviewable teacher samples and enforce productive-task length."""
     payload = activity.get("payload")
     activity_type = payload.get("type") if isinstance(payload, Mapping) else None
+    if activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        try:
+            teacher_sample_review_inputs(activity, kit)
+        except PromptPackV3Error as error:
+            raise RuleNamedRejection(
+                "teacher_sample_constraints", suffix="source_quiz_sample_shape"
+            ) from error
+        return
     if activity_type == "text-questions":
         try:
             samples = _text_question_teacher_samples(activity, kit)
@@ -2482,9 +2581,7 @@ def validate_teacher_sample_constraints(
             ) from error
         normalized = [" ".join(sample.casefold().split()) for sample in samples]
         duplicate_indexes = {
-            index
-            for index, sample in enumerate(normalized)
-            if normalized.count(sample) > 1
+            index for index, sample in enumerate(normalized) if normalized.count(sample) > 1
         }
         if duplicate_indexes:
             rejections = tuple(
@@ -2902,6 +2999,11 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
         return
     activity_type = payload.get("type")
     answer_key = activity.get("answer_key")
+    if activity_type == "quiz" and kit.get("focus_alignment") == "source-comprehension":
+        # These options are complete source propositions. Exact-bank binding
+        # and question grounding are checked by the activity and purpose gates;
+        # a single-word VESUM adjacency rule is inapplicable to them.
+        return
 
     def _validate_options(
         answer: str,
@@ -2966,11 +3068,13 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             len(options) != len(choice_bank) or set(options) != set(choice_bank)
         ):
             raise PromptPackV3Error(f"{label} does not preserve its exact certified choice bank")
-        if frame_family in {"cross-gap-lexical.v1", "contextual-morphology-cloze.v3"}:
+        if frame_family in {
+            "cross-gap-lexical.v1",
+            "contextual-morphology-cloze.v3",
+            "source-context-lexical.v1",
+        }:
             if not isinstance(choice_bank, list) or set(options) != set(choice_bank):
-                raise PromptPackV3Error(
-                    f"{label} does not preserve its exact certified cloze bank"
-                )
+                raise PromptPackV3Error(f"{label} does not preserve its exact certified cloze bank")
             all_units = kit.get("certified_units", ())
             other_gap_answers = {
                 forms[0]
@@ -2984,27 +3088,20 @@ def validate_distractor_adjacency(activity: Mapping[str, Any], kit: Mapping[str,
             distractors = [option for option in options if option != answer]
             if not distractors:
                 raise PromptPackV3Error(f"{label} contains no lexical distractors")
-            if frame_family == "cross-gap-lexical.v1":
+            if frame_family in {"cross-gap-lexical.v1", "source-context-lexical.v1"}:
                 if not set(distractors) <= other_gap_answers:
                     raise PromptPackV3Error(
                         f"{label} contains a distractor that is not another certified gap answer"
                     )
             else:
-                if any(
-                    not (answer_lemmas & _lemma_set(option, db_path))
-                    for option in distractors
-                ):
-                    raise PromptPackV3Error(
-                        f"{label} contains a cross-lemma semantic distractor"
-                    )
+                if any(not (answer_lemmas & _lemma_set(option, db_path)) for option in distractors):
+                    raise PromptPackV3Error(f"{label} contains a cross-lemma semantic distractor")
                 return
             if any(answer_lemmas & _lemma_set(option, db_path) for option in distractors):
                 raise PromptPackV3Error(f"{label} cross-gap bank repeats the answer lemma")
             answer_pos = _pos_set(answer, db_path)
             if not all(answer_pos & _pos_set(option, db_path) for option in distractors):
-                raise PromptPackV3Error(
-                    f"{label} cross-gap bank contains a cross-POS distractor"
-                )
+                raise PromptPackV3Error(f"{label} cross-gap bank contains a cross-POS distractor")
             return
         if shared_degree_bank:
             degree_classes: set[int] = set()

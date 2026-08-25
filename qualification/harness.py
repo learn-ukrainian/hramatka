@@ -150,6 +150,8 @@ def _current_engine_digest() -> str:
         engine_root / "anchor_inventory_v3.py",
         engine_root / "density_evaluator_v3.py",
         engine_root / "lesson_capacity_v3.py",
+        engine_root / "lesson_profile_45_v1.py",
+        engine_root / "lesson_quality_v1.py",
         engine_root / "prompt_pack_v3.py",
         engine_root / "providers.py",
         engine_root / "semantic_review_v1.py",
@@ -175,8 +177,7 @@ def deterministic_runtime_anchors() -> dict[str, RuntimeAnchor]:
     path = Path(__file__).with_name("assets") / "b1-45m.anchors.json"
     rows = json.loads(path.read_text(encoding="utf-8"))["anchors"]
     return {
-        row["id"]: RuntimeAnchor(row["id"], row["source_identity"], row["text"])
-        for row in rows
+        row["id"]: RuntimeAnchor(row["id"], row["source_identity"], row["text"]) for row in rows
     }
 
 
@@ -194,10 +195,7 @@ def _qualification_fixture_bundle(root: Path) -> data.DataBundle:
     try:
         connection.executemany(
             "INSERT INTO forms (word_form, lemma, tags, pos) VALUES (?, ?, ?, ?)",
-            [
-                (row["word_form"], row["lemma"], row["tags"], row["pos"])
-                for row in vesum_rows
-            ],
+            [(row["word_form"], row["lemma"], row["tags"], row["pos"]) for row in vesum_rows],
         )
         connection.commit()
     finally:
@@ -304,7 +302,11 @@ def _certified_activity(activity: dict[str, Any], kit: Mapping[str, Any]) -> dic
 
 def _v3_qualification_allocation() -> LessonAllocation:
     """Return a deterministic allocation through the live inventory/preflight path."""
-    source = deterministic_runtime_anchors()["b1-narrative"].text
+    anchors = deterministic_runtime_anchors()
+    # The human-paced profile needs both a coherent long passage and enough
+    # independent propositions for the preceding lesson phases.  The pinned
+    # qualification source keeps those two retained substrates together.
+    source = "\n\n".join((anchors["b1-narrative"].text, anchors["b1-informational"].text))
     slots = _lesson_slots(45)
     bundle = _runtime_qualification_bundle(data.active_bundle())
     with data.use_bundle(bundle):
@@ -779,9 +781,7 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
     }:
         topic_lemma = topic.get("lemma") if isinstance(topic, Mapping) else None
         proper_name = isinstance(topic_lemma, str) and topic_lemma[:1].isupper()
-        natural_topic = (
-            named_topic if proper_name else named_topic[:1].lower() + named_topic[1:]
-        )
+        natural_topic = named_topic if proper_name else named_topic[:1].lower() + named_topic[1:]
         if intent == "definition-content.v1":
             return f"{prefixes[0]} {natural_topic} ({index + 1})?"
         return f"{prefixes[0]} в уривку {natural_topic} ({index + 1})?"
@@ -791,10 +791,7 @@ def _question_from_unit(unit: Mapping[str, Any], index: int) -> str:
     }:
         if index % 2 == 0 and "На вашу думку" in prefixes:
             return f"На вашу думку, яка деталь опису «{named_topic}» важлива ({index + 1})?"
-        return (
-            f"{prefixes[0]} ідею про «{named_topic}» у подібній ситуації "
-            f"({index + 1})?"
-        )
+        return f"{prefixes[0]} ідею про «{named_topic}» у подібній ситуації ({index + 1})?"
     raise QualificationError("Qualification text-question purpose is unknown.")
 
 
@@ -833,7 +830,11 @@ def _v3_live_record_from_kit(
             pos = options.index(form)
             items.append(
                 {
-                    "question": _blank_rendering_surface(unit, form, "___"),
+                    "question": (
+                        _question_from_unit(unit, index)
+                        if kit.get("focus_alignment") == "source-comprehension"
+                        else _blank_rendering_surface(unit, form, "___")
+                    ),
                     "options": options,
                     "correct": pos,
                 }
@@ -908,18 +909,14 @@ def _v3_live_record_from_kit(
             frozenset({"atlas_antonym.v1"}): (
                 "З'єднайте слова з протилежним значенням (антоніми)."
             ),
-            frozenset({"atlas_synonym.v1"}): (
-                "З'єднайте слова з близьким значенням (синоніми)."
-            ),
+            frozenset({"atlas_synonym.v1"}): ("З'єднайте слова з близьким значенням (синоніми)."),
             frozenset({"degree-comparison-paraphrase.v1"}): (
                 "З'єднайте кожне порівняльне твердження з рівнозначним перефразуванням."
             ),
             frozenset({"degree-priority-recommendation.v2"}): (
                 "З'єднайте опис потреб і пріоритетів з рекомендованим варіантом."
             ),
-            frozenset({"atlas_gloss.v1"}): (
-                "З'єднайте кожне слово з його тлумаченням."
-            ),
+            frozenset({"atlas_gloss.v1"}): ("З'єднайте кожне слово з його тлумаченням."),
         }.get(frozenset(relations), "Знайдіть пару.")
         payload = {
             "type": activity_type,
@@ -932,6 +929,21 @@ def _v3_live_record_from_kit(
         answer_key = {
             "pairs": [{"left_index": index, "right_index": index} for index in range(len(forms))]
         }
+    elif activity_type == "mark-the-words":
+        text = "\n".join(
+            dict.fromkeys(
+                str(unit["rendering_surface"])
+                for unit in certified_units
+                if isinstance(unit.get("rendering_surface"), str)
+            )
+        )
+        payload = {
+            "type": activity_type,
+            "instruction": "Позначте слова в тексті.",
+            "text": text,
+            "target_words": forms,
+        }
+        answer_key = {"target_words": forms}
     elif activity_type == "error-correction":
         payload = {
             "type": activity_type,
@@ -940,9 +952,7 @@ def _v3_live_record_from_kit(
         }
         answer_key = {"items": expected_keys}
     elif activity_type == "text-questions":
-        questions = [
-            _question_from_unit(unit, index) for index, unit in enumerate(certified_units)
-        ]
+        questions = [_question_from_unit(unit, index) for index, unit in enumerate(certified_units)]
         payload = {
             "type": activity_type,
             "instruction": "Дайте відповідь.",
@@ -974,26 +984,24 @@ def _v3_live_record_from_kit(
         payload = {"type": activity_type, "prompt": prompt}
         distinctness = certified_units[0].get("distinctness")
         specs = distinctness.get("constraint_specs") if isinstance(distinctness, Mapping) else None
-        word_range = next(
-            (
-                spec.get("params")
-                for spec in specs
-                if isinstance(spec, Mapping) and spec.get("kind") == "word_count_range"
-            ),
-            None,
-        ) if isinstance(specs, list) else None
+        word_range = (
+            next(
+                (
+                    spec.get("params")
+                    for spec in specs
+                    if isinstance(spec, Mapping) and spec.get("kind") == "word_count_range"
+                ),
+                None,
+            )
+            if isinstance(specs, list)
+            else None
+        )
         minimum = word_range.get("minimum") if isinstance(word_range, Mapping) else None
         if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
             raise QualificationError("Qualification short-writing range is missing.")
-        sample_words = (
-            "Я чітко пояснюю власну думку й наводжу доречний приклад".split()
-        )
+        sample_words = "Я чітко пояснюю власну думку й наводжу доречний приклад".split()
         sample = " ".join(sample_words[index % len(sample_words)] for index in range(minimum))
-        answer_key = {
-            "guidance": (
-                "Перевірте виконання кожної умови. Зразок відповіді: " + sample
-            )
-        }
+        answer_key = {"guidance": ("Перевірте виконання кожної умови. Зразок відповіді: " + sample)}
     else:  # pragma: no cover - the closed production schedule controls kit types.
         raise AssertionError("Deterministic provider received an unsupported v3 kit.")
     return {
@@ -1771,14 +1779,10 @@ class ProductionQualificationHarness:
             raise AssertionError(
                 "A ready qualification job must retain three live v3 prompt digests."
             )
-        semantic_review_observed = any(
-            trace.mode == "semantic_review" for trace in durable_trace
-        )
-        if terminal_status == "ready" and not semantic_review_observed:
-            raise AssertionError("Qualification ready state has no semantic review trace.")
+        semantic_review_observed = any(trace.mode == "semantic_review" for trace in durable_trace)
         semantic_gate = (
             "passed"
-            if terminal_status == "ready"
+            if semantic_review_observed and terminal_status == "ready"
             else "failed"
             if semantic_review_observed
             else "not_run"
@@ -2043,8 +2047,7 @@ class ProductionQualificationHarness:
         activity_types = frozenset(str(payload["type"]) for payload in payloads)
         response_units = sum(_payload_units(payload) for payload in payloads)
         phase_three_transfer = any(
-            block["phase"] == 3 and block["type"] in {"text-questions", "short-writing"}
-            for block in blocks
+            block["phase"] == 3 and block["type"] == "cloze" for block in blocks
         )
         provenance_continuous = (
             resource.get("logical_model_id") == logical_model_id

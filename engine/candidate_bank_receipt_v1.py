@@ -60,8 +60,6 @@ def seal_complete_inventory(
 ) -> _CompleteInventorySeal:
     """Create the opaque receipt capability at the one post-build boundary."""
     members = _members_by_bank(inventory)
-    if ("short-writing", 1) not in members:
-        raise ValueError("Candidate bank receipt capture requires the short-writing bank.")
     _require_complete_authorized_bank_set(members)
     profile = lesson_profile_45()
     return _CompleteInventorySeal(
@@ -190,6 +188,9 @@ def _members_by_bank(
         grouped[("match-up", _bank_group(pair.pair_id, "match-up"))].append(pair.pair_id)
     for task in inventory.writing_tasks:
         grouped[("short-writing", _bank_group(task.task_id, "short-writing"))].append(task.task_id)
+    for request in inventory.mark_requests:
+        group = _bank_group(request.request_id, "mark-the-words")
+        grouped[("mark-the-words", group)].extend(request.target_token_ids)
     return {key: tuple(value) for key, value in grouped.items()}
 
 
@@ -198,13 +199,10 @@ def _require_complete_authorized_bank_set(
 ) -> None:
     """Require a closed inventory that can cover every 45-minute slot.
 
-    The only intentionally shared bank is ``fill-in:1`` for the two middle
-    slots.  A capability is therefore never issued for a subset such as the
-    short-writing bank alone, nor for a set missing another active placement.
+    A capability is never issued for a subset or for a bank without an exact
+    placement in the immutable profile.
     """
     profile = lesson_profile_45()
-    if ("fill-in", 1) not in members:
-        raise ValueError("Candidate bank receipt capture requires the shared fallback bank.")
     covered_slots: set[str] = set()
     for activity_type, group_number in members:
         try:
@@ -229,8 +227,6 @@ def receipts_for_inventory(
     members = _members_by_bank(inventory)
     if seal.inventory is not inventory or seal.context != context:
         raise ValueError("Candidate bank receipt capture requires its creation-boundary seal.")
-    if ("short-writing", 1) not in members:
-        raise ValueError("Candidate bank receipt capture requires the short-writing bank.")
     _require_complete_authorized_bank_set(members)
     rows: list[CandidateBankReceipt] = []
     for (activity_type, group_number), candidate_ids in sorted(members.items()):

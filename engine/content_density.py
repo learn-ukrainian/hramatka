@@ -39,12 +39,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from . import schema
+from .sentence_segmentation_v1 import sentence_spans
 
 if TYPE_CHECKING:
     from .registry import ActivityRegistryEntry
 
 _SPACE_RE: Final = re.compile(r"\s+")
-_SENTENCE_RE: Final = re.compile(r"[^.!?…]+[.!?…]?")
 _WORD_GUIDANCE_RE: Final = re.compile(r"4\d\s*[-–]\s*6\d|40|50|60", re.IGNORECASE)
 _REQUIREMENT_MARKERS_RE: Final = re.compile(
     r"(?:\(\d+\)|\d[\).\]]|;\s|—\s*(?:опиш|згадай|порів|навед|поясн|вкаж))",
@@ -78,8 +78,7 @@ THIN_SOURCE_UA_MESSAGE: Final = (
 # deterministic thin-source precheck (i.e. sufficient source but still could not
 # assemble a full lesson this time). Must never blame the teacher's text.
 FLOOR_SHORTFALL_UA_MESSAGE: Final = (
-    "Цього разу не вдалося скласти повний урок. "
-    "Спробуйте, будь ласка, ще раз."
+    "Цього разу не вдалося скласти повний урок. Спробуйте, будь ласка, ще раз."
 )
 
 
@@ -123,9 +122,7 @@ def normalize_evidence_sentence(text: str) -> str:
 
 def count_sentences(text: str) -> int:
     """Count non-empty sentence spans in one displayed passage."""
-    return sum(
-        1 for match in _SENTENCE_RE.finditer(text.strip()) if match.group(0).strip()
-    )
+    return len(sentence_spans(text))
 
 
 def scaled_generation_target(entry: ActivityRegistryEntry, anchor: dict | None) -> int:
@@ -272,9 +269,7 @@ def _derived_stem_values(candidate: schema.HramatkaActivity) -> tuple[str, ...]:
     raw_stems: list[object] = []
     if activity_type in {"fill-in", "error-correction"}:
         raw_stems.extend(
-            item.get("sentence")
-            for item in activity.get("items", [])
-            if isinstance(item, Mapping)
+            item.get("sentence") for item in activity.get("items", []) if isinstance(item, Mapping)
         )
     elif activity_type == "short-writing":
         raw_stems.append(activity.get("prompt"))
@@ -374,10 +369,7 @@ def meets_content_density(
 
     if activity_type == "cloze":
         blanks = activity.get("blanks", [])
-        return (
-            isinstance(blanks, list)
-            and len(blanks) >= delivered_item_floors()["cloze"]
-        )
+        return isinstance(blanks, list) and len(blanks) >= delivered_item_floors()["cloze"]
 
     if activity_type == "match-up":
         pairs = activity.get("pairs", [])
@@ -715,9 +707,7 @@ def _phase_three_transfer_errors(
     retained on the candidate, not the public activity projection.
     """
     productive = [
-        candidate
-        for candidate in phase_three
-        if candidate.activity.get("type") in PRODUCTIVE_TYPES
+        candidate for candidate in phase_three if candidate.activity.get("type") in PRODUCTIVE_TYPES
     ]
     if not productive:
         return ["phase_3_requires_productive_transfer"]
@@ -733,9 +723,7 @@ def _phase_three_transfer_errors(
     if not isinstance(items, list) or len(items) < 3:
         return ["phase_3_text_questions_require_three_moves"]
     questions = [
-        str(item.get("question") or "").casefold()
-        for item in items[:3]
-        if isinstance(item, dict)
+        str(item.get("question") or "").casefold() for item in items[:3] if isinstance(item, dict)
     ]
     evidence_by_locator = {
         evidence.locator: evidence.quote.strip()
@@ -888,9 +876,7 @@ def evaluate_teacher_ready_density(
     if len(type_units) < contract.min_types:
         errors.append(f"activity_types_{len(type_units)}_minimum_{contract.min_types}")
     errors.extend(
-        _phase_three_transfer_errors(
-            [*selected_by_phase.get(3, ()), *tray_by_phase.get(3, ())]
-        )
+        _phase_three_transfer_errors([*selected_by_phase.get(3, ()), *tray_by_phase.get(3, ())])
     )
     return TeacherReadyDensityReceipt(
         duration=duration,

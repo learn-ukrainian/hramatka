@@ -36,7 +36,7 @@ SUBSCRIPTION_HOST = "antigravity-cli"
 SUBSCRIPTION_EXECUTABLE_ENV = "HRAMATKA_SUBSCRIPTION_EXECUTABLE"
 SUBSCRIPTION_MODEL_ENV = "HRAMATKA_SUBSCRIPTION_MODEL"
 DEFAULT_SUBSCRIPTION_EXECUTABLE = "agy"
-DEFAULT_SUBSCRIPTION_MODEL = "gemini-3.6-flash-high"
+DEFAULT_SUBSCRIPTION_MODEL = "gemini-3.7-flash-high"
 
 # Provider endpoints are OpenAI-compatible `/chat/completions`. Base URLs are
 # env-overridable so no deployed address is baked into code (Sol leak audit).
@@ -71,8 +71,7 @@ def _validate_vertex_base_url(value: str) -> str:
         or len(parts) != 7
         or not parts[2]
         or parts[3:] != ("locations", "global", "publishers", "google")
-        or parsed.path.rstrip("/")
-        != f"/v1/projects/{parts[2]}/locations/global/publishers/google"
+        or parsed.path.rstrip("/") != f"/v1/projects/{parts[2]}/locations/global/publishers/google"
         or parsed.query
         or parsed.fragment
         or parsed.username
@@ -80,6 +79,7 @@ def _validate_vertex_base_url(value: str) -> str:
     ):
         raise ValueError("Vertex base URL must be the global Google publisher prefix.")
     return value.rstrip("/")
+
 
 DEEPINFRA_API_KEY_ENV = "DEEPINFRA_API_KEY"
 DEEPINFRA_BASE_URL_ENV = "HRAMATKA_DEEPINFRA_BASE_URL"
@@ -124,9 +124,7 @@ class SubscriptionGeneratorPort:
         default=None, init=False, repr=False
     )
 
-    def bind_semantic_review_route(
-        self, *, route_id: str, host: str, model_id: str
-    ) -> None:
+    def bind_semantic_review_route(self, *, route_id: str, host: str, model_id: str) -> None:
         """Seal one qualification route onto this subscription provider port."""
         if (
             not all(isinstance(value, str) and value for value in (route_id, host, model_id))
@@ -726,9 +724,7 @@ class FailoverGeneratorPort(AISGeneratorPort):
         self._fallback = fallback
         self._fallback_label = fallback_label
 
-    def bind_semantic_review_route(
-        self, *, route_id: str, host: str, model_id: str
-    ) -> None:
+    def bind_semantic_review_route(self, *, route_id: str, host: str, model_id: str) -> None:
         """Transparent fallback is incompatible with exact semantic-review attribution."""
         del route_id, host, model_id
         raise ValueError("A failover provider cannot be a qualified semantic reviewer route.")

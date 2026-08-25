@@ -11,7 +11,7 @@ from typing import Final
 
 from hramatka.contracts import PILOT_ACTIVITY_TYPES
 
-TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v3"
+TEACHER_READY_DENSITY_VERSION: Final = "TeacherReadyDensity.v4"
 
 # Allocation owns the operation identity used by its immutable ≤2 evidence
 # reuse rule.  Keeping it beside the v3 floor authority preserves the
@@ -20,7 +20,7 @@ COGNITIVE_OPERATION: Final[Mapping[str, str]] = MappingProxyType(
     {
         "true-false": "evaluate",
         "quiz": "recall",
-        "cloze": "recall",
+        "cloze": "long-form-reconstruction",
         "fill-in": "form",
         "error-correction": "form",
         "mark-the-words": "identify",
@@ -34,7 +34,10 @@ COGNITIVE_OPERATION: Final[Mapping[str, str]] = MappingProxyType(
 # transfer task. Literal fact recovery is reserved for undrilled propositions;
 # the final inventory labels any fallback overlap as anchored application.
 EVIDENCE_CAPACITY_OVERLAYS: Final[frozenset[tuple[str, str]]] = frozenset(
-    {("text-questions", "source-comprehension")}
+    {
+        ("text-questions", "source-comprehension"),
+        ("cloze", "long-form-reconstruction"),
+    }
 )
 
 
@@ -76,14 +79,11 @@ class ActivityFloor:
             raise ValueError("An activity floor must require at least one unit.")
         if self.minimum_registered_constraints < 0 or self.certified_errors_per_unit < 0:
             raise ValueError("Floor subrequirements cannot be negative.")
-        if (
-            self.category_minima is not None
-            and self.category_minima.total > self.minimum_units
-        ):
+        if self.category_minima is not None and self.category_minima.total > self.minimum_units:
             raise ValueError("Text-question category minima cannot exceed the activity floor.")
 
 
-# The one v3 per-type density authority.  Do not copy these values into future
+# The one v4 per-type density authority.  Do not copy these values into future
 # builders, evaluators, receipt code, or phase planners: import ``floor_for``.
 FLOOR_TABLE: Final[Mapping[str, ActivityFloor]] = MappingProxyType(
     {
@@ -109,7 +109,7 @@ FLOOR_TABLE: Final[Mapping[str, ActivityFloor]] = MappingProxyType(
 )
 
 if set(FLOOR_TABLE) != set(PILOT_ACTIVITY_TYPES):  # pragma: no cover - import-time contract guard
-    raise RuntimeError("TeacherReadyDensity.v3 must cover every pilot activity type exactly once.")
+    raise RuntimeError("TeacherReadyDensity.v4 must cover every pilot activity type exactly once.")
 
 
 def floor_for(activity_type: str) -> ActivityFloor:

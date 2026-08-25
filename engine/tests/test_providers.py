@@ -101,10 +101,10 @@ def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_js
         assert kwargs["timeout"] == 17
         assert kwargs["check"] is False
         assert "HRAMATKA_AIS_API_KEY" not in kwargs["env"]
-        return _subscription_completed("```json\n{\"activities\": []}\n```\n")
+        return _subscription_completed('```json\n{"activities": []}\n```\n')
 
     port = _subscription_port(runner)
-    assert port("SERIALIZER-STYLE-PROMPT") == "```json\n{\"activities\": []}\n```\n"
+    assert port("SERIALIZER-STYLE-PROMPT") == '```json\n{"activities": []}\n```\n'
     assert seen == [
         [
             "agy",
@@ -217,7 +217,7 @@ def test_subscription_bake_route_requires_explicit_selection(monkeypatch):
 
 def test_logical_subscription_route_is_explicit_and_never_builds_api_fallback(monkeypatch):
     monkeypatch.setattr(providers.SubscriptionGeneratorPort, "is_configured", lambda _self: True)
-    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.6-flash")
+    flash = next(model for model in LOGICAL_MODELS if model.id == "gemini-3.7-flash")
     selector = providers.make_logical_model_generator(
         flash.id,
         (providers.SUBSCRIPTION_PROVIDER,),
@@ -902,9 +902,7 @@ def test_ais_generator_reports_api_observed_provenance_from_its_own_call():
         "tier": "api_observed",
         "client_version": None,
         "requested_model": "google-ais/gemma-4-31b-it",
-        "raw_output_sha256": (
-            "35bf4703564648295baf3d35c7d9dc8536f06a20368e2dc60cbb3ef1924c63f9",
-        ),
+        "raw_output_sha256": ("35bf4703564648295baf3d35c7d9dc8536f06a20368e2dc60cbb3ef1924c63f9",),
     }
     assert ProviderProvenance.from_dict(provenance).requested_model == "google-ais/gemma-4-31b-it"
 
@@ -1274,9 +1272,7 @@ def test_400_fallback_retry_without_json_mode(monkeypatch):
             host="google-ais",
             retry_backoff_s=0,
         )
-        out = transport(
-            "prompt", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5
-        )
+        out = transport("prompt", api_key="k", model="google-ais/gemini-3.6-flash", timeout_s=5)
         assert out == '{"activities": []}'
 
         # Verify first call had json_object and second didn't
@@ -1389,6 +1385,7 @@ def test_provenance_stamp_fallback_fired(monkeypatch):
 
     # Reset ContextVar
     from hramatka.engine.transport import generator_model_id
+
     token = generator_model_id.set(None)
     try:
         res = port("test prompt")

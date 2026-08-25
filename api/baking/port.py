@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 FLOOR_SHORTFALL_UA_MESSAGE = (
@@ -21,6 +22,7 @@ class LessonBaker(Protocol):
         focus: str | None,
         *,
         block: dict[str, Any],
+        lesson_blocks: Sequence[Mapping[str, Any]],
         feedback: str | None,
     ) -> dict[str, Any]: ...
 

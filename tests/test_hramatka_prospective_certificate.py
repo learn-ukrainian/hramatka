@@ -100,8 +100,7 @@ def _payload(
                 "candidate_ids": ids,
                 "count": 8,
                 "candidate_offsets": [
-                    {"candidate_id": item, "unit_offset": offset}
-                    for offset, item in enumerate(ids)
+                    {"candidate_id": item, "unit_offset": offset} for offset, item in enumerate(ids)
                 ],
                 "candidate_provenance": [
                     {
@@ -152,10 +151,7 @@ def _payload(
     for receipt in full_receipts:
         receipt["inventory_seal"] = seal
     by_id = {receipt["bank_id"]: receipt for receipt in full_receipts}
-    banks = [
-        {"bank_id": bank_id, "receipt": by_id[bank_id]}
-        for bank_id in ("quiz:1", "cloze:1")
-    ]
+    banks = [{"bank_id": bank_id, "receipt": by_id[bank_id]} for bank_id in ("quiz:1", "cloze:1")]
 
     slot_specs = (
         ("P1-A1", 1, "quiz", 8),
@@ -209,9 +205,7 @@ def _payload(
             }
             for slot in slots
         ],
-        "eligible_replacement_edges": [
-            {"slot_id": slot["slot_id"], "types": []} for slot in slots
-        ],
+        "eligible_replacement_edges": [{"slot_id": slot["slot_id"], "types": []} for slot in slots],
         "canonical_allocation_digest": "c" * 64,
     }
     units = [unit for slot in slots for unit in slot["units"]]
@@ -322,8 +316,11 @@ def _manifest(*, first_text: str | None = None) -> ProspectiveManifest:
 
 def test_composite_rule_and_existing_profile_are_byte_pinned() -> None:
     assert sha256(COMPOSITE_RULE) == COMPOSITE_RULE_DIGEST
-    assert lesson_profile_45().digest == PROFILE_DIGEST
-    assert density_floor_fingerprint() == DENSITY_FLOOR_DIGEST
+    # This 64-cell certificate grammar belongs to the retired pre-quality
+    # profile. It remains parseable evidence, but cannot authorize the current
+    # teacher engine.
+    assert lesson_profile_45().digest != PROFILE_DIGEST
+    assert density_floor_fingerprint() != DENSITY_FLOOR_DIGEST
     assert len(lesson_profile_45().slots) == 6
 
 
@@ -385,9 +382,7 @@ def test_failed_source_is_retained_as_an_explicit_no_witness_failure() -> None:
         lambda value: value["source"].__setitem__("selection_rank", -5),
         lambda value: value["cells"][0].__setitem__("allocation", {"lol": "not-geometry"}),
         lambda value: value["cells"][0].__setitem__("witness", {"lol": "not-witness"}),
-        lambda value: value["cells"][0].__setitem__(
-            "domain_commitments", {"lol": "not-domains"}
-        ),
+        lambda value: value["cells"][0].__setitem__("domain_commitments", {"lol": "not-domains"}),
         lambda value: value["bank_receipts"][1].__setitem__("inventory_seal", "0" * 64),
     ],
 )
@@ -411,11 +406,7 @@ def test_detached_engine_bundle_is_reverified_with_all_inputs_required(
     }
     caller = data.DataBundle(
         root=tmp_path,
-        manifest={
-            "inputs": {
-                name: {**row, "required": False} for name, row in policy.items()
-            }
-        },
+        manifest={"inputs": {name: {**row, "required": False} for name, row in policy.items()}},
     )
     monkeypatch.setattr(
         prospective_capture, "frozen_content_authority", lambda _repository: ("d" * 64, policy)
@@ -465,16 +456,14 @@ def test_parser_and_independent_replay_reject_bank_and_geometry_corruption(
         prospective_replay, "_banks", lambda *_args: copy.deepcopy(payload["banks"])
     )
     monkeypatch.setattr(prospective_replay, "_verified_engine_bundle", lambda *_args: object())
-    expected_cells = copy.deepcopy(payload["cells"])
-    monkeypatch.setattr(
-        prospective_replay,
-        "_replay_cell",
-        lambda *_args: expected_cells.pop(0),
-    )
     certificate = ProspectiveCertificate(payload).to_bytes()
-    assert prospective_replay.replay_source(
-        certificate, manifest, source, text, bundle=object(), repository=Path.cwd()
-    ).digest
+    with pytest.raises(
+        prospective_replay.ProspectiveReplayError,
+        match="profile or density floor authority has drifted",
+    ):
+        prospective_replay.replay_source(
+            certificate, manifest, source, text, bundle=object(), repository=Path.cwd()
+        )
 
     corrupted = _payload(manifest_digest=manifest.digest, source_id=source.sqlite_id)
     corrupted["source"] = source.to_dict()
@@ -490,14 +479,10 @@ def test_parser_and_independent_replay_reject_bank_and_geometry_corruption(
     with pytest.raises(ProspectiveProofSchemaError):
         ProspectiveCertificate(corrupted)
 
-    expected_cells = copy.deepcopy(payload["cells"])
-    expected_cells[0]["allocation"]["canonical_allocation_digest"] = "0" * 64
-    monkeypatch.setattr(
-        prospective_replay,
-        "_replay_cell",
-        lambda *_args: expected_cells.pop(0),
-    )
-    with pytest.raises(prospective_replay.ProspectiveReplayError, match="does not replay"):
+    with pytest.raises(
+        prospective_replay.ProspectiveReplayError,
+        match="profile or density floor authority has drifted",
+    ):
         prospective_replay.replay_source(
             certificate,
             manifest,
@@ -565,24 +550,13 @@ def test_capture_and_replay_fail_closed_on_non_exact_receipt_emission(
 
     monkeypatch.setattr(prospective_capture, "inventory_from_anchor", fake_inventory)
     monkeypatch.setattr(prospective_capture, "_verified_engine_bundle", lambda *_args: object())
-    certificate = prospective_capture.capture_source(
-        manifest, source, text, bundle=object(), repository=Path.cwd()
-    )
-    assert certificate.payload["status"] == "failed"
-    assert certificate.payload["banks"] == []
-    assert certificate.payload["cells"] == []
-
-    monkeypatch.setattr(prospective_replay, "inventory_from_anchor", fake_inventory)
-    monkeypatch.setattr(prospective_replay, "_verified_engine_bundle", lambda *_args: object())
-    replayed = prospective_replay.replay_source(
-        certificate.to_bytes(),
-        manifest,
-        source,
-        text,
-        bundle=object(),
-        repository=Path.cwd(),
-    )
-    assert replayed.digest == certificate.digest
+    with pytest.raises(
+        prospective_capture.ProspectiveCaptureError,
+        match="profile or density floor authority has drifted",
+    ):
+        prospective_capture.capture_source(
+            manifest, source, text, bundle=object(), repository=Path.cwd()
+        )
 
 
 def test_cli_persists_exact_denominator_and_replays_persisted_bytes(monkeypatch, tmp_path) -> None:

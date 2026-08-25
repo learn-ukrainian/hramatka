@@ -15,8 +15,8 @@ from types import MappingProxyType
 from typing import Final
 
 SCHEMA_VERSION: Final = "HramatkaProofCertificate.v1"
-CONTENT_BASELINE_COMMIT: Final = "feccaa9083fdc824023284cf097d543737060f93"
-CONTENT_MANIFEST_DIGEST: Final = "da0ace9338c09c3bca68f3d08921e97d958182472151e3f03f5f852a1be182cc"
+CONTENT_BASELINE_COMMIT: Final = "f6c3e99c5b41d7dfdf19b1b6d3422e734cfb71d3"
+CONTENT_MANIFEST_DIGEST: Final = "a74f58e20cfbfa5e73b45eb719aa5d103a53bae34d7514ac6eadac6b1f3e7c84"
 CONTENT_MANIFEST_PATH: Final = "hramatka/qualification/assets/b1-45m.manifest.json"
 CONTENT_ANCHORS_PATH: Final = "hramatka/qualification/assets/b1-45m.anchors.json"
 CONTENT_LINGUISTICS_PATH: Final = "hramatka/qualification/assets/b1-45m.linguistics.json"
@@ -69,6 +69,7 @@ _ACTIVITY_TYPES: Final = frozenset(
         "cloze",
         "fill-in",
         "error-correction",
+        "mark-the-words",
         "text-questions",
         "short-writing",
     }
@@ -780,9 +781,7 @@ def _declared_domain_commitments(
         "unit": [unit["unit_id"] for unit in units],
         "claim": claims,
         "locator": locators,
-        "plan": [
-            {"unit_id": unit["unit_id"], "digest": unit["plan_digest"]} for unit in units
-        ],
+        "plan": [{"unit_id": unit["unit_id"], "digest": unit["plan_digest"]} for unit in units],
         "reservation": [
             reservation
             for unit in units

@@ -37,13 +37,14 @@ _PROVENANCE = {
 
 def _row(
     *,
+    activity_type: str = "text-questions",
     category: str = "comprehension",
     evidence: str = "Марія повернулася додому через сильний дощ.",
     question: str = "Чому Марія повернулася додому?",
     sample: str = "Марія повернулася додому, бо почався сильний дощ.",
 ) -> dict[str, object]:
     return {
-        "activity_type": "text-questions",
+        "activity_type": activity_type,
         "category": category,
         "evidence_segments": [evidence],
         "item_index": 0,
@@ -55,11 +56,27 @@ def _row(
     }
 
 
+def test_source_quiz_answer_can_be_reviewed_against_certified_evidence() -> None:
+    approval = review_teacher_samples(
+        [
+            _row(
+                activity_type="quiz",
+                question="Чому Марія повернулася додому?",
+                sample="Через сильний дощ.",
+            )
+        ],
+        reviewer=lambda prompt: _result(prompt, "pass", []),
+        cache=SemanticReviewCache(),
+        code_provenance=_PROVENANCE,
+        explicit_route="fixture:reviewer:v1",
+    )
+
+    assert approval is not None
+
+
 def _request_from_prompt(prompt: str) -> dict:
     return json.loads(
-        prompt.split("BEGIN_HOST_REVIEW_REQUEST\n", 1)[1].split(
-            "\nEND_HOST_REVIEW_REQUEST", 1
-        )[0]
+        prompt.split("BEGIN_HOST_REVIEW_REQUEST\n", 1)[1].split("\nEND_HOST_REVIEW_REQUEST", 1)[0]
     )
 
 
@@ -193,10 +210,7 @@ def test_transplanted_personal_scene_is_not_treated_as_entailment() -> None:
                     category="anchored_application",
                     evidence="Мандрівники заночували біля річки й розклали намет.",
                     question="Розкажіть про власне рішення під час подорожі.",
-                    sample=(
-                        "Ми заночували біля тієї самої річки й розклали такий самий "
-                        "намет."
-                    ),
+                    sample=("Ми заночували біля тієї самої річки й розклали такий самий намет."),
                 )
             ],
             reviewer=lambda prompt: _result(prompt, "fail", ["personal_transplant"]),
@@ -216,18 +230,21 @@ def test_unavailable_or_uncertain_review_never_authorizes_a_sample(
         reviewer = None
         expected = SemanticReviewConfigurationError
     elif failure_mode == "timeout":
+
         def unavailable(_prompt: str) -> str:
             raise GeneratorUnavailable("review timeout", retry_exhausted=True)
 
         reviewer = unavailable
         expected = GeneratorUnavailable
     elif failure_mode == "malformed":
+
         def malformed(_prompt: str) -> str:
             return "not json"
 
         reviewer = malformed
         expected = SemanticReviewMalformed
     else:
+
         def ambiguous(prompt: str) -> str:
             return _result(prompt, "ambiguous", [])
 
@@ -357,8 +374,4 @@ def test_runtime_provenance_hashes_the_exact_review_projection_adapter_and_templ
     provenance = runtime_review_provenance(adapter_path=Path(engine_adapter_v3.__file__))
 
     assert set(provenance) == set(_PROVENANCE)
-    assert all(
-        len(value) == 64
-        for key, value in provenance.items()
-        if key.endswith("_sha256")
-    )
+    assert all(len(value) == 64 for key, value in provenance.items() if key.endswith("_sha256"))

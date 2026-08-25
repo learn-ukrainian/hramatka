@@ -18,7 +18,7 @@ only B1/45-minute metadata for exactly these IDs:
 
 - `b1-narrative`
 - `b1-dialogue`
-- `b1-morphology`
+- `b1-informational`
 
 For each ID it stores source identity and SHA-256 only. Do not commit the raw
 teacher anchor, a generated lesson, a database, provider credentials, or
@@ -41,13 +41,12 @@ Run the proof locally with:
 .venv/bin/python -m pytest -q tests/test_production_qualification.py tests/test_qualified_model_selector.py
 ```
 
-Without an explicit target, the harness executes these nine exact cells:
+Without an explicit target, the harness executes the complete active routing
+matrix. The current teacher route is:
 
 | Logical model | Route ID |
 | --- | --- |
-| Gemini 3.6 Flash | `gemini-flash-subscription` |
-| Gemini 3.1 Pro | `gemini-pro-subscription` |
-| Gemma 4 31B | `gemma-openrouter` |
+| Gemini 3.7 Flash | `gemini-flash-subscription` |
 
 For each of the three anchors, the content-free receipt binds source commit,
 harness/manifest/anchor hashes, logical model, expected and observed route,
@@ -55,10 +54,13 @@ prompt/density/registry/engine/flag digests, density counts, route-bound
 generation/repair trace, explicit provenance tier, and outcome. The deterministic run intentionally
 creates one shortfall so the ordinary generic slot-repair loop must run.
 
-The path gate requires a durable ready job, eight visible blocks in the 3/4/1
-phase distribution, at least 28 learner-response units, activity diversity,
-and phase-three productive transfer. It also verifies route continuity for
-each generation and repair call.
+The path gate requires a durable ready job and the teacher-approved six-slot
+45-minute profile: match-up and source-comprehension quiz in Phase 1; fill-in,
+error correction, and mark-the-words in Phase 2; and one 350--450 word coherent
+source cloze in Phase 3 with one meaningful gap in every sentence. It also
+checks the slot-specific response-unit floors, activity diversity, lesson
+quality contract, semantic answer evidence, and route continuity for every
+generation and repair call.
 
 ## Receipt validation and aggregation
 
@@ -76,22 +78,21 @@ configured routes has exactly one current three-anchor aggregate. An explicit
 target can omit unrelated logical models, never an individual route of a
 selected model. The selector independently rejects duplicate route aggregates.
 
-The deterministic path result marks `semantic_gate: not_run`. It does not make
-claims about Ukrainian language quality, answer keys, or instructional
-semantics. Under the current shadow-tier policy, `not_run` remains admissible
-for a route aggregate; a future semantic cutover must explicitly change the
-receipt gate rather than silently treating this evidence as language review.
+Every passing cell must mark `semantic_gate: passed`. A `not_run` or `failed`
+semantic gate is never admissible for a route aggregate. The semantic review
+uses independently replayable evidence rows for the teacher-visible answers;
+transport success and density counts alone do not qualify a model.
 
 ## Real-provider runs
 
 The real mode is an operator-only command and is never invoked by pytest or by
-the teacher API. By default it runs the full 3-anchor × 3-route matrix. Passing
+the teacher API. By default it runs the full 3-anchor × active-route matrix. Passing
 one or more `--logical-model-id` values instead selects complete logical-model
 matrices: every configured route of each selected model and every immutable
-anchor remain mandatory. This is how Flash can be qualified without treating an
-unconfigured Gemma credential as evidence about Flash. Before it constructs a
+anchor remain mandatory. This is how Flash is qualified without treating any
+retired model or route as evidence about Flash. Before it constructs a
 provider it requires a clean worktree, the current source commit, the immutable
-manifest digest, all three external anchor hashes, both production-path feature
+manifest digest, all three external anchor hashes, the production-path feature
 flags, each selected route's credential source, separate scratch and receipt
 directories outside the repository, and a spend acknowledgement bound to the
 current commit, manifest, and selected routes.
@@ -124,14 +125,14 @@ First obtain the exact acknowledgement string without running the command's
 provider mode. The full default matrix uses:
 
 ```text
-HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x3
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x1
 ```
 
 An explicit Flash target includes its route identity, so a one-model
-acknowledgement cannot authorize Pro or Gemma:
+acknowledgement cannot authorize any other route:
 
 ```text
-HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x1:gemini-3.6-flash/gemini-flash-subscription
+HRAMATKA-QUALIFICATION-SPEND:<current-head>:<manifest-sha256>:B1-45M-3x1:gemini-3.7-flash/gemini-flash-subscription
 ```
 
 The operator then supplies that exact value together with
@@ -150,18 +151,15 @@ route telemetry.
 
 ### Headless subscription route
 
-The two subscription routes are selected with `HRAMATKA_BAKE_PROVIDERS=antigravity`;
-they never become API fallbacks. The executable defaults to `agy` and can be
+The subscription route is selected with `HRAMATKA_BAKE_PROVIDERS=antigravity`;
+it never becomes an API fallback. The executable defaults to `agy` and can be
 explicitly set with `HRAMATKA_SUBSCRIPTION_EXECUTABLE`. The requested model
 defaults to the selected logical route's wire model and can be explicitly set
 with `HRAMATKA_SUBSCRIPTION_MODEL`; an explicit override must match the pinned
-qualification route. `gemini-3.6-flash` pins `gemini-3.6-flash-high` and
-`gemini-3.1-pro` pins `gemini-3.1-pro-high`.
+qualification route. `gemini-3.7-flash` pins `gemini-3.7-flash-high`.
 
-Gemma 4 31B pins OpenRouter alone (`gemma-openrouter`,
-`google/gemma-4-31b-it`). It is `api_observed` and does not require a Google
-AIS credential. The retained AIS route specifications are future qualification
-options, not shipped teacher routes.
+Retired model specifications are not part of the active qualification matrix
+and cannot be selected by the teacher API.
 
 Each call starts a fresh sandboxed `agy --print` process with slash-command and
 skill expansion disabled. It never retries timeouts or non-zero exits: the CLI
@@ -170,8 +168,8 @@ a completed subscription request. The child receives only its runtime context
 (`HOME`, `PATH`, locale/temp/XDG variables, and `AGY_`/`ANTIGRAVITY_` values),
 never the parent process's provider API-key variables.
 
-The shipped Flash and Pro subscription routes rest on `cli_self_reported`
-evidence, not `api_observed`: receipts retain
+The shipped Flash subscription route rests on `cli_self_reported` evidence,
+not `api_observed`: receipts retain
 client version, requested model, and SHA-256 hashes of raw CLI outputs but not
 the outputs. The default selector gate requires `api_observed`. An operator may
 explicitly permit this route's lower-observability tier only with
@@ -179,17 +177,16 @@ explicitly permit this route's lower-observability tier only with
 does not turn CLI evidence into API-observed evidence.
 
 The run deletes its per-cell SQLite/cache/generated-content scratch directory
-and persists only validated content-free receipts. It leaves
-`semantic_gate: not_run`, invokes no semantic reviewer, and cannot populate
-the shipped production receipt defaults. Semantic adjudication is a separately
-authorized later gate that must repeat provenance validation before any call.
+and persists only validated content-free receipts. A passing real cell must
+complete the semantic reviewer on the same pinned route and persist
+`semantic_gate: passed`; otherwise qualification fails closed.
 
 Real cells use the production 1,800-second bake hard timeout and keep the
 authenticated API lifecycle open for 1,830 seconds, rather than the no-cost
 test harness's 600-second/20-second bounds. A cell that has not reached a
 terminal durable state by that deadline is refused; a terminal failed job is
 also refused. The command exits nonzero unless every selected cell is present,
-passed, and remains `semantic_gate: not_run`; it reports only anchor/route IDs,
+passed, and records `semantic_gate: passed`; it reports only anchor/route IDs,
 never lesson or provider content.
 
 ### Re-run the first Flash qualification
@@ -212,7 +209,7 @@ print(
     spend_acknowledgement(
         source_commit=os.environ["SOURCE_COMMIT"],
         manifest_sha256=os.environ["MANIFEST_SHA256"],
-        logical_model_ids=("gemini-3.6-flash",),
+        logical_model_ids=("gemini-3.7-flash",),
     )
 )
 PY
@@ -224,7 +221,7 @@ PY
   --scratch-root /operator-local/hramatka-qual/v3-flash-scratch \
   --source-commit "$SOURCE_COMMIT" \
   --manifest-sha256 "$MANIFEST_SHA256" \
-  --logical-model-id gemini-3.6-flash \
+  --logical-model-id gemini-3.7-flash \
   --execute-real-provider \
   --acknowledge-provider-spend "$ACK"
 

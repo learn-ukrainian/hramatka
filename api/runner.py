@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 
 from jsonschema import ValidationError
@@ -329,6 +330,12 @@ class BakeRunner:
         regenerate = getattr(baker, "regenerate_activity", None)
         if not callable(regenerate):
             raise ValueError("Configured baker does not support block regeneration.")
+        lesson = lesson_job.lesson
+        lesson_blocks = lesson.get("blocks") if isinstance(lesson, Mapping) else None
+        if not isinstance(lesson_blocks, list) or not all(
+            isinstance(block, Mapping) for block in lesson_blocks
+        ):
+            raise ValueError("Ready lesson does not contain regenerable sibling blocks.")
         for attempt in range(2):
             try:
                 return regenerate(
@@ -336,6 +343,7 @@ class BakeRunner:
                     lesson_job.duration,
                     lesson_job.focus,
                     block=regeneration.old_block,
+                    lesson_blocks=tuple(lesson_blocks),
                     feedback=regeneration.feedback,
                 )
             except ProviderUnavailable as error:

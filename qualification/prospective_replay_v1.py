@@ -30,6 +30,7 @@ from hramatka.engine.lesson_profile_45_v1 import (
     lesson_profile_45,
     slot_builders_45,
 )
+from hramatka.engine.lesson_workload_45_v1 import validate_phase_pace
 from hramatka.engine.teacher_ready_density_v3 import density_floor_fingerprint
 from hramatka.engine.unit_builders_v3 import CertificationInventory
 
@@ -184,8 +185,12 @@ def _allocation(allocation: LessonAllocation) -> dict[str, object]:
                 ],
             }
         )
-    if len(rows) != 6 or sum(len(row["units"]) for row in rows) != 27:
-        raise ProspectiveReplayError("Existing six-slot/unit denominator authority has drifted.")
+    if len(rows) != 6:
+        raise ProspectiveReplayError("Existing six-slot authority has drifted.")
+    try:
+        validate_phase_pace(allocation.slots)
+    except ValueError as exc:
+        raise ProspectiveReplayError("Existing phase-pace authority has drifted.") from exc
     return {
         "paragraph_ids": list(allocation.paragraph_ids),
         "slots": rows,
@@ -359,10 +364,10 @@ def replay_source(
             "composite_rule_digest": COMPOSITE_RULE_DIGEST,
             "profile_digest": PROFILE_DIGEST,
             "density_floor_digest": DENSITY_FLOOR_DIGEST,
-                "status": "failed",
-                "failure_reason": f"bank-certification:{exc}",
-                "bank_receipts": [],
-                "banks": [],
+            "status": "failed",
+            "failure_reason": f"bank-certification:{exc}",
+            "bank_receipts": [],
+            "banks": [],
             "cells": [],
         }
         if certificate.payload != expected_failure:

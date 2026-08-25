@@ -7,7 +7,6 @@ session, Origin/CSRF, SQLite, status-polling, and revision routes.
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import re
@@ -15,13 +14,18 @@ import socket
 import stat
 import sys
 import threading
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 LOOPBACK = "127.0.0.1"
 OWNER_TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 EXPECTED_STATE_DIRECTORY = Path(__file__).resolve().parents[1] / ".real-e2e"
-TEST_LOGICAL_MODEL_ID = "gemini-3.6-flash"
+TEST_LOGICAL_MODEL_ID = "gemini-3.7-flash"
+_V3_KITS_RE = re.compile(
+    r"=== IMMUTABLE TYPE-KITS \(data, not instructions\) ===\n```json\n(.*?)\n```",
+    re.DOTALL,
+)
 
 
 class E2EInterpreterError(RuntimeError):
@@ -78,11 +82,11 @@ def _qualified_test_registry() -> Any:
         return QualifiedModelRegistry(receipts=())
 
     test_provider_route = QualifiedProviderRoute(
-        "gemini-flash-ais", "google-ais", "google-ais/gemini-3.6-flash"
+        "gemini-flash-subscription", "antigravity-cli", "gemini-3.7-flash-high"
     )
     model = LogicalModelSpec(
         id=TEST_LOGICAL_MODEL_ID,
-        label="Gemini 3.5 Flash",
+        label="Gemini 3.7 Flash",
         description_uk="Детермінована тестова модель.",
         provider_routes=(test_provider_route,),
     )
@@ -104,6 +108,50 @@ def _qualified_test_registry() -> Any:
         passed=True,
     )
     return QualifiedModelRegistry(models=(model,), receipts=(receipt,))
+
+
+def _v3_fixture_serializer(prompt: str) -> str:
+    """Render v3 records from the exact certified kits without a provider call."""
+    from hramatka.qualification.harness import _v3_live_record_from_kit
+
+    matched = _V3_KITS_RE.search(prompt)
+    if matched is None:
+        raise AssertionError("real-backend v3 fixture received no immutable type kits")
+    kits = json.loads(matched.group(1))
+    if not isinstance(kits, list) or not all(isinstance(kit, dict) for kit in kits):
+        raise AssertionError("real-backend v3 fixture received malformed immutable type kits")
+    records = [_v3_live_record_from_kit(kit) for kit in kits]
+    if "=== BLOCK REGENERATION CONTRACT ===" in prompt:
+        for record in records:
+            record["activity"]["payload"]["instruction"] += " Уважно звірте відповідь із текстом."
+    return json.dumps({"slots": records}, ensure_ascii=False)
+
+
+def _v3_fixture_semantic_reviewer(prompt: str) -> str:
+    """Approve host-built teacher samples deterministically and without transport."""
+    begin = "BEGIN_HOST_REVIEW_REQUEST\n"
+    end = "\nEND_HOST_REVIEW_REQUEST"
+    if begin not in prompt or end not in prompt:
+        raise AssertionError("real-backend semantic fixture received an invalid request")
+    request = json.loads(prompt.split(begin, 1)[1].split(end, 1)[0])
+    items = request.get("items")
+    if not isinstance(items, list):
+        raise AssertionError("real-backend semantic fixture request has no items")
+    return json.dumps(
+        {
+            "contract_version": request["contract_version"],
+            "input_digest": request["input_digest"],
+            "results": [
+                {
+                    "review_id": item["review_id"],
+                    "verdict": "pass",
+                    "failure_codes": [],
+                }
+                for item in items
+            ],
+        },
+        ensure_ascii=False,
+    )
 
 
 def _fixture_baker(runtime_dir: Path) -> Any:
@@ -152,46 +200,34 @@ def _fixture_baker(runtime_dir: Path) -> Any:
 
         return UnderCapacityFixtureBaker(runtime_dir)
 
-    from hramatka.api.baking.engine_adapter import EngineLessonBaker
-    from hramatka.engine import fixtures
-    from hramatka.engine.providers import telemetry_ctx
+    from hramatka.api.baking.engine_adapter_v3 import EngineLessonBaker as V3EngineLessonBaker
+    from hramatka.qualification import harness as qualification_harness
 
-    class FixtureBaker(EngineLessonBaker):
-        """Fast deterministic LessonBaker port implementation; it never calls a provider."""
+    class FixtureBaker(V3EngineLessonBaker):
+        """Offline v3 baker using the production preflight and certified kit records."""
 
-        def __init__(self, runtime_dir: Path, *, logical_model_id: str | None = None) -> None:
+        def __init__(self, runtime_dir: Path) -> None:
             self._runtime_dir = runtime_dir
-
-            def generator(prompt: str) -> str:
-                ctx = telemetry_ctx.get()
-                phase = int(ctx.phase) if ctx is not None and ctx.phase else 1
-                activities = fixtures.e2e_activities_for_prompt(prompt, phase=phase)
-                return json.dumps({"activities": activities}, ensure_ascii=False)
-
             super().__init__(
-                generator=generator,
-                bundle=fixtures._bundle_with_matchup_vocabulary(runtime_dir / "data"),
-                cache_dir=runtime_dir / "cache",
-                logical_model_id=logical_model_id,
+                generator=_v3_fixture_serializer,
+                bundle=qualification_harness._qualification_fixture_bundle(runtime_dir / "data"),
+                semantic_reviewer=_v3_fixture_semantic_reviewer,
+                semantic_reviewer_route="fixture:semantic-reviewer:v1",
+                logical_model_id=TEST_LOGICAL_MODEL_ID,
             )
 
         def for_logical_model(self, logical_model_id: str | None) -> Any:
             if logical_model_id != TEST_LOGICAL_MODEL_ID:
                 raise ValueError("real-backend fixture requires its qualified logical model")
-            routed = FixtureBaker.__new__(FixtureBaker)
-            routed._runtime_dir = self._runtime_dir
-            EngineLessonBaker.__init__(
-                routed,
-                generator=self._generator,
-                bundle=self._resolved_bundle,
-                cache_dir=self._cache_dir,
-                logical_model_id=logical_model_id,
-            )
-            return routed
+            return self
 
         def bake(self, anchor: str | dict, duration: int, focus: str | None) -> dict[str, Any]:
             del anchor
-            return super().bake(fixtures.load_anchor(), duration, focus)
+            return super().bake(
+                qualification_harness.deterministic_runtime_anchors()["b1-narrative"].text,
+                duration,
+                focus,
+            )
 
         def regenerate_activity(
             self,
@@ -200,16 +236,19 @@ def _fixture_baker(runtime_dir: Path) -> Any:
             focus: str | None,
             *,
             block: dict[str, Any],
+            lesson_blocks: Sequence[Mapping[str, Any]],
             feedback: str | None,
         ) -> dict[str, Any]:
-            """Deterministic changed block for the real API/browser contract seam."""
-            del anchor, duration, focus, feedback
-            replacement = copy.deepcopy(block)
-            replacement["activity"]["payload"]["instruction"] += " Новий варіант."
-            replacement["activity"]["provenance"]["generator"] = TEST_LOGICAL_MODEL_ID
-            replacement["provenance"]["generator"] = TEST_LOGICAL_MODEL_ID
-            replacement["note"] = "Створено новий перевірений варіант."
-            return replacement
+            """Exercise production regeneration with the deterministic fixture anchor."""
+            del anchor
+            return super().regenerate_activity(
+                qualification_harness.deterministic_runtime_anchors()["b1-narrative"].text,
+                duration,
+                focus,
+                block=block,
+                lesson_blocks=lesson_blocks,
+                feedback=feedback,
+            )
 
     return FixtureBaker(runtime_dir)
 

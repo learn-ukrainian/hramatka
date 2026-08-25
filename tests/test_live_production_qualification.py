@@ -45,6 +45,8 @@ from hramatka.qualification.manifest import ManifestError
 from hramatka.qualification.receipts import DensityDiagnosticReceipt, RouteBinding
 
 _HEAD = "a" * 40
+
+
 def _request(tmp_path: Path, **changes: object) -> LiveQualificationRequest:
     manifest = load_manifest()
     request = LiveQualificationRequest(
@@ -88,7 +90,7 @@ def _diagnostic_request(tmp_path: Path) -> LiveDiagnosticRequest:
 
 
 def _flash_request(tmp_path: Path) -> LiveQualificationRequest:
-    target = ("gemini-3.6-flash",)
+    target = ("gemini-3.7-flash",)
     request = _request(tmp_path)
     return replace(
         request,
@@ -157,31 +159,27 @@ def test_preflight_refuses_execution_before_provider_construction(
     assert not called
 
 
-def test_matrix_is_derived_from_three_logical_models_and_rebinds_to_9_cells() -> None:
+def test_matrix_is_the_subscription_only_model_across_three_anchors() -> None:
     manifest = load_manifest()
-    assert len(_matrix()) == 3
-    assert len(_matrix()) * 3 == 9
+    assert len(_matrix()) == 1
+    assert len(_matrix()) * 3 == 3
     assert {route.route_id for _logical_model_id, route in _matrix()} == {
         "gemini-flash-subscription",
-        "gemini-pro-subscription",
-        "gemma-openrouter",
     }
     assert spend_acknowledgement(source_commit=_HEAD, manifest_sha256=manifest.sha256).endswith(
-        ":B1-45M-3x3"
+        ":B1-45M-3x1"
     )
 
 
 def test_flash_target_requires_its_complete_three_anchor_route_matrix(tmp_path) -> None:
     manifest = load_manifest()
-    target = ("gemini-3.6-flash",)
+    target = ("gemini-3.7-flash",)
     matrix = _matrix(target)
 
     assert matrix == (
         (
-            "gemini-3.6-flash",
-            RouteBinding(
-                "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
-            ),
+            "gemini-3.7-flash",
+            RouteBinding("gemini-flash-subscription", "antigravity-cli", "gemini-3.7-flash-high"),
         ),
     )
     assert len(matrix) * 3 == 3
@@ -189,7 +187,7 @@ def test_flash_target_requires_its_complete_three_anchor_route_matrix(tmp_path) 
         source_commit=_HEAD,
         manifest_sha256=manifest.sha256,
         logical_model_ids=target,
-    ).endswith(":B1-45M-3x1:gemini-3.6-flash/gemini-flash-subscription")
+    ).endswith(":B1-45M-3x1:gemini-3.7-flash/gemini-flash-subscription")
 
     preflight_live_qualification(
         _flash_request(tmp_path),
@@ -335,7 +333,7 @@ def test_live_density_diagnostic_runs_only_the_pinned_flash_cell_and_persists_co
         pinned_port_factory=fake_port_factory,
     )
 
-    assert constructed == [("gemini-3.6-flash", "gemini-flash-subscription")]
+    assert constructed == [("gemini-3.7-flash", "gemini-flash-subscription")]
     assert credential_routes == ["gemini-flash-subscription"]
     assert run.cell.receipt.outcome == "passed"
     parsed = DensityDiagnosticReceipt.from_dict(
@@ -463,6 +461,7 @@ def test_invalid_later_route_runtime_refuses_before_any_pinned_port_factory(
             pinned_port_factory=port_factory,
         )
     assert not constructed
+
 
 def test_route_validation_is_pure_config_and_never_probes_the_host_filesystem(
     monkeypatch,
@@ -596,7 +595,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
 
     anchors = deterministic_runtime_anchors()
     anchor = anchors["b1-narrative"]
-    route = RouteBinding("gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high")
+    route = RouteBinding("gemini-flash-subscription", "antigravity-cli", "gemini-3.7-flash-high")
     bundle = fixtures._bundle_with_matchup_vocabulary(tmp_path / "fixture-data")
     harness = ProductionQualificationHarness(tmp_path / "receipts", source_commit=_HEAD)
     (tmp_path / "short").mkdir()
@@ -607,7 +606,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
         with pytest.raises(QualificationError, match="terminal state"):
             harness._run_cell(
                 anchor,
-                "gemini-3.6-flash",
+                "gemini-3.7-flash",
                 route,
                 bundle,
                 provider=SlowProvider(route),
@@ -619,7 +618,7 @@ def test_shared_runner_waits_for_injected_live_readiness_timeout(
             )
         result = harness._run_cell(
             anchor,
-            "gemini-3.6-flash",
+            "gemini-3.7-flash",
             route,
             bundle,
             provider=SlowProvider(route),
@@ -665,7 +664,7 @@ def test_pinned_route_refuses_port_without_receipt_provenance() -> None:
     route = RouteBinding(
         route_id="gemini-flash-subscription",
         host="antigravity-cli",
-        model_id="gemini-3.6-flash-high",
+        model_id="gemini-3.7-flash-high",
     )
     provider = _PinnedRouteProvider(route, lambda _prompt: '{"activities": []}')  # type: ignore[arg-type]
 
@@ -694,17 +693,15 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
         pinned_port_factory=fake_port_factory,
     )
 
-    assert len(run.cells) == 9
-    assert len(constructed) == 9
+    assert len(run.cells) == 3
+    assert len(constructed) == 3
     assert set(constructed) == {
         (
-            "gemini-3.6-flash",
+            "gemini-3.7-flash",
             "gemini-flash-subscription",
             "antigravity-cli",
-            "gemini-3.6-flash-high",
+            "gemini-3.7-flash-high",
         ),
-        ("gemini-3.1-pro", "gemini-pro-subscription", "antigravity-cli", "gemini-3.1-pro-high"),
-        ("gemma-4-31b", "gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
     }
     assert request.scratch_root.is_dir()
     assert list(request.scratch_root.iterdir()) == []
@@ -728,7 +725,7 @@ def test_live_mode_uses_exact_routes_cleans_scratch_and_leaves_semantic_separate
     # A current aggregate now includes the fail-closed teacher-sample review.
     assert (
         RouteAggregate(
-            logical_model_id="gemini-3.6-flash",
+            logical_model_id="gemini-3.7-flash",
             route=route_cells[0].expected_route,
             cells=route_cells,
         )
@@ -759,15 +756,15 @@ def test_live_mode_can_qualify_the_complete_flash_target_without_other_credentia
     assert len(run.cells) == 3
     assert set(constructed) == {
         (
-            "gemini-3.6-flash",
+            "gemini-3.7-flash",
             "gemini-flash-subscription",
             "antigravity-cli",
-            "gemini-3.6-flash-high",
+            "gemini-3.7-flash-high",
         )
     }
     assert json.loads((request.receipt_root / "aggregation-targets.json").read_text()) == {
         "schema_version": "ProductionQualificationTargets.v1",
-        "logical_model_ids": ["gemini-3.6-flash"],
+        "logical_model_ids": ["gemini-3.7-flash"],
     }
 
 

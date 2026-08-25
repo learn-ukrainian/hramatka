@@ -335,7 +335,65 @@ def _candidate_unit(
         candidate.certified_error_count if candidate.activity_type == "error-correction" else 0
     )
     distinctness: dict[str, object]
-    if candidate.activity_type in {"quiz", "cloze", "fill-in"}:
+    source_quiz = (
+        candidate.activity_type == "quiz" and candidate.focus_alignment == "source-comprehension"
+    )
+    if source_quiz:
+        sentence = next(
+            (item for item in inventory.sentences if item.sentence_id == candidate.sentence_id),
+            None,
+        )
+        topic = (
+            next(
+                (token for token in sentence.tokens if token.token_id == candidate.topic_token_id),
+                None,
+            )
+            if sentence is not None
+            else None
+        )
+        if (
+            sentence is None
+            or topic is None
+            or candidate.expected_key != sentence.text
+            or candidate.category != "comprehension"
+            or candidate.question_intent != "fact-recovery"
+            or candidate.question_basis != "source-proposition"
+            or candidate.question_grounding_terms != (topic.surface,)
+            or candidate.topic_lemma is None
+        ):
+            raise ValueError("Source quiz must bind one complete certified proposition.")
+        if (
+            len(candidate.choice_bank) != 3
+            or len(candidate.choice_bank) != len(set(candidate.choice_bank))
+            or candidate.expected_key not in candidate.choice_bank
+            or {option for option, _warrant in candidate.exclusion_warrants}
+            != set(candidate.choice_bank) - {candidate.expected_key}
+            or not all(warrant.strip() for _option, warrant in candidate.exclusion_warrants)
+        ):
+            raise ValueError("Source quiz needs one answer and two certified distractors.")
+        prefixes = _TEXT_QUESTION_ALLOWED_PREFIXES["comprehension"]
+        distinctness = {
+            "stem": candidate.candidate_id,
+            "semantic_target": candidate.semantic_target,
+            "question_category": candidate.category,
+            "question_intent": candidate.question_intent,
+            "question_basis": {
+                "kind": "source-proposition",
+                "sentence_id": candidate.sentence_id,
+            },
+            "question_topic": {
+                "token_id": topic.token_id,
+                "surface": topic.surface,
+                "lemma": candidate.topic_lemma,
+            },
+            "question_grounding_terms": [topic.surface],
+            "question_frame": {
+                "allowed_prefixes": list(prefixes),
+                "category": candidate.category,
+                "intent": candidate.question_intent,
+            },
+        }
+    elif candidate.activity_type in {"quiz", "cloze", "fill-in"}:
         rendering_surface = candidate.rendering_surface or candidate.literal_evidence
         if (
             candidate.target_start_offset is None
@@ -360,6 +418,7 @@ def _candidate_unit(
             not in {
                 "cross-gap-lexical.v1",
                 "contextual-morphology-cloze.v3",
+                "source-context-lexical.v1",
             }
         ):
             raise ValueError("Generic cloze needs a certified contextual option bank.")
@@ -409,15 +468,11 @@ def _candidate_unit(
                         for item in inventory.sentences
                         if item.sentence_id == sentence_id
                     )
-                    if len(evidence_segments) != len(
-                        candidate.question_context_sentence_ids
-                    ):
+                    if len(evidence_segments) != len(candidate.question_context_sentence_ids):
                         raise ValueError(
                             "Text-question regeneration evidence segments are detached."
                         )
-                    distinctness["regeneration_evidence_segments"] = list(
-                        evidence_segments
-                    )
+                    distinctness["regeneration_evidence_segments"] = list(evidence_segments)
             prefixes = _TEXT_QUESTION_RELATION_PREFIXES.get(
                 candidate.question_intent or ""
             ) or _TEXT_QUESTION_ALLOWED_PREFIXES.get(candidate.category or "")
@@ -453,9 +508,7 @@ def _candidate_unit(
                 )
                 proposition_basis = candidate.question_basis == "source-proposition"
                 span_basis = candidate.question_basis == "source-span"
-                proof_surface = (
-                    candidate.rendering_surface if span_basis else sentence.text
-                )
+                proof_surface = candidate.rendering_surface if span_basis else sentence.text
                 if (
                     sentence is None
                     or candidate.answer_start_offset is None
@@ -476,17 +529,14 @@ def _candidate_unit(
                     or (
                         (proposition_basis or span_basis)
                         and (
-                            candidate.category
-                            not in {"comprehension", "anchored_application"}
+                            candidate.category not in {"comprehension", "anchored_application"}
                             or candidate.focus_alignment != "source-comprehension"
                             or candidate.topic_token_id is not None
                             or candidate.topic_lemma is not None
                         )
                     )
                 ):
-                    raise ValueError(
-                        "Text-question source proof must bind one source proposition."
-                    )
+                    raise ValueError("Text-question source proof must bind one source proposition.")
                 distinctness["answer_span"] = {
                     "sentence_id": candidate.sentence_id,
                     "start_offset": candidate.answer_start_offset,
@@ -500,12 +550,9 @@ def _candidate_unit(
                     }
                     if candidate.category == "anchored_application":
                         source_surfaces = {token.surface for token in sentence.tokens}
-                        if (
-                            not candidate.question_grounding_terms
-                            or any(
-                                term not in source_surfaces
-                                for term in candidate.question_grounding_terms
-                            )
+                        if not candidate.question_grounding_terms or any(
+                            term not in source_surfaces
+                            for term in candidate.question_grounding_terms
                         ):
                             raise ValueError(
                                 "Text-question application grounding terms must bind source tokens."
@@ -527,10 +574,8 @@ def _candidate_unit(
                     if (
                         candidate.category != "comprehension"
                         or len(context_sentences) < 2
-                        or len(context_sentences)
-                        != len(candidate.question_context_sentence_ids)
-                        or candidate.sentence_id
-                        not in candidate.question_context_sentence_ids
+                        or len(context_sentences) != len(candidate.question_context_sentence_ids)
+                        or candidate.sentence_id not in candidate.question_context_sentence_ids
                         or " ".join(item.text for item in context_sentences)
                         != candidate.rendering_surface
                         or candidate.question_grounding_terms
@@ -630,9 +675,7 @@ def _candidate_unit(
         ),
         citation_plan=tuple(
             Citation(inventory.source_id, f"sentence:{sentence_id}")
-            for sentence_id in (
-                candidate.question_context_sentence_ids or (candidate.sentence_id,)
-            )
+            for sentence_id in (candidate.question_context_sentence_ids or (candidate.sentence_id,))
         ),
         distinctness=distinctness,
         rendering_surface=candidate.rendering_surface or candidate.literal_evidence,
@@ -706,9 +749,7 @@ def _generic_builder(
     evidence_candidates = tuple(item for item in candidates if item.kit_rule_id is None)
     if evidence_candidates:
         maximum_per_source = (
-            2
-            if activity_type in {"quiz", "cloze", "fill-in", "error-correction"}
-            else 1
+            2 if activity_type in {"quiz", "cloze", "fill-in", "error-correction"} else 1
         )
         if not _source_diverse(
             tuple(item.sentence_id for item in evidence_candidates),
@@ -721,11 +762,21 @@ def _generic_builder(
     source_lemmas = tuple(
         item.source_lemma
         for item in candidates
-        if item.kit_rule_id is None
-        and item.activity_type in {"quiz", "cloze", "fill-in"}
+        if item.kit_rule_id is None and item.activity_type in {"quiz", "cloze", "fill-in"}
     )
-    if any(lemma is not None for lemma in source_lemmas) and (
-        None in source_lemmas or len(source_lemmas) != len(set(source_lemmas))
+    long_form_cloze = (
+        activity_type == "cloze"
+        and len(candidates) >= 18
+        and len({candidate.rendering_surface for candidate in candidates}) == 1
+        and all(
+            candidate.frame_family in {"cross-gap-lexical.v1", "source-context-lexical.v1"}
+            for candidate in candidates
+        )
+    )
+    if (
+        not long_form_cloze
+        and any(lemma is not None for lemma in source_lemmas)
+        and (None in source_lemmas or len(source_lemmas) != len(set(source_lemmas)))
     ):
         candidates = ()
     return certify_unit_plan(

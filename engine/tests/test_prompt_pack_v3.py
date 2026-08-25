@@ -119,11 +119,11 @@ def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
     from hramatka.qualification.harness import _v3_qualification_allocation
 
     allocation = _v3_qualification_allocation()
-    context = build_phase_context(allocation, phase=1)
+    context = build_phase_context(allocation, phase=3)
     kit = next(
         item
         for item in context["type_kits"]
-        if item["slot_id"] == "P1-A2" and item["type"] == "cloze"
+        if item["slot_id"] == "P3-A1" and item["type"] == "cloze"
     )
     units = kit["certified_units"]
     carrier = units[0]["rendering_surface"]
@@ -143,6 +143,71 @@ def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
             independently_rendered[:start] + f"{{{index}}}" + independently_rendered[end:]
         )
     assert kit["marked_rendering_surface"] == independently_rendered
+
+
+def test_qualified_quiz_is_source_comprehension_not_another_gap_drill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hramatka.api.baking.engine_adapter_v3 import _activity_gate
+    from hramatka.qualification.harness import _v3_qualification_allocation
+
+    context = build_phase_context(_v3_qualification_allocation(), phase=1)
+    kit = next(item for item in context["type_kits"] if item["type"] == "quiz")
+    items = []
+    key_items = []
+    topic_lemmas = {}
+    for index, unit in enumerate(kit["certified_units"]):
+        distinctness = unit["distinctness"]
+        prefix = distinctness["question_frame"]["allowed_prefixes"][0]
+        topic = distinctness["question_topic"]["surface"]
+        topic_lemmas[topic.casefold()] = distinctness["question_topic"]["lemma"]
+        options = list(distinctness["choice_bank"])
+        shift = index % len(options)
+        options = [*options[shift:], *options[:shift]]
+        correct = options.index(unit["allowed_forms"][0])
+        items.append(
+            {
+                "question": f"{prefix} повідомляє джерело про {topic}?",
+                "options": options,
+                "correct": correct,
+            }
+        )
+        key_items.append({"index": index, "correct": correct})
+    activity = {
+        "payload": {
+            "type": "quiz",
+            "instruction": "Дайте відповіді за змістом тексту.",
+            "items": items,
+        },
+        "answer_key": {"items": key_items},
+    }
+    original_matches = prompt_pack_v3._vesum_matches
+
+    def qualification_matches(word, db_path):
+        lemma = topic_lemmas.get(word.casefold())
+        return [{"lemma": lemma, "pos": "noun"}] if lemma else original_matches(word, db_path)
+
+    monkeypatch.setattr(prompt_pack_v3, "_vesum_matches", qualification_matches)
+
+    _activity_gate(activity, kit)
+    validate_activity_purpose(activity, kit)
+    validate_distractor_adjacency(activity, kit)
+    validate_teacher_sample_constraints(activity, kit)
+    review_inputs = teacher_sample_review_inputs(activity, kit)
+
+    assert len(review_inputs) == len(kit["certified_units"])
+    assert all(row["activity_type"] == "quiz" for row in review_inputs)
+    assert all(row["category"] == "comprehension" for row in review_inputs)
+    assert [row["teacher_sample"] for row in review_inputs] == [
+        item["options"][item["correct"]] for item in items
+    ]
+    assert [row["evidence_segments"] for row in review_inputs] == [
+        [unit["rendering_surface"]] for unit in kit["certified_units"]
+    ]
+
+    activity["payload"]["items"][0]["question"] = "Що тут ___?"
+    with pytest.raises(PromptPackV3Error, match="not bound to its proposition"):
+        validate_activity_purpose(activity, kit)
 
 
 def test_serializer_temperature_is_bound_into_the_prompt_context(
@@ -925,8 +990,7 @@ def test_short_writing_visible_constraints_and_bounded_teacher_sample_pass() -> 
             "prompt": ("Напишіть текст про ваш щоденний розклад: " + ", ".join(target_forms) + "."),
         },
         "answer_key": {
-            "guidance": "Перевірте виконання всіх умов. Зразок відповіді: "
-            + _ukrainian_sample(60)
+            "guidance": "Перевірте виконання всіх умов. Зразок відповіді: " + _ukrainian_sample(60)
         },
     }
     _activity_gate(activity, kit)
@@ -977,9 +1041,7 @@ def test_short_writing_punctuation_cannot_pad_a_short_teacher_sample() -> None:
     kit = _context("short-writing")["type_kits"][0]
     activity = {
         "payload": {"type": "short-writing", "prompt": "Напишіть короткий текст."},
-        "answer_key": {
-            "guidance": "Зразок відповіді: " + _ukrainian_sample(59) + " ---"
-        },
+        "answer_key": {"guidance": "Зразок відповіді: " + _ukrainian_sample(59) + " ---"},
     }
 
     with pytest.raises(
@@ -1043,9 +1105,7 @@ def test_text_question_review_inputs_use_only_matching_host_certified_evidence()
 
     assert len(inputs) == len(kit["certified_units"])
     assert inputs[0]["evidence_segments"] == [certified_segment]
-    assert inputs[1]["evidence_segments"] == [
-        kit["certified_units"][1]["rendering_surface"]
-    ]
+    assert inputs[1]["evidence_segments"] == [kit["certified_units"][1]["rendering_surface"]]
     assert all("evidence_quote" not in row for row in inputs)
     assert "Підроблений доказ" not in repr(inputs)
     assert activity == frozen_activity
@@ -1063,9 +1123,7 @@ def test_text_question_malformed_host_evidence_segments_fail_closed() -> None:
         "slot_id": kit["slot_id"],
         "type": kit["type"],
         "activity": activity,
-        "serialized_units": [
-            {"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]
-        ],
+        "serialized_units": [{"unit_id": unit_id} for unit_id in kit["scheduled_unit_ids"]],
     }
 
     with pytest.raises(RuleNamedRejection) as rejection:
@@ -1597,9 +1655,7 @@ def test_temporal_preposition_does_not_consume_a_source_answer_word(
         for unit in kit["certified_units"]
         if unit["distinctness"]["question_category"] == "comprehension"
     )
-    unit["rendering_surface"] = (
-        "За кілька хвилин сонце розжене туман, і мандрівники замружаться."
-    )
+    unit["rendering_surface"] = "За кілька хвилин сонце розжене туман, і мандрівники замружаться."
     unit["distinctness"]["question_topic"] = {
         "token_id": "s-1:t-3",
         "surface": "хвилин",
@@ -1692,9 +1748,7 @@ def test_application_block_requires_one_text_supported_interpretive_question() -
     with pytest.raises(PromptPackV3Error, match="evidence-based interpretive"):
         validate_activity_purpose(activity, kit)
 
-    activity["payload"]["items"][1] = (
-        "На вашу думку, яка деталь опису книги важлива?"
-    )
+    activity["payload"]["items"][1] = "На вашу думку, яка деталь опису книги важлива?"
     validate_activity_purpose(activity, kit)
 
 
@@ -1715,9 +1769,7 @@ def test_application_question_accepts_a_grounded_reference_to_the_visible_descri
         "payload": {
             "type": "text-questions",
             "instruction": "Дайте відповідь.",
-            "items": [
-                "На вашу думку, як читання впливає на мозок у цьому описі?"
-            ],
+            "items": ["На вашу думку, як читання впливає на мозок у цьому описі?"],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1847,11 +1899,11 @@ def test_anchored_application_rejects_contrast_as_one_causal_reason() -> None:
     activity = {
         "payload": {
             "type": "text-questions",
-                "instruction": "Дайте відповідь.",
-                "items": [
-                    "З вашого досвіду, як ви відмовлялися від квартири "
-                    "через те, що вона красива, але дорога?"
-                ],
+            "instruction": "Дайте відповідь.",
+            "items": [
+                "З вашого досвіду, як ви відмовлялися від квартири "
+                "через те, що вона красива, але дорога?"
+            ],
         },
         "answer_key": {"guidance": "Обґрунтуйте відповідь."},
     }
@@ -1948,9 +2000,7 @@ def test_frequency_comprehension_question_must_keep_its_certified_scale(
         "тепер": [{"lemma": "тепер", "pos": "adv", "tags": "adv"}],
         "уже": [{"lemma": "уже", "pos": "adv", "tags": "adv"}],
         "хати": [{"lemma": "хата", "pos": "noun", "tags": "noun:p:v_naz"}],
-        "попадалися": [
-            {"lemma": "попадатися", "pos": "verb", "tags": "verb:imperf:past:p"}
-        ],
+        "попадалися": [{"lemma": "попадатися", "pos": "verb", "tags": "verb:imperf:past:p"}],
         "рідше": [{"lemma": "рідше", "pos": "adv", "tags": "adv:compc"}],
         "часто": [{"lemma": "часто", "pos": "adv", "tags": "adv"}],
     }
@@ -2122,9 +2172,7 @@ def test_observed_tetiana_question_defects_receive_item_local_repairs(
             "intent": intent,
         }
     elif question.startswith("Чи доводилося вам"):
-        unit["distinctness"]["question_frame"]["allowed_prefixes"].append(
-            "Чи доводилося вам"
-        )
+        unit["distinctness"]["question_frame"]["allowed_prefixes"].append("Чи доводилося вам")
     kit["certified_units"] = [unit]
     record = {
         "activity": {

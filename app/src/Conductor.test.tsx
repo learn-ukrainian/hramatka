@@ -112,3 +112,21 @@ describe('Conductor deliberate-error badge (#208)', () => {
     expect(screen.queryByTestId('deliberate-error-list')).not.toBeInTheDocument();
   });
 });
+
+describe('Conductor phase-minute budgets', () => {
+  it.each([
+    [45, ['10:00', '20:00', '15:00']],
+    [60, ['15:00', '30:00', '15:00']],
+    [90, ['20:00', '45:00', '25:00']],
+  ] as const)('shows a %s-minute plan that sums to its selected duration', (duration, expected) => {
+    renderConductor({ ...lessonDoc(ENRICHED_KEY), duration });
+
+    fireEvent.click(screen.getByRole('button', { name: /Готово/ }));
+
+    const planned = Array.from(document.querySelectorAll<HTMLTableRowElement>('.cond-tbl tbody tr')).map(
+      (row) => row.cells[1].textContent,
+    );
+    expect(planned).toEqual(expected);
+    expect(expected.reduce((total, value) => total + Number(value.slice(0, -3)), 0)).toBe(duration);
+  });
+});

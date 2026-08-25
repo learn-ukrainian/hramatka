@@ -16,17 +16,26 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   // Production receipts are intentionally empty after #375; this flow relies
   // on the real-backend harness's qualified test-registry injection seam.
   const modelPicker = page.getByLabel('Модель для уроку');
-  await expect(modelPicker).toHaveValue('gemini-3.6-flash');
-  await modelPicker.selectOption('gemini-3.6-flash');
+  await expect(modelPicker).toHaveValue('gemini-3.7-flash');
+  await modelPicker.selectOption('gemini-3.7-flash');
   await page.locator('.field').filter({ hasText: 'Тривалість' }).locator('select').selectOption('45');
   const submittedLesson = page.waitForRequest(
     request => request.url().endsWith('/api/lessons') && request.method() === 'POST',
   );
   await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-  expect((await submittedLesson).postDataJSON().logical_model_id).toBe('gemini-3.6-flash');
-  // 45-min B1 lesson = 8 activities under the canonical sizing policy (hramatka/sizing_policy.py).
-  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(8, { timeout: 15_000 });
-  await expect(page.locator('[data-activity-player]')).toHaveCount(8);
+  expect((await submittedLesson).postDataJSON().logical_model_id).toBe('gemini-3.7-flash');
+  // The live v3 45-minute profile is six exact slots, not the retired eight-block plan.
+  const expectedTypes = [
+    'match-up', 'quiz', 'fill-in', 'error-correction', 'mark-the-words', 'cloze',
+  ];
+  const activityPlayers = page.locator('.lesson-view [data-activity-player]');
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 15_000 });
+  await expect(activityPlayers).toHaveCount(6);
+  await expect
+    .poll(async () => page.locator('.lesson-view [data-activity-type]').evaluateAll(
+      nodes => nodes.map(node => node.getAttribute('data-activity-type')),
+    ))
+    .toEqual(expectedTypes);
 
   const revisionBefore = await page.locator('.meta').textContent();
   const initialRevision = Number(revisionBefore?.match(/Ревізія: (\d+)/)?.[1]);
@@ -40,25 +49,28 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   const beforeActivities = await Promise.all(
     Array.from({ length: await lessonBlocks.count() }, (_, index) => blockContent(index)),
   );
-  const firstBlock = page.locator('.lesson-view [data-block-id="block-1"]');
-  await firstBlock.getByRole('button', { name: 'Створити інший варіант' }).click();
-  await firstBlock.getByPlaceholder(/менше очевидних підказок/).fill(
+  const targetBlockIndex = 1;
+  const targetBlock = page.locator('.lesson-view [data-block-id="block-2"]');
+  await targetBlock.getByRole('button', { name: 'Створити інший варіант' }).click();
+  await targetBlock.getByPlaceholder(/менше очевидних підказок/).fill(
     'Зробіть формулювання природнішим.',
   );
   const regenerationRequest = page.waitForRequest(
-    request => request.url().includes('/blocks/block-1/regenerations')
+    request => request.url().includes('/blocks/block-2/regenerations')
       && request.method() === 'POST',
   );
-  await firstBlock.getByRole('button', { name: 'Створити новий варіант' }).click();
+  await targetBlock.getByRole('button', { name: 'Створити новий варіант' }).click();
   expect((await regenerationRequest).postDataJSON().feedback).toBe(
     'Зробіть формулювання природнішим.',
   );
-  await expect(firstBlock.getByTestId('regeneration-succeeded')).toBeVisible({ timeout: 10_000 });
+  await expect(targetBlock.getByTestId('regeneration-succeeded')).toBeVisible({ timeout: 10_000 });
   const afterActivities = await Promise.all(
     Array.from({ length: await lessonBlocks.count() }, (_, index) => blockContent(index)),
   );
-  expect(afterActivities[0]).not.toBe(beforeActivities[0]);
-  expect(afterActivities.slice(1)).toEqual(beforeActivities.slice(1));
+  expect(afterActivities[targetBlockIndex]).not.toBe(beforeActivities[targetBlockIndex]);
+  expect(afterActivities.filter((_, index) => index !== targetBlockIndex)).toEqual(
+    beforeActivities.filter((_, index) => index !== targetBlockIndex),
+  );
   await expect(page.locator('.meta')).toContainText(`Ревізія: ${initialRevision + 1}`);
 
   const warnings = await page.locator('.ack-btn').count();
@@ -75,6 +87,14 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   const directUrl = page.url();
   await page.reload();
   await expect(page).toHaveURL(directUrl);
-  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(8, { timeout: 10_000 });
+  await expect(page.locator('.lesson-view .dblock:not(.empty-phase)')).toHaveCount(6, { timeout: 10_000 });
   await expect(page.getByText('Прийнято', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: /Провести заняття/ }).click();
+  await expect(page.locator('.conductor-view .cond-title b')).toContainText('Проведення заняття');
+  for (let task = 0; task < expectedTypes.length; task += 1) {
+    await page.getByRole('button', { name: /Готово/ }).click();
+  }
+  const plannedTimes = await page.locator('.cond-tbl tbody tr td:nth-child(2)').allTextContents();
+  expect(plannedTimes).toEqual(['10:00', '20:00', '15:00']);
 });

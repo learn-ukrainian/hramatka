@@ -24,6 +24,7 @@ from hramatka.engine.lesson_profile_45_v1 import (
     lesson_profile_45,
     slot_builders_45,
 )
+from hramatka.engine.lesson_workload_45_v1 import validate_phase_pace
 
 from .manifest import RuntimeAnchor, load_manifest
 from .proof_schema_v1 import (
@@ -115,6 +116,11 @@ def _inventory_commitment(inventory: object) -> str:
             "candidate_ids": [candidate.candidate_id for candidate in inventory.candidates],
             "pair_ids": [pair.pair_id for pair in inventory.atlas_pairs],
             "writing_ids": [task.task_id for task in inventory.writing_tasks],
+            "mark_target_ids": [
+                token_id
+                for request in inventory.mark_requests
+                for token_id in request.target_token_ids
+            ],
             "sentence_ids": [sentence.sentence_id for sentence in inventory.sentences],
         }
     )
@@ -224,9 +230,7 @@ def _domain_commitments(
         "claim": claims,
         "locator": locators,
         "plan": [{"unit_id": unit["unit_id"], "digest": unit["plan_digest"]} for unit in units],
-        "reservation": [
-            reservation for unit in units for reservation in unit["reservations"]
-        ],
+        "reservation": [reservation for unit in units for reservation in unit["reservations"]],
         "allocation": [
             {
                 "slot_id": slot["slot_id"],
@@ -289,9 +293,10 @@ def capture_certificate(inputs: CaptureInputs) -> ProofCertificate:
         )
     if preflight.allocation is None:
         raise ProofCaptureError("Capture anchor cannot produce a complete deterministic lesson.")
-    allocated_units = sum(len(slot.plan.units) for slot in preflight.allocation.slots)
-    if allocated_units != 27:
-        raise ProofCaptureError("Capture allocation does not meet the pinned unit denominator.")
+    try:
+        validate_phase_pace(preflight.allocation.slots)
+    except ValueError as exc:
+        raise ProofCaptureError("Capture allocation does not meet the pinned phase pace.") from exc
     certificate = ProofCertificate(
         anchor_id=inputs.anchor.id,
         manifest_digest=manifest.sha256,

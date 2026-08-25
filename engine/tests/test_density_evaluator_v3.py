@@ -112,9 +112,7 @@ def test_cause_vocabulary_covers_every_bake_path_rejection_stage() -> None:
         "short_writing_visible_constraints": (
             "short_writing_visible_constraints: learner_facing_requirements"
         ),
-        "teacher_sample_constraints": (
-            "teacher_sample_constraints: host_certified_teacher_answer"
-        ),
+        "teacher_sample_constraints": ("teacher_sample_constraints: host_certified_teacher_answer"),
         "serialization_exactness": "serialization_exactness: scheduled_unit_references",
         "raw_contract": "raw_contract: pilot_activity_schema",
         "repair_renderer": "repair_renderer: slot_response_unavailable",
@@ -153,9 +151,7 @@ def test_rendered_reference_response_reaches_the_production_evaluator() -> None:
                         "items": [
                             {
                                 "index": index,
-                                "correct": units[index]["distinctness"]["choice_bank"].index(
-                                    form
-                                ),
+                                "correct": units[index]["distinctness"]["choice_bank"].index(form),
                             }
                             for index, form in enumerate(forms)
                         ]
@@ -206,7 +202,7 @@ def test_ready_and_tray_are_graded_independently_and_emit_only_content_free_rece
             "disposition": "ready",
             "units": 8,
             "floor_met": True,
-            "contract_version": "TeacherReadyDensity.v3",
+            "contract_version": "TeacherReadyDensity.v4",
         },
         {
             "phase": 1,
@@ -214,7 +210,7 @@ def test_ready_and_tray_are_graded_independently_and_emit_only_content_free_rece
             "disposition": "tray",
             "units": 5,
             "floor_met": True,
-            "contract_version": "TeacherReadyDensity.v3",
+            "contract_version": "TeacherReadyDensity.v4",
         },
     ]
 
@@ -241,7 +237,7 @@ def test_below_floor_output_is_hidden_density_shortfall_with_no_tray_credit() ->
         "disposition": "density_shortfall",
         "units": 4,
         "floor_met": False,
-        "contract_version": "TeacherReadyDensity.v3",
+        "contract_version": "TeacherReadyDensity.v4",
     }
     assert [block.slot_id for block in evaluated.accepted] == ["P1-A1"]
     assert all(error.slot_id == "P1-A2" for error in shortfall.errors)
@@ -470,8 +466,7 @@ def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
         },
         "answer_key": {
             "guidance": "\n".join(
-                f"{index + 1}. Зразок відповіді: Початковий зразок {index}."
-                for index in range(8)
+                f"{index + 1}. Зразок відповіді: Початковий зразок {index}." for index in range(8)
             )
         },
     }
@@ -518,12 +513,14 @@ def test_text_question_item_repairs_cannot_regress_other_questions() -> None:
         "Виправлене питання 6?",
         "Добре питання 7?",
     ]
-    assert "4. Зразок відповіді: Виправлений зразок 3." in evaluated.blocks[
-        0
-    ].activity["answer_key"]["guidance"]
-    assert "7. Зразок відповіді: Виправлений зразок 6." in evaluated.blocks[
-        0
-    ].activity["answer_key"]["guidance"]
+    assert (
+        "4. Зразок відповіді: Виправлений зразок 3."
+        in evaluated.blocks[0].activity["answer_key"]["guidance"]
+    )
+    assert (
+        "7. Зразок відповіді: Виправлений зразок 6."
+        in evaluated.blocks[0].activity["answer_key"]["guidance"]
+    )
 
 
 def test_targeted_text_question_repair_discards_non_target_mutations() -> None:
@@ -649,8 +646,7 @@ def test_missing_scheduled_slot_exhausts_bounded_repairs_then_fails_closed() -> 
     )
 
     assert repair_calls == [
-        (repair_round, "P1-A2")
-        for repair_round in range(1, MAX_REPAIR_ROUNDS + 1)
+        (repair_round, "P1-A2") for repair_round in range(1, MAX_REPAIR_ROUNDS + 1)
     ]
     assert [(block.slot_id, block.disposition) for block in evaluated.blocks] == [
         ("P1-A1", "ready"),
@@ -759,9 +755,7 @@ def test_bounded_repairs_share_the_original_plan_and_context_then_use_exact_repl
     assert [call[0] for call in calls] == list(range(1, MAX_REPAIR_ROUNDS + 1))
     assert calls[0][1] == calls[1][1] == calls[2][1] == calls[3][1]
     assert calls[0][2] == calls[1][2] == calls[2][2] == calls[3][2]
-    assert [(call[3], call[4]) for call in calls] == [
-        ("quiz", 8)
-    ] * MAX_REPAIR_ROUNDS
+    assert [(call[3], call[4]) for call in calls] == [("quiz", 8)] * MAX_REPAIR_ROUNDS
     assert len(frozen_prompts) == 1
     assert replacement_calls == [("cloze", 5)]
     assert [(block.activity_type, block.disposition) for block in evaluated.blocks] == [
@@ -856,7 +850,7 @@ def test_repair_exhaustion_without_a_certified_replacement_drops_only_its_slot()
         "disposition": "dropped",
         "units": 8,
         "floor_met": True,
-        "contract_version": "TeacherReadyDensity.v3",
+        "contract_version": "TeacherReadyDensity.v4",
     }
     assert all(error.slot_id == "P1-A1" for error in evaluated.errors)
 

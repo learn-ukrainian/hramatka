@@ -22,15 +22,13 @@ QUALIFIED_MODEL_REGISTRY_VERSION: Final = "QualifiedLogicalModels.v1"
 # Transcription validates these fail-closed selector literals against the live
 # template and density authorities before it may copy a route aggregate here.
 PROMPT_PACK_VERSION: Final = "PromptPackInput.v3.4"
-PROMPT_SHA256: Final = "12c44aea8d079496817d870f0796887bb3802cca30a211c3e5a2d1ee2ac9bd2a"
+PROMPT_SHA256: Final = "c632234bf07eb11dd83e5e4b791b9d28e43ade3560f1f9a56ce7e1bbdb268f6f"
 TEMPLATE_VERSION: Final = "gemma-phase-pack.v3.15"
 TEMPLATE_SHA256: Final = "d32f40cb48b5a2cf102507c5aa08c4b44e57b479fbbef9cc638b2da778387380"
-DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v3"
-DENSITY_CONTRACT_DIGEST: Final = "a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21"
+DENSITY_CONTRACT_VERSION: Final = "TeacherReadyDensity.v4"
+DENSITY_CONTRACT_DIGEST: Final = "dadffe48c7c7ff56be8128c8aca910b864ecc608b569e2d1b57989645b970710"
 TYPE_KIT_IDENTITY: Final = "TeacherReadyDensity.v3.unit-plan-kit.v3"
-QUALIFICATION_ANCHORS: Final = frozenset(
-    {"b1-narrative", "b1-dialogue", "b1-informational"}
-)
+QUALIFICATION_ANCHORS: Final = frozenset({"b1-narrative", "b1-dialogue", "b1-informational"})
 
 
 class LogicalModelUnavailable(ValueError):
@@ -79,51 +77,64 @@ class QualificationReceipt:
 # model IDs, endpoints, and fallback order deliberately live in providers.py.
 LOGICAL_MODELS: Final = (
     LogicalModelSpec(
+        id="gemini-3.7-flash",
+        label="Gemini 3.7 Flash",
+        description_uk="Швидке складання уроку.",
+        provider_routes=(
+            QualifiedProviderRoute(
+                "gemini-flash-subscription", "antigravity-cli", "gemini-3.7-flash-high"
+            ),
+        ),
+    ),
+    LogicalModelSpec(
         id="gemini-3.6-flash",
         label="Gemini 3.6 Flash",
-        description_uk="Швидке складання уроку.",
+        description_uk="Застарілий маршрут.",
         provider_routes=(
             QualifiedProviderRoute(
                 "gemini-flash-subscription", "antigravity-cli", "gemini-3.6-flash-high"
             ),
         ),
+        retired=True,
     ),
     LogicalModelSpec(
         id="gemini-3.1-pro",
         label="Gemini 3.1 Pro",
-        description_uk="Ретельне складання уроку.",
+        description_uk="Застарілий маршрут.",
         provider_routes=(
             QualifiedProviderRoute(
                 "gemini-pro-subscription", "antigravity-cli", "gemini-3.1-pro-high"
             ),
         ),
+        retired=True,
     ),
     LogicalModelSpec(
         id="gemma-4-31b",
         label="Gemma 4 31B",
-        description_uk="Складання уроку відкритою моделлю.",
+        description_uk="Застарілий маршрут.",
         provider_routes=(
             QualifiedProviderRoute("gemma-openrouter", "openrouter", "google/gemma-4-31b-it"),
         ),
+        retired=True,
     ),
 )
 
 # Transcribed from the candidate-source qualification matrix (source commit
-# bb4a8af07b9f7420228b150e88371758acee0e1f) by
+# d27c314c5cdd84eca0ec78dad0f83911ebd2352d) by
 # ``hramatka.qualification.transcribe``; the block below is its verbatim output.
 PRODUCTION_QUALIFICATION_RECEIPTS: Final[tuple[QualificationReceipt, ...]] = (
     QualificationReceipt(
-        logical_model_id="gemini-3.1-pro",
-        provider_route="gemini-pro-subscription",
+        logical_model_id="gemini-3.7-flash",
+        provider_route="gemini-flash-subscription",
         provider_host="antigravity-cli",
-        provider_model_id="gemini-3.1-pro-high",
+        provider_model_id="gemini-3.7-flash-high",
         registry_version="QualifiedLogicalModels.v1",
         prompt_pack_version="PromptPackInput.v3.4",
-        prompt_sha256="12c44aea8d079496817d870f0796887bb3802cca30a211c3e5a2d1ee2ac9bd2a",
+        prompt_sha256="c632234bf07eb11dd83e5e4b791b9d28e43ade3560f1f9a56ce7e1bbdb268f6f",
         template_version="gemma-phase-pack.v3.15",
         template_sha256="d32f40cb48b5a2cf102507c5aa08c4b44e57b479fbbef9cc638b2da778387380",
-        density_contract_version="TeacherReadyDensity.v3",
-        density_contract_digest="a1e7943c8f5768a3376b082be4798600ae2aac4f86f8be671effb10667d56f21",
+        density_contract_version="TeacherReadyDensity.v4",
+        density_contract_digest="dadffe48c7c7ff56be8128c8aca910b864ecc608b569e2d1b57989645b970710",
         type_kit_identity="TeacherReadyDensity.v3.unit-plan-kit.v3",
         serializer_temperature=0.0,
         provenance_tier="cli_self_reported",

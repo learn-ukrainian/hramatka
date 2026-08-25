@@ -15,6 +15,12 @@ from itertools import combinations
 from typing import Literal
 
 from .closed_class_policy import CLOSED_CLASS_ALLOWED_SHAPES, is_closed_class_target
+from .lesson_workload_45_v1 import (
+    PHASE_PACE,
+    PLANNED_INTERACTIONS,
+    interaction_minutes,
+    planned_interactions,
+)
 from .teacher_ready_density_v3 import (
     COGNITIVE_OPERATION,
     EVIDENCE_CAPACITY_OVERLAYS,
@@ -345,6 +351,11 @@ def _non_evidence_claims(plan: UnitPlan) -> tuple[tuple[str, str], ...]:
 
 def _source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
     """Count an evidence source once per slot, never once per constituent unit."""
+    if plan.activity_type == "cloze" and _operation_for(plan) == "long-form-reconstruction":
+        # The final contiguous passage is the lesson's integration substrate,
+        # not a third independent drill on every sentence it contains. Gap and
+        # candidate claims still stay exclusive through _non_evidence_claims.
+        return frozenset()
     if (plan.activity_type, _operation_for(plan)) in EVIDENCE_CAPACITY_OVERLAYS:
         # Literal comprehension remains exclusive evidence. Only the two
         # interpretive/application rows are true overlays and may reuse a
@@ -357,11 +368,7 @@ def _source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
         )
     return frozenset(
         (
-            *(
-                unit.anchor.anchor_id
-                for unit in plan.units
-                if unit.anchor.kind == "evidence"
-            ),
+            *(unit.anchor.anchor_id for unit in plan.units if unit.anchor.kind == "evidence"),
             *(
                 f"{unit.anchor.anchor_id.rsplit(':', 1)[0]}:{claim.resource_id}"
                 for unit in plan.units
@@ -376,11 +383,7 @@ def _all_source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
     """Return source carriers without applying the read/discuss overlay exemption."""
     return frozenset(
         (
-            *(
-                unit.anchor.anchor_id
-                for unit in plan.units
-                if unit.anchor.kind == "evidence"
-            ),
+            *(unit.anchor.anchor_id for unit in plan.units if unit.anchor.kind == "evidence"),
             *(
                 f"{unit.anchor.anchor_id.rsplit(':', 1)[0]}:{claim.resource_id}"
                 for unit in plan.units
@@ -394,8 +397,7 @@ def _all_source_evidence_ids(plan: UnitPlan) -> frozenset[str]:
 def _narrative_drill_plan_overlap_ok(plans: Sequence[UnitPlan]) -> bool:
     """Keep quiz/fill-in carriers distinct in the 45-minute narrative shape."""
     if not any(
-        (plan.activity_type, _operation_for(plan)) in EVIDENCE_CAPACITY_OVERLAYS
-        for plan in plans
+        (plan.activity_type, _operation_for(plan)) in EVIDENCE_CAPACITY_OVERLAYS for plan in plans
     ):
         return True
     quiz_plans = [plan for plan in plans if plan.activity_type == "quiz"]
@@ -427,14 +429,8 @@ def _can_reserve(reservation: _Reservation, plan: UnitPlan) -> bool:
         if any(
             use.phase == plan.phase
             and not (
-                (
-                    use.operation.startswith("degree-")
-                    or use.operation == "anchor-comprehension"
-                )
-                and (
-                    operation.startswith("degree-")
-                    or operation == "anchor-comprehension"
-                )
+                (use.operation.startswith("degree-") or use.operation == "anchor-comprehension")
+                and (operation.startswith("degree-") or operation == "anchor-comprehension")
             )
             for use in prior_uses
         ):
@@ -486,9 +482,7 @@ def replacement_plan_can_coexist(
         )
     ):
         return False
-    retained_plans = tuple(
-        slot.plan for slot in allocation.slots if slot.slot_id != target_slot_id
-    )
+    retained_plans = tuple(slot.plan for slot in allocation.slots if slot.slot_id != target_slot_id)
     if not _narrative_drill_plan_overlap_ok((*retained_plans, candidate)):
         return False
     reservation = _Reservation.empty()
@@ -502,18 +496,52 @@ def replacement_plan_can_coexist(
 
 
 def _floor_subplans(plan: UnitPlan) -> Iterator[UnitPlan]:
-    """Choose stable substrate while preserving complete composed eight-unit kits."""
+    """Choose stable substrate sized for the scheduled learner workload."""
     if not plan.floor_met:
         return
     minimum_units = floor_for(plan.activity_type).minimum_units
-    # The established composed kits are eight-unit progressions. New generic
-    # narrative builders certify exactly the type floor (five or six), so they
-    # remain compact while a surplus candidate inventory cannot inflate a block.
-    selected_units = 8 if len(plan.units) >= 8 else minimum_units
+    operation = _operation_for(plan)
+    planned_units = (
+        None
+        if operation.startswith("degree-")
+        else planned_interactions(plan.slot_id, plan.activity_type)
+    )
+    selected_units = (
+        len(plan.units)
+        if plan.activity_type == "cloze" and _operation_for(plan) == "long-form-reconstruction"
+        else planned_units
+        if planned_units is not None and len(plan.units) >= planned_units
+        else len(plan.units)
+        if planned_units is not None
+        else 8
+        if planned_units is None and len(plan.units) >= 8
+        else minimum_units
+    )
     for units in _unit_subsets(plan, selected_units):
         subplan = _subplan(plan, units)
         if subplan.floor_met:
             yield subplan
+
+
+def _qualified_45_workload_ok(choices: Sequence[_Choice]) -> bool:
+    """Require plausible phase pacing only for the exact qualified profile."""
+    expected = {
+        **{slot_id: activity_type for slot_id, activity_type in PLANNED_INTERACTIONS},
+        "P3-A1": "cloze",
+    }
+    actual = {choice.slot_plans.slot.slot_id: choice.plan.activity_type for choice in choices}
+    if actual != expected:
+        return True
+    minutes = {phase: 0.0 for phase in PHASE_PACE}
+    for choice in choices:
+        minutes[choice.plan.phase] = minutes.get(choice.plan.phase, 0.0) + interaction_minutes(
+            choice.plan.activity_type,
+            len(choice.plan.units),
+        )
+    return all(
+        pace.minimum_minutes <= minutes[phase] <= pace.maximum_minutes
+        for phase, pace in PHASE_PACE.items()
+    )
 
 
 def _unit_subsets(plan: UnitPlan, selected_units: int) -> Iterator[tuple[CertifiedUnit, ...]]:
@@ -535,16 +563,14 @@ def _unit_subsets(plan: UnitPlan, selected_units: int) -> Iterator[tuple[Certifi
         indexed_categories[category].append(index)
 
     if selected_units == sum(preferred.values()) and all(
-        len(indexed_categories[category]) >= count
-        for category, count in preferred.items()
+        len(indexed_categories[category]) >= count for category, count in preferred.items()
     ):
         targets = preferred
     else:
         targets = None
     for indexes in combinations(range(len(plan.units)), selected_units):
         counts = Counter(
-            str(plan.units[index].distinctness["question_category"])
-            for index in indexes
+            str(plan.units[index].distinctness["question_category"]) for index in indexes
         )
         if targets is not None:
             if any(counts[category] != count for category, count in targets.items()):
@@ -651,7 +677,11 @@ def allocate_exact_cover(
         index: int, reservation: _Reservation, choices: tuple[_Choice, ...]
     ) -> tuple[_Choice, ...] | None:
         if index == len(ordered):
-            return choices if _narrative_drill_overlap_ok(choices) else None
+            return (
+                choices
+                if _narrative_drill_overlap_ok(choices) and _qualified_45_workload_ok(choices)
+                else None
+            )
         for candidate in _candidate_choices(ordered[index]):
             for subplan in _floor_subplans(candidate.plan):
                 if _can_reserve(reservation, subplan):
