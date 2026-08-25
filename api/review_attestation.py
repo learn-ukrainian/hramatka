@@ -982,7 +982,7 @@ class ReviewAttestor:
                 expected_head=expected_head,
                 token=github_token,
             )
-            pr, diff, workflow_path = self._fetch_authoritative_inputs(
+            pr, workflow_path = self._fetch_authoritative_context(
                 pr_number,
                 github_token,
                 expected_head=expected_head,
@@ -1043,6 +1043,11 @@ class ReviewAttestor:
             author_family = _parse_lifecycle(pr.get("body"), is_draft=pr.get("draft"))
             if author_family == "google":
                 raise ReviewAttestationError("same_model_family")
+            diff = self._fetch_authoritative_diff(
+                base_sha=base,
+                head_sha=head,
+                token=github_token,
+            )
             user_input = self._user_input(
                 pr_number=pr_number, base_sha=base, head_sha=head, diff=diff
             )
@@ -1389,7 +1394,7 @@ class ReviewAttestor:
             return None
         return base_sha
 
-    def _fetch_authoritative_inputs(
+    def _fetch_authoritative_context(
         self,
         pr_number: int,
         token: str,
@@ -1397,7 +1402,7 @@ class ReviewAttestor:
         expected_head: str,
         expected_base_sha: str,
         workflow_sha: str,
-    ) -> tuple[dict[str, Any], str, str]:
+    ) -> tuple[dict[str, Any], str]:
         repository = self.settings.review_attestation_repository
         assert repository is not None
         encoded_repo = quote(repository, safe="/")
@@ -1405,19 +1410,10 @@ class ReviewAttestor:
             pr = self._github_get(f"/repos/{encoded_repo}/pulls/{pr_number}", token).json()
             if not isinstance(pr, dict):
                 raise ValueError("malformed PR")
-            head_sha = self._authoritative_head(pr, expected_head)
+            self._authoritative_head(pr, expected_head)
             base_sha = self._base_sha(pr)
             if base_sha != expected_base_sha:
                 raise ReviewAttestationError("actions_run_mismatch")
-            diff_response = self._github_get(
-                f"/repos/{encoded_repo}/compare/{base_sha}...{head_sha}",
-                token,
-                accept="application/vnd.github.v3.diff",
-            )
-            raw_diff = diff_response.content
-            if len(raw_diff) > self.settings.review_attestation_max_diff_bytes:
-                raise ReviewAttestationError("diff_too_large", status_code=422)
-            diff = raw_diff.decode("utf-8")
             workflow_path = self._workflow_path()
             contents_path = (
                 f"/repos/{encoded_repo}/contents/{quote(workflow_path, safe='/')}"
@@ -1431,7 +1427,30 @@ class ReviewAttestor:
             raise ReviewAttestationError("github_authority_unavailable", status_code=503) from error
         if _sha256(raw_workflow) != self.settings.review_attestation_workflow_digest:
             raise ReviewAttestationError("workflow_digest_mismatch")
-        return pr, diff, workflow_path
+        return pr, workflow_path
+
+    def _fetch_authoritative_diff(
+        self, *, base_sha: str, head_sha: str, token: str
+    ) -> str:
+        repository = self.settings.review_attestation_repository
+        assert repository is not None
+        encoded_repo = quote(repository, safe="/")
+        try:
+            diff_response = self._github_get(
+                f"/repos/{encoded_repo}/compare/{base_sha}...{head_sha}",
+                token,
+                accept="application/vnd.github.v3.diff",
+            )
+            raw_diff = diff_response.content
+            if len(raw_diff) > self.settings.review_attestation_max_diff_bytes:
+                raise ReviewAttestationError("diff_too_large", status_code=422)
+            return raw_diff.decode("utf-8")
+        except ReviewAttestationError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise ReviewAttestationError(
+                "github_authority_unavailable", status_code=503
+            ) from error
 
     @staticmethod
     def _validate_sealed_review_lifecycle(
