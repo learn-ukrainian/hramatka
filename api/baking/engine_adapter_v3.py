@@ -88,6 +88,7 @@ from hramatka.engine.transport import (
     generator_model_id,
 )
 from hramatka.engine.unit_builders_v3 import BUILDERS
+from hramatka.engine.unit_plan_v3 import UnitPlan
 
 from ..store import canonical_json
 from .artifacts import bake_artifact_dir
@@ -454,17 +455,59 @@ _TITLES = {
 }
 
 
-def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
+def _certified_fill_in_answer_surfaces(
+    payload: Mapping[str, Any], plan: UnitPlan | None
+) -> tuple[str, ...] | None:
+    """Return answers only when payload items exactly match a certified plan."""
+    if (
+        payload.get("type") != "fill-in"
+        or not isinstance(plan, UnitPlan)
+        or plan.activity_type != "fill-in"
+        or plan.disposition != "certified"
+    ):
+        return None
+    items = payload.get("items")
+    if not isinstance(items, list) or len(items) != len(plan.units):
+        return None
+    answers: list[str] = []
+    for item, unit in zip(items, plan.units, strict=True):
+        if not isinstance(item, Mapping):
+            return None
+        answer = item.get("answer")
+        options = item.get("options")
+        bank = unit.distinctness.get("choice_bank")
+        if (
+            not isinstance(answer, str)
+            or not isinstance(options, list)
+            or not all(isinstance(option, str) for option in options)
+            or not unit.allowed_forms
+            or answer != unit.allowed_forms[0]
+            or answer != unit.expected_key_or_rule.value
+            or not isinstance(bank, tuple)
+            or not _options_match_bank(options, bank)
+        ):
+            return None
+        answers.append(answer)
+    return tuple(answers)
+
+
+def _external_option_surfaces(
+    payload: Mapping[str, Any], *, plan: UnitPlan | None = None
+) -> tuple[str, ...]:
     """Return learner surfaces that still need source-provenance review.
 
-    A certified cloze bank deliberately contains contextually excluded
-    distractors: same-lemma morphology forms and passage-attested lexical
-    foils.  Those choices have already passed exact-bank binding and their
-    deterministic exclusion-warrant gates; treating them as untrusted teacher
-    content produces a false warning on every otherwise source-grounded
-    long-form cloze.  The cloze answer remains source-bound here, while other
-    selected-response activities continue to review every learner option.
+    Certified cloze and fill-in banks deliberately contain contextually
+    excluded distractors: same-lemma morphology forms and passage-attested
+    lexical foils.  Those choices have already passed exact-bank binding and
+    their deterministic exclusion-warrant gates; treating them as untrusted
+    teacher content produces a false warning on otherwise source-grounded
+    gap activities.  Their correct answers remain source-bound here, while
+    other selected-response activities continue to review every learner
+    option.
     """
+    certified_fill_in_answers = _certified_fill_in_answer_surfaces(payload, plan)
+    if certified_fill_in_answers is not None:
+        return certified_fill_in_answers
     surfaces: list[str] = []
     activity_type = payload.get("type")
     items = payload.get("items")
@@ -498,8 +541,10 @@ def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(surfaces)
 
 
-def _has_external_options(payload: Mapping[str, Any], anchor_text: str | None) -> bool:
-    surfaces = _external_option_surfaces(payload)
+def _has_external_options(
+    payload: Mapping[str, Any], anchor_text: str | None, *, plan: UnitPlan | None = None
+) -> bool:
+    surfaces = _external_option_surfaces(payload, plan=plan)
     return bool(
         anchor_text
         and surfaces
@@ -3417,7 +3462,7 @@ class EngineLessonBaker:
         evaluation: Any,
         index: int,
         *,
-        plan: Any | None = None,
+        plan: UnitPlan | None = None,
         anchor_text: str | None = None,
         teacher_sample_semantically_approved: bool = False,
     ) -> dict[str, Any]:
@@ -3432,7 +3477,7 @@ class EngineLessonBaker:
             and not teacher_sample_semantically_approved
         ):
             raise ValueError("teacher sample was not semantically approved")
-        external_options = _has_external_options(payload, anchor_text)
+        external_options = _has_external_options(payload, anchor_text, plan=plan)
         rendered_answer_key = dict(answer_key)
         gates = [
             "v3",
