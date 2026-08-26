@@ -17,7 +17,6 @@ from typing import Literal
 from .closed_class_policy import CLOSED_CLASS_ALLOWED_SHAPES, is_closed_class_target
 from .lesson_workload_45_v1 import (
     PHASE_PACE,
-    PLANNED_INTERACTIONS,
     interaction_minutes,
     planned_interactions,
 )
@@ -526,11 +525,17 @@ def _floor_subplans(plan: UnitPlan) -> Iterator[UnitPlan]:
 def _qualified_45_workload_ok(choices: Sequence[_Choice]) -> bool:
     """Require plausible phase pacing only for the exact qualified profile."""
     expected = {
-        **{slot_id: activity_type for slot_id, activity_type in PLANNED_INTERACTIONS},
-        "P3-A1": "cloze",
+        "P1-A1": frozenset({"match-up", "true-false"}),
+        "P1-A2": frozenset({"quiz"}),
+        "P2-A1": frozenset({"fill-in"}),
+        "P2-A2": frozenset({"error-correction"}),
+        "P2-A3": frozenset({"mark-the-words"}),
+        "P3-A1": frozenset({"cloze"}),
     }
     actual = {choice.slot_plans.slot.slot_id: choice.plan.activity_type for choice in choices}
-    if actual != expected:
+    if set(actual) != set(expected) or any(
+        actual[slot_id] not in allowed for slot_id, allowed in expected.items()
+    ):
         return True
     minutes = {phase: 0.0 for phase in PHASE_PACE}
     for choice in choices:

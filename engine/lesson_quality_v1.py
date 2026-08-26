@@ -34,6 +34,7 @@ QUALITY_OPERATION: Final[Mapping[str, str]] = MappingProxyType(
         "quiz": "retrieve-select",
         "cloze": "contextual-reconstruct",
         "match-up": "semantic-associate",
+        "true-false": "evaluate",
         "fill-in": "guided-form",
         "error-correction": "diagnose-repair",
         "mark-the-words": "identify-target",

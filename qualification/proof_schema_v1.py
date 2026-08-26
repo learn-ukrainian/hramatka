@@ -65,6 +65,7 @@ _FROZEN_DATA_NAMES: Final = frozenset({"vesum.db", "atlas.db", "sources.db"})
 _ACTIVITY_TYPES: Final = frozenset(
     {
         "quiz",
+        "true-false",
         "match-up",
         "cloze",
         "fill-in",

@@ -54,6 +54,7 @@ def test_complete_creation_time_banks_are_receipted_once_for_every_profile_slot(
     receipts = captured[0]
     assert {receipt.bank_id for receipt in receipts} == {
         "match-up:1",
+        "true-false:1",
         "quiz:1",
         "fill-in:1",
         "error-correction:1",

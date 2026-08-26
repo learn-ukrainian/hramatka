@@ -184,6 +184,8 @@ def _members_by_bank(
             _bank_group(candidate.candidate_id, candidate.activity_type),
         )
         grouped[key].append(candidate.candidate_id)
+    for fact in inventory.true_false_facts:
+        grouped[("true-false", _bank_group(fact.fact_id, "true-false"))].append(fact.fact_id)
     for pair in inventory.atlas_pairs:
         grouped[("match-up", _bank_group(pair.pair_id, "match-up"))].append(pair.pair_id)
     for task in inventory.writing_tasks:

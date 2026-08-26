@@ -71,7 +71,7 @@ describe('i18n translation layer', () => {
       },
       {
         code: 'insufficient_anchor_capacity',
-        mustIncludeUk: 'Опорного матеріалу недостатньо',
+        mustIncludeUk: 'шість типів вправ',
         mustNotIncludeUk: '2–3',
       },
       {
@@ -138,13 +138,10 @@ describe('i18n translation layer', () => {
       // material; generic post-generation floors must keep the retry wording.
       if (c.code === 'insufficient_anchor_capacity') {
         expect(uk).not.toMatch(/поганий|тонк/i);
-        expect(uk).toContain('повного уроку');
-        expect(uk).toContain('довший і різноманітніший текст із конкретними деталями');
+        expect(uk).toContain('шість типів вправ');
         expect(uk).toContain('ваш текст уже збережено');
         expect(uk).not.toMatch(/2[–-]3/);
-        expect(en.toLowerCase()).toContain('supported material');
-        expect(en.toLowerCase()).toContain('complete lesson');
-        expect(en.toLowerCase()).toContain('longer, more varied source with concrete details');
+        expect(en.toLowerCase()).toContain('all six lesson activity types');
         expect(en.toLowerCase()).toContain('your text is already saved');
         expect(en).not.toMatch(/2[–-]3/);
       }

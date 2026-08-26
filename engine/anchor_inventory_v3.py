@@ -1151,12 +1151,20 @@ def _ladder_is_vesum_certified(ladder: DegreeLadder) -> bool:
     )
 
 
+def _without_closing_marks(text: str) -> str:
+    terminal = text.rstrip()
+    while terminal and terminal[-1] in "»”\"')]":
+        terminal = terminal[:-1].rstrip()
+    return terminal
+
+
 def _safe_item_carrier(sentence: AnchorSentence) -> bool:
     """Exclude title/fragment rows while retaining complete nominal clauses."""
     text = sentence.text.strip()
+    terminal = _without_closing_marks(text)
     return (
         bool(text)
-        and text[-1:] in {".", "!", "?", "…"}
+        and terminal[-1:] in {".", "!", "?", "…"}
         and text.count("«") == text.count("»")
         and text.count("(") == text.count(")")
         and text.count("[") == text.count("]")
@@ -1165,7 +1173,8 @@ def _safe_item_carrier(sentence: AnchorSentence) -> bool:
 
 def _safe_true_fact_carrier(sentence: AnchorSentence) -> bool:
     """Admit only declarative source sentences as literal true/false statements."""
-    return _safe_item_carrier(sentence) and sentence.text.rstrip().endswith(".")
+    text = _without_closing_marks(sentence.text)
+    return _safe_item_carrier(sentence) and text.endswith(".")
 
 
 def _uses_second_person(sentence: AnchorSentence) -> bool:
@@ -3431,20 +3440,21 @@ def _balanced_true_false(
     *,
     sentence_group_uses: Counter[str],
     sentence_phase_uses: dict[str, set[int]],
+    phase: int = 2,
 ) -> tuple[TrueFalseFact, ...]:
-    """Build the balanced source-bound board without requiring question relations.
+    """Build a balanced source-bound board for the caller-selected phase.
 
-    Text questions and true/false share Phase 2 when both are available, but
-    relation scarcity in the former must not erase independently provable
-    statements in the latter.  Every row still uses a distinct safe carrier;
-    false rows retain the closed predicate-negation catalog.
+    Phase 2 remains the legacy default. The qualified 45-minute profile passes
+    phase 1 when true/false replaces the unavailable match-up board. Relation
+    scarcity must not erase independently provable statements; every row still
+    uses a distinct safe carrier and false rows use the closed mutation catalog.
     """
     eligible = tuple(
         sentence
         for sentence in sentences
         if sentence.tokens
         and sentence_group_uses[sentence.sentence_id] < 2
-        and 2 not in sentence_phase_uses.get(sentence.sentence_id, set())
+        and phase not in sentence_phase_uses.get(sentence.sentence_id, set())
         and _safe_item_carrier(sentence)
     )
     false_rows = [
@@ -5239,6 +5249,19 @@ def inventory_from_anchor(
                         target_token_ids=tuple(token.token_id for token in group),
                     )
                 )
+    if source_comprehension_45 and "true-false" in replacement_lane and primary_state is not None:
+        # The fallback is a complete, source-bound selected-response bank. It
+        # is generated from carriers not already consumed by the phase-1 quiz
+        # or phase-2 drills, so exact-cover can substitute it without sharing
+        # an evidence operation with the remaining lesson.
+        true_false_facts.extend(
+            _balanced_true_false(
+                sentences,
+                sentence_group_uses=Counter(primary_state[1]),
+                sentence_phase_uses={key: set(value) for key, value in primary_state[3].items()},
+                phase=1,
+            )
+        )
     inventory = CertificationInventory(
         source_id=_source_id(anchor),
         sentences=sentences,

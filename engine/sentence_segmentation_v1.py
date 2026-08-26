@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from typing import Final
 
-_SENTENCE_RE: Final = re.compile(r"[^\n.!?…]+[.!?…]?")
+# Keep closing quotation/bracket marks with the sentence-ending punctuation.
+# Otherwise a normal quoted final sentence becomes an orphan ``»`` fragment,
+# which is not a usable cloze carrier and can make an otherwise admissible
+# 350–450-word source fail the every-sentence reconstruction contract.
+_SENTENCE_RE: Final = re.compile(r"[^\n.!?…]+[.!?…]?(?:[»”\"')\]]+)?")
 
 
 def sentence_spans(text: str) -> tuple[str, ...]:

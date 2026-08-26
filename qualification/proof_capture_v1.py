@@ -114,6 +114,7 @@ def _inventory_commitment(inventory: object) -> str:
     return sha256(
         {
             "candidate_ids": [candidate.candidate_id for candidate in inventory.candidates],
+            "true_false_ids": [fact.fact_id for fact in inventory.true_false_facts],
             "pair_ids": [pair.pair_id for pair in inventory.atlas_pairs],
             "writing_ids": [task.task_id for task in inventory.writing_tasks],
             "mark_target_ids": [

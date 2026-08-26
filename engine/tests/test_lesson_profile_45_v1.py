@@ -13,14 +13,14 @@ def test_profile_is_the_immutable_45_minute_adapter_authority() -> None:
         (slot.slot_id, slot.phase, slot.requested_type, slot.replacement_types)
         for slot in profile.slots
     ] == [
-        ("P1-A1", 1, "match-up", ()),
+        ("P1-A1", 1, "match-up", ("true-false",)),
         ("P1-A2", 1, "quiz", ()),
         ("P2-A1", 2, "fill-in", ()),
         ("P2-A2", 2, "error-correction", ()),
         ("P2-A3", 2, "mark-the-words", ()),
         ("P3-A1", 3, "cloze", ()),
     ]
-    assert profile.digest == "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be"
+    assert profile.digest == "32d0aff3e7c0ffe89620a6416cc13b75c333a24ddaa332800a0b52f8fd3f3eb6"
     assert profile.group_number_for("P2-A1", "fill-in") == 1
     assert profile.group_number_for("P3-A1", "cloze") == 1
     assert not profile.fallback_to_group_one("P2-A1", "fill-in")

@@ -1925,8 +1925,8 @@ def test_floor_bakeerror_on_insufficient_anchor_uses_source_capacity_code_and_ex
 
     assert failed["failure_code"] == "insufficient_anchor_capacity"
     assert failed["failure_message"] == (
-        "Опорного матеріалу недостатньо для повного уроку. "
-        "Спробуйте довший і різноманітніший текст із конкретними деталями."
+        "Не вдалося підібрати всі шість типів вправ із цього тексту. "
+        "Спробуйте інший зв’язний текст із конкретними подіями та різними формами слів."
     )
     assert "private source diagnostic" not in (failed["failure_message"] or "")
     # Must not fall back to the generic safe message.
@@ -2721,9 +2721,10 @@ def test_cancel_is_owner_scoped_idempotent_and_retry_preserves_job_history(tmp_p
             assert ready["attempt"] == 2
             assert [entry["attempt"] for entry in ready["attempt_history"]] == [1, 2]
             assert ready["attempt_history"][0]["status"] == "cancelled"
-            assert ready["attempt_history"][0]["retry_requested_revision"] == cancelled_body[
-                "revision"
-            ]
+            assert (
+                ready["attempt_history"][0]["retry_requested_revision"]
+                == cancelled_body["revision"]
+            )
 
             _error(
                 client.post(

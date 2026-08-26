@@ -1538,6 +1538,15 @@ def test_real_backend_uses_repository_venv_prefix_outside_ci(tmp_path: Path) -> 
         assert ready
         identity = json.loads(os.read(read_fd, 256).decode("ascii"))
         assert identity["python_prefix"] == sys.prefix
+        primary_invite = state_directory / "invite-token"
+        retry_invite = state_directory / "invite-token-retry-1"
+        assert primary_invite.read_text(encoding="ascii")
+        assert retry_invite.read_text(encoding="ascii")
+        assert primary_invite.read_text(encoding="ascii") != retry_invite.read_text(
+            encoding="ascii"
+        )
+        assert stat.S_IMODE(primary_invite.stat().st_mode) == 0o600
+        assert stat.S_IMODE(retry_invite.stat().st_mode) == 0o600
     finally:
         os.close(read_fd)
         if process.poll() is None:

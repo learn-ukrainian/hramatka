@@ -26,7 +26,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 _AUGMENT_ONLY_ENV = "HRAMATKA_FIXTURE_AUGMENT_ONLY"
 _AUGMENT_BASELINE_REF_ENV = "HRAMATKA_FIXTURE_AUGMENT_BASELINE_GIT_REF"
+_AUGMENT_DELTA_NAME_ENV = "HRAMATKA_FIXTURE_AUGMENT_DELTA_NAME"
 _QUALIFICATION_ASSET_ENV = "HRAMATKA_FIXTURE_WRITE_QUALIFICATION_ASSET"
+_TEST_TARGET_ENV = "HRAMATKA_FIXTURE_TEST_TARGET"
 
 
 def _baseline_rows(name: str) -> list[dict]:
@@ -65,9 +67,7 @@ def _qualification_inventory_inputs(real_dir: Path) -> tuple[set[str], set[str]]
     slots = _lesson_slots(45)
     surfaces: set[str] = set()
     atlas_lemmas: set[str] = set()
-    anchor_path = (
-        HERE.parents[2] / "qualification" / "assets" / "b1-45m.anchors.json"
-    )
+    anchor_path = HERE.parents[2] / "qualification" / "assets" / "b1-45m.anchors.json"
     rows = json.loads(anchor_path.read_text(encoding="utf-8"))["anchors"]
     for row in rows:
         source = row["text"]
@@ -157,7 +157,8 @@ def _record_vesum_rows() -> list[dict]:
 
     import pytest
 
-    rc = pytest.main(["hramatka/engine/tests", "-q", "-p", "no:cacheprovider"])
+    test_target = os.environ.get(_TEST_TARGET_ENV, "hramatka/engine/tests")
+    rc = pytest.main([test_target, "-q", "-p", "no:cacheprovider"])
     if rc != 0:
         raise SystemExit(f"suite failed under real data (rc={rc}); not writing fixtures")
 
@@ -178,9 +179,7 @@ def _trim_payload(payload: dict, *, include_antonyms: bool = False) -> dict:
     if isinstance(secs, dict):
         section_names = ("antonyms", "synonyms") if include_antonyms else ("synonyms",)
         kept_sections = {
-            name: secs[name]
-            for name in section_names
-            if isinstance(secs.get(name), dict)
+            name: secs[name] for name in section_names if isinstance(secs.get(name), dict)
         }
         if kept_sections:
             trimmed["sections"] = kept_sections
@@ -204,9 +203,7 @@ def _source_bundle_provenance(real_dir: Path) -> dict[str, object]:
     }
 
 
-def _extract_atlas_payloads(
-    real_dir: Path, *, include_qualification: bool = False
-) -> list[dict]:
+def _extract_atlas_payloads(real_dir: Path, *, include_qualification: bool = False) -> list[dict]:
     from hramatka.engine import data, retrieval
 
     data.set_active_bundle(data.resolve_bundle(data_dir=real_dir, verify=True))
@@ -232,9 +229,7 @@ def _extract_atlas_payloads(
                 continue
             lemma = payload.get("lemma")
             if isinstance(lemma, str) and lemma.lower() in needed and lemma.lower() not in kept:
-                kept[lemma.lower()] = _trim_payload(
-                    payload, include_antonyms=include_qualification
-                )
+                kept[lemma.lower()] = _trim_payload(payload, include_antonyms=include_qualification)
     finally:
         conn.close()
     return [kept[k] for k in sorted(kept)]
@@ -251,14 +246,12 @@ def main() -> None:
             )
         baseline_vesum = _baseline_rows("vesum_forms.json")
         baseline_vesum_keys = {
-            (row["word_form"], row["lemma"], row["tags"], row["pos"])
-            for row in baseline_vesum
+            (row["word_form"], row["lemma"], row["tags"], row["pos"]) for row in baseline_vesum
         }
         qualification_vesum = [
             row
             for row in _qualification_vesum_rows(real_dir)
-            if (row["word_form"], row["lemma"], row["tags"], row["pos"])
-            not in baseline_vesum_keys
+            if (row["word_form"], row["lemma"], row["tags"], row["pos"]) not in baseline_vesum_keys
         ]
         baseline_atlas = _baseline_rows("atlas_rows.json")
         baseline_atlas_lemmas = {row.get("lemma") for row in baseline_atlas}
@@ -267,12 +260,7 @@ def main() -> None:
             for row in _extract_atlas_payloads(real_dir, include_qualification=True)
             if row.get("lemma") not in baseline_atlas_lemmas
         ]
-        asset_path = (
-            HERE.parents[2]
-            / "qualification"
-            / "assets"
-            / "b1-45m.linguistics.json"
-        )
+        asset_path = HERE.parents[2] / "qualification" / "assets" / "b1-45m.linguistics.json"
         asset_path.write_text(
             json.dumps(
                 {
@@ -287,18 +275,17 @@ def main() -> None:
             + "\n",
             encoding="utf-8",
         )
-        (HERE / "vesum_forms.json").write_text(
-            _baseline_text("vesum_forms.json"), encoding="utf-8"
-        )
-        (HERE / "atlas_rows.json").write_text(
-            _baseline_text("atlas_rows.json"), encoding="utf-8"
-        )
+        (HERE / "vesum_forms.json").write_text(_baseline_text("vesum_forms.json"), encoding="utf-8")
+        (HERE / "atlas_rows.json").write_text(_baseline_text("atlas_rows.json"), encoding="utf-8")
         print(
             f"wrote {len(qualification_vesum)} qualification VESUM forms and "
             f"{len(qualification_atlas)} Atlas payloads"
         )
         return
-    vesum_rows = _baseline_rows("vesum_forms.json") if augment_only else _record_vesum_rows()
+    if augment_only:
+        vesum_rows = [*_baseline_rows("vesum_forms.json"), *_record_vesum_rows()]
+    else:
+        vesum_rows = _record_vesum_rows()
     if augment_only:
         vesum_rows = [
             {
@@ -308,25 +295,54 @@ def main() -> None:
                 "pos": pos,
             }
             for word_form, lemma, tags, pos in sorted(
-                {
-                    (row["word_form"], row["lemma"], row["tags"], row["pos"])
-                    for row in vesum_rows
-                }
+                {(row["word_form"], row["lemma"], row["tags"], row["pos"]) for row in vesum_rows}
             )
         ]
+    delta_name = os.environ.get(_AUGMENT_DELTA_NAME_ENV)
+    if delta_name:
+        if not augment_only or not os.environ.get(_AUGMENT_BASELINE_REF_ENV):
+            raise SystemExit("delta generation requires augmentation and an explicit baseline")
+        if Path(delta_name).name != delta_name or not (
+            delta_name.startswith("vesum_forms.") and delta_name.endswith(".jsonl")
+        ):
+            raise SystemExit("delta name must match vesum_forms.<name>.jsonl")
+        baseline_keys = {
+            (row["word_form"], row["lemma"], row["tags"], row["pos"])
+            for row in _baseline_rows("vesum_forms.json")
+        }
+        delta_rows = [
+            row
+            for row in vesum_rows
+            if (row["word_form"], row["lemma"], row["tags"], row["pos"]) not in baseline_keys
+        ]
+        (HERE / delta_name).write_text(
+            "".join(
+                json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+                for row in delta_rows
+            ),
+            encoding="utf-8",
+        )
+        (HERE / "vesum_forms.json").write_text(_baseline_text("vesum_forms.json"), encoding="utf-8")
     atlas_rows = _extract_atlas_payloads(real_dir)
     if augment_only:
         current_atlas = _baseline_rows("atlas_rows.json")
         by_lemma = {row.get("lemma"): row for row in current_atlas}
         by_lemma.update({row.get("lemma"): row for row in atlas_rows})
         atlas_rows = [by_lemma[lemma] for lemma in sorted(by_lemma) if lemma]
-    (HERE / "vesum_forms.json").write_text(
-        json.dumps(vesum_rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
-    )
+    if not delta_name:
+        (HERE / "vesum_forms.json").write_text(
+            json.dumps(vesum_rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        )
     (HERE / "atlas_rows.json").write_text(
         json.dumps(atlas_rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
     )
-    print(f"wrote {len(vesum_rows)} vesum forms, {len(atlas_rows)} atlas payloads")
+    if delta_name:
+        print(
+            f"wrote {len(delta_rows)} delta vesum forms to {delta_name}, "
+            f"{len(atlas_rows)} atlas payloads"
+        )
+    else:
+        print(f"wrote {len(vesum_rows)} vesum forms, {len(atlas_rows)} atlas payloads")
 
 
 if __name__ == "__main__":

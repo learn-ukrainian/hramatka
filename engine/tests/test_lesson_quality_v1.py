@@ -24,8 +24,8 @@ from hramatka.engine.unit_plan_v3 import (
 _COUNTS = {
     "match-up": 8,
     "quiz": 8,
-    "fill-in": 7,
-    "error-correction": 6,
+    "fill-in": 8,
+    "error-correction": 8,
     "mark-the-words": 10,
     "cloze": 22,
 }
@@ -165,12 +165,12 @@ def _rendered() -> list[dict[str, object]]:
                     "answer": "слово",
                     "options": ["слово", "форма", "вираз"],
                 }
-                for index in range(1, 8)
+                for index in range(1, 9)
             ],
         },
         "error-correction": {
             "type": "error-correction",
-            "items": [f"Виправте іншу помилку в реченні номер {index}." for index in range(1, 7)],
+            "items": [f"Виправте іншу помилку в реченні номер {index}." for index in range(1, 9)],
         },
         "mark-the-words": {
             "type": "mark-the-words",
@@ -194,7 +194,7 @@ def test_accepted_shape_is_varied_dense_and_human_paced() -> None:
 
     validate_teacher_lesson_quality_45(allocation, _rendered())
 
-    assert estimated_active_work_minutes(allocation) == pytest.approx(38.15)
+    assert estimated_active_work_minutes(allocation) == pytest.approx(41.0)
 
 
 def test_quiz_cannot_collapse_into_another_gap_drill() -> None:

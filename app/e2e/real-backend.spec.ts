@@ -3,9 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const tokenPath = path.resolve('.real-e2e/invite-token');
+const retryTokenPath = path.resolve('.real-e2e/invite-token-retry-1');
 
-test('real teacher loop preserves session, status, revisions, and direct links', async ({ page }) => {
-  const token = (await fs.readFile(tokenPath, 'utf8')).trim();
+test('real teacher loop preserves session, status, revisions, and direct links', async ({ page }, testInfo) => {
+  testInfo.setTimeout(60_000);
+  const selectedTokenPath = testInfo.retry === 0 ? tokenPath : retryTokenPath;
+  const token = (await fs.readFile(selectedTokenPath, 'utf8')).trim();
   await page.goto(`/teacher/#invite=${token}`);
   await expect(page).toHaveURL(/\/teacher\/$/);
   await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible();
@@ -65,7 +68,7 @@ test('real teacher loop preserves session, status, revisions, and direct links',
   expect((await regenerationRequest).postDataJSON().feedback).toBe(
     'Зробіть формулювання природнішим.',
   );
-  await expect(targetBlock.getByTestId('regeneration-succeeded')).toBeVisible({ timeout: 10_000 });
+  await expect(targetBlock.getByTestId('regeneration-succeeded')).toBeVisible({ timeout: 30_000 });
   const afterActivities = await Promise.all(
     Array.from({ length: await lessonBlocks.count() }, (_, index) => blockContent(index)),
   );

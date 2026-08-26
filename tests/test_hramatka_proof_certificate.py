@@ -169,7 +169,7 @@ def test_capture_and_independent_replay_cover_all_manifest_anchors(tmp_path) -> 
     assert [
         sum(len(slot["units"]) for slot in certificate.allocation["slots"])
         for certificate in certificates
-    ] == [61, 57, 66]
+    ] == [64, 60, 69]
     assert {
         certificate.anchor_id: (
             certificate.profile_digest,
@@ -179,19 +179,19 @@ def test_capture_and_independent_replay_cover_all_manifest_anchors(tmp_path) -> 
         for certificate in certificates
     } == {
         "b1-narrative": (
-            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
-            "a5101a45cc2a44a5707485bfad7bd5eb6dc67bf889de1a17c4f1ae3d502b05bc",
-            "a5101a45cc2a44a5707485bfad7bd5eb6dc67bf889de1a17c4f1ae3d502b05bc",
+            "32d0aff3e7c0ffe89620a6416cc13b75c333a24ddaa332800a0b52f8fd3f3eb6",
+            "d4df26bc2dfc4ae64ceccfd74eda4f9412fc7b034d83b334900fdeb1187e7771",
+            "d4df26bc2dfc4ae64ceccfd74eda4f9412fc7b034d83b334900fdeb1187e7771",
         ),
         "b1-dialogue": (
-            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
-            "956a7d0752710349e36bf52827145060d29e41b2a95d775d62564daf86c70165",
-            "956a7d0752710349e36bf52827145060d29e41b2a95d775d62564daf86c70165",
+            "32d0aff3e7c0ffe89620a6416cc13b75c333a24ddaa332800a0b52f8fd3f3eb6",
+            "18085a954bbfa72d9ed4bf6d5aec2e947edaba6c34b921f32a1a6aafe9cc00bb",
+            "18085a954bbfa72d9ed4bf6d5aec2e947edaba6c34b921f32a1a6aafe9cc00bb",
         ),
         "b1-informational": (
-            "8fdd9b4bdbc362099e64aba8324944a7443a2b7dabd28cb76917db2e882791be",
-            "d57ea826385bdb5160778132d66bf66b2da6cb6776f42f4e7f8490c4649b4e80",
-            "d57ea826385bdb5160778132d66bf66b2da6cb6776f42f4e7f8490c4649b4e80",
+            "32d0aff3e7c0ffe89620a6416cc13b75c333a24ddaa332800a0b52f8fd3f3eb6",
+            "96a4e2f3381826089f2faf550a5100f28a3874a50df0489c626ee7e20bb1b39b",
+            "96a4e2f3381826089f2faf550a5100f28a3874a50df0489c626ee7e20bb1b39b",
         ),
     }
     assert all(

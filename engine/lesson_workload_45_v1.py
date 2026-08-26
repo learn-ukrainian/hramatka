@@ -38,6 +38,7 @@ PHASE_PACE: Final[Mapping[int, PhasePace]] = MappingProxyType(
 MINUTES_PER_INTERACTION: Final[Mapping[str, float]] = MappingProxyType(
     {
         "match-up": 0.4,
+        "true-false": 0.4,
         "quiz": 0.6,
         "fill-in": 0.65,
         "error-correction": 1.1,
@@ -52,9 +53,10 @@ LONG_READING_BASE_MINUTES: Final = 3.0
 PLANNED_INTERACTIONS: Final[Mapping[tuple[str, str], int]] = MappingProxyType(
     {
         ("P1-A1", "match-up"): 8,
+        ("P1-A1", "true-false"): 8,
         ("P1-A2", "quiz"): 8,
-        ("P2-A1", "fill-in"): 7,
-        ("P2-A2", "error-correction"): 6,
+        ("P2-A1", "fill-in"): 8,
+        ("P2-A2", "error-correction"): 8,
         ("P2-A3", "mark-the-words"): 10,
     }
 )

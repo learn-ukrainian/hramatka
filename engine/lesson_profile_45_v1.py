@@ -18,7 +18,7 @@ from .lesson_capacity_v3 import LessonSlot
 from .lesson_workload_45_v1 import workload_manifest
 from .teacher_ready_density_v3 import density_floor_fingerprint, floor_for, phase_shape_for
 
-PROFILE_VERSION: Final = "Hramatka45MinuteProfile.v2"
+PROFILE_VERSION: Final = "Hramatka45MinuteProfile.v3"
 ResponseDemandTier = Literal[
     "selected-response",
     "bounded-production",
@@ -30,6 +30,7 @@ _TIER_BY_TYPE: Final[Mapping[str, ResponseDemandTier]] = MappingProxyType(
     {
         "quiz": "selected-response",
         "match-up": "selected-response",
+        "true-false": "selected-response",
         "cloze": "bounded-production",
         "fill-in": "bounded-production",
         "error-correction": "bounded-production",
@@ -46,7 +47,15 @@ _SCHEDULED_TYPES: Final = (
     "mark-the-words",
     "cloze",
 )
-_REPLACEMENTS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType({})
+_REPLACEMENTS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        # Ordinary B1 stories do not reliably carry the Atlas gloss material
+        # needed by the selected-response match-up board. The existing
+        # source-bound true/false board is the only approved same-tier
+        # fallback for this one 45-minute slot.
+        "match-up": ("true-false",),
+    }
+)
 
 
 @dataclass(frozen=True)

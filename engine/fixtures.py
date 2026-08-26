@@ -269,8 +269,15 @@ def _seed() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _build_vesum_db(path: Path) -> None:
+def _build_vesum_db(path: Path, *, delta_names: tuple[str, ...] = ()) -> None:
     rows = json.loads((_FIXTURES_DIR / "vesum_forms.json").read_text(encoding="utf-8"))
+    for delta_name in delta_names:
+        if not delta_name.isidentifier():
+            raise ValueError(f"invalid VESUM fixture delta name: {delta_name!r}")
+        delta_path = _FIXTURES_DIR / f"vesum_forms.{delta_name}.jsonl"
+        rows.extend(
+            json.loads(line) for line in delta_path.read_text(encoding="utf-8").splitlines() if line
+        )
     rows = [*rows, *_seed().get("vesum_forms", []), *_TASK_LANGUAGE_FORMS]
     conn = sqlite3.connect(path)
     try:
@@ -315,10 +322,12 @@ def _build_atlas_db(path: Path) -> None:
         conn.close()
 
 
-def _build_fixture_bundle(root: Path) -> data.DataBundle:
+def _build_fixture_bundle(
+    root: Path, *, vesum_delta_names: tuple[str, ...] = ()
+) -> data.DataBundle:
     vesum = root / "vesum.db"
     atlas = root / "atlas.db"
-    _build_vesum_db(vesum)
+    _build_vesum_db(vesum, delta_names=vesum_delta_names)
     _build_atlas_db(atlas)
     v_sha, v_size = _sha_size(vesum)
     a_sha, a_size = _sha_size(atlas)
@@ -941,10 +950,12 @@ def e2e_activities_for_prompt(prompt: str, *, phase: int) -> list[dict]:
     return activities
 
 
-def _bundle_with_matchup_vocabulary(root):
+def _bundle_with_matchup_vocabulary(
+    root: Path, *, vesum_delta_names: tuple[str, ...] = ()
+) -> data.DataBundle:
     """The normal fixture bundle omits two right-side synonym surface forms."""
     root.mkdir()
-    original = _build_fixture_bundle(root)
+    original = _build_fixture_bundle(root, vesum_delta_names=vesum_delta_names)
     connection = sqlite3.connect(root / "vesum.db")
     try:
         connection.executemany(

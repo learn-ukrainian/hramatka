@@ -24,5 +24,7 @@ test('under-capacity preflight never renders a generation phase or provider-call
 
   const recovery = page.getByTestId('failure-recovery-body');
   await expect(recovery).toHaveAttribute('data-failure-code', 'insufficient_anchor_capacity');
-  await expect(recovery).toContainText('Опорного матеріалу недостатньо для повного уроку.');
+  await expect(recovery).toContainText(
+    'Не вдалося підібрати всі шість типів вправ із цього тексту.',
+  );
 });

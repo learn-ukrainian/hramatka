@@ -262,8 +262,8 @@ const DICT = {
   // Per-failure_code recovery copy (#185). Source-capacity guidance is reserved
   // for the deterministic preflight code; post-generation floors keep a retry CTA.
   'recovery.body.insufficient_anchor_capacity': {
-    uk: 'Опорного матеріалу недостатньо для повного уроку. Спробуйте довший і різноманітніший текст із конкретними деталями — ваш текст уже збережено.',
-    en: 'The source does not contain enough supported material for a complete lesson. Use a longer, more varied source with concrete details — your text is already saved.',
+    uk: 'Не вдалося підібрати всі шість типів вправ із цього тексту. Спробуйте інший зв’язний текст із конкретними подіями та різними формами слів — ваш текст уже збережено.',
+    en: 'This text could not support all six lesson activity types. Try another connected story with concrete events and varied word forms — your text is already saved.',
   },
   'recovery.body.lesson_floor_unmet': {
     uk: 'Цього разу не вдалося скласти повний урок. Спробуйте ще раз — ваш текст уже збережено.',

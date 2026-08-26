@@ -343,6 +343,7 @@ def main() -> None:
     origin = os.environ["HRAMATKA_E2E_ORIGIN"]
     database_path = Path(os.environ["HRAMATKA_E2E_DB_PATH"])
     token_path = Path(os.environ["HRAMATKA_E2E_INVITE_PATH"])
+    retry_token_path = token_path.with_name("invite-token-retry-1")
     listener: socket.socket | None = None
     try:
         if parent_gone.is_set():
@@ -358,9 +359,13 @@ def main() -> None:
         )
         teacher = app.state.store.create_teacher("E2E викладач")
         _, invite_token = app.state.store.create_invite(teacher.id)
+        retry_teacher = app.state.store.create_teacher("E2E викладач — повтор")
+        _, retry_invite_token = app.state.store.create_invite(retry_teacher.id)
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(invite_token, encoding="ascii")
         token_path.chmod(0o600)
+        retry_token_path.write_text(retry_invite_token, encoding="ascii")
+        retry_token_path.chmod(0o600)
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -51,7 +51,7 @@ def test_real_baker_delivers_the_accepted_human_paced_lesson_shape(tmp_path) -> 
         len(payloads[2]["items"]),
         len(payloads[3]["items"]),
         len(payloads[4]["target_words"]),
-    ] == [8, 8, 7, 6, 10]
+    ] == [8, 8, 8, 8, 10]
     quiz_items = blocks[1]["activity"]["payload"]["items"]
     assert all("___" not in item["question"] for item in quiz_items)
     cloze = blocks[-1]["activity"]["payload"]

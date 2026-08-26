@@ -183,7 +183,12 @@ def deterministic_runtime_anchors() -> dict[str, RuntimeAnchor]:
 
 def _qualification_fixture_bundle(root: Path) -> data.DataBundle:
     """Build an isolated offline bundle without widening every engine test's lexicon."""
-    bundle = fixtures._bundle_with_matchup_vocabulary(root)
+    # The representative profile-v3 receipt carries the complete VESUM
+    # paradigms queried by the denser 45-minute workload. It is intentionally
+    # shared by these three qualification anchors and the exact ordinary-story
+    # regression, but excluded from the session-wide base fixture so unrelated
+    # legacy builders keep their original ambiguity surface.
+    bundle = fixtures._bundle_with_matchup_vocabulary(root, vesum_delta_names=("profile_45_v3",))
     asset_path = Path(__file__).with_name("assets") / "b1-45m.linguistics.json"
     asset_bytes = asset_path.read_bytes()
     asset = json.loads(asset_bytes)
