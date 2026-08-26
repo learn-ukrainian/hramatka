@@ -2647,6 +2647,18 @@ def test_cancel_is_owner_scoped_idempotent_and_retry_preserves_job_history(tmp_p
             assert baker.started.wait(timeout=1)
             active = client.get(f"/api/lessons/{lesson_id}/status").json()
             assert active["status"] == "baking"
+            assert isinstance(active["started_at"], str)
+            openapi = (Path(__file__).parents[1] / "hramatka/api/openapi.yaml").read_text(
+                encoding="utf-8"
+            )
+            status_schema = openapi.split("    LessonStatus:\n", maxsplit=1)[1].split(
+                "    TeacherSafeProgress:\n", maxsplit=1
+            )[0]
+            assert "        - started_at" in status_schema
+            assert (
+                "started_at:\n          type: [string, 'null']\n          format: date-time"
+                in status_schema
+            )
 
             # Active DELETE must not make the provider operation invisible.
             _error(
@@ -2664,6 +2676,7 @@ def test_cancel_is_owner_scoped_idempotent_and_retry_preserves_job_history(tmp_p
             cancelled_body = cancelled.json()
             assert cancelled_body["status"] == "cancelled"
             assert cancelled_body["attempt"] == 1
+            assert cancelled_body["started_at"] == active["started_at"]
             assert cancelled_body["attempt_history"][-1]["status"] == "cancelled"
             assert cancelled_body["attempt_history"][-1]["failure_code"] == "cancelled"
             _error(
@@ -2708,6 +2721,7 @@ def test_cancel_is_owner_scoped_idempotent_and_retry_preserves_job_history(tmp_p
             assert retried.status_code == 202, retried.text
             assert retried.json()["id"] == lesson_id
             assert retried.json()["attempt"] == 2
+            assert retried.json()["started_at"] is None
 
             # A lost retry response may be replayed after the new attempt is claimed or ready.
             replay = client.post(

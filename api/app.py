@@ -255,6 +255,10 @@ def _status_payload(job: JobRecord) -> dict[str, object]:
         "failure_message": job.failure_message,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
+        # This is the current attempt's claim time, not the lesson's creation
+        # time.  The teacher's elapsed clock must reset when a failed lesson is
+        # retried in place.
+        "started_at": job.started_at,
     }
     progress = _teacher_safe_progress(job.progress)
     if progress is not None:

@@ -1342,6 +1342,7 @@ components:
         - failure_message
         - created_at
         - updated_at
+        - started_at
       properties:
         id:
           type: string
@@ -1382,6 +1383,10 @@ components:
         updated_at:
           type: string
           format: date-time
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: Start time of the current bake attempt; null before it is claimed.
         progress:
           $ref: '#/components/schemas/TeacherSafeProgress'
     TeacherSafeProgress:

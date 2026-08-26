@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import App from './App';
+import App, { statusCardFromApi, type LessonStatus } from './App';
 import { LangProvider } from './i18n';
 
 const teacher = {
@@ -27,6 +27,22 @@ function jobStatus(status: 'draft' | 'baking' | 'failed' | 'cancelled', revision
     failure_code: status === 'cancelled' ? 'cancelled' : null,
     failure_message: null,
     created_at: '2026-08-13T00:00:00Z', updated_at: '2026-08-13T00:00:02Z',
+  };
+}
+
+function statusForTimer(overrides: Partial<LessonStatus> = {}): LessonStatus {
+  return {
+    id: 'lesson-1',
+    status: 'baking',
+    step: 'завдання складено',
+    revision: 1,
+    attempt: 1,
+    attempt_history: [],
+    failure_code: null,
+    failure_message: null,
+    created_at: '2026-08-26T08:00:00Z',
+    updated_at: '2026-08-26T08:00:00Z',
+    ...overrides,
   };
 }
 
@@ -331,6 +347,34 @@ describe('cancel and retry in place (#415)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     window.history.replaceState(null, '', '#/lessons/lesson-1');
+  });
+
+  it('uses the retry attempt clock instead of carrying an earlier attempt forward', () => {
+    const firstAttempt = statusCardFromApi(statusForTimer({
+      attempt: 2,
+      started_at: '2026-08-26T08:10:00Z',
+    }));
+    const retryQueued = statusCardFromApi(statusForTimer({
+      status: 'draft',
+      attempt: 3,
+      started_at: null,
+      updated_at: '2026-08-26T10:00:00Z',
+    }), firstAttempt);
+    const retryBaking = statusCardFromApi(statusForTimer({
+      attempt: 3,
+      started_at: '2026-08-26T10:00:05Z',
+      updated_at: '2026-08-26T10:00:05Z',
+    }), retryQueued);
+
+    expect(retryQueued.startedAt).toBeUndefined();
+    expect(retryBaking.startedAt).toBe('2026-08-26T10:00:05Z');
+
+    const legacyRetry = statusCardFromApi(statusForTimer({
+      attempt: 4,
+      started_at: undefined,
+      updated_at: '2026-08-26T12:00:00Z',
+    }), retryBaking);
+    expect(legacyRetry.startedAt).toBe('2026-08-26T12:00:00Z');
   });
 
   it('cancels once and retries the same job at its returned revision', async () => {

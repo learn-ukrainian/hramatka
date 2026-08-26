@@ -160,7 +160,7 @@ interface LessonAttempt {
   retry_requested_revision: number | null;
 }
 
-interface LessonStatus {
+export interface LessonStatus {
   id: string;
   status: LessonState;
   step: string;
@@ -171,10 +171,24 @@ interface LessonStatus {
   failure_message: string | null;
   created_at: string;
   updated_at: string;
+  /** Current attempt start; absent only when reading an older API deployment. */
+  started_at?: string | null;
   progress?: BakeProgress;
 }
 
-function statusCardFromApi(status: LessonStatus, previous?: { startedAt?: string }) {
+export function statusCardFromApi(
+  status: LessonStatus,
+  previous?: { attempt?: number; startedAt?: string },
+) {
+  const isNewAttempt = previous?.attempt !== status.attempt;
+  // Older API deployments do not expose started_at.  Keep their same-attempt
+  // clock stable, but never carry an earlier attempt into a retry.  updated_at
+  // is the least stale durable fallback at the current attempt transition.
+  const fallbackStartedAt = status.status === 'baking'
+    ? (isNewAttempt
+      ? status.updated_at || status.created_at
+      : previous?.startedAt || status.updated_at || status.created_at)
+    : (isNewAttempt ? undefined : previous?.startedAt);
   return {
     status: status.status,
     step: status.step || '',
@@ -184,7 +198,7 @@ function statusCardFromApi(status: LessonStatus, previous?: { startedAt?: string
     failure: status.failure_message || undefined,
     failure_code: status.failure_code ?? null,
     progress: status.progress || undefined,
-    startedAt: previous?.startedAt || status.created_at,
+    startedAt: status.started_at ?? fallbackStartedAt,
   };
 }
 
@@ -1092,15 +1106,11 @@ export default function TeacherApp() {
               setBakeElapsedMs(0);
               return;
             }
-            const startedAt = st.created_at || new Date().toISOString();
+            const mappedStatus = statusCardFromApi(st as LessonStatus);
             setBakeStatus({
+              ...mappedStatus,
               status: st.status === 'ready' ? 'baking' : (st.status as LessonState),
               step: st.step || 'bake.step.tasksComposed',
-              revision: st.revision || 1,
-              attempt: st.attempt || 1,
-              attempt_history: st.attempt_history || [],
-              progress: st.progress || undefined,
-              startedAt,
             });
             setBakeElapsedMs(0);
             pollStatus(id);
