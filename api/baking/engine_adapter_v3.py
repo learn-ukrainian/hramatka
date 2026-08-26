@@ -455,8 +455,18 @@ _TITLES = {
 
 
 def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return learner choice surfaces that must be honest about outside text."""
+    """Return learner surfaces that still need source-provenance review.
+
+    A certified cloze bank deliberately contains contextually excluded
+    distractors: same-lemma morphology forms and passage-attested lexical
+    foils.  Those choices have already passed exact-bank binding and their
+    deterministic exclusion-warrant gates; treating them as untrusted teacher
+    content produces a false warning on every otherwise source-grounded
+    long-form cloze.  The cloze answer remains source-bound here, while other
+    selected-response activities continue to review every learner option.
+    """
     surfaces: list[str] = []
+    activity_type = payload.get("type")
     items = payload.get("items")
     if isinstance(items, list):
         for item in items:
@@ -468,7 +478,14 @@ def _external_option_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
     blanks = payload.get("blanks")
     if isinstance(blanks, list):
         for blank in blanks:
-            options = blank.get("options") if isinstance(blank, Mapping) else None
+            if not isinstance(blank, Mapping):
+                continue
+            if activity_type == "cloze":
+                answer = blank.get("answer")
+                if isinstance(answer, str):
+                    surfaces.append(answer)
+                    continue
+            options = blank.get("options")
             if isinstance(options, list):
                 surfaces.extend(option for option in options if isinstance(option, str))
     pairs = payload.get("pairs")

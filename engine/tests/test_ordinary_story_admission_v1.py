@@ -4,9 +4,11 @@ import re
 from pathlib import Path
 
 from hramatka.api.anchor_preparation import prepare_anchor_text
+from hramatka.api.baking.engine_adapter_v3 import _has_external_options
 from hramatka.engine import data
 from hramatka.engine.anchor_inventory_v3 import inventory_from_anchor
 from hramatka.engine.fixtures import _build_fixture_bundle
+from hramatka.engine.gates.vesum import is_anchor_verbatim
 from hramatka.engine.lesson_capacity_v3 import AnchorParagraph, AnchorWindow, preflight_lesson
 from hramatka.engine.lesson_profile_45_v1 import lesson_profile_45, slot_builders_45
 from hramatka.engine.lesson_quality_v1 import validate_teacher_lesson_plan_quality_45
@@ -75,5 +77,26 @@ def test_ordinary_teacher_story_qualifies_without_glossary_gaming(tmp_path: Path
     assert {unit.distinctness["gap"]["sentence_id"] for unit in allocated["P3-A1"].plan.units} == {
         f"s-{index}" for index in range(1, 25)
     }
+    cloze_payload = {
+        "type": "cloze",
+        "blanks": [
+            {
+                "id": index,
+                "answer": unit.allowed_forms[0],
+                "options": list(unit.distinctness["choice_bank"]),
+            }
+            for index, unit in enumerate(allocated["P3-A1"].plan.units, start=1)
+        ],
+    }
+    assert all(
+        is_anchor_verbatim(blank["answer"], source)
+        for blank in cloze_payload["blanks"]
+    )
+    assert any(
+        not is_anchor_verbatim(option, source)
+        for blank in cloze_payload["blanks"]
+        for option in blank["options"]
+    )
+    assert not _has_external_options(cloze_payload, source)
     phase_three_prompt = render_phase_prompt(build_phase_context(result.allocation, phase=3))
     assert len(phase_three_prompt.encode("utf-8")) < 90_000
