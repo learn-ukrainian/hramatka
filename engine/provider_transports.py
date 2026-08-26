@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -105,9 +106,11 @@ DEEPSEEK_V4_PRO_MODEL = "deepseek-v4-pro"
 class SubscriptionGeneratorPort:
     """One-shot, non-interactive subscription-client generator.
 
-    Every generation starts a new ``agy --print`` process.  The port retains
-    only content-free output hashes for a qualification receipt; it never
-    resumes a conversation and intentionally performs no automatic retry.
+    Every generation starts a new ``agy`` stream-json process.  The prompt is
+    sent through stdin so large teacher prompts never become an argv item. The
+    port retains only content-free output hashes for a qualification receipt;
+    it never resumes a conversation and intentionally performs no automatic
+    retry.
     Retrying an interrupted CLI request could repeat a completed subscription
     call because this client has no idempotency-key protocol.
     """
@@ -186,17 +189,22 @@ class SubscriptionGeneratorPort:
         self._resolve_client_version()
         command = [
             self.executable,
-            "--print",
-            prompt,
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
             "--model",
             self.model,
             "--disable-slash-commands",
             "--sandbox",
-            "--output-format",
-            "text",
             "--print-timeout",
             f"{self.timeout_s}s",
         ]
+        stream_input = json.dumps(
+            {"event": "user", "message": {"content": prompt}},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ) + "\n"
         started_at_ms = int(time.perf_counter() * 1000)
         try:
             # Deliberately one invocation only.  A timeout/non-zero result is
@@ -205,6 +213,7 @@ class SubscriptionGeneratorPort:
                 completed = self.runner(
                     command,
                     capture_output=True,
+                    input=stream_input,
                     text=True,
                     timeout=self.timeout_s,
                     check=False,
@@ -225,7 +234,8 @@ class SubscriptionGeneratorPort:
         if completed.returncode != 0:
             raise GeneratorUnavailable("subscription client exited unsuccessfully")
         raw = completed.stdout
-        if not _subscription_completion_text(raw):
+        completion = _extract_subscription_completion(raw)
+        if completion is None:
             raise GeneratorUnavailable("subscription client did not emit a serializer completion")
         generator_model_id.set(self.model)
         generator_route_identity.set((self.host, self.model))
@@ -246,7 +256,7 @@ class SubscriptionGeneratorPort:
                     "ended_at_ms": ended_at_ms,
                 }
             )
-        return raw
+        return completion
 
 
 def _which(executable: str) -> str | None:
@@ -296,6 +306,51 @@ def _subscription_completion_text(raw: object) -> bool:
     if normalized.startswith(conversational):
         return False
     return extract_json(raw) is not None
+
+
+def _extract_subscription_completion(raw: object) -> str | None:
+    """Extract one terminal SUCCESS response from a stream-json transcript.
+
+    The subscription client may emit progress events before its terminal
+    result. Every non-empty stdout line must still be valid JSON, and the
+    terminal result must be the final event. This keeps malformed, duplicate,
+    failed, or partial streams fail-closed without exposing provider output in
+    an exception message.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+
+    completion: str | None = None
+    terminal_seen = False
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        if terminal_seen:
+            return None
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(event, dict):
+            return None
+        event_name = event.get("event")
+        if not isinstance(event_name, str) or not event_name:
+            return None
+        if event_name == "error":
+            return None
+        if event_name != "result":
+            continue
+        result = event.get("result")
+        if not isinstance(result, dict) or result.get("status") != "SUCCESS":
+            return None
+        response = result.get("response")
+        if not isinstance(response, str) or not _subscription_completion_text(response):
+            return None
+        if completion is not None:
+            return None
+        completion = response
+        terminal_seen = True
+    return completion
 
 
 def _extract_text(body: Any) -> str:

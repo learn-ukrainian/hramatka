@@ -80,6 +80,19 @@ def _subscription_completed(
     return subprocess.CompletedProcess(["agy"], returncode, stdout=stdout, stderr="ignored")
 
 
+def _subscription_stream_result(
+    response: str = '{"activities": []}', *, status: str = "SUCCESS"
+) -> str:
+    return (
+        json.dumps(
+            {"event": "result", "result": {"status": status, "response": response}},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
 def _subscription_port(runner):
     return providers.SubscriptionGeneratorPort(
         executable="agy",
@@ -91,8 +104,10 @@ def _subscription_port(runner):
 
 
 # --- explicit headless subscription route ---------------------------------
-def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_json():
+def test_subscription_generator_uses_stream_json_stdin_contract_and_extracts_fenced_json():
     seen: list[list[str]] = []
+    fenced = '```json\n{"activities": []}\n```\n'
+    stdout = _subscription_stream_result(fenced)
 
     def runner(command, **kwargs):
         seen.append(command)
@@ -101,21 +116,28 @@ def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_js
         assert kwargs["timeout"] == 17
         assert kwargs["check"] is False
         assert "HRAMATKA_AIS_API_KEY" not in kwargs["env"]
-        return _subscription_completed('```json\n{"activities": []}\n```\n')
+        assert kwargs["input"] == (
+            '{"event":"user","message":{"content":"SERIALIZER-STYLE-PROMPT"}}\n'
+        )
+        assert json.loads(kwargs["input"]) == {
+            "event": "user",
+            "message": {"content": "SERIALIZER-STYLE-PROMPT"},
+        }
+        return _subscription_completed(stdout)
 
     port = _subscription_port(runner)
-    assert port("SERIALIZER-STYLE-PROMPT") == '```json\n{"activities": []}\n```\n'
+    assert port("SERIALIZER-STYLE-PROMPT") == fenced
     assert seen == [
         [
             "agy",
-            "--print",
-            "SERIALIZER-STYLE-PROMPT",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
             "--model",
             "gemini-3.6-flash-high",
             "--disable-slash-commands",
             "--sandbox",
-            "--output-format",
-            "text",
             "--print-timeout",
             "17s",
         ]
@@ -124,7 +146,7 @@ def test_subscription_generator_uses_one_shot_print_contract_and_keeps_fenced_js
         "tier": "cli_self_reported",
         "client_version": "1.1.10",
         "requested_model": "gemini-3.6-flash-high",
-        "raw_output_sha256": ("b587bd808c10e72c66e63fbc32b4f95a3a3780c2e544fdf7ac422257ab437886",),
+        "raw_output_sha256": ("11d9dca155a9402b480da4b6ad3ba2db4aa2b8c01c8fba2ac5c79f3ae31f3ee1",),
     }
 
 
@@ -132,7 +154,7 @@ def test_subscription_generator_does_not_require_metered_provider_acknowledgemen
     monkeypatch.delenv(METERED_PROVIDER_SPEND_ACK_ENV)
 
     def runner(*_args, **_kwargs):
-        return _subscription_completed('{"activities": []}')
+        return _subscription_completed(_subscription_stream_result())
 
     port = _subscription_port(runner)
 
@@ -142,21 +164,61 @@ def test_subscription_generator_does_not_require_metered_provider_acknowledgemen
 def test_subscription_generator_rejects_conversational_wrong_argument_reply():
     port = _subscription_port(
         lambda *_args, **_kwargs: _subscription_completed(
-            "Understood. I will not recommend any slash commands."
+            _subscription_stream_result(
+                "Understood. I will not recommend any slash commands."
+            )
         )
     )
     with pytest.raises(GeneratorUnavailable, match="serializer completion"):
         port("PROMPT")
 
 
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "not-json\n",
+        _subscription_stream_result(status="ERROR"),
+        json.dumps({"event": "error", "error": {"message": "failed"}}) + "\n",
+        _subscription_stream_result(response="not-json"),
+        json.dumps({"event": "progress", "state": "running"}) + "\n",
+        _subscription_stream_result() + _subscription_stream_result(),
+        _subscription_stream_result() + "not-json\n",
+    ],
+)
+def test_subscription_generator_rejects_malformed_error_or_incomplete_streams(stdout: str):
+    port = _subscription_port(lambda *_args, **_kwargs: _subscription_completed(stdout))
+
+    with pytest.raises(GeneratorUnavailable, match="serializer completion"):
+        port("PROMPT")
+
+
+def test_subscription_generator_sends_large_prompt_via_stdin_without_argv_item():
+    prompt = "x" * 195_295
+    seen: dict[str, object] = {}
+
+    def runner(command, **kwargs):
+        seen["command"] = command
+        seen["input"] = kwargs["input"]
+        assert prompt not in command
+        assert all(len(argument.encode("utf-8")) < 131_072 for argument in command)
+        request = json.loads(kwargs["input"])
+        assert request == {"event": "user", "message": {"content": prompt}}
+        assert kwargs["input"].endswith("\n")
+        return _subscription_completed(_subscription_stream_result())
+
+    port = _subscription_port(runner)
+    assert port(prompt) == '{"activities": []}'
+    assert len(seen["input"].encode("utf-8")) > 195_295
+
+
 def test_subscription_generator_is_stateless_between_calls():
     prompts: list[str] = []
 
-    def runner(command, **_kwargs):
-        prompts.append(command[2])
+    def runner(command, **kwargs):
+        prompts.append(json.loads(kwargs["input"])["message"]["content"])
         assert "--continue" not in command
         assert "--conversation" not in command
-        return _subscription_completed('{"activities": []}')
+        return _subscription_completed(_subscription_stream_result())
 
     port = _subscription_port(runner)
     assert port("first isolated prompt") == '{"activities": []}'
@@ -169,7 +231,10 @@ def test_subscription_generator_is_stateless_between_calls():
     "runner",
     [
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired(["agy", "--print"], 17)
+            subprocess.TimeoutExpired(
+                ["agy", "--input-format", "stream-json", "--output-format", "stream-json"],
+                17,
+            )
         ),
         lambda *_args, **_kwargs: _subscription_completed("", returncode=9),
     ],
@@ -182,17 +247,18 @@ def test_subscription_timeout_and_nonzero_surface_typed_unavailable(runner):
 def test_subscription_timeout_never_carries_the_prompt_into_a_traceback():
     """A timeout must not put prompt text anywhere a logger can render it.
 
-    This client takes the prompt as a command argument, so a real
-    TimeoutExpired carries it in ``.cmd``.  Chaining that exception publishes
-    the whole prompt through ``__cause__`` to log.exception, an unhandled
-    exception hook, or a test report -- which this module forbids for prompt
-    and response CONTENT.  The parametrised test above cannot catch this: its
+    The prompt is sent through stdin, so a real TimeoutExpired carries an argv
+    without prompt content. Chaining that exception could still publish
+    command details through ``__cause__`` to log.exception, an unhandled
+    exception hook, or a test report, which this module forbids for prompt and
+    response CONTENT. The parametrised test above cannot catch this: its
     fixture builds a TimeoutExpired whose cmd omits the prompt.
     """
     prompt = "TEACHER-PASTED-UKRAINIAN-TEXT-Привіт-світ"
 
-    def runner(command, **_kwargs):
-        assert prompt in command, "the fixture must reproduce the real argv"
+    def runner(command, **kwargs):
+        assert prompt not in command
+        assert json.loads(kwargs["input"])["message"]["content"] == prompt
         raise subprocess.TimeoutExpired(command, 17)
 
     try:
