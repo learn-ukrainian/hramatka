@@ -11,6 +11,7 @@ from hramatka.engine.lesson_capacity_v3 import AnchorParagraph, AnchorWindow, pr
 from hramatka.engine.lesson_profile_45_v1 import lesson_profile_45, slot_builders_45
 from hramatka.engine.lesson_quality_v1 import validate_teacher_lesson_plan_quality_45
 from hramatka.engine.lesson_workload_45_v1 import phase_minutes
+from hramatka.engine.prompt_pack_v3 import build_phase_context, render_phase_prompt
 from hramatka.engine.sentence_segmentation_v1 import sentence_spans
 
 _SOURCE = Path(__file__).with_name("fixtures") / "ordinary_b1_story_565.txt"
@@ -74,3 +75,5 @@ def test_ordinary_teacher_story_qualifies_without_glossary_gaming(tmp_path: Path
     assert {unit.distinctness["gap"]["sentence_id"] for unit in allocated["P3-A1"].plan.units} == {
         f"s-{index}" for index in range(1, 25)
     }
+    phase_three_prompt = render_phase_prompt(build_phase_context(result.allocation, phase=3))
+    assert len(phase_three_prompt.encode("utf-8")) < 90_000

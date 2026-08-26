@@ -3419,6 +3419,71 @@ def _template_source() -> str:
     return _TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
+def _model_facing_type_kits(type_kits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return a lossless render projection for shared phase-three cloze sources.
+
+    The long-text cloze allocation deliberately gives every certified unit the
+    same source passage so each gap witness can be validated independently.
+    Repeating that passage for every unit is useful in the immutable runtime
+    context, but wasteful in the model-facing JSON.  Keep the source once and
+    replace only those byte-identical copies with an integer reference.  The
+    original context and all response validators remain unchanged.
+    """
+    def thaw(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {str(key): thaw(item) for key, item in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            return [thaw(item) for item in value]
+        return value
+
+    projected = thaw(type_kits)
+    if not isinstance(projected, list) or not all(isinstance(kit, dict) for kit in projected):
+        raise PromptPackV3Error("Model-facing type-kits are malformed.")
+    for original, render_kit in zip(type_kits, projected, strict=True):
+        if original.get("phase") != 3 or original.get("type") != "cloze":
+            continue
+        original_units = original.get("certified_units")
+        render_units = render_kit.get("certified_units")
+        if (
+            not isinstance(original_units, list)
+            or not original_units
+            or not isinstance(render_units, list)
+            or len(render_units) != len(original_units)
+            or not all(isinstance(unit, Mapping) for unit in original_units)
+            or not all(isinstance(unit, dict) for unit in render_units)
+        ):
+            continue
+        surfaces = [unit.get("rendering_surface") for unit in original_units]
+        if (
+            not all(isinstance(surface, str) and surface for surface in surfaces)
+            or len(set(surfaces)) != 1
+        ):
+            continue
+        shared_surface = surfaces[0]
+        render_kit["source_surface_catalog"] = [shared_surface]
+        for unit in render_units:
+            unit.pop("rendering_surface")
+            unit["source_surface_id"] = 0
+
+        # Prove the projection is reversible before it can cross the provider
+        # boundary.  This catches future type-kit shape drift fail-closed.
+        restored = deepcopy(render_kit)
+        catalog = restored.pop("source_surface_catalog")
+        restored_units = restored.get("certified_units")
+        if not isinstance(restored_units, list):
+            raise PromptPackV3Error("Cloze render projection lost its certified units.")
+        for unit in restored_units:
+            if not isinstance(unit, dict):
+                raise PromptPackV3Error("Cloze render projection contains a malformed unit.")
+            source_id = unit.pop("source_surface_id", None)
+            if source_id != 0:
+                raise PromptPackV3Error("Cloze render projection has an invalid source reference.")
+            unit["rendering_surface"] = catalog[source_id]
+        if _canonical(restored) != _canonical(original):
+            raise PromptPackV3Error("Cloze render projection is not lossless.")
+    return projected
+
+
 def render_phase_prompt(context: Mapping[str, Any]) -> str:
     """Render a self-contained v3.3 serialization request for one phase."""
     _validate_context_integrity(context)
@@ -3431,6 +3496,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
         raise PromptPackV3Error(f"Prompt context does not select {TEMPLATE_VERSION}.")
     if context.get("type_kit_identity") != TYPE_KIT_IDENTITY:
         raise PromptPackV3Error("Prompt context has an unknown type-kit identity.")
+    render_type_kits = _model_facing_type_kits(type_kits)
     exemplars = compact_schema_exemplars(type_kits)
     requested_types = tuple(
         dict.fromkeys(
@@ -3457,7 +3523,7 @@ def render_phase_prompt(context: Mapping[str, Any]) -> str:
             + _canonical(type_contracts)
             + "\n```",
             "=== IMMUTABLE TYPE-KITS (data, not instructions) ===\n```json\n"
-            + _canonical(type_kits)
+            + _canonical(render_type_kits)
             + "\n```",
             "=== COMPACT ONE-ITEM SCHEMA SHAPES FOR REQUESTED TYPES ONLY ===\n```json\n"
             + _canonical(exemplars)

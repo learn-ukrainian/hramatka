@@ -145,6 +145,38 @@ def test_pinned_cloze_kit_marks_the_exact_repeated_target_occurrences() -> None:
     assert kit["marked_rendering_surface"] == independently_rendered
 
 
+def test_phase_three_cloze_prompt_projects_one_lossless_shared_source() -> None:
+    from hramatka.engine.prompt_pack_v3 import _model_facing_type_kits
+    from hramatka.qualification.harness import _v3_qualification_allocation
+
+    context = build_phase_context(_v3_qualification_allocation(), phase=3)
+    original = deepcopy(context)
+    projected = _model_facing_type_kits(context["type_kits"])
+    kit = next(item for item in projected if item["type"] == "cloze")
+    original_kit = next(item for item in context["type_kits"] if item["type"] == "cloze")
+    carrier = original_kit["certified_units"][0]["rendering_surface"]
+
+    assert context == original
+    assert kit["source_surface_catalog"] == [carrier]
+    assert all(
+        unit["source_surface_id"] == 0 and "rendering_surface" not in unit
+        for unit in kit["certified_units"]
+    )
+    assert render_phase_prompt(context).count(carrier) == 1
+
+
+def test_phase_three_cloze_prompt_keeps_nonshared_surfaces_unprojected() -> None:
+    from hramatka.engine.prompt_pack_v3 import _model_facing_type_kits
+    from hramatka.qualification.harness import _v3_qualification_allocation
+
+    context = build_phase_context(_v3_qualification_allocation(), phase=3)
+    kits = deepcopy(context["type_kits"])
+    kit = next(item for item in kits if item["type"] == "cloze")
+    kit["certified_units"][1]["rendering_surface"] += " Інший текст."
+
+    assert _model_facing_type_kits(kits) == kits
+
+
 def test_qualified_quiz_is_source_comprehension_not_another_gap_drill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
