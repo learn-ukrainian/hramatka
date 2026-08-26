@@ -23,6 +23,7 @@ _PAGE_LABEL_RE = re.compile(
     r"^(?:коментарі|опублікувати|рекомендовані)\s*[:.!?…-]*$",
     re.IGNORECASE,
 )
+_CLOSING_PUNCTUATION_ONLY_RE = re.compile(r"""[»›”’"')\]]+""")
 
 
 class AnchorPreparationError(ValueError):
@@ -122,7 +123,13 @@ def _is_hard_boundary(sentence: str) -> bool:
         return True
     letters = _ALPHA_RE.findall(sentence)
     if not letters:
-        return bool(sentence.strip())
+        # Sentence splitting can leave ordinary closing punctuation (for
+        # example the ``»`` in ``«Хто готовий?»``) in its own fragment.  Such
+        # punctuation carries no page or code semantics and must not activate
+        # article extraction, which would otherwise rewrite valid teacher
+        # prose before capacity admission.
+        fragment = sentence.strip()
+        return bool(fragment) and _CLOSING_PUNCTUATION_ONLY_RE.fullmatch(fragment) is None
     cyrillic_ratio = len(_CYRILLIC_RE.findall(sentence)) / len(letters)
     code_punctuation = sum(sentence.count(marker) for marker in (";", "=", "(", ")"))
     return cyrillic_ratio < 0.45 and code_punctuation >= 2

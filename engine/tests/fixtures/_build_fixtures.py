@@ -166,6 +166,51 @@ def _record_vesum_rows() -> list[dict]:
     return rows
 
 
+def _surface_closed_vesum_rows(real_dir: Path, captured: list[dict]) -> list[dict]:
+    """Expand captured analyses to every authoritative row for each surface.
+
+    A lemma lookup can introduce a word form whose other lemma/POS analyses
+    were not returned by that lookup.  Runtime word-form lookups see all of
+    those analyses, so a replay fixture that retains only the lemma result can
+    silently narrow the ambiguity surface.  Close the capture over each
+    observed ``word_form`` and fail if the authority no longer contains an
+    exact captured analysis.
+    """
+    captured_keys = {
+        (row["word_form"], row["lemma"], row["tags"], row["pos"]) for row in captured
+    }
+    authoritative: set[tuple[str, str, str, str]] = set()
+    connection = sqlite3.connect(real_dir / "vesum.db")
+    try:
+        for surface in sorted({key[0] for key in captured_keys}, key=str.casefold):
+            authoritative.update(
+                connection.execute(
+                    "SELECT word_form, lemma, tags, pos FROM forms WHERE word_form = ?",
+                    (surface,),
+                ).fetchall()
+            )
+    finally:
+        connection.close()
+    missing = captured_keys - authoritative
+    if missing:
+        raise ValueError(
+            "captured VESUM analyses are absent from the authoritative surface: "
+            f"{len(missing)} row(s)"
+        )
+    return [
+        {"word_form": word_form, "lemma": lemma, "tags": tags, "pos": pos}
+        for word_form, lemma, tags, pos in sorted(authoritative)
+    ]
+
+
+def _fixture_only_vesum_keys() -> set[tuple[str, str, str, str]]:
+    """Return explicitly synthetic rows that fixture extraction must not retain."""
+    from hramatka.engine import fixtures
+
+    rows = [*fixtures._seed().get("vesum_forms", []), *fixtures._TASK_LANGUAGE_FORMS]
+    return {(row["word_form"], row["lemma"], row["tags"], row["pos"]) for row in rows}
+
+
 def _trim_payload(payload: dict, *, include_antonyms: bool = False) -> dict:
     """Keep only the fields `retrieval.build_atlas_lookup` actually reads, so the
     fixture stays tiny and carries no incidental public prose."""
@@ -282,10 +327,17 @@ def main() -> None:
             f"{len(qualification_atlas)} Atlas payloads"
         )
         return
+    fixture_only_keys = _fixture_only_vesum_keys()
+    recorded_vesum_rows = [
+        row
+        for row in _record_vesum_rows()
+        if (row["word_form"], row["lemma"], row["tags"], row["pos"]) not in fixture_only_keys
+    ]
+    captured_vesum_rows = _surface_closed_vesum_rows(real_dir, recorded_vesum_rows)
     if augment_only:
-        vesum_rows = [*_baseline_rows("vesum_forms.json"), *_record_vesum_rows()]
+        vesum_rows = [*_baseline_rows("vesum_forms.json"), *captured_vesum_rows]
     else:
-        vesum_rows = _record_vesum_rows()
+        vesum_rows = captured_vesum_rows
     if augment_only:
         vesum_rows = [
             {

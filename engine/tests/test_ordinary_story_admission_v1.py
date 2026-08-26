@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from hramatka.api.anchor_preparation import prepare_anchor_text
 from hramatka.engine import data
 from hramatka.engine.anchor_inventory_v3 import inventory_from_anchor
 from hramatka.engine.fixtures import _build_fixture_bundle
@@ -18,7 +19,11 @@ _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ][А-Яа-яІіЇ�
 
 def test_ordinary_teacher_story_qualifies_without_glossary_gaming(tmp_path: Path) -> None:
     """The deployed #565 reproduction must authorize a dense six-format lesson offline."""
-    source = _SOURCE.read_text(encoding="utf-8")
+    raw_source = _SOURCE.read_text(encoding="utf-8")
+    source = prepare_anchor_text(raw_source)
+    assert source == raw_source.strip()
+    assert "\n\n" in source
+    assert source.endswith("?»")
     profile = lesson_profile_45()
     bundle_root = tmp_path / "ordinary-story-bundle"
     bundle_root.mkdir()
