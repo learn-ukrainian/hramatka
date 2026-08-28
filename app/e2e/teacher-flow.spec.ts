@@ -667,46 +667,35 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     expect(teacherKeys).toBeGreaterThan(0);
   });
 
-  test('URL import flow creates lesson and failure keeps form state', async ({ page }) => {
+  test('paste-only creation hides URL import and rejects a forged URL-backed request', async ({ page }) => {
     await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
     await page.reload();
     await page.waitForURL(TEACHER_ROOT_URL);
 
-    await page.getByRole('tab', { name: 'З посилання' }).click();
-    await page.getByTestId('anchor-url-input').fill('https://stub.example.test/article');
-    await page.getByTestId('fetch-anchor-url-btn').click();
+    await expect(page.getByRole('tab', { name: /З посилання|From a link/i })).toHaveCount(0);
+    await expect(page.getByTestId('anchor-url-input')).toHaveCount(0);
+    await expect(page.getByTestId('fetch-anchor-url-btn')).toHaveCount(0);
 
-    const textarea = page.getByTestId('anchor-text-input');
-    await expect(textarea).toHaveValue(/Текст, отриманий із посилання/);
-    await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-    await page.waitForSelector('[data-activity-player], .block', { timeout: 15000 });
-
-    await page.getByTestId('copy-lesson-as-new').click();
-    await expect(page.getByRole('heading', { name: 'Створити новий урок' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'З посилання' })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByTestId('anchor-url-input')).toBeVisible();
-
-    const failUrl = 'https://stub.example.test/fail-fetch';
-    await page.getByTestId('anchor-url-input').fill(failUrl);
-    await page.getByTestId('fetch-anchor-url-btn').click();
-    await expect(page.getByRole('alert')).toBeVisible();
-    await expect(page.getByTestId('anchor-url-input')).toHaveValue(failUrl);
-    await expect(textarea).toHaveValue(/Текст, отриманий із посилання/);
-  });
-
-  test('invalid URL recovery copy follows the selected interface language', async ({ page }) => {
-    await page.goto(`${APP}/teacher/#invite=${TEST_TOKEN}`);
-    await page.reload();
-    await page.waitForURL(TEACHER_ROOT_URL);
-
-    await page.getByTestId('lang-toggle').click();
-    await page.getByRole('tab', { name: 'From a link' }).click();
-    await page.getByTestId('anchor-url-input').fill('not-a-url');
-    await page.getByTestId('fetch-anchor-url-btn').click();
-
-    await expect(page.getByRole('alert')).toContainText('The link must be a valid HTTPS address.');
-    await expect(page.getByRole('alert')).not.toContainText(/[А-Яа-яІіЇїЄєҐґ]/);
-    await expect(page.getByTestId('anchor-url-input')).toHaveValue('not-a-url');
+    const forged = await page.evaluate(async (logicalModelId) => {
+      const session = await (await fetch('/api/session')).json();
+      const response = await fetch('/api/lessons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+        body: JSON.stringify({
+          id: crypto.randomUUID(),
+          anchor: {
+            text: 'Текст, який хтось намагався подати як URL-джерело.',
+            source: 'teacher-url',
+            source_url: 'https://example.test/article',
+          },
+          level: 'B1',
+          duration: 45,
+          logical_model_id: logicalModelId,
+        }),
+      });
+      return { status: response.status, code: (await response.json()).code };
+    }, TEST_LOGICAL_MODEL_ID);
+    expect(forged).toEqual({ status: 422, code: 'invalid_input' });
   });
 
   test('failed status subline never shows stale «готово» step (regression)', async ({ page }) => {

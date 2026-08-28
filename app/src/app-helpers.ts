@@ -46,8 +46,8 @@ export interface BakeRequestPayload {
   /** Legacy sessionStorage field accepted when restoring a pre-wiring request. */
   focus?: string;
   lessonId: string;
-  anchorSource?: 'teacher-paste' | 'teacher-url';
-  sourceUrl?: string;
+  /** New requests are paste-only; unknown legacy storage fields are ignored. */
+  anchorSource?: 'teacher-paste';
   logicalModelId?: string;
 }
 

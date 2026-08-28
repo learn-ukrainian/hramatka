@@ -250,56 +250,6 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
-  /api/anchor/import-url:
-    post:
-      tags: [Lessons]
-      operationId: importAnchorUrl
-      summary: Fetch readable text from an HTTPS page for teacher review
-      description: |
-        Server-side only URL import with SSRF defenses. The browser posts an
-        HTTPS URL, receives extracted text plus the normalized source URL, and
-        places the text into the same anchor textarea for teacher review before
-        lesson creation. Private, loopback, link-local, and metadata targets
-        are rejected, as are unsafe redirects, oversized responses, and
-        non-text content types.
-      security:
-        - PilotSession: []
-      parameters:
-        - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UrlImportRequest'
-      responses:
-        '200':
-          description: Readable text extracted for teacher review
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UrlImportResponse'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/CsrfRejected'
-        '422':
-          $ref: '#/components/responses/InvalidInput'
-        '429':
-          description: Per-teacher URL import rate limit exceeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '502':
-          description: Upstream fetch failed without losing browser form state
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          $ref: '#/components/responses/PersistenceUnavailable'
   /api/lesson-models:
     get:
       tags: [Lessons]
@@ -332,7 +282,7 @@ paths:
       summary: Create or recover an idempotent anchor bake
       description: |
         The browser creates a UUID and reuses it for network retries. The
-        request hash covers `anchor` (including `source_url` for teacher-url),
+        request hash covers the pasted-text `anchor`,
         `level`, `duration`, `methodology`, normalized `focus` and
         `grammar_focus` (`null` when omitted), and `logical_model_id`. Same UUID and same request returns the existing
         aggregate with `reused: true`; different input or a model that is not
@@ -1181,51 +1131,7 @@ components:
           description: 1–100000 Unicode code points after JSON decoding; whitespace-only is invalid.
         source:
           type: string
-          enum: [teacher-paste, teacher-url]
-        source_url:
-          type: string
-          format: uri
-          pattern: '^https://'
-          maxLength: 2048
-          description: Required when source is teacher-url; omitted for teacher-paste.
-      allOf:
-        - if:
-            properties:
-              source:
-                const: teacher-url
-          then:
-            required: [source_url]
-        - if:
-            properties:
-              source:
-                const: teacher-paste
-          then:
-            not:
-              required: [source_url]
-    UrlImportRequest:
-      type: object
-      additionalProperties: false
-      required: [url]
-      properties:
-        url:
-          type: string
-          minLength: 1
-          maxLength: 2048
-          description: HTTPS page URL to fetch server-side for readable text extraction.
-    UrlImportResponse:
-      type: object
-      additionalProperties: false
-      required: [text, source_url]
-      properties:
-        text:
-          type: string
-          minLength: 1
-          maxLength: 100000
-        source_url:
-          type: string
-          format: uri
-          pattern: '^https://'
-          maxLength: 2048
+          enum: [teacher-paste]
     LessonCreateRequest:
       type: object
       additionalProperties: false
@@ -1523,6 +1429,7 @@ components:
           format: uri
           pattern: '^https://'
           maxLength: 2048
+          description: Present only on a legacy stored URL-derived lesson. New lessons accept pasted text only.
         chars:
           type: integer
           minimum: 1

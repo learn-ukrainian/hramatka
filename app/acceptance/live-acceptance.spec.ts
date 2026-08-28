@@ -33,9 +33,6 @@ const TEACHER_NAME = 'accept-verify';
 // A short real B1-level Ukrainian paragraph (about Львів + борщ).
 const UA_B1_TEXT = `Львів — це місто на заході України. Воно відоме своєю старовинною архітектурою, кавою та шоколадом. Багато туристів приїжджають, щоб побачити Ратушу та прогулятися центром. У місцевих ресторанах готують традиційний борщ за сімейними рецептами. Місто поєднує історію з сучасним життям.`;
 
-// A safe-ish HTTPS article (wikipedia UA). If SSRF guard legitimately rejects, we assert UA error + preserved form state (do not hard-fail).
-const TEST_ARTICLE_URL = 'https://uk.wikipedia.org/wiki/Львів';
-
 interface ErrorLog {
   type: string;
   text: string;
@@ -280,44 +277,6 @@ async function exerciseCatalogStates(page: Page) {
   await readyRow.locator('button').click();
   await expect(page.locator('.lesson-view')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/Урок не знайдено|Lesson not found/i)).toHaveCount(0);
-}
-
-async function exerciseUrlImport(page: Page) {
-  // Switch to URL tab
-  await page.getByRole('tab', { name: /З посилання|From a link/i }).click();
-  const urlInput = page.getByTestId('anchor-url-input');
-  await urlInput.fill(TEST_ARTICLE_URL);
-  const fetchBtn = page.getByTestId('fetch-anchor-url-btn');
-  await fetchBtn.click();
-
-  const textarea = page.getByTestId('anchor-text-input');
-  const errBanner = page.locator('.banner.fail, [role="alert"]').first();
-
-  // Wait a bit for network action (fetch or guard).
-  await page.waitForTimeout(2500);
-
-  const hasText = (await textarea.inputValue().catch(() => '')).trim().length > 10;
-  const hasErr = await errBanner.isVisible().catch(() => false);
-
-  if (hasText) {
-    // Good path: extracted text landed.
-    const val = await textarea.inputValue();
-    expect(val.length).toBeGreaterThan(10);
-    expect(await urlInput.inputValue()).toContain('wikipedia');
-  } else {
-    // As instructed: if the fetch is blocked by SSRF guard (or fails for size/guard), confirm form state preserved + UA error.
-    // Do not hard-fail the acceptance on a legitimately rejected external fetch.
-    if (hasErr) {
-      const errText = (await errBanner.textContent().catch(() => '')) || '';
-      // UA error surfaced (content in Ukrainian or clear failure message). Content check is loose.
-      expect(errText.length).toBeGreaterThan(3);
-    }
-    // URL input keeps its value (form not wiped) — critical for the "state preserved" requirement.
-    expect(await urlInput.inputValue()).toBe(TEST_ARTICLE_URL);
-  }
-
-  // Return to text tab for the main bake (even if url fetch did not yield text)
-  await page.getByRole('tab', { name: /Вставити текст|Paste text/i }).click();
 }
 
 async function ackAllWarnings(page: Page) {
@@ -620,11 +579,10 @@ test.describe('hramatka live pilot — full acceptance (Sol 9-item + workbench) 
       assertNoConsoleErrors('catalog-empty-both');
     });
 
-    // ===== 2/3. URL import (may legitimately fail) + main paste bake =====
+    // ===== 2/3. Paste-only main bake =====
     let bakeResult: { status: string; lessonId?: string; jobId?: string } = { status: 'unknown' };
 
-    await test.step('3. URL import tab + main paste + bake (B1 text)', async () => {
-      await exerciseUrlImport(page);
+    await test.step('3. Main paste + bake (B1 text)', async () => {
       await fillPasteForm(page, UA_B1_TEXT, 45, 'вищий ступінь прикметників');
       await startBakeFromPaste(page);
 

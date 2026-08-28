@@ -483,9 +483,9 @@ def canonical_request_json(
     grammar_focus: str | None = None,
     logical_model_id: str | None = None,
 ) -> str:
-    """Build the complete canonical request defined by the frozen OpenAPI contract."""
+    """Build canonical durable request JSON, including retained legacy rows."""
     if anchor_source not in {"teacher-paste", "teacher-url"}:
-        raise ValueError("The pilot accepts only teacher-paste or teacher-url anchors.")
+        raise ValueError("A stored lesson request has an unsupported anchor source.")
     if anchor_source == "teacher-url" and not anchor_source_url:
         raise ValueError("teacher-url anchors require source_url.")
     if anchor_source == "teacher-paste" and anchor_source_url is not None:
@@ -1269,6 +1269,11 @@ class JobStore:
     ) -> tuple[JobRecord, bool]:
         if duration != 45:
             raise ValueError("New lesson generation is qualified for 45 minutes only.")
+        # The 45-minute pilot creates lessons from text the teacher pasted into
+        # the form.  Keep the canonicalizer able to decode historical URL
+        # records so they stay readable, but never create another such record.
+        if anchor_source != "teacher-paste" or anchor_source_url is not None:
+            raise ValueError("New lesson generation accepts teacher-paste anchors only.")
         request_json = canonical_request_json(
             anchor_text=anchor_text,
             anchor_source=anchor_source,

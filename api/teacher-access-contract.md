@@ -22,6 +22,11 @@ lesson URLs, collaborative editing, LMS integration, analytics, general accounts
 passwords/recovery, PostgreSQL, object storage, HA, platform abstractions, and a web
 admin product.
 
+The UI and production API expose no URL-import control or route. New lesson creation
+accepts only `teacher-paste`. A stored legacy URL-derived lesson remains owner-readable
+through the ordinary catalog/status/lesson reads, but cannot be recreated as a new
+URL-backed lesson; the teacher may copy its visible text into a new pasted-text lesson.
+
 ## Invite exchange
 
 1. An operator creates a `pilot_teachers` row and a one-use invite. Invite tokens are

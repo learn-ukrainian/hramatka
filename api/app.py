@@ -51,7 +51,6 @@ from .models import (
     RestoreRejectedMutation,
     RevisionMutation,
     TeacherPreferences,
-    UrlImportRequest,
     WebAuthnAssertion,
     WebAuthnCredential,
 )
@@ -88,7 +87,6 @@ from .store import (
     WarningBlockNotFound,
     canonical_request_json,
 )
-from .url_import import UrlImportError, fetch_url_text
 
 _SESSION_COOKIE = "__Host-hramatka_session"
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
@@ -275,9 +273,9 @@ def _resource_payload(
         raise RuntimeError("A ready lesson aggregate must have a lesson document.")
     lesson = copy.deepcopy(job.lesson)
     # The stored document is valid against the digest-pinned public schema,
-    # which requires these anchor provenance fields.  The frozen OpenAPI
-    # browser contract deliberately narrows LessonAnchor to pasted text,
-    # source, and character count.
+    # which requires these anchor provenance fields. The frozen OpenAPI
+    # browser contract accepts pasted text for new lessons while retaining the
+    # legacy URL fields in LessonAnchor so old stored lessons remain readable.
     lesson.get("anchor", {}).pop("fingerprint", None)
     lesson.get("anchor", {}).pop("diagnostics", None)
     return {
@@ -977,44 +975,6 @@ def create_app(
         store.set_teacher_default_duration(session.teacher_id, request_body.default_duration)
         return {"default_duration": request_body.default_duration}
 
-    @app.post("/api/anchor/import-url")
-    def import_anchor_url(
-        request_body: UrlImportRequest,
-        _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
-    ) -> dict[str, object]:
-        try:
-            result = fetch_url_text(request_body.url, teacher_id=session.teacher_id)
-        except UrlImportError as error:
-            if error.code == "url_rate_limited":
-                status_code = status.HTTP_429_TOO_MANY_REQUESTS
-            elif error.code == "url_fetch_failed":
-                status_code = status.HTTP_502_BAD_GATEWAY
-            else:
-                status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
-            raise PilotError(
-                status_code,
-                error.code,
-                error.message,
-                retryable=error.retryable,
-            ) from error
-        try:
-            prepared_text = prepare_anchor_text(result.text)
-        except AnchorPreparationError as error:
-            message = (
-                "Виправте можливі помилки OCR у тексті: "
-                + ", ".join(f"«{token}»" for token in error.suspicious_tokens)
-                + "."
-                if error.suspicious_tokens
-                else "На сторінці не знайдено достатньо зв’язного українського тексту."
-            )
-            raise PilotError(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "anchor_unusable",
-                message,
-            ) from error
-        return {"text": prepared_text, "source_url": result.source_url}
-
     @app.post("/api/lessons", status_code=status.HTTP_202_ACCEPTED)
     def create_lesson(
         request_body: LessonCreate,
@@ -1068,7 +1028,6 @@ def create_app(
                     lesson_id,
                     anchor_text=prepared_anchor_text,
                     anchor_source=request_body.anchor.source,
-                    anchor_source_url=request_body.anchor.source_url,
                     level=request_body.level,
                     duration=request_body.duration,
                     focus=request_body.focus,
@@ -1256,6 +1215,16 @@ def create_app(
                 422,
                 "invalid_input",
                 "Немає збереженого запиту для повторного створення уроку.",
+            )
+        # Historical URL-derived lessons remain owner-readable. Recreating one
+        # would create a new URL-backed lesson, which is outside the frozen
+        # paste-only pilot; the teacher can copy its visible text into a new
+        # pasted-text lesson instead.
+        if anchor_source != "teacher-paste" or anchor_source_url is not None:
+            raise PilotError(
+                422,
+                "invalid_input",
+                "Урок із посилання не можна створити повторно. Вставте текст у новий урок.",
             )
         try:
             canonical_request_json(

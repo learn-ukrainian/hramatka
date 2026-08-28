@@ -607,30 +607,6 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // Anchor URL import (stub — no real network)
-  if (pathname === '/api/anchor/import-url' && method === 'POST') {
-    if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
-    if (!requireCsrf(req, res, state.session)) return;
-    const body = await parseBody(req);
-    const rawUrl = (body && body.url) || '';
-    if (!rawUrl.trim()) {
-      return sendJSON(res, 422, errorBody('url_invalid', 'Вставте адресу сторінки — і ми дістанемо з неї текст.'));
-    }
-    if (!rawUrl.startsWith('https://')) {
-      return sendJSON(res, 422, errorBody('url_invalid', 'Посилання має бути коректною HTTPS-адресою.'));
-    }
-    if (/localhost|127\.0\.0\.1|192\.168\.|10\./i.test(rawUrl)) {
-      return sendJSON(res, 422, errorBody('url_blocked', 'Ця адреса недоступна для імпорту.'));
-    }
-    if (rawUrl === 'https://stub.example.test/fail-fetch') {
-      return sendJSON(res, 502, errorBody('url_fetch_failed', 'Не вдалося отримати текст із цієї адреси. Перевірте посилання.', true));
-    }
-    return sendJSON(res, 200, {
-      text: 'Текст, отриманий із посилання для перевірки вчителем. Він містить речення для вправ.',
-      source_url: rawUrl,
-    });
-  }
-
   // Lessons
   if (pathname === '/api/lessons' && method === 'GET') {
     if (!state.session) return sendJSON(res, 401, errorBody('session_required', 'A valid teacher session is required.'));
@@ -662,6 +638,9 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
     }
     if (!anchor || !anchor.text || anchor.text.trim().length < 1 || anchor.text.length > 100000) {
+      return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
+    }
+    if (anchor.source !== 'teacher-paste' || anchor.source_url != null) {
       return sendJSON(res, 422, errorBody('invalid_input', 'The request is invalid.'));
     }
     if (logicalModelId !== QUALIFIED_LOGICAL_MODEL.id) {

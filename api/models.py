@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FrozenModel(BaseModel):
@@ -34,8 +34,7 @@ class RecoveryCodeRedeem(FrozenModel):
 
 class AnchorInput(FrozenModel):
     text: str = Field(min_length=1, max_length=100_000)
-    source: Literal["teacher-paste", "teacher-url"]
-    source_url: str | None = Field(default=None, max_length=2048)
+    source: Literal["teacher-paste"]
 
     @field_validator("text")
     @classmethod
@@ -43,28 +42,6 @@ class AnchorInput(FrozenModel):
         if not value.strip():
             raise ValueError("Paste text must not be whitespace only.")
         return value
-
-    @field_validator("source_url")
-    @classmethod
-    def normalize_source_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        trimmed = value.strip()
-        return trimmed or None
-
-    @model_validator(mode="after")
-    def validate_source_provenance(self) -> AnchorInput:
-        if self.source == "teacher-paste":
-            if self.source_url is not None:
-                raise ValueError("teacher-paste anchors must not include source_url.")
-            return self
-        if self.source_url is None or not self.source_url.startswith("https://"):
-            raise ValueError("teacher-url anchors require an https source_url.")
-        return self
-
-
-class UrlImportRequest(FrozenModel):
-    url: str = Field(min_length=1, max_length=2048)
 
 
 class LessonCreate(FrozenModel):
