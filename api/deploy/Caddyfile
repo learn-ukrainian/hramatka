@@ -75,7 +75,9 @@
 	# Keep the canonical static application URL trailing-slash form.  Invite
 	# fragments remain client-side and therefore never reach Caddy.
 	handle /teacher {
-		redir /teacher/ permanent
+		# The first positional argument to redir is a matcher. Keep it explicit:
+		# without *, Caddy treats /teacher/ as that matcher rather than the target.
+		redir * /teacher/ permanent
 	}
 
 	# handle_path strips /teacher before resolving static files. The bundle is
