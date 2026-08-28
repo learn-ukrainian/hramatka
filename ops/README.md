@@ -246,9 +246,9 @@ For daemon-style lifecycle management, use the repository runner from the reposi
 ./services.sh start     # start the teacher app in the background, print the one-use invite URL
 ./services.sh status    # report whether the teacher is running
 ./services.sh stop      # stop it cleanly (no orphans, no stale runtime state)
-./services.sh restart   # stop then start
+./services.sh restart   # fast-forward clean local main from origin/main, then stop and start
 ./services.sh build     # frontend build using the existing dependency tree
-./services.sh rebuild   # stage/build the frontend, swap it, then start under one lock
+./services.sh rebuild   # fast-forward, stage/build the frontend, swap it, then start under one lock
 ./services.sh clean     # stop, then remove dist/log/pid state
 ./services.sh help      # full usage
 ```
@@ -267,6 +267,12 @@ Hard rules (same as the foreground launcher, plus runner-specific ones):
   the runner prints exactly what to restore instead of installing.
 - Restart leaves no orphaned processes and no stale runtime state: a stale
   `hramatka/app/.real-e2e` directory is removed before every start.
+- Restart and rebuild first require a clean checkout on `main`, fetch
+  `origin/main`, and fast-forward only. A dirty, detached, or divergent
+  checkout fails before any teacher process is stopped; `start` deliberately
+  keeps its existing no-pull behavior. Abandoned `.rebuild-stage.*` scratch
+  directories from an interrupted rebuild are removed first; unrelated
+  untracked files still fail the freshness check.
 - Rebuild preflights tools, credentials, data, and the existing dependency tree;
   it builds and CSP-checks a staged artifact before stopping a healthy service
   or replacing `dist`, then swaps and starts under one lifecycle lock. A failed
