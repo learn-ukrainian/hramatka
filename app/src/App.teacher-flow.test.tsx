@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { statusCardFromApi, type LessonStatus } from './App';
 import { LangProvider } from './i18n';
 
@@ -127,10 +127,14 @@ function regenerationEntry(lessonId: string, status: 'succeeded' | 'failed') {
   };
 }
 
-function installFetch(lessons: unknown[] = [], modelId: string | null = 'pilot') {
+function installFetch(
+  lessons: unknown[] = [],
+  modelId: string | null = 'pilot',
+  sessionPayload: typeof teacher & { local_auth_disabled?: boolean } = teacher,
+) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.endsWith('/api/session')) return response(teacher);
+    if (url.endsWith('/api/session')) return response(sessionPayload);
     if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
     if (url.endsWith('/api/lesson-models')) {
       return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
@@ -600,5 +604,58 @@ describe('activity regeneration reconciliation (#418)', () => {
       resolveRegeneration(response(regenerationEntry('lesson-1', 'failed')));
       await pendingRegeneration;
     });
+  });
+});
+
+describe('passkey chrome for local-auth vs invite sessions (#514)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '#/');
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: {},
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'credentials');
+  });
+
+  it('does not render enroll or sign-in chrome for a local-auth-disabled session', async () => {
+    installFetch([], 'pilot', {
+      ...teacher,
+      teacher: { id: 'local-1', display_name: 'Локальний викладач' },
+      local_auth_disabled: true,
+    });
+    renderApp();
+
+    expect(await screen.findByTestId('teacher-display-name')).toHaveTextContent('Локальний викладач');
+    expect(screen.getByTestId('local-auth-disabled-banner')).toBeInTheDocument();
+    expect(screen.queryByTestId('passkey-enroll-btn')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Додати ключ доступу' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('passkey-sign-in-btn')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Увійти за ключем доступу' })).not.toBeInTheDocument();
+  });
+
+  it('still renders enroll chrome for an invite session', async () => {
+    installFetch();
+    renderApp();
+
+    expect(await screen.findByTestId('passkey-enroll-btn')).toHaveTextContent('Додати ключ доступу');
+    expect(screen.queryByTestId('local-auth-disabled-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('passkey-sign-in-btn')).not.toBeInTheDocument();
+  });
+
+  it('still renders sign-in chrome on the unauthenticated invite page', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/session')) {
+        return errorResponse(401, { code: 'session_required', message: 'session required' });
+      }
+      return response({});
+    }));
+    renderApp();
+
+    expect(await screen.findByTestId('passkey-sign-in-btn')).toHaveTextContent('Увійти за ключем доступу');
+    expect(screen.queryByTestId('passkey-enroll-btn')).not.toBeInTheDocument();
   });
 });

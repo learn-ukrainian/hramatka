@@ -1655,8 +1655,14 @@ export default function TeacherApp() {
                   ?
                 </button>
                 <span data-testid="teacher-display-name">{session.teacher.display_name}</span>
-                {'credentials' in navigator && (
-                  <button onClick={enrollPasskey} className="link" disabled={loading}>
+                {'credentials' in navigator && session.local_auth_disabled !== true && (
+                  <button
+                    type="button"
+                    onClick={enrollPasskey}
+                    className="link"
+                    disabled={loading}
+                    data-testid="passkey-enroll-btn"
+                  >
                     {t('passkey.add')}
                   </button>
                 )}
@@ -1744,7 +1750,13 @@ export default function TeacherApp() {
             {t('invite.testBtn')}
           </button>
           {'credentials' in navigator && (
-            <button className="btn secondary" onClick={signInWithPasskey} disabled={loading}>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={signInWithPasskey}
+              disabled={loading}
+              data-testid="passkey-sign-in-btn"
+            >
               {t('passkey.signIn')}
             </button>
           )}
