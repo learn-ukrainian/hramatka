@@ -128,9 +128,31 @@ const DICT = {
     uk: 'Ключ доступу не підтверджено.',
     en: 'The passkey could not be confirmed.',
   },
-  'passkey.recoveryCodesAlert': {
-    uk: 'Збережіть ці коди відновлення; їх буде показано лише раз:\n\n{codes}',
-    en: 'Save these recovery codes; they will be shown only once:\n\n{codes}',
+  'recovery.codesTitle': { uk: 'Коди відновлення', en: 'Recovery codes' },
+  'recovery.codesLead': {
+    uk: 'Збережіть ці коди зараз. Їх буде показано лише один раз.',
+    en: 'Save these codes now. They will be shown only once.',
+  },
+  'recovery.copyCodes': { uk: 'Скопіювати коди', en: 'Copy codes' },
+  'recovery.downloadCodes': { uk: 'Завантажити коди', en: 'Download codes' },
+  'recovery.codesSaved': {
+    uk: 'Підтвердити: коди збережено',
+    en: 'Confirm the codes are saved',
+  },
+  'recovery.codesCopied': { uk: 'Коди скопійовано.', en: 'Recovery codes copied.' },
+  'recovery.codesCopyFailed': {
+    uk: 'Не вдалося скопіювати коди. Збережіть їх вручну.',
+    en: 'Could not copy the codes. Save them manually.',
+  },
+  'recovery.signInLabel': { uk: 'Код відновлення', en: 'Recovery code' },
+  'recovery.signIn': { uk: 'Увійти за кодом', en: 'Sign in with a code' },
+  'recovery.signInHint': {
+    uk: 'Використайте один зі збережених кодів відновлення.',
+    en: 'Use one of the recovery codes you saved.',
+  },
+  'recovery.redeemFailed': {
+    uk: 'Не вдалося увійти за кодом відновлення. Перевірте код або скористайтеся ключем доступу.',
+    en: 'Could not sign in with that recovery code. Check the code or use a passkey.',
   },
   'localAuthDisabled.banner': {
     uk: 'Локальний режим: автентифікацію вимкнено. Не відкривайте застосунок у мережі.',

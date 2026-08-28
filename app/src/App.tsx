@@ -309,6 +309,11 @@ export default function TeacherApp() {
   const [csrf, setCsrf] = useState<string | null>(null); // kept in memory only
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError>(null);
+  // Recovery codes are intentionally memory-only. They are shown immediately
+  // after passkey enrollment and are discarded as soon as the dialog closes.
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [recoveryCodesCopyStatus, setRecoveryCodesCopyStatus] = useState<'ok' | 'fail' | null>(null);
+  const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
 
   // Paste form state (level fixed B1)
   const [pasteText, setPasteText] = useState('');
@@ -414,6 +419,9 @@ export default function TeacherApp() {
     setBakeElapsedMs(0);
     resetLang(); // #106 boundary: UI language back to default UA + clear persisted choice
     setClipboardNotice(null);
+    setRecoveryCodes(null);
+    setRecoveryCodesCopyStatus(null);
+    setRecoveryCodeInput('');
   }, [clearPoll, resetLang]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
@@ -598,9 +606,87 @@ export default function TeacherApp() {
         return;
       }
       const { recovery_codes } = await complete.json();
-      window.alert(t('passkey.recoveryCodesAlert', { codes: recovery_codes.join('\n') }));
+      if (Array.isArray(recovery_codes) && recovery_codes.length > 0 && recovery_codes.every((code): code is string => typeof code === 'string')) {
+        setRecoveryCodes(recovery_codes);
+        setRecoveryCodesCopyStatus(null);
+      } else {
+        setError(errKey('passkey.notConfirmed'));
+      }
     } catch {
       setError(errKey('passkey.notConfirmed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyRecoveryCodes = async () => {
+    if (!recoveryCodes) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(recoveryCodes.join('\n'));
+      setRecoveryCodesCopyStatus('ok');
+    } catch {
+      setRecoveryCodesCopyStatus('fail');
+    }
+  };
+
+  const dismissRecoveryCodes = () => {
+    setRecoveryCodes(null);
+    setRecoveryCodesCopyStatus(null);
+  };
+
+  const downloadRecoveryCodes = () => {
+    if (!recoveryCodes) return;
+    const blob = new Blob([recoveryCodes.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = 'hramatka-recovery-codes.txt';
+    link.style.display = 'none';
+    try {
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  const redeemRecoveryCode = async () => {
+    const code = recoveryCodeInput.trim();
+    if (!code) {
+      setError(errKey('recovery.redeemFailed'));
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      const complete = await apiFetch('/api/recovery-codes/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      if (!complete.ok) {
+        setError(errKey('recovery.redeemFailed'));
+        return;
+      }
+      const data = await complete.json();
+      resetSessionScopedState();
+      setSession({
+        teacher: data.teacher,
+        expires_at: data.expires_at,
+        csrf_token: data.csrf_token,
+        local_auth_disabled: data.local_auth_disabled === true,
+      });
+      setCsrf(data.csrf_token);
+      setSessionReady(true);
+      navigate({ view: 'paste' });
+      await refreshSession();
+      await loadTeacherDefaultDuration();
+      await loadQualifiedModels();
+      try { await loadCatalog(); } catch {}
+    } catch {
+      setError(errKey('recovery.redeemFailed'));
     } finally {
       setLoading(false);
     }
@@ -1644,6 +1730,49 @@ export default function TeacherApp() {
         </div>
       )}
 
+      {recoveryCodes && (
+        <div
+          className="recovery-codes-overlay"
+          role="presentation"
+        >
+          <section
+            className="recovery-codes-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recovery-codes-title"
+            aria-describedby="recovery-codes-description"
+            data-testid="recovery-codes-dialog"
+          >
+            <h2 id="recovery-codes-title">{t('recovery.codesTitle')}</h2>
+            <p id="recovery-codes-description">{t('recovery.codesLead')}</p>
+            <pre className="recovery-codes-list" data-testid="recovery-codes-list">
+              {recoveryCodes.join('\n')}
+            </pre>
+            {recoveryCodesCopyStatus && (
+              <p className={`recovery-codes-copy-status ${recoveryCodesCopyStatus}`} role="status">
+                {t(recoveryCodesCopyStatus === 'ok' ? 'recovery.codesCopied' : 'recovery.codesCopyFailed')}
+              </p>
+            )}
+            <div className="recovery-codes-actions">
+              <button type="button" className="btn secondary" onClick={copyRecoveryCodes} autoFocus>
+                {t('recovery.copyCodes')}
+              </button>
+              <button type="button" className="btn secondary" onClick={downloadRecoveryCodes}>
+                {t('recovery.downloadCodes')}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={dismissRecoveryCodes}
+                data-testid="recovery-codes-saved-btn"
+              >
+                {t('recovery.codesSaved')}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {error && (
         <div className="banner fail error" role="alert">
           <span className="ic">!</span>
@@ -1704,6 +1833,35 @@ export default function TeacherApp() {
               {t('passkey.signIn')}
             </button>
           )}
+          <form
+            className="recovery-code-sign-in"
+            onSubmit={(event) => { event.preventDefault(); void redeemRecoveryCode(); }}
+            data-testid="recovery-code-sign-in"
+          >
+            <label htmlFor="recovery-code-input">{t('recovery.signInLabel')}</label>
+            <div className="recovery-code-sign-in-row">
+              <input
+                id="recovery-code-input"
+                type="text"
+                value={recoveryCodeInput}
+                onChange={(event) => setRecoveryCodeInput(event.target.value)}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                disabled={loading}
+                data-testid="recovery-code-input"
+              />
+              <button
+                type="submit"
+                className="btn secondary"
+                disabled={loading}
+                data-testid="recovery-code-submit"
+              >
+                {t('recovery.signIn')}
+              </button>
+            </div>
+            <p className="small">{t('recovery.signInHint')}</p>
+          </form>
           <p className="small">{t('invite.small')}</p>
         </main>
       )}
