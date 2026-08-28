@@ -487,6 +487,9 @@ def create_app(
     app = FastAPI(
         title="Hramatka teacher pilot API",
         version="1.0.0-pilot-frozen",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -548,13 +551,20 @@ def create_app(
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error(_: Request, __: StarletteHTTPException) -> JSONResponse:
-        # The frozen API never returns FastAPI's default ``detail`` envelope.
+    async def http_error(_: Request, error: StarletteHTTPException) -> JSONResponse:
+        # Framework HTTP errors keep the frozen {code,message,retryable}
+        # envelope and must not impersonate owner-hidden lesson absence.
+        status_code = error.status_code
+        if status_code not in {
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        }:
+            status_code = status.HTTP_404_NOT_FOUND
         return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status_code,
             content={
-                "code": "lesson_not_found",
-                "message": "Урок не знайдено.",
+                "code": "not_found",
+                "message": "Не знайдено.",
                 "retryable": False,
             },
         )
@@ -578,33 +588,35 @@ def create_app(
         if content_type != "application/json":
             raise PilotError(422, "invalid_input", "Запит містить помилку.")
 
-    @app.post("/api/internal/review-attestations")
-    async def create_review_attestation(
-        request: Request,
-        _: None = Depends(require_json),
-        oidc_token: Annotated[str | None, Header(alias="X-GitHub-OIDC-Token")] = None,
-        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    ) -> dict[str, object]:
-        content_length = request.headers.get("content-length")
-        if content_length is not None and (
-            not content_length.isdigit() or int(content_length) > 65_536
-        ):
-            raise ReviewAttestationError("invalid_request", status_code=422)
-        body = await request.body()
-        if len(body) > 65_536:
-            raise ReviewAttestationError("invalid_request", status_code=422)
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError as error:
-            raise ReviewAttestationError("invalid_request", status_code=422) from error
-        attestor: ReviewAttestor = app.state.review_attestor
-        github_token = _github_bearer_token(authorization)
-        return await run_in_threadpool(
-            attestor.attest,
-            payload,
-            oidc_token=oidc_token,
-            github_token=github_token,
-        )
+    if settings.review_attestation_enabled:
+
+        @app.post("/api/internal/review-attestations")
+        async def create_review_attestation(
+            request: Request,
+            _: None = Depends(require_json),
+            oidc_token: Annotated[str | None, Header(alias="X-GitHub-OIDC-Token")] = None,
+            authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        ) -> dict[str, object]:
+            content_length = request.headers.get("content-length")
+            if content_length is not None and (
+                not content_length.isdigit() or int(content_length) > 65_536
+            ):
+                raise ReviewAttestationError("invalid_request", status_code=422)
+            body = await request.body()
+            if len(body) > 65_536:
+                raise ReviewAttestationError("invalid_request", status_code=422)
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError as error:
+                raise ReviewAttestationError("invalid_request", status_code=422) from error
+            attestor: ReviewAttestor = app.state.review_attestor
+            github_token = _github_bearer_token(authorization)
+            return await run_in_threadpool(
+                attestor.attest,
+                payload,
+                oidc_token=oidc_token,
+                github_token=github_token,
+            )
 
     def require_origin(origin: Annotated[str | None, Header()] = None) -> None:
         if origin != settings.pilot_origin:

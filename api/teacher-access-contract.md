@@ -192,6 +192,7 @@ persistence failures; failed/cancelled bakes use the explicit in-place retry end
 | 401 | `session_required` | Missing/invalid/expired/revoked session |
 | 403 | `csrf_rejected` | Origin or CSRF enforcement failed |
 | 404 | `lesson_not_found`, `warning_block_not_found` | Owner-hidden lesson/block absence |
+| 404 / 405 | `not_found` | Unknown path or method; never `lesson_not_found` |
 | 409 | `idempotency_conflict`, `lesson_not_ready`, `revision_conflict`, `lesson_state_conflict`, `warning_acknowledgements_required` | Durable state conflict; never auto-resolved by overwriting |
 | 410 | `invite_unavailable` | Unknown/used/expired/revoked invite |
 | 422 | `invalid_input` | Invalid JSON/fields/UUID, whitespace paste, paste over 100,000 code points, or `teacher-url` |
