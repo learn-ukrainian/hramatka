@@ -258,7 +258,9 @@ paths:
       description: |
         Returns only teacher-visible logical identities with complete current
         production-path receipts. Provider routes, wire model IDs, credentials,
-        and fallback order are deliberately absent.
+        and fallback order are deliberately absent. When `models` is empty,
+        `unavailable_code` provides a safe recovery state; it never exposes a
+        provider response, quota value, credential, or routing detail.
       security:
         - PilotSession: []
       responses:
@@ -1186,7 +1188,7 @@ components:
     QualifiedModelList:
       type: object
       additionalProperties: false
-      required: [registry_version, models, unavailable_message]
+      required: [registry_version, models, unavailable_message, unavailable_code]
       properties:
         registry_version:
           type: string
@@ -1197,6 +1199,10 @@ components:
             $ref: '#/components/schemas/QualifiedModelChoice'
         unavailable_message:
           type: [string, 'null']
+        unavailable_code:
+          type: [string, 'null']
+          enum: [no_qualified_model, generation_disabled, null]
+          description: Safe state for an empty choice set; null when a model is available.
     LessonCreateAccepted:
       type: object
       additionalProperties: false

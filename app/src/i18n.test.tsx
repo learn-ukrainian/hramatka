@@ -10,7 +10,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import fs from 'fs';
 import path from 'path';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
-import { LangProvider, useT, translate, loadLang, saveLang, clearLang, recoveryBodyKey } from './i18n';
+import { LangProvider, useT, translate, loadLang, saveLang, clearLang, recoveryBodyKey, modelUnavailableKey } from './i18n';
 
 const VENDOR_FIXTURES = path.resolve(
   __dirname,
@@ -80,7 +80,7 @@ describe('i18n translation layer', () => {
       },
       {
         code: 'provider_unavailable',
-        mustIncludeUk: 'Постачальник не зміг завершити',
+        mustIncludeUk: 'доступна квота',
         mustNotIncludeUk: 'перевантажений',
       },
       {
@@ -90,7 +90,7 @@ describe('i18n translation layer', () => {
       },
       {
         code: 'lesson_schema_invalid',
-        mustIncludeUk: 'Спробуйте ще раз',
+        mustIncludeUk: 'не пройшов перевірку',
         mustNotIncludeUk: 'перевантажений',
       },
       {
@@ -159,6 +159,14 @@ describe('i18n translation layer', () => {
     );
     expect(translate('uk', recoveryBodyKey('lesson_floor_unmet'))).not.toBe(
       translate('uk', recoveryBodyKey('engine_unavailable')),
+    );
+    // The pre-bake states are distinct too: lack of qualification is not an
+    // operator pause, and both use translated recovery copy rather than a
+    // provider payload.
+    expect(modelUnavailableKey('no_qualified_model')).toBe('paste.modelUnavailable');
+    expect(modelUnavailableKey('generation_disabled')).toBe('paste.generationDisabled');
+    expect(translate('uk', modelUnavailableKey('generation_disabled'))).toContain(
+      'Перегляд і проведення збережених уроків доступні',
     );
   });
 

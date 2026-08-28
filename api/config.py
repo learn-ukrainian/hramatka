@@ -66,9 +66,9 @@ def _decode_secret(value: str) -> bytes:
     return decoded
 
 
-def _parse_zero_or_one_flag(name: str) -> bool:
+def _parse_zero_or_one_flag(name: str, *, default: str = "0") -> bool:
     """Read an operator-controlled feature flag without silently accepting typos."""
-    value = os.environ.get(name, "0")
+    value = os.environ.get(name, default)
     if value not in {"0", "1"}:
         raise RuntimeError(f"{name} must be the literal 0 or 1.")
     return value == "1"
@@ -139,6 +139,9 @@ class Settings:
     bake_workers: int = _DEFAULT_BAKE_WORKERS
     max_provider_concurrency: int = _DEFAULT_MAX_PROVIDER_CONCURRENCY
     bake_providers: tuple[str, ...] = _DEFAULT_BAKE_PROVIDERS
+    # A deliberate operator pause is distinct from a provider or worker
+    # outage: saved lessons remain available while no new generation starts.
+    generation_enabled: bool = True
     mock_mode: bool = False
     local_static_teacher: bool = False
     local_launcher_marker: bool = False
@@ -284,6 +287,9 @@ class Settings:
             bake_workers=workers,
             max_provider_concurrency=max_provider_concurrency,
             bake_providers=_parse_bake_providers(os.environ.get("HRAMATKA_BAKE_PROVIDERS")),
+            generation_enabled=_parse_zero_or_one_flag(
+                "HRAMATKA_GENERATION_ENABLED", default="1"
+            ),
             # Mock mode exists only as an explicit test/development seam.  It is
             # never ready for the deployed pilot and the production service does
             # not select it as its default baker.

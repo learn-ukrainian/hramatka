@@ -19,7 +19,7 @@ test('real teacher sees empty model picker and disabled bake when no model is qu
   const banner = page.getByTestId('no-qualified-models');
   await expect(banner).toBeVisible();
   await expect(banner).toContainText(
-    'Моделі тимчасово недоступні: кваліфікація для поточних правил уроку ще не завершена.'
+    'Немає моделей, кваліфікованих для поточних правил уроку.'
   );
 
   // The bake button must stay disabled while no qualified model is selected.

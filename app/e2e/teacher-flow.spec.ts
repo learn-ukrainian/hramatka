@@ -263,7 +263,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(page.getByPlaceholder(/Вставте український текст/)).toBeVisible({ timeout: 10_000 });
     await page.getByPlaceholder(/Вставте український текст/).fill('Тест збою фейкового постачальника __FAIL_BAKE__.');
     await page.getByRole('button', { name: /Згенерувати урок/ }).click();
-    await expect(page.getByTestId('failure-recovery')).toContainText('Постачальник не зміг завершити');
+    await expect(page.getByTestId('failure-recovery')).toContainText('Сервіс моделі або доступна квота зараз недоступні');
     const lessonId = new URL(page.url()).hash.match(/^#\/lessons\/([^?]+)/)?.[1];
     const retried = page.waitForResponse(response => response.url().endsWith(`/api/lessons/${lessonId}/retry`) && response.status() === 202);
     await page.getByTestId('failure-retry-btn').click();
@@ -405,8 +405,8 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
 
     const recovery = page.getByTestId('failure-recovery');
     await expect(recovery).toBeVisible({ timeout: 10000 });
-    await expect(recovery).toContainText(/Не вдалося створити урок|Постачальник не зміг завершити/);
-    await expect(recovery).toContainText(/Постачальник тимчасово недоступний|текст уже збережено|історія спроб збережено/i);
+    await expect(recovery).toContainText(/Не вдалося створити урок|Сервіс моделі або доступна квота зараз недоступні/);
+    await expect(recovery).toContainText(/Сервіс моделі або доступна квота зараз недоступні|текст уже збережено|історія спроб збережено/i);
     await expect(page.getByTestId('baking-subline')).not.toContainText(/готово|завдання складено/i);
 
     const en = await page.locator('text=The lesson bake could not be completed').count();

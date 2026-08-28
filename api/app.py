@@ -470,12 +470,56 @@ def create_app(
         # leave the HTTP fallback projecting ``baking``.
         runner.close_admission()
 
+    def generation_disabled_error() -> None:
+        """Refuse provider work while leaving saved lessons fully readable."""
+        raise PilotError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "generation_disabled",
+            (
+                "Створення уроків тимчасово вимкнено. "
+                "Перегляд і проведення збережених уроків доступні."
+            ),
+            retryable=True,
+        )
+
+    def lesson_models_payload() -> dict[str, object]:
+        """Expose one safe availability reason without provider-routing detail."""
+        if not settings.generation_enabled:
+            return {
+                "registry_version": "QualifiedLogicalModels.v1",
+                "models": [],
+                "unavailable_message": (
+                    "Створення уроків тимчасово вимкнено. "
+                    "Перегляд і проведення збережених уроків доступні."
+                ),
+                "unavailable_code": "generation_disabled",
+            }
+        if not production_routing_required:
+            payload = model_registry.public_payload()
+        else:
+            operational: set[str] = set()
+            for model in model_registry.qualified_models():
+                try:
+                    logical_generator(model.id)
+                except (LogicalModelUnavailable, ValueError):
+                    continue
+                operational.add(model.id)
+            payload = model_registry.public_payload(operational_model_ids=frozenset(operational))
+        return {
+            **payload,
+            "unavailable_code": "no_qualified_model" if not payload["models"] else None,
+        }
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # In-process engine work is not resumable after a process exit.  Mark it
         # durably failed before this process claims any new aggregate.
         store.recover_baking_jobs(settings.bake_hard_timeout_seconds)
         store.recover_activity_regenerations()
+        if not settings.generation_enabled:
+            # Close admission before workers start: a deliberate pause cannot
+            # claim a queued job and reach a provider in the background.
+            runner.close_admission()
         runner.start()
         try:
             yield
@@ -954,16 +998,7 @@ def create_app(
         _: AuthenticatedSession = Depends(require_session),
     ) -> dict[str, object]:
         """Expose qualified logical choices, never provider routing details."""
-        if not production_routing_required:
-            return model_registry.public_payload()
-        operational: set[str] = set()
-        for model in model_registry.qualified_models():
-            try:
-                logical_generator(model.id)
-            except (LogicalModelUnavailable, ValueError):
-                continue
-            operational.add(model.id)
-        return model_registry.public_payload(operational_model_ids=frozenset(operational))
+        return lesson_models_payload()
 
     @app.put("/api/teacher/preferences")
     def put_teacher_preferences(
@@ -981,6 +1016,8 @@ def create_app(
         _: None = Depends(require_json),
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        if not settings.generation_enabled:
+            generation_disabled_error()
         lesson_id = _lesson_id(request_body.id)
         try:
             prepared_anchor_text = prepare_anchor_text(request_body.anchor.text)
@@ -1138,6 +1175,8 @@ def create_app(
         _: None = Depends(require_json),
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        if not settings.generation_enabled:
+            generation_disabled_error()
         lesson_key = _lesson_id(lesson_id)
         try:
             with runner.hold_admission():
@@ -1183,6 +1222,8 @@ def create_app(
         lesson_id: UUID,
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        if not settings.generation_enabled:
+            generation_disabled_error()
         source_job = owner_job(session.teacher_id, _lesson_id(lesson_id))
         if not source_job.request_json.strip():
             raise PilotError(
@@ -1306,6 +1347,8 @@ def create_app(
         _: None = Depends(require_json),
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        if not settings.generation_enabled:
+            generation_disabled_error()
         lesson_key = _lesson_id(lesson_id)
         lesson_job = owner_job(session.teacher_id, lesson_key)
         logical_model_id = lesson_job.logical_model_id
@@ -1387,6 +1430,8 @@ def create_app(
         _: None = Depends(require_json),
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
+        if not settings.generation_enabled:
+            generation_disabled_error()
         lesson_key = _lesson_id(lesson_id)
         regeneration = store.get_activity_regeneration(session.teacher_id, str(regeneration_id))
         if regeneration is None or regeneration.lesson_id != lesson_key:

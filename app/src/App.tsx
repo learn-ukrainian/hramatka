@@ -20,7 +20,7 @@ import {
   type ClipboardMode,
 } from './app-helpers';
 import Conductor from './Conductor';
-import { useT, statusKey, recoveryBodyKey, type ChromeKey } from './i18n';
+import { useT, statusKey, recoveryBodyKey, modelUnavailableKey, type ChromeKey } from './i18n';
 import LessonBlocks from './LessonBlocks';
 import ReviewWorkbench from './ReviewWorkbench';
 import QualifiedModelPicker, {
@@ -124,6 +124,7 @@ interface QualifiedModelList {
   registry_version: string;
   models: QualifiedModelChoice[];
   unavailable_message: string | null;
+  unavailable_code?: string | null;
 }
 
 interface LessonCatalogItem {
@@ -625,7 +626,11 @@ export default function TeacherApp() {
       const payload: QualifiedModelList = await res.json();
       const models = Array.isArray(payload.models) ? payload.models : [];
       setQualifiedModels(models);
-      setModelUnavailableMessage(payload.unavailable_message || null);
+      setModelUnavailableMessage(
+        models.length === 0
+          ? t(modelUnavailableKey(payload.unavailable_code))
+          : (payload.unavailable_message || null),
+      );
       setSelectedModelId(previous => resolveQualifiedModelId(models, previous));
     } catch {
       // Availability is fail-closed: a failed list read never revives cached choices.
@@ -633,7 +638,7 @@ export default function TeacherApp() {
       setSelectedModelId('');
       setModelUnavailableMessage(null);
     }
-  }, []);
+  }, [t]);
 
   // On mount (and on hashchange for invite fragment): try redeem from fragment.
   // This ensures E2E direct-goto with hash (or late hash set) triggers redeem without requiring full reload.

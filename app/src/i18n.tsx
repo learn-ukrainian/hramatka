@@ -162,6 +162,10 @@ const DICT = {
     uk: 'Немає моделей, кваліфікованих для поточних правил уроку.',
     en: 'No models are qualified for the current lesson rules.',
   },
+  'paste.generationDisabled': {
+    uk: 'Створення уроків тимчасово вимкнено. Перегляд і проведення збережених уроків доступні.',
+    en: 'Lesson generation is temporarily paused. You can still review and run saved lessons.',
+  },
   'paste.methodology': { uk: 'Методика', en: 'Methodology' },
   'paste.methodology.ttt': { uk: 'Тест → Навчання → Тест', en: 'Test → Teach → Test' },
   'paste.methodology.hint': { uk: 'перевірити → навчити → перевірити. Радимо для B1.', en: 'test → teach → re-test. Recommended for B1.' },
@@ -274,16 +278,16 @@ const DICT = {
     en: 'The lesson could not be created. This sometimes happens when the service is overloaded. Try again — your text is already saved.',
   },
   'recovery.body.provider_unavailable': {
-    uk: 'Постачальник не зміг завершити складання уроку. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
-    en: 'The provider could not complete the lesson build. Retry in this same lesson — its text, identity, and attempt history are preserved.',
+    uk: 'Сервіс моделі або доступна квота зараз недоступні. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
+    en: 'The model service or available quota is unavailable right now. Retry in this same lesson — its text, identity, and attempt history are preserved.',
   },
   'recovery.body.bake_timeout': {
     uk: 'Час очікування складання уроку минув. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
     en: 'The lesson build timed out. Retry in this same lesson — its text, identity, and attempt history are preserved.',
   },
   'recovery.body.lesson_schema_invalid': {
-    uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
-    en: 'The lesson could not be created. Try again — your text is already saved.',
+    uk: 'Створений урок не пройшов перевірку. Повторіть спробу в цьому самому занятті — текст, ідентифікатор і історія спроб збережено.',
+    en: 'The generated lesson did not pass validation. Retry in this same lesson — its text, identity, and attempt history are preserved.',
   },
   'recovery.body.worker_restarted': {
     uk: 'Не вдалося створити урок. Спробуйте ще раз — текст уже збережено.',
@@ -912,6 +916,15 @@ export function recoveryBodyKey(failureCode: string | null | undefined): ChromeK
     default:
       return 'recovery.body';
   }
+}
+
+/** Safe recovery copy for an empty qualified-model response (#44). */
+export function modelUnavailableKey(
+  unavailableCode: string | null | undefined,
+): ChromeKey {
+  return unavailableCode === 'generation_disabled'
+    ? 'paste.generationDisabled'
+    : 'paste.modelUnavailable';
 }
 
 export type TFn = (key: ChromeKey, params?: Params) => string;

@@ -221,6 +221,34 @@ describe('teacher lesson creation and list chrome', () => {
     });
   });
 
+  it('keeps the lesson library available when an operator pauses generation (#44)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 45 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({
+          registry_version: 'test',
+          models: [],
+          unavailable_message: 'raw server message must not be rendered',
+          unavailable_code: 'generation_disabled',
+        });
+      }
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+    renderApp();
+
+    expect(await screen.findByTestId('no-qualified-models')).toHaveTextContent(
+      'Створення уроків тимчасово вимкнено',
+    );
+    expect(screen.getByRole('button', { name: 'Згенерувати урок' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    expect(await screen.findByRole('heading', { name: 'Мої заняття' })).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/api/lessons'))).toBe(true);
+  });
+
   it('explains the required paste input for empty and whitespace-only text without starting a bake', async () => {
     installFetch();
     renderApp();

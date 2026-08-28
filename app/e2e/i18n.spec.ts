@@ -151,13 +151,13 @@ test.describe('Hramatka dual-language chrome E2E (stub)', () => {
 
     const recovery = page.getByTestId('failure-recovery');
     await expect(recovery).toBeVisible({ timeout: 10000 });
-    await expect(recovery).toContainText('The provider could not complete the lesson build');
+    await expect(recovery).toContainText('The model service or available quota is unavailable right now');
     await expect(page.getByRole('button', { name: 'Retry in this same lesson' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Back to the list' })).toBeVisible();
 
     // Toggling back re-renders the SAME overlay in Ukrainian (reversible chrome)
     await page.getByTestId('lang-toggle').click(); // → UK
-    await expect(recovery).toContainText('Постачальник не зміг завершити складання уроку');
+    await expect(recovery).toContainText('Сервіс моделі або доступна квота зараз недоступні');
     await expect(page.getByRole('button', { name: 'Повторити в цьому самому занятті' })).toBeVisible();
   });
 });
