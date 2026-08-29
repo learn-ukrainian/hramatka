@@ -84,12 +84,12 @@ def _google_callback(
     client: TestClient,
     *,
     credential: str = "signed-google-id-token",
-    csrf: str = "google-double-submit",
+    origin: str = ORIGIN,
 ):
-    client.cookies.set("g_csrf_token", csrf, domain="pilot.example.test", path="/")
     return client.post(
         "/api/auth/google/complete",
-        data={"credential": credential, "g_csrf_token": csrf},
+        headers={"Origin": origin},
+        data={"credential": credential},
         follow_redirects=False,
     )
 
@@ -172,10 +172,13 @@ def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
     monkeypatch.setattr(app_module, "verify_google_credential", verified)
     csrf_rejected = client.post(
         "/api/auth/google/complete",
-        data={"credential": "token", "g_csrf_token": "body"},
+        data={"credential": "token"},
         follow_redirects=False,
     )
     assert csrf_rejected.headers["location"] == "/teacher/?google=failed"
+    assert calls == 0
+    foreign_origin = _google_callback(client, origin="https://evil.example.test")
+    assert foreign_origin.headers["location"] == "/teacher/?google=failed"
     assert calls == 0
 
     unknown = _google_callback(client)
@@ -264,6 +267,39 @@ def test_allowlisted_qa_email_binds_dedicated_teacher_and_mints_session(
         returned = client.get("/api/session")
         assert returned.status_code == 200
         assert returned.json()["teacher"]["id"] == teacher.id
+
+
+def test_same_origin_json_complete_mints_allowlisted_session(monkeypatch, tmp_path) -> None:
+    bootstrap = create_app(
+        settings=_settings(tmp_path), baker=SimpleNamespace(bake=lambda *_: {})
+    )
+    teacher = bootstrap.state.store.create_teacher("QA викладач")
+    app = create_app(
+        settings=_settings(
+            tmp_path,
+            google_allowed_emails=frozenset({QA_EMAIL}),
+            google_allowed_email_teacher_id=teacher.id,
+        ),
+        baker=SimpleNamespace(bake=lambda *_: {}),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("qa-json-sub", QA_EMAIL, sign_in["nonce"]),
+        )
+        completed = client.post(
+            "/api/auth/google/complete",
+            headers={"Origin": ORIGIN, "Content-Type": "application/json"},
+            json={"credential": "signed-google-id-token"},
+            follow_redirects=False,
+        )
+        assert completed.status_code == 303
+        assert completed.headers["location"] == "/teacher/"
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        assert session.json()["teacher"]["id"] == teacher.id
 
 
 def test_allowlisted_qa_email_mints_session_when_staff_authorization_is_required(
@@ -447,8 +483,11 @@ def test_google_link_options_returns_clean_401_when_the_bound_session_races_away
 def test_frontend_primary_google_cta_keeps_fallbacks_and_never_persists_a_credential() -> None:
     source = (REPO_ROOT / "hramatka/app/src/App.tsx").read_text(encoding="utf-8")
     assert 'data-testid="google-sign-in-button"' in source
-    assert "ux_mode: 'redirect'" in source
-    assert "login_uri: googleOptions.login_uri" in source
+    assert "ux_mode: 'popup'" in source
+    assert "postGoogleCredentialSameOrigin" in source
+    assert "form.action = '/api/auth/google/complete'" in source
+    assert "ux_mode: 'redirect'" not in source
+    assert "login_uri: googleOptions.login_uri" not in source
     assert "params.get('google') === 'failed'" in source
     assert "data-testid=\"passkey-sign-in-btn\"" in source
     assert "data-testid=\"recovery-code-sign-in\"" in source

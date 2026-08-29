@@ -255,6 +255,25 @@ function clearEntryNonce(): void {
   sessionStorage.removeItem(ENTRY_NONCE_STORAGE_KEY);
 }
 
+function postGoogleCredentialSameOrigin(credential: string): void {
+  // GIS popup returns the JWT to this page. A same-origin form POST lets the
+  // complete 303 land on /teacher/ or /teacher/?google=failed. Never persist.
+  if (!credential) {
+    window.location.assign('/teacher/?google=failed');
+    return;
+  }
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/api/auth/google/complete';
+  const field = document.createElement('input');
+  field.type = 'hidden';
+  field.name = 'credential';
+  field.value = credential;
+  form.appendChild(field);
+  document.body.appendChild(form);
+  form.submit();
+}
+
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = getApiBase();
   const url = base ? `${base}${path}` : path;
@@ -498,8 +517,8 @@ export default function TeacherApp() {
     return () => { cancelled = true; };
   }, [session?.role, session?.teacher.id]);
 
-  // Google Identity Services posts its signed credential directly to our
-  // same-origin callback.  The browser never stores that credential in a URL,
+  // GIS popup returns the signed credential to this page; we immediately POST
+  // it same-origin. The browser never stores that credential in a URL,
   // localStorage, sessionStorage, or React state.
   useEffect(() => {
     let cancelled = false;
@@ -544,8 +563,13 @@ export default function TeacherApp() {
       if (cancelled || !google?.accounts?.id || !googleButtonRef.current) return;
       google.accounts.id.initialize({
         client_id: googleOptions.client_id,
-        ux_mode: 'redirect',
-        login_uri: googleOptions.login_uri,
+        ux_mode: 'popup',
+        callback: (response: { credential?: string }) => {
+          if (cancelled) return;
+          postGoogleCredentialSameOrigin(
+            typeof response?.credential === 'string' ? response.credential : '',
+          );
+        },
         nonce: googleOptions.nonce,
         auto_select: false,
       });

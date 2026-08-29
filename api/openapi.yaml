@@ -184,17 +184,17 @@ paths:
     post:
       tags: [Session]
       operationId: completeGoogleTeacherSignIn
-      summary: Verify a Google redirect credential and establish the ordinary cookie session
+      summary: Verify a same-origin Google credential and establish the ordinary cookie session
       description: |
-        Google Identity Services posts form fields `credential` and
-        `g_csrf_token` to this exact same-origin callback. The server compares
-        Google's double-submit CSRF cookie, verifies Google signature/JWKS,
-        issuer, configured audience, expiry, issued-at, verified email, and
-        one-use nonce. Only a pre-existing teacher link, or one operator-created
-        verified-email preauthorization, may sign in; no public registration or
-        credential persistence occurs. A first binding atomically consumes that
-        reservation and fixes the immutable Google subject. Success redirects
-        to the teacher SPA after setting the ordinary HttpOnly session cookie.
+        The teacher page posts the GIS popup `credential` same-origin as JSON or
+        a form field. The server requires an exact Origin match, then verifies
+        Google signature/JWKS, issuer, configured audience, expiry, issued-at,
+        verified email, and one-use nonce. Only a pre-existing teacher link, an
+        env allowlisted verified email, or one operator-created verified-email
+        preauthorization may sign in; no public registration or credential
+        persistence occurs. Success redirects to the teacher SPA after setting
+        the ordinary HttpOnly session cookie. Failure redirects to
+        `/teacher/?google=failed`.
       security: []
       responses:
         '303':
