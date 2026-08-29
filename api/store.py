@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .migrations import (
     EXPECTED_SCHEMA_VERSION,
@@ -33,6 +33,7 @@ from .validation import validate_lesson
 
 _OPAQUE_TOKEN_BYTES = 32
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+_GOOGLE_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+$")
 _LOCAL_STATIC_TEACHER_ID = str(
     uuid.uuid5(uuid.NAMESPACE_URL, "https://hramatka.local/static-teacher/v1")
 )
@@ -83,6 +84,9 @@ class GoogleNonceUnavailable(ValueError):
 
 class GoogleIdentityUnavailable(ValueError):
     """A verified Google account is not linked to one active pilot teacher."""
+
+
+StaffRole = Literal["admin", "teacher"]
 
 
 class IdempotencyConflict(ValueError):
@@ -199,6 +203,15 @@ class TeacherRecord:
     display_name: str
     created_at: str
     deactivated_at: str | None
+
+
+@dataclass(frozen=True)
+class StaffOwnerRecord:
+    """Safe owner metadata, exposed only to an authenticated administrator."""
+
+    id: str
+    display_name: str
+    role: StaffRole | None
 
 
 @dataclass(frozen=True)
@@ -442,6 +455,27 @@ def session_secret_digest(raw_secret: bytes) -> bytes:
     return hashlib.sha256(b"hramatka-session\0" + raw_secret).digest()
 
 
+def normalize_google_email(email: str) -> str:
+    """Canonicalize only a verified Google email for a preauthorization lookup."""
+    if (
+        not isinstance(email, str)
+        or not 3 <= len(email) <= 320
+        or email != email.strip()
+        or not email.isascii()
+        or _GOOGLE_EMAIL_RE.fullmatch(email) is None
+    ):
+        raise ValueError("Google email is invalid.")
+    return email.casefold()
+
+
+def google_email_preauthorization_digest(email: str) -> bytes:
+    """Return a domain-separated digest for the sole preauthorization lookup."""
+    normalized = normalize_google_email(email)
+    return hashlib.sha256(
+        b"hramatka-google-email-preauthorization\0" + normalized.encode("ascii")
+    ).digest()
+
+
 def redeem_nonce_digest(raw_nonce: bytes) -> bytes:
     """Return the only browser-entry nonce value permitted in SQLite."""
     return hashlib.sha256(b"hramatka-redeem-nonce\0" + raw_nonce).digest()
@@ -655,6 +689,186 @@ class JobStore:
             ).fetchone()
         return self._teacher_record(row) if row is not None else None
 
+    def grant_staff_role(
+        self, teacher_id: str, role: StaffRole, *, require_google_identity: bool = False
+    ) -> StaffRole:
+        """Grant one explicit staff role; operator CLI is the only caller.
+
+        An administrator bootstrap must already be bound to Google. A teacher
+        may be granted before first Google binding so the one-time invite-based
+        linking ceremony has no implicit account provisioning path.
+        """
+        if role not in {"admin", "teacher"}:
+            raise ValueError("Unsupported staff role.")
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            teacher = connection.execute(
+                "SELECT 1 FROM pilot_teachers WHERE id = ? AND deactivated_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if teacher is None:
+                raise ValueError("Teacher does not exist or is deactivated.")
+            if require_google_identity:
+                identity = connection.execute(
+                    "SELECT 1 FROM google_teacher_identities "
+                    "WHERE teacher_id = ? AND revoked_at IS NULL",
+                    (teacher_id,),
+                ).fetchone()
+                if identity is None:
+                    raise ValueError("Teacher has no active Google identity.")
+            connection.execute(
+                """
+                INSERT INTO staff_authorization_grants (teacher_id, role, created_at, revoked_at)
+                VALUES (?, ?, ?, NULL)
+                ON CONFLICT(teacher_id) DO UPDATE SET role = excluded.role, revoked_at = NULL
+                """,
+                (teacher_id, role, timestamp),
+            )
+        return role
+
+    def revoke_staff_role(self, teacher_id: str) -> bool:
+        """Revoke a grant and every extant browser session in one transaction."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            changed = connection.execute(
+                "UPDATE staff_authorization_grants SET revoked_at = COALESCE(revoked_at, ?) "
+                "WHERE teacher_id = ? AND revoked_at IS NULL",
+                (timestamp, teacher_id),
+            )
+            if changed.rowcount == 1:
+                # Do not leave a valid-looking pre-revocation cookie that could
+                # become usable again after a later regrant.
+                connection.execute(
+                    "UPDATE pilot_sessions SET revoked_at = COALESCE(revoked_at, ?) "
+                    "WHERE teacher_id = ?",
+                    (timestamp, teacher_id),
+                )
+                # Regranting a role must not revive a stale first-login email
+                # reservation. An operator explicitly creates a fresh one.
+                connection.execute(
+                    "DELETE FROM google_email_preauthorizations "
+                    "WHERE teacher_id = ? AND consumed_at IS NULL",
+                    (teacher_id,),
+                )
+        return changed.rowcount == 1
+
+    def active_staff_role(self, teacher_id: str) -> StaffRole | None:
+        """Return only an active durable role for an active teacher."""
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT g.role FROM staff_authorization_grants AS g
+                JOIN pilot_teachers AS t ON t.id = g.teacher_id
+                WHERE g.teacher_id = ? AND g.revoked_at IS NULL AND t.deactivated_at IS NULL
+                """,
+                (teacher_id,),
+            ).fetchone()
+        return None if row is None else row["role"]
+
+    def list_staff_owners(self) -> list[StaffOwnerRecord]:
+        """List every durable lesson owner, including historical/inactive ones."""
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.id, t.display_name,
+                       CASE WHEN g.revoked_at IS NULL AND t.deactivated_at IS NULL
+                            THEN g.role ELSE NULL END AS role
+                FROM pilot_teachers AS t
+                LEFT JOIN staff_authorization_grants AS g ON g.teacher_id = t.id
+                ORDER BY t.display_name COLLATE NOCASE, t.id
+                """
+            ).fetchall()
+        return [
+            StaffOwnerRecord(id=row["id"], display_name=row["display_name"], role=row["role"])
+            for row in rows
+        ]
+
+    def owner_exists(self, teacher_id: str) -> bool:
+        """Resolve a historical owner for an administrator without lesson-id lookup."""
+        with self._read_connection() as connection:
+            return connection.execute(
+                "SELECT 1 FROM pilot_teachers WHERE id = ?", (teacher_id,)
+            ).fetchone() is not None
+
+    def preauthorize_google_email(self, teacher_id: str, email: str, role: StaffRole) -> StaffRole:
+        """Atomically grant an existing teacher and reserve one verified Google email."""
+        if role not in {"admin", "teacher"}:
+            raise ValueError("Unsupported staff role.")
+        email_digest = google_email_preauthorization_digest(email)
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            teacher = connection.execute(
+                "SELECT 1 FROM pilot_teachers WHERE id = ? AND deactivated_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if teacher is None:
+                raise ValueError("Teacher does not exist or is deactivated.")
+            identity = connection.execute(
+                "SELECT 1 FROM google_teacher_identities WHERE teacher_id = ?", (teacher_id,)
+            ).fetchone()
+            if identity is not None:
+                raise ValueError("Teacher already has a Google identity.")
+            connection.execute(
+                """
+                INSERT INTO staff_authorization_grants (teacher_id, role, created_at, revoked_at)
+                VALUES (?, ?, ?, NULL)
+                ON CONFLICT(teacher_id) DO UPDATE SET role = excluded.role, revoked_at = NULL
+                """,
+                (teacher_id, role, timestamp),
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO google_email_preauthorizations
+                    (id, teacher_id, email_digest, created_at, consumed_at)
+                    VALUES (?, ?, ?, ?, NULL)
+                    """,
+                    (str(uuid.uuid4()), teacher_id, email_digest, timestamp),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("Google email preauthorization is unavailable.") from error
+        return role
+
+    def create_preauthorized_google_teacher(
+        self, display_name: str, email: str, role: StaffRole
+    ) -> TeacherRecord:
+        """Create an operator-approved staff record and one-use Google email reservation."""
+        if not isinstance(display_name, str) or not 1 <= len(display_name) <= 100:
+            raise ValueError("Teacher display_name must be 1–100 characters.")
+        if role not in {"admin", "teacher"}:
+            raise ValueError("Unsupported staff role.")
+        email_digest = google_email_preauthorization_digest(email)
+        timestamp = now_iso()
+        teacher = TeacherRecord(
+            id=str(uuid.uuid4()),
+            display_name=display_name,
+            created_at=timestamp,
+            deactivated_at=None,
+        )
+        with self._write_transaction() as connection:
+            connection.execute(
+                "INSERT INTO pilot_teachers (id, display_name, created_at, deactivated_at) "
+                "VALUES (?, ?, ?, NULL)",
+                (teacher.id, teacher.display_name, timestamp),
+            )
+            connection.execute(
+                "INSERT INTO staff_authorization_grants "
+                "(teacher_id, role, created_at, revoked_at) VALUES (?, ?, ?, NULL)",
+                (teacher.id, role, timestamp),
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO google_email_preauthorizations
+                    (id, teacher_id, email_digest, created_at, consumed_at)
+                    VALUES (?, ?, ?, ?, NULL)
+                    """,
+                    (str(uuid.uuid4()), teacher.id, email_digest, timestamp),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("Google email preauthorization is unavailable.") from error
+        return teacher
+
     def create_local_static_session(self) -> RedeemedSession:
         """Create a normal session for the one stable local-only teacher.
 
@@ -856,7 +1070,9 @@ class JobStore:
 
     # -- Browser session lifecycle -----------------------------------------
 
-    def redeem_invite(self, token: str, nonce: str) -> RedeemedSession:
+    def redeem_invite(
+        self, token: str, nonce: str, *, require_active_staff_grant: bool = False
+    ) -> RedeemedSession:
         """Consume an invite once, with same-browser recovery after a lost response."""
         raw_token = decode_opaque_token(token)
         raw_nonce = decode_opaque_token(nonce)
@@ -887,8 +1103,15 @@ class JobStore:
                 WHERE i.token_hash = ?
                   AND i.revoked_at IS NULL
                   AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS grant_row
+                        WHERE grant_row.teacher_id = i.teacher_id
+                          AND grant_row.revoked_at IS NULL
+                    )
+                  )
                 """,
-                (invite_token_digest(raw_token),),
+                (invite_token_digest(raw_token), int(require_active_staff_grant)),
             ).fetchone()
             if invite_row is None:
                 raise InviteUnavailable("This invite is no longer available.")
@@ -1019,6 +1242,32 @@ class JobStore:
                 )
         return self._session_record(row) if row is not None else None
 
+    def authorized_staff_role(self, teacher_id: str) -> StaffRole | None:
+        """Authorize a normal session on every request, fail-closed by SQL join."""
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT grant_row.role
+                FROM staff_authorization_grants AS grant_row
+                JOIN pilot_teachers AS teacher ON teacher.id = grant_row.teacher_id
+                JOIN google_teacher_identities AS google
+                    ON google.teacher_id = teacher.id
+                WHERE grant_row.teacher_id = ?
+                  AND grant_row.revoked_at IS NULL
+                  AND teacher.deactivated_at IS NULL
+                  AND google.revoked_at IS NULL
+                """,
+                (teacher_id,),
+            ).fetchone()
+        return None if row is None else row["role"]
+
+    def may_bootstrap_google_link(self, record: SessionRecord) -> bool:
+        """Allow exactly a grant-backed invite session to bind its first Google identity."""
+        if record.auth_method != "invite":
+            return False
+        has_grant = self.active_staff_role(record.teacher_id) is not None
+        return has_grant and not self.teacher_has_google_identity(record.teacher_id)
+
     def logout_session(self, raw_secret: bytes | str) -> bool:
         """Revoke the presented current session before an HTTP 204 is returned."""
         raw = _coerce_opaque_secret(raw_secret)
@@ -1134,7 +1383,13 @@ class JobStore:
         )
 
     def link_google_identity(
-        self, *, teacher_id: str, session_id: str, subject: str, email: str
+        self,
+        *,
+        teacher_id: str,
+        session_id: str,
+        subject: str,
+        email: str,
+        require_active_grant: bool = False,
     ) -> None:
         """Bind one verified Google subject to the already signed-in teacher.
 
@@ -1155,9 +1410,17 @@ class JobStore:
             ).fetchone()
             if session is None:
                 raise SessionUnavailable("The teacher session is no longer active.")
+            if require_active_grant:
+                grant = connection.execute(
+                    "SELECT 1 FROM staff_authorization_grants "
+                    "WHERE teacher_id = ? AND revoked_at IS NULL",
+                    (teacher_id,),
+                ).fetchone()
+                if grant is None:
+                    raise SessionUnavailable("The teacher session is no longer active.")
             existing_subject = connection.execute(
                 "SELECT teacher_id FROM google_teacher_identities "
-                "WHERE subject = ? AND revoked_at IS NULL",
+                "WHERE subject = ?",
                 (subject,),
             ).fetchone()
             if existing_subject is not None and existing_subject["teacher_id"] != teacher_id:
@@ -1184,7 +1447,9 @@ class JobStore:
                 (str(uuid.uuid4()), teacher_id, subject, email, timestamp, timestamp),
             )
 
-    def authenticate_google_identity(self, subject: str) -> str | None:
+    def authenticate_google_identity(
+        self, subject: str, *, require_active_grant: bool = False
+    ) -> str | None:
         """Resolve only an already-linked active teacher from a Google subject."""
         timestamp = now_iso()
         with self._write_transaction() as connection:
@@ -1193,8 +1458,14 @@ class JobStore:
                 SELECT g.teacher_id FROM google_teacher_identities AS g
                 JOIN pilot_teachers AS t ON t.id = g.teacher_id
                 WHERE g.subject = ? AND g.revoked_at IS NULL AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS grant_row
+                        WHERE grant_row.teacher_id = t.id AND grant_row.revoked_at IS NULL
+                    )
+                  )
                 """,
-                (subject,),
+                (subject, int(require_active_grant)),
             ).fetchone()
             if row is None:
                 return None
@@ -1203,6 +1474,95 @@ class JobStore:
                 (timestamp, subject),
             )
         return str(row["teacher_id"])
+
+    def bind_google_email_preauthorization(
+        self, *, subject: str, email: str
+    ) -> RedeemedSession | None:
+        """Consume exactly one approved verified email and establish its first Google session.
+
+        The preauthorization, identity binding, and opaque browser session are
+        one SQLite transaction.  A subject/email mismatch, unknown email, or
+        replay returns no principal and leaves no partially created identity or
+        session behind.
+        """
+        if not isinstance(subject, str) or not subject or len(subject) > 255:
+            return None
+        try:
+            email_digest = google_email_preauthorization_digest(email)
+        except ValueError:
+            return None
+        timestamp = now_iso()
+        raw_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)
+        session = SessionRecord(
+            id=str(uuid.uuid4()),
+            teacher_id="",
+            teacher_display_name="",
+            invite_id=None,
+            created_at=timestamp,
+            expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
+            revoked_at=None,
+            auth_method="google",
+        )
+        with self._write_transaction() as connection:
+            # A provider subject is immutable. It cannot be rebound—even if a
+            # historic identity was revoked—by presenting a matching email.
+            if connection.execute(
+                "SELECT 1 FROM google_teacher_identities WHERE subject = ?", (subject,)
+            ).fetchone() is not None:
+                return None
+            row = connection.execute(
+                """
+                SELECT p.id, p.teacher_id, t.display_name
+                FROM google_email_preauthorizations AS p
+                JOIN pilot_teachers AS t ON t.id = p.teacher_id
+                JOIN staff_authorization_grants AS g ON g.teacher_id = t.id
+                WHERE p.email_digest = ? AND p.consumed_at IS NULL
+                  AND t.deactivated_at IS NULL AND g.revoked_at IS NULL
+                """,
+                (email_digest,),
+            ).fetchone()
+            if row is None:
+                return None
+            consumed = connection.execute(
+                "UPDATE google_email_preauthorizations SET consumed_at = ? "
+                "WHERE id = ? AND consumed_at IS NULL",
+                (timestamp, row["id"]),
+            )
+            if consumed.rowcount != 1:
+                return None
+            connection.execute(
+                """
+                INSERT INTO google_teacher_identities
+                (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (str(uuid.uuid4()), row["teacher_id"], subject, email, timestamp, timestamp),
+            )
+            session = SessionRecord(
+                **{
+                    **session.__dict__,
+                    "teacher_id": row["teacher_id"],
+                    "teacher_display_name": row["display_name"],
+                }
+            )
+            connection.execute(
+                """
+                INSERT INTO pilot_sessions
+                (id, teacher_id, invite_id, secret_hash, redeem_nonce_hash, created_at, expires_at,
+                 idle_expires_at, last_seen_at, revoked_at, auth_method)
+                VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL, 'google')
+                """,
+                (
+                    session.id,
+                    session.teacher_id,
+                    session_secret_digest(raw_secret),
+                    session.created_at,
+                    session.expires_at,
+                    _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                    timestamp,
+                ),
+            )
+        return RedeemedSession(session=session, raw_secret=raw_secret)
 
     def teacher_has_google_identity(self, teacher_id: str) -> bool:
         """Return whether this active teacher already has one usable Google link."""
@@ -1275,15 +1635,33 @@ class JobStore:
                     "UPDATE google_teacher_identities SET last_used_at = ? WHERE subject = ?",
                     (timestamp, subject),
                 )
-                return teacher_id
-            connection.execute(
-                """
-                INSERT INTO google_teacher_identities
-                (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
-                VALUES (?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (str(uuid.uuid4()), teacher_id, subject, email, timestamp, timestamp),
-            )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO google_teacher_identities
+                    (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL)
+                    """,
+                    (str(uuid.uuid4()), teacher_id, subject, email, timestamp, timestamp),
+                )
+            # Env allowlist is the operator authorization. Production session
+            # minting also requires an active staff grant; do not overwrite
+            # an existing role or revive a revoked one.
+            grant = connection.execute(
+                "SELECT role, revoked_at FROM staff_authorization_grants WHERE teacher_id = ?",
+                (teacher_id,),
+            ).fetchone()
+            if grant is None:
+                connection.execute(
+                    """
+                    INSERT INTO staff_authorization_grants
+                    (teacher_id, role, created_at, revoked_at)
+                    VALUES (?, 'teacher', ?, NULL)
+                    """,
+                    (teacher_id, timestamp),
+                )
+            elif grant["revoked_at"] is not None:
+                raise GoogleIdentityUnavailable("This Google account is unavailable.")
         return teacher_id
 
     # -- WebAuthn and recovery-code lifecycle ------------------------------
@@ -1396,53 +1774,135 @@ class JobStore:
                 return None
         return row["teacher_id"]
 
-    def mint_reentry_session(self, teacher_id: str, *, auth_method: str) -> RedeemedSession:
-        """The shared, opaque session seam used by all non-invite entry doors."""
-        if auth_method not in {"passkey", "recovery", "google"}:
-            raise ValueError("Unsupported re-entry method.")
+    def record_webauthn_use_and_mint_session(
+        self,
+        credential_id: bytes,
+        sign_count: int,
+        *,
+        require_active_staff_authorization: bool = False,
+    ) -> RedeemedSession | None:
+        """Advance a passkey once and mint only for an atomically authorized teacher."""
         timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT c.teacher_id, t.display_name
+                FROM webauthn_credentials AS c
+                JOIN pilot_teachers AS t ON t.id = c.teacher_id
+                WHERE c.credential_id = ? AND c.revoked_at IS NULL AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR (
+                      EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS g
+                        WHERE g.teacher_id = t.id AND g.revoked_at IS NULL
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM google_teacher_identities AS google
+                        WHERE google.teacher_id = t.id AND google.revoked_at IS NULL
+                      )
+                    )
+                  )
+                """,
+                (credential_id, int(require_active_staff_authorization)),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = connection.execute(
+                "UPDATE webauthn_credentials SET sign_count = ?, last_used_at = ? "
+                "WHERE credential_id = ? AND ((sign_count = 0 AND ? = 0) OR ? > sign_count)",
+                (sign_count, timestamp, credential_id, sign_count, sign_count),
+            )
+            if changed.rowcount != 1:
+                return None
+            return self._insert_reentry_session(
+                connection,
+                teacher_id=row["teacher_id"],
+                teacher_display_name=row["display_name"],
+                auth_method="passkey",
+                timestamp=timestamp,
+            )
+
+    def _insert_reentry_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        teacher_id: str,
+        teacher_display_name: str,
+        auth_method: str,
+        timestamp: str,
+    ) -> RedeemedSession:
+        """Insert the opaque session only after the caller's writer-side authorization check."""
         raw_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)
         session = SessionRecord(
             id=str(uuid.uuid4()),
             teacher_id=teacher_id,
-            teacher_display_name="",
+            teacher_display_name=teacher_display_name,
             invite_id=None,
             created_at=timestamp,
             expires_at=_add_hours(timestamp, _SESSION_ABSOLUTE_HOURS),
             revoked_at=None,
             auth_method=auth_method,
         )
+        connection.execute(
+            """
+            INSERT INTO pilot_sessions
+            (id, teacher_id, invite_id, secret_hash, redeem_nonce_hash, created_at, expires_at,
+             idle_expires_at, last_seen_at, revoked_at, auth_method)
+            VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                session.id,
+                teacher_id,
+                session_secret_digest(raw_secret),
+                timestamp,
+                session.expires_at,
+                _add_hours(timestamp, _SESSION_IDLE_HOURS),
+                timestamp,
+                auth_method,
+            ),
+        )
+        return RedeemedSession(session=session, raw_secret=raw_secret)
+
+    def mint_reentry_session(
+        self,
+        teacher_id: str,
+        *,
+        auth_method: str,
+        require_active_staff_authorization: bool = False,
+    ) -> RedeemedSession:
+        """The shared opaque-session seam, with production authorization checked in its write tx."""
+        if auth_method not in {"passkey", "recovery", "google"}:
+            raise ValueError("Unsupported re-entry method.")
+        timestamp = now_iso()
         with self._write_transaction() as connection:
             teacher = connection.execute(
-                "SELECT display_name FROM pilot_teachers WHERE id = ? AND deactivated_at IS NULL",
-                (teacher_id,),
+                """
+                SELECT t.display_name FROM pilot_teachers AS t
+                WHERE t.id = ? AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR (
+                      EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS g
+                        WHERE g.teacher_id = t.id AND g.revoked_at IS NULL
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM google_teacher_identities AS google
+                        WHERE google.teacher_id = t.id AND google.revoked_at IS NULL
+                      )
+                    )
+                  )
+                """,
+                (teacher_id, int(require_active_staff_authorization)),
             ).fetchone()
             if teacher is None:
                 raise SessionUnavailable("The teacher session is no longer active.")
-            connection.execute(
-                """
-                INSERT INTO pilot_sessions
-                (id, teacher_id, invite_id, secret_hash, redeem_nonce_hash, created_at, expires_at,
-                 idle_expires_at, last_seen_at, revoked_at, auth_method)
-                VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, NULL, ?)
-                """,
-                (
-                    session.id,
-                    teacher_id,
-                    session_secret_digest(raw_secret),
-                    timestamp,
-                    session.expires_at,
-                    _add_hours(timestamp, _SESSION_IDLE_HOURS),
-                    timestamp,
-                    auth_method,
-                ),
+            return self._insert_reentry_session(
+                connection,
+                teacher_id=teacher_id,
+                teacher_display_name=teacher["display_name"],
+                auth_method=auth_method,
+                timestamp=timestamp,
             )
-        return RedeemedSession(
-            session=SessionRecord(
-                **{**session.__dict__, "teacher_display_name": teacher["display_name"]}
-            ),
-            raw_secret=raw_secret,
-        )
 
     def regenerate_recovery_codes(self, teacher_id: str, *, count: int = 10) -> list[str]:
         codes = [
@@ -1492,6 +1952,51 @@ class JobStore:
             )
             return row["teacher_id"] if changed.rowcount == 1 else None
 
+    def redeem_recovery_code_and_mint_session(
+        self, code: str, *, require_active_staff_authorization: bool = False
+    ) -> RedeemedSession | None:
+        """Consume recovery proof and mint only when staff authorization is still current."""
+        timestamp = now_iso()
+        digest = token_digest(b"hramatka-recovery-code", code.encode())
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.teacher_id, t.display_name
+                FROM recovery_codes AS r
+                JOIN pilot_teachers AS t ON t.id = r.teacher_id
+                WHERE r.code_hash = ? AND r.used_at IS NULL AND r.superseded_at IS NULL
+                  AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR (
+                      EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS g
+                        WHERE g.teacher_id = t.id AND g.revoked_at IS NULL
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM google_teacher_identities AS google
+                        WHERE google.teacher_id = t.id AND google.revoked_at IS NULL
+                      )
+                    )
+                  )
+                """,
+                (digest, int(require_active_staff_authorization)),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = connection.execute(
+                "UPDATE recovery_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL",
+                (timestamp, digest),
+            )
+            if changed.rowcount != 1:
+                return None
+            return self._insert_reentry_session(
+                connection,
+                teacher_id=row["teacher_id"],
+                teacher_display_name=row["display_name"],
+                auth_method="recovery",
+                timestamp=timestamp,
+            )
+
     # -- Teacher preferences (P2-6) ----------------------------------------
 
     def get_teacher_default_duration(self, teacher_id: str) -> int:
@@ -1532,6 +2037,7 @@ class JobStore:
         anchor_source: str = "teacher-paste",
         anchor_source_url: str | None = None,
         logical_model_id: str | None = None,
+        require_active_staff_authorization: bool = False,
     ) -> tuple[JobRecord, bool]:
         if duration != 45:
             raise ValueError("New lesson generation is qualified for 45 minutes only.")
@@ -1556,15 +2062,27 @@ class JobStore:
         with self._write_transaction() as connection:
             active_teacher = connection.execute(
                 """
-                SELECT 1 FROM pilot_teachers
-                WHERE id = ? AND deactivated_at IS NULL
+                SELECT 1 FROM pilot_teachers AS t
+                WHERE t.id = ? AND t.deactivated_at IS NULL
+                  AND (
+                    ? = 0 OR (
+                      EXISTS (
+                        SELECT 1 FROM staff_authorization_grants AS g
+                        WHERE g.teacher_id = t.id AND g.revoked_at IS NULL
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM google_teacher_identities AS google
+                        WHERE google.teacher_id = t.id AND google.revoked_at IS NULL
+                      )
+                    )
+                  )
                 """,
-                (teacher_id,),
+                (teacher_id, int(require_active_staff_authorization)),
             ).fetchone()
             if active_teacher is None:
-                # A request can pass cookie lookup just before an operator
-                # deactivates that teacher.  This second check is deliberately
-                # inside the writer transaction, so it cannot create a new job
+                # A request can pass HTTP scope resolution just before an
+                # operator revokes/deactivates the target. This second check is
+                # in the writer transaction, so it cannot create a new job
                 # after that lifecycle decision commits.
                 raise SessionUnavailable("The teacher session is no longer active.")
             try:

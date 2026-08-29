@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import jwt
 import pytest
@@ -265,6 +266,39 @@ def test_allowlisted_qa_email_binds_dedicated_teacher_and_mints_session(
         assert returned.json()["teacher"]["id"] == teacher.id
 
 
+def test_allowlisted_qa_email_mints_session_when_staff_authorization_is_required(
+    monkeypatch, tmp_path
+) -> None:
+    bootstrap = create_app(
+        settings=_settings(tmp_path), baker=SimpleNamespace(bake=lambda *_: {})
+    )
+    teacher = bootstrap.state.store.create_teacher("QA викладач")
+    app = create_app(
+        settings=_settings(
+            tmp_path,
+            google_allowed_emails=frozenset({QA_EMAIL}),
+            google_allowed_email_teacher_id=teacher.id,
+            staff_authorization_required=True,
+        ),
+        baker=SimpleNamespace(bake=lambda *_: {}),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("qa-staff-sub", QA_EMAIL, sign_in["nonce"]),
+        )
+        completed = _google_callback(client)
+        assert completed.status_code == 303
+        assert completed.headers["location"] == "/teacher/"
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        assert session.json()["teacher"]["id"] == teacher.id
+        assert session.json()["google_linked"] is True
+        assert session.json()["role"] == "teacher"
+
+
 def test_allowlisted_email_creates_teacher_when_host_omits_teacher_id(
     monkeypatch, tmp_path
 ) -> None:
@@ -321,6 +355,32 @@ def test_google_allowed_email_teacher_id_must_be_a_uuid() -> None:
     assert _validate_google_allowed_email_teacher_id("") is None
     with pytest.raises(ValueError, match="teacher UUID"):
         _validate_google_allowed_email_teacher_id("not-a-uuid")
+
+
+def test_google_link_never_reuses_a_revoked_subject(monkeypatch, app, client) -> None:
+    first, _ = _invite_session(app, client, "Історична")
+    with app.state.store._write_transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO google_teacher_identities
+            (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+            VALUES (?, ?, 'permanently-bound-sub', 'historic@example.test',
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-02T00:00:00Z')
+            """,
+            (str(uuid4()), first.id),
+        )
+    client.cookies.clear()
+    _, second_session = _invite_session(app, client, "Нова")
+    options = _options(client, second_session["csrf_token"])
+    monkeypatch.setattr(
+        app_module,
+        "verify_google_credential",
+        lambda *_: _identity(
+            "permanently-bound-sub", "new@example.test", options["nonce"]
+        ),
+    )
+    client.cookies.clear()
+    assert _google_callback(client).headers["location"] == "/teacher/?google=failed"
 
 
 def test_google_options_fail_closed_without_the_explicit_public_client_id(tmp_path) -> None:
@@ -485,4 +545,8 @@ def test_v015_preserves_v014_sessions_and_adds_google_identity_tables(tmp_path) 
         assert connection.execute(
             "SELECT 1 FROM sqlite_master "
             "WHERE type = 'table' AND name = 'google_teacher_identities'"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'google_email_preauthorizations'"
         ).fetchone()

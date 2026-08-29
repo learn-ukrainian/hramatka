@@ -56,6 +56,35 @@ def _parser() -> argparse.ArgumentParser:
 
     deactivate = commands.add_parser("deactivate", help="deactivate a teacher and revoke access")
     deactivate.add_argument("--teacher-id", required=True, type=_uuid)
+
+    bootstrap_admin = commands.add_parser(
+        "bootstrap-admin",
+        help="grant admin to an existing Google-linked teacher",
+    )
+    bootstrap_admin.add_argument("--teacher-id", required=True, type=_uuid)
+
+    grant = commands.add_parser(
+        "grant",
+        help="preauthorize an existing teacher for Google-bound staff access",
+    )
+    grant.add_argument("--teacher-id", required=True, type=_uuid)
+    grant.add_argument("--role", required=True, choices=("admin", "teacher"))
+
+    preauthorize = commands.add_parser(
+        "preauthorize-google",
+        help="reserve one verified Google email for a named staff member",
+    )
+    subject = preauthorize.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--teacher-id", type=_uuid, help="existing active teacher")
+    subject.add_argument("--display-name", help="create this approved teacher atomically")
+    preauthorize.add_argument("--email", required=True, help="verified Google account email")
+    preauthorize.add_argument("--role", required=True, choices=("admin", "teacher"))
+
+    revoke_grant = commands.add_parser(
+        "revoke-grant",
+        help="revoke an explicit staff authorization grant",
+    )
+    revoke_grant.add_argument("--teacher-id", required=True, type=_uuid)
     return parser
 
 
@@ -66,6 +95,46 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "create":
         _emit(store.create_teacher(args.display_name))
+        return 0
+
+    if args.command == "bootstrap-admin":
+        store.grant_staff_role(args.teacher_id, "admin", require_google_identity=True)
+        record = store.get_teacher(args.teacher_id)
+        assert record is not None
+        _emit(record)
+        return 0
+
+    if args.command == "grant":
+        # Admin grants are also bound to an already verified Google identity;
+        # teachers may be preauthorized before their one-time Google link.
+        store.grant_staff_role(
+            args.teacher_id,
+            args.role,
+            require_google_identity=args.role == "admin",
+        )
+        record = store.get_teacher(args.teacher_id)
+        assert record is not None
+        _emit(record)
+        return 0
+
+    if args.command == "preauthorize-google":
+        if args.teacher_id is not None:
+            store.preauthorize_google_email(args.teacher_id, args.email, args.role)
+            record = store.get_teacher(args.teacher_id)
+            assert record is not None
+        else:
+            record = store.create_preauthorized_google_teacher(
+                args.display_name, args.email, args.role
+            )
+        _emit(record)
+        return 0
+
+    if args.command == "revoke-grant":
+        if not store.revoke_staff_role(args.teacher_id):
+            parser.error("active staff grant not found")
+        record = store.get_teacher(args.teacher_id)
+        assert record is not None
+        _emit(record)
         return 0
 
     record = store.deactivate_teacher(args.teacher_id)

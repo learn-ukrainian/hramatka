@@ -19,7 +19,7 @@ from typing import Annotated, Any
 from urllib.parse import parse_qs
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, Path, Request, Response, status
+from fastapi import Depends, FastAPI, Header, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
@@ -87,6 +87,7 @@ from .store import (
     ReviewMutationInvalid,
     RevisionConflict,
     SessionUnavailable,
+    StaffRole,
     TokenFormatError,
     WarningAcknowledgementsRequired,
     WarningBlockNotFound,
@@ -201,10 +202,19 @@ class PilotError(Exception):
 class AuthenticatedSession:
     record: Any
     raw_secret: bytes
+    role: StaffRole
 
     @property
     def teacher_id(self) -> str:
         return self.record.teacher_id
+
+
+@dataclass(frozen=True)
+class OwnerScope:
+    """Resolved server-side lesson owner; browser input never becomes authority."""
+
+    owner_id: str
+    role: StaffRole
 
 
 def _encode_opaque(raw: bytes) -> str:
@@ -422,6 +432,12 @@ def create_app(
     """Create the one-process application; it deliberately exposes no bearer path."""
     settings = settings or Settings.from_env()
     production_routing_required = baker is None
+    # Direct local tests opt out explicitly through Settings. The deployed
+    # environment enables this; an absent Google configuration therefore
+    # fails closed for all normal sessions rather than falling back to invites.
+    production_staff_auth_required = (
+        settings.staff_authorization_required and not settings.local_static_teacher_enabled
+    )
     model_registry = model_registry or default_model_registry(
         required_provenance_by_route={
             "gemini-flash-subscription": settings.subscription_qualification_provenance_tier,
@@ -678,7 +694,12 @@ def create_app(
         record = store.lookup_session(raw_secret)
         if record is None:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
-        return AuthenticatedSession(record=record, raw_secret=raw_secret)
+        role = store.authorized_staff_role(record.teacher_id)
+        if production_staff_auth_required and role is None:
+            raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
+        # Local tests retain the existing invite/passkey compatibility, while
+        # production never fabricates a role: this fallback is presentation-only.
+        return AuthenticatedSession(record=record, raw_secret=raw_secret, role=role or "teacher")
 
     # Routers mounted during application construction cannot import this
     # closure: it is bound to this application's cookie decoder and JobStore.
@@ -706,6 +727,7 @@ def create_app(
             "expires_at": session.record.expires_at,
             "csrf_token": csrf_token(settings.csrf_hmac_key, session.raw_secret),
             "google_linked": store.teacher_has_google_identity(session.record.teacher_id),
+            "role": session.role,
         }
         if settings.local_static_teacher_enabled and session.record.auth_method == "local":
             payload["local_auth_disabled"] = True
@@ -721,7 +743,15 @@ def create_app(
 
     def session_response(redeemed) -> Response:
         """Every entry door terminates in the one existing cookie session contract."""
-        session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
+        session = AuthenticatedSession(
+            record=redeemed.session,
+            raw_secret=redeemed.raw_secret,
+            role=(
+                store.authorized_staff_role(redeemed.session.teacher_id)
+                or store.active_staff_role(redeemed.session.teacher_id)
+                or "teacher"
+            ),
+        )
         response = JSONResponse(content=session_payload(session))
         set_session_cookie(response, redeemed.raw_secret, redeemed.session.expires_at)
         return response
@@ -736,11 +766,48 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
-        job = store.get(teacher_id, lesson_id)
+    def owner_job(scope: OwnerScope, lesson_id: str) -> JobRecord:
+        job = store.get(scope.owner_id, lesson_id)
         if job is None:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return job
+
+    def _owner_scope(
+        session: AuthenticatedSession,
+        owner_id: UUID | None,
+        *,
+        require_active_target: bool = False,
+    ) -> OwnerScope:
+        requested = str(owner_id) if owner_id is not None else session.teacher_id
+        if requested == session.teacher_id:
+            return OwnerScope(owner_id=requested, role=session.role)
+        if session.role != "admin" or not store.owner_exists(requested):
+            # Teachers never learn whether a forged owner exists. Admin receives
+            # an explicit durable owner scope, never an unscoped lesson lookup.
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
+        if require_active_target and store.authorized_staff_role(requested) is None:
+            raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
+        return OwnerScope(owner_id=requested, role=session.role)
+
+    def require_read_owner_scope(
+        owner_id: UUID | None = Query(default=None),
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> OwnerScope:
+        return _owner_scope(session, owner_id)
+
+    def require_mutation_owner_scope(
+        owner_id: UUID | None = Query(default=None),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> OwnerScope:
+        return _owner_scope(session, owner_id)
+
+    def require_create_owner_scope(
+        owner_id: UUID | None = Query(default=None),
+        session: AuthenticatedSession = Depends(require_mutation_session),
+    ) -> OwnerScope:
+        # Historical/deactivated owners remain manageable when they already
+        # have lessons, but no new work may be created for them.
+        return _owner_scope(session, owner_id, require_active_target=True)
 
     def lesson_resource(job: JobRecord) -> dict[str, object]:
         """The one lesson-resource assembly: feedback plus durable replacement state."""
@@ -831,7 +898,11 @@ def create_app(
         __: None = Depends(require_origin),
     ) -> Response:
         try:
-            redeemed = store.redeem_invite(request_body.token, request_body.nonce)
+            redeemed = store.redeem_invite(
+                request_body.token,
+                request_body.nonce,
+                require_active_staff_grant=production_staff_auth_required,
+            )
         except TokenFormatError as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         except InviteUnavailable as error:
@@ -860,6 +931,12 @@ def create_app(
                 raise PilotError(
                     403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
                 )
+            active_role = store.authorized_staff_role(record.teacher_id)
+            can_bootstrap = production_staff_auth_required and store.may_bootstrap_google_link(
+                record
+            )
+            if production_staff_auth_required and active_role is None and not can_bootstrap:
+                raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
             if store.teacher_has_google_identity(record.teacher_id):
                 raise PilotError(409, "google_already_linked", "Вхід через Google уже підключено.")
             try:
@@ -916,27 +993,52 @@ def create_app(
                     session_id=ceremony.session_id,
                     subject=verified.subject,
                     email=verified.email,
+                    require_active_grant=production_staff_auth_required,
                 )
                 response = RedirectResponse(url="/teacher/?google=linked", status_code=303)
                 # Google's cross-site POST does not carry our Lax session
                 # cookie. The one-use nonce is the link authorization, and a
                 # fresh ordinary cookie session gets the teacher back into the
                 # app without relying on that absent cookie.
-                established = store.mint_reentry_session(ceremony.teacher_id, auth_method="google")
+                established = store.mint_reentry_session(
+                    ceremony.teacher_id,
+                    auth_method="google",
+                    require_active_staff_authorization=production_staff_auth_required,
+                )
                 set_session_cookie(response, established.raw_secret, established.session.expires_at)
                 response.headers["Cache-Control"] = "no-store"
                 return response
-            teacher_id = store.authenticate_google_identity(verified.subject)
+            teacher_id = store.authenticate_google_identity(
+                verified.subject,
+                require_active_grant=production_staff_auth_required,
+            )
             if teacher_id is None:
-                if verified.email.casefold() not in settings.google_allowed_emails:
+                if verified.email.casefold() in settings.google_allowed_emails:
+                    teacher_id = store.admit_allowlisted_google_identity(
+                        subject=verified.subject,
+                        email=verified.email,
+                        teacher_id=settings.google_allowed_email_teacher_id,
+                    )
+                elif production_staff_auth_required:
+                    established = store.bind_google_email_preauthorization(
+                        subject=verified.subject, email=verified.email
+                    )
+                    if established is None:
+                        return google_failure_redirect()
+                    response = RedirectResponse(url="/teacher/", status_code=303)
+                    set_session_cookie(
+                        response, established.raw_secret, established.session.expires_at
+                    )
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
+                else:
                     return google_failure_redirect()
-                teacher_id = store.admit_allowlisted_google_identity(
-                    subject=verified.subject,
-                    email=verified.email,
-                    teacher_id=settings.google_allowed_email_teacher_id,
-                )
             response = RedirectResponse(url="/teacher/", status_code=303)
-            established = store.mint_reentry_session(teacher_id, auth_method="google")
+            established = store.mint_reentry_session(
+                teacher_id,
+                auth_method="google",
+                require_active_staff_authorization=production_staff_auth_required,
+            )
             set_session_cookie(response, established.raw_secret, established.session.expires_at)
             response.headers["Cache-Control"] = "no-store"
             return response
@@ -954,9 +1056,13 @@ def create_app(
     def passkey_enrollment_options(
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
-        # First binding is deliberately possible only from the invite-created
-        # session: no name, email, or client-supplied identity can bind a key.
-        if session.record.auth_method != "invite":
+        # Local/non-production onboarding retains its invite flow. In
+        # production, require_session has just rechecked that a Google-derived
+        # session still has an active grant and non-revoked Google identity.
+        if (
+            (production_staff_auth_required and session.record.auth_method != "google")
+            or (not production_staff_auth_required and session.record.auth_method != "invite")
+        ):
             raise PilotError(
                 403, "passkey_enrollment_forbidden", "Потрібна первинна сесія за запрошенням."
             )
@@ -980,7 +1086,10 @@ def create_app(
         _: None = Depends(require_json),
         session: AuthenticatedSession = Depends(require_mutation_session),
     ) -> dict[str, object]:
-        if session.record.auth_method != "invite":
+        if (
+            (production_staff_auth_required and session.record.auth_method != "google")
+            or (not production_staff_auth_required and session.record.auth_method != "invite")
+        ):
             raise PilotError(
                 403, "passkey_enrollment_forbidden", "Потрібна первинна сесія за запрошенням."
             )
@@ -1060,10 +1169,14 @@ def create_app(
             is not True
         ):
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
-        teacher_id = store.record_webauthn_use(verified.credential_id, verified.new_sign_count)
-        if teacher_id is None:
+        established = store.record_webauthn_use_and_mint_session(
+            verified.credential_id,
+            verified.new_sign_count,
+            require_active_staff_authorization=production_staff_auth_required,
+        )
+        if established is None:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
-        return session_response(store.mint_reentry_session(teacher_id, auth_method="passkey"))
+        return session_response(established)
 
     @app.post("/api/recovery-codes/regenerate")
     def regenerate_recovery_codes(
@@ -1078,10 +1191,13 @@ def create_app(
         _: None = Depends(require_json),
         __: None = Depends(require_origin),
     ) -> Response:
-        teacher_id = store.redeem_recovery_code(request_body.code)
-        if teacher_id is None:
+        established = store.redeem_recovery_code_and_mint_session(
+            request_body.code,
+            require_active_staff_authorization=production_staff_auth_required,
+        )
+        if established is None:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.")
-        return session_response(store.mint_reentry_session(teacher_id, auth_method="recovery"))
+        return session_response(established)
 
     if settings.local_static_teacher_enabled:
 
@@ -1140,7 +1256,7 @@ def create_app(
     def create_lesson(
         request_body: LessonCreate,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_create_owner_scope),
     ) -> dict[str, object]:
         if not settings.generation_enabled:
             generation_disabled_error()
@@ -1187,7 +1303,7 @@ def create_app(
         try:
             with runner.hold_admission():
                 job, created = store.create_or_get(
-                    session.teacher_id,
+                    scope.owner_id,
                     lesson_id,
                     anchor_text=prepared_anchor_text,
                     anchor_source=request_body.anchor.source,
@@ -1197,6 +1313,7 @@ def create_app(
                     methodology=request_body.methodology,
                     grammar_focus=request_body.grammar_focus,
                     logical_model_id=logical_model_id,
+                    require_active_staff_authorization=production_staff_auth_required,
                 )
                 if created and not runner.submit(job.id):
                     refuse_unclaimed_admission()
@@ -1204,7 +1321,7 @@ def create_app(
                         "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
                         failure_code="engine_unavailable",
                     )
-                    job = owner_job(session.teacher_id, lesson_id)
+                    job = owner_job(scope, lesson_id)
         except IdempotencyConflict as error:
             raise PilotError(
                 409,
@@ -1217,22 +1334,35 @@ def create_app(
         return {"id": job.id, "status": job.status, "revision": job.revision, "reused": not created}
 
     @app.get("/api/lessons")
-    def list_lessons(session: AuthenticatedSession = Depends(require_session)) -> dict[str, object]:
-        return _catalog_payload(store.list_catalog(session.teacher_id))
+    def list_lessons(scope: OwnerScope = Depends(require_read_owner_scope)) -> dict[str, object]:
+        return _catalog_payload(store.list_catalog(scope.owner_id))
+
+    @app.get("/api/lesson-owners")
+    def list_lesson_owners(
+        session: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, object]:
+        if session.role != "admin":
+            raise PilotError(404, "not_found", "Не знайдено.")
+        return {
+            "owners": [
+                {"id": owner.id, "display_name": owner.display_name, "role": owner.role}
+                for owner in store.list_staff_owners()
+            ]
+        }
 
     @app.get("/api/lessons/{lesson_id}/status")
     def lesson_status(
         lesson_id: UUID,
-        session: AuthenticatedSession = Depends(require_session),
+        scope: OwnerScope = Depends(require_read_owner_scope),
     ) -> dict[str, object]:
-        return _status_payload(owner_job(session.teacher_id, _lesson_id(lesson_id)))
+        return _status_payload(owner_job(scope, _lesson_id(lesson_id)))
 
     @app.get("/api/lessons/{lesson_id}")
     def get_lesson(
         lesson_id: UUID,
-        session: AuthenticatedSession = Depends(require_session),
+        scope: OwnerScope = Depends(require_read_owner_scope),
     ) -> dict[str, object]:
-        job = owner_job(session.teacher_id, _lesson_id(lesson_id))
+        job = owner_job(scope, _lesson_id(lesson_id))
         if job.status != "ready" or job.lesson is None:
             raise PilotError(409, "lesson_not_ready", "Урок ще не готовий.")
         return lesson_resource(job)
@@ -1240,10 +1370,10 @@ def create_app(
     @app.delete("/api/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_lesson(
         lesson_id: UUID,
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> Response:
         lesson_key = _lesson_id(lesson_id)
-        job = owner_job(session.teacher_id, lesson_key)
+        job = owner_job(scope, lesson_key)
         if job.status in {"draft", "baking"}:
             raise PilotError(
                 409,
@@ -1258,7 +1388,7 @@ def create_app(
                 "Попередня спроба ще завершує запущену роботу; зачекайте перед видаленням.",
                 lesson_id=lesson_key,
             )
-        if not store.delete_lesson(session.teacher_id, lesson_key):
+        if not store.delete_lesson(scope.owner_id, lesson_key):
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1267,12 +1397,12 @@ def create_app(
         lesson_id: UUID,
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job, _ = store.cancel(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 expected_revision=request_body.expected_revision,
             )
@@ -1299,7 +1429,7 @@ def create_app(
         lesson_id: UUID,
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         if not settings.generation_enabled:
             generation_disabled_error()
@@ -1307,7 +1437,7 @@ def create_app(
         try:
             with runner.hold_admission():
                 job, queued = store.retry(
-                    session.teacher_id,
+                    scope.owner_id,
                     lesson_key,
                     expected_revision=request_body.expected_revision,
                 )
@@ -1317,7 +1447,7 @@ def create_app(
                         "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
                         failure_code="engine_unavailable",
                     )
-                    job = owner_job(session.teacher_id, lesson_key)
+                    job = owner_job(scope, lesson_key)
         except LessonNotFound as error:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
         except RevisionConflict as error:
@@ -1346,11 +1476,11 @@ def create_app(
     @app.post("/api/lessons/{lesson_id}/recreate", status_code=status.HTTP_202_ACCEPTED)
     def recreate_lesson(
         lesson_id: UUID,
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         if not settings.generation_enabled:
             generation_disabled_error()
-        source_job = owner_job(session.teacher_id, _lesson_id(lesson_id))
+        source_job = owner_job(scope, _lesson_id(lesson_id))
         if not source_job.request_json.strip():
             raise PilotError(
                 422,
@@ -1427,7 +1557,7 @@ def create_app(
         try:
             with runner.hold_admission():
                 job, created = store.create_or_get(
-                    session.teacher_id,
+                    scope.owner_id,
                     new_lesson_id,
                     anchor_text=anchor_text,
                     anchor_source=anchor_source,
@@ -1438,6 +1568,7 @@ def create_app(
                     methodology=methodology,
                     grammar_focus=grammar_focus,
                     logical_model_id=logical_model_id,
+                    require_active_staff_authorization=production_staff_auth_required,
                 )
                 if created and not runner.submit(job.id):
                     refuse_unclaimed_admission()
@@ -1445,7 +1576,7 @@ def create_app(
                         "Сервіс складання уроків недоступний. Спробуйте, будь ласка, ще раз.",
                         failure_code="engine_unavailable",
                     )
-                    job = owner_job(session.teacher_id, new_lesson_id)
+                    job = owner_job(scope, new_lesson_id)
         except IdempotencyConflict as error:
             raise PilotError(
                 409,
@@ -1471,12 +1602,12 @@ def create_app(
         ],
         request_body: ActivityRegenerationCreate,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         if not settings.generation_enabled:
             generation_disabled_error()
         lesson_key = _lesson_id(lesson_id)
-        lesson_job = owner_job(session.teacher_id, lesson_key)
+        lesson_job = owner_job(scope, lesson_key)
         logical_model_id = lesson_job.logical_model_id
         if logical_model_id is None:
             raise PilotError(
@@ -1497,7 +1628,7 @@ def create_app(
         try:
             with runner.hold_admission():
                 regeneration, created = store.create_or_get_activity_regeneration(
-                    session.teacher_id,
+                    scope.owner_id,
                     str(request_body.id),
                     lesson_id=lesson_key,
                     block_id=block_id,
@@ -1509,13 +1640,13 @@ def create_app(
                 if created and not runner.submit(regeneration.id):
                     refuse_unclaimed_admission()
                     store.fail_activity_regeneration(
-                        session.teacher_id,
+                        scope.owner_id,
                         regeneration.id,
                         "engine_unavailable",
                         "Сервіс створення варіантів недоступний. Попередній блок збережено.",
                     )
                     regeneration = (
-                        store.get_activity_regeneration(session.teacher_id, regeneration.id)
+                        store.get_activity_regeneration(scope.owner_id, regeneration.id)
                         or regeneration
                     )
         except (
@@ -1534,11 +1665,11 @@ def create_app(
     def get_activity_regeneration(
         lesson_id: UUID,
         regeneration_id: UUID,
-        session: AuthenticatedSession = Depends(require_session),
+        scope: OwnerScope = Depends(require_read_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
-        owner_job(session.teacher_id, lesson_key)
-        regeneration = store.get_activity_regeneration(session.teacher_id, str(regeneration_id))
+        owner_job(scope, lesson_key)
+        regeneration = store.get_activity_regeneration(scope.owner_id, str(regeneration_id))
         if regeneration is None or regeneration.lesson_id != lesson_key:
             raise PilotError(
                 404, "regeneration_not_found", "Спробу створення варіанта не знайдено."
@@ -1554,12 +1685,12 @@ def create_app(
         regeneration_id: UUID,
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         if not settings.generation_enabled:
             generation_disabled_error()
         lesson_key = _lesson_id(lesson_id)
-        regeneration = store.get_activity_regeneration(session.teacher_id, str(regeneration_id))
+        regeneration = store.get_activity_regeneration(scope.owner_id, str(regeneration_id))
         if regeneration is None or regeneration.lesson_id != lesson_key:
             raise PilotError(
                 404, "regeneration_not_found", "Спробу створення варіанта не знайдено."
@@ -1577,7 +1708,7 @@ def create_app(
         try:
             with runner.hold_admission():
                 retried = store.retry_activity_regeneration(
-                    session.teacher_id,
+                    scope.owner_id,
                     str(regeneration_id),
                     expected_revision=request_body.expected_revision,
                     prompt_version=REGENERATION_PROMPT_VERSION,
@@ -1586,13 +1717,13 @@ def create_app(
                 if not runner.submit(retried.id):
                     refuse_unclaimed_admission()
                     store.fail_activity_regeneration(
-                        session.teacher_id,
+                        scope.owner_id,
                         retried.id,
                         "engine_unavailable",
                         "Сервіс створення варіантів недоступний. Попередній блок збережено.",
                     )
                     retried = (
-                        store.get_activity_regeneration(session.teacher_id, retried.id) or retried
+                        store.get_activity_regeneration(scope.owner_id, retried.id) or retried
                     )
         except (
             ActivityRegenerationNotFound,
@@ -1616,12 +1747,12 @@ def create_app(
         ],
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.acknowledge_warning(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 block_id=block_id,
                 expected_revision=request_body.expected_revision,
@@ -1657,12 +1788,12 @@ def create_app(
         ],
         request_body: BlockMoveMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.move_block(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 block_id=block_id,
                 direction=request_body.direction,
@@ -1687,12 +1818,12 @@ def create_app(
         ],
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.remove_block(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 block_id=block_id,
                 expected_revision=request_body.expected_revision,
@@ -1716,12 +1847,12 @@ def create_app(
         ],
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.include_reserve_block(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 block_id=block_id,
                 expected_revision=request_body.expected_revision,
@@ -1745,12 +1876,12 @@ def create_app(
         ],
         request_body: ActivityReplacementMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.replace_block_activity(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 block_id=block_id,
                 activity=request_body.activity,
@@ -1775,12 +1906,12 @@ def create_app(
         ],
         request_body: ActivityFeedbackMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.put_activity_feedback(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 slot_id=block_id,
                 verdict=request_body.verdict,
@@ -1803,12 +1934,12 @@ def create_app(
         rejected_index: Annotated[int, Path(ge=0)],
         request_body: RestoreRejectedMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.restore_rejected_entry(
-                session.teacher_id,
+                scope.owner_id,
                 lesson_key,
                 rejected_index=rejected_index,
                 phase=request_body.phase,
@@ -1829,12 +1960,12 @@ def create_app(
         lesson_id: UUID,
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.accept_lesson(
-                session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
+                scope.owner_id, lesson_key, expected_revision=request_body.expected_revision
             )
         except LessonNotFound as error:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error
@@ -1866,12 +1997,12 @@ def create_app(
         lesson_id: UUID,
         request_body: RevisionMutation,
         _: None = Depends(require_json),
-        session: AuthenticatedSession = Depends(require_mutation_session),
+        scope: OwnerScope = Depends(require_mutation_owner_scope),
     ) -> dict[str, object]:
         lesson_key = _lesson_id(lesson_id)
         try:
             job = store.return_to_draft(
-                session.teacher_id, lesson_key, expected_revision=request_body.expected_revision
+                scope.owner_id, lesson_key, expected_revision=request_body.expected_revision
             )
         except LessonNotFound as error:
             raise PilotError(404, "lesson_not_found", "Урок не знайдено.") from error

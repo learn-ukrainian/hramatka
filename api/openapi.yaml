@@ -18,7 +18,7 @@ tags:
   - name: Session
     description: Invite exchange and current-session lifecycle.
   - name: Lessons
-    description: Owner-scoped bake, review, acceptance, and catalog lifecycle.
+    description: Owner-scoped bake, review, acceptance, and catalog lifecycle. A teacher may omit `owner_id` only for herself; an administrator may select an active staff owner explicitly.
   - name: Teacher
     description: Per-teacher preferences (owner-scoped; display_name remains identity-owned).
   - name: Probes
@@ -163,7 +163,10 @@ paths:
         CSRF proof issues a nonce bound to that existing teacher for first-time
         Google linking. It never creates a teacher account or returns a bearer
         credential. The endpoint is absent until the public OAuth client id is
-        configured.
+        configured. In production, a trusted operator may reserve one verified
+        Google email for a pre-existing staff record; the anonymous sign-in
+        ceremony consumes that one reservation atomically when it first binds
+        the immutable Google subject.
       security: []
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
@@ -187,9 +190,11 @@ paths:
         `g_csrf_token` to this exact same-origin callback. The server compares
         Google's double-submit CSRF cookie, verifies Google signature/JWKS,
         issuer, configured audience, expiry, issued-at, verified email, and
-        one-use nonce. Only a pre-existing teacher link may sign in; no public
-        registration or credential persistence occurs. Success redirects to the
-        teacher SPA after setting the ordinary HttpOnly session cookie.
+        one-use nonce. Only a pre-existing teacher link, or one operator-created
+        verified-email preauthorization, may sign in; no public registration or
+        credential persistence occurs. A first binding atomically consumes that
+        reservation and fixes the immutable Google subject. Success redirects
+        to the teacher SPA after setting the ordinary HttpOnly session cookie.
       security: []
       responses:
         '303':
@@ -322,6 +327,37 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/lesson-owners:
+    get:
+      tags: [Lessons]
+      operationId: listLessonOwners
+      summary: List every durable lesson owner for an administrator's explicit lesson scope
+      security:
+        - PilotSession: []
+      responses:
+        '200':
+          description: Durable owners, including inactive or revoked historical owners with existing lessons
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [owners]
+                properties:
+                  owners:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, display_name, role]
+                      properties:
+                        id: {type: string, format: uuid}
+                        display_name: {type: string}
+                        role: {type: [string, 'null'], enum: [admin, teacher, null]}
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/lessons:
     post:
       tags: [Lessons]
@@ -337,6 +373,7 @@ paths:
       security:
         - PilotSession: []
       parameters:
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -370,9 +407,13 @@ paths:
         Returns metadata only, newest first by `created_at DESC, id DESC`.
         `anchor_snippet` is capped to a short preview; the full anchor remains
         available only from the owner-scoped lesson resource.
-        No row owned by another teacher may participate in this query.
+        No row owned by another teacher may participate in this query. An
+        administrator must name another owner with `owner_id`; no lesson ID is
+        ever looked up without resolved owner scope.
       security:
         - PilotSession: []
+      parameters:
+        - $ref: '#/components/parameters/OwnerId'
       responses:
         '200':
           description: Owner-scoped lesson catalog, including an empty catalog
@@ -393,6 +434,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
       responses:
         '200':
           description: Durable aggregate status
@@ -417,6 +459,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
       responses:
         '200':
           description: Validated lesson plus concurrency and acceptance metadata
@@ -443,6 +486,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       responses:
@@ -471,6 +515,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -510,6 +555,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -542,6 +588,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       responses:
@@ -583,6 +630,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -620,6 +668,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -653,6 +702,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -687,6 +737,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -725,6 +776,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -768,6 +820,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -795,6 +848,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/RegenerationId'
       responses:
         '200':
@@ -816,6 +870,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/RegenerationId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -850,6 +905,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/BlockId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -888,6 +944,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/RejectedIndex'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -921,6 +978,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -953,6 +1011,7 @@ paths:
         - PilotSession: []
       parameters:
         - $ref: '#/components/parameters/LessonId'
+        - $ref: '#/components/parameters/OwnerId'
         - $ref: '#/components/parameters/OriginHeader'
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -1012,6 +1071,14 @@ components:
       name: __Host-hramatka_session
       description: Opaque 256-bit session secret; only its digest is stored.
   parameters:
+    OwnerId:
+      name: owner_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Omit for the session owner. An administrator may name any durable owner to read or manage existing lessons; creating new work for another owner requires an active authorized target.
     LessonId:
       name: lesson_id
       in: path
@@ -1152,10 +1219,14 @@ components:
     Session:
       type: object
       additionalProperties: false
-      required: [teacher, expires_at, csrf_token, google_linked]
+      required: [teacher, role, expires_at, csrf_token, google_linked]
       properties:
         teacher:
           $ref: '#/components/schemas/Teacher'
+        role:
+          type: string
+          enum: [admin, teacher]
+          description: Presentation-only durable staff role; server authorization is re-evaluated on every request.
         expires_at:
           type: string
           format: date-time
@@ -2059,6 +2130,16 @@ components:
             code: service_not_ready
             message: The service is not ready.
             retryable: true
+    NotFound:
+      description: Generic non-enumerating absence or unavailable surface
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: not_found
+            message: Not found.
+            retryable: false
     IdempotencyConflict:
       description: The UUID is already bound to a different canonical request
       content:

@@ -238,6 +238,9 @@ class Settings:
     # already-linked Google subjects still authenticate.
     google_allowed_emails: frozenset[str] = frozenset()
     google_allowed_email_teacher_id: str | None = None
+    # Direct Settings construction is the explicit local test/development
+    # seam. The deployed environment enables this fail-closed policy by default.
+    staff_authorization_required: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "pilot_origin", _validate_origin(self.pilot_origin))
@@ -455,5 +458,8 @@ class Settings:
             ),
             google_allowed_email_teacher_id=os.environ.get(
                 "HRAMATKA_GOOGLE_ALLOWED_EMAIL_TEACHER_ID"
+            ),
+            staff_authorization_required=_parse_zero_or_one_flag(
+                "HRAMATKA_STAFF_AUTHORIZATION_REQUIRED", default="1"
             ),
         )
