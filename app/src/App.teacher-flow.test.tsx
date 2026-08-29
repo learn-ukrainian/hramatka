@@ -180,6 +180,39 @@ describe('teacher lesson creation and list chrome', () => {
     expect(window.location.pathname).toBe('/teacher/');
   });
 
+  it('lets an administrator select a durable owner scope for the lesson catalog', async () => {
+    const admin = { ...teacher, role: 'admin' as const };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(admin);
+      if (url.endsWith('/api/lesson-owners')) {
+        return response({ owners: [
+          { id: 'teacher-1', display_name: 'Марія', role: 'admin' },
+          { id: 'teacher-2', display_name: 'Тетяна', role: 'teacher' },
+        ] });
+      }
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 45 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({ registry_version: 'test', models: [], unavailable_message: null });
+      }
+      if (url.includes('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+
+    renderApp();
+    const picker = await screen.findByTestId('admin-owner-picker');
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => (
+      String(url).includes('/api/lessons?owner_id=teacher-1')
+    ))).toBe(true));
+    const select = picker.querySelector('select')!;
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'teacher-2' } });
+    });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => (
+      String(url).includes('/api/lessons?owner_id=teacher-2')
+    ))).toBe(true));
+  });
+
   it('scrubs an invite fragment when the initial session refresh fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith('/api/session')) throw new Error('offline');

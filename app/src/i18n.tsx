@@ -222,6 +222,7 @@ const DICT = {
 
   // ---- catalog ----
   'catalog.title': { uk: 'Мої заняття', en: 'My lessons' }, // T_EXACT
+  'catalog.owner': { uk: 'Власниця занять', en: 'Lesson owner' },
   'catalog.refresh': { uk: 'Оновити список', en: 'Refresh list' },
   'catalog.new': { uk: '+ Нове заняття', en: '+ New lesson' },
   'catalog.emptyTitle': { uk: 'Поки що занять немає', en: 'No lessons yet' },

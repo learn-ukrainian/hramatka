@@ -54,10 +54,17 @@ type PilotActivityType =
 
 interface Session {
   teacher: { id: string; display_name: string };
+  role: 'admin' | 'teacher';
   expires_at: string;
   csrf_token: string;
   local_auth_disabled?: boolean;
   google_linked: boolean;
+}
+
+interface LessonOwner {
+  id: string;
+  display_name: string;
+  role: 'admin' | 'teacher' | null;
 }
 
 interface ErrorEnvelope {
@@ -313,6 +320,8 @@ export default function TeacherApp() {
   const { t, lang, toggleLang, resetLang } = useT();
 
   const [session, setSession] = useState<Session | null>(null);
+  const [lessonOwners, setLessonOwners] = useState<LessonOwner[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const [csrf, setCsrf] = useState<string | null>(null); // kept in memory only
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError>(null);
@@ -383,6 +392,14 @@ export default function TeacherApp() {
   const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
   const [pendingPrintLessonId, setPendingPrintLessonId] = useState<string | null>(null);
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
+
+  const lessonApiFetch = (path: string, init?: RequestInit, ownerId = selectedOwnerId): Promise<Response> => {
+    if (session?.role !== 'admin' || !ownerId || !path.startsWith('/api/lessons')) {
+      return apiFetch(path, init);
+    }
+    const separator = path.includes('?') ? '&' : '?';
+    return apiFetch(`${path}${separator}owner_id=${encodeURIComponent(ownerId)}`, init);
+  };
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
 
@@ -447,12 +464,14 @@ export default function TeacherApp() {
       const data = await res.json();
       const s: Session = {
         teacher: data.teacher,
+        role: data.role === 'admin' ? 'admin' : 'teacher',
         expires_at: data.expires_at,
         csrf_token: data.csrf_token,
         local_auth_disabled: data.local_auth_disabled === true,
         google_linked: data.google_linked === true,
       };
       setSession(s);
+      setSelectedOwnerId(data.teacher?.id ?? null);
       setCsrf(data.csrf_token);
       setSessionReady(true);
       return s;
@@ -464,6 +483,20 @@ export default function TeacherApp() {
     }
     return null;
   };
+
+  useEffect(() => {
+    if (session?.role !== 'admin') {
+      setLessonOwners([]);
+      return;
+    }
+    let cancelled = false;
+    void apiFetch('/api/lesson-owners').then(async (response) => {
+      if (!response.ok || cancelled) return;
+      const payload = await response.json();
+      if (!cancelled) setLessonOwners(Array.isArray(payload.owners) ? payload.owners : []);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [session?.role, session?.teacher.id]);
 
   // Google Identity Services posts its signed credential directly to our
   // same-origin callback.  The browser never stores that credential in a URL,
@@ -564,6 +597,7 @@ export default function TeacherApp() {
           const data = await res.json();
           const s: Session = {
             teacher: data.teacher,
+            role: data.role === 'admin' ? 'admin' : 'teacher',
             expires_at: data.expires_at,
             csrf_token: data.csrf_token,
             google_linked: data.google_linked === true,
@@ -648,6 +682,7 @@ export default function TeacherApp() {
       const data = await complete.json();
       setSession({
         teacher: data.teacher,
+        role: data.role === 'admin' ? 'admin' : 'teacher',
         expires_at: data.expires_at,
         csrf_token: data.csrf_token,
         google_linked: data.google_linked === true,
@@ -772,6 +807,7 @@ export default function TeacherApp() {
       resetSessionScopedState();
       setSession({
         teacher: data.teacher,
+        role: data.role === 'admin' ? 'admin' : 'teacher',
         expires_at: data.expires_at,
         csrf_token: data.csrf_token,
         local_auth_disabled: data.local_auth_disabled === true,
@@ -961,7 +997,7 @@ export default function TeacherApp() {
       logicalModelId: source.logicalModelId,
     };
     try {
-      const res = await apiFetch('/api/lessons', {
+      const res = await lessonApiFetch('/api/lessons', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1032,7 +1068,7 @@ export default function TeacherApp() {
     setBakeMutation(operation);
     setError(null);
     try {
-      const res = await apiFetch(`/api/lessons/${lid}/${operation}`, {
+      const res = await lessonApiFetch(`/api/lessons/${lid}/${operation}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         // The backend's revision CAS is the cross-tab guard.  Replaying this
@@ -1057,7 +1093,7 @@ export default function TeacherApp() {
       // Another tab may have completed the same idempotent intent or advanced
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
-        const statusRes = await apiFetch(`/api/lessons/${lid}/status`);
+        const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
           setBakeStatus(refreshed);
@@ -1156,7 +1192,7 @@ export default function TeacherApp() {
       attempts++;
       let st: any = null;
       try {
-        const res = await apiFetch(`/api/lessons/${id}/status`);
+        const res = await lessonApiFetch(`/api/lessons/${id}/status`);
         st = await res.json();
         // Re-check after await in case switch happened during network
         if (activePollIdRef.current !== id) {
@@ -1216,7 +1252,7 @@ export default function TeacherApp() {
       setBakeStatus(null);
     }
     try {
-      const res = await apiFetch(`/api/lessons/${id}`);
+      const res = await lessonApiFetch(`/api/lessons/${id}`);
       if (res.status === 200) {
         const lr: LessonResource = await res.json();
         setLesson(lr);
@@ -1233,7 +1269,7 @@ export default function TeacherApp() {
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
         try {
-          const statusRes = await apiFetch(`/api/lessons/${id}/status`);
+          const statusRes = await lessonApiFetch(`/api/lessons/${id}/status`);
           if (statusRes.ok) {
             const st = await statusRes.json();
             if (st.status === 'failed' || st.status === 'cancelled') {
@@ -1273,15 +1309,24 @@ export default function TeacherApp() {
     }
   };
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (ownerId?: string) => {
     // #93 item 2: auto-loaded once session ready; guard removed, manual button remains
-    const res = await apiFetch('/api/lessons');
+    const res = await lessonApiFetch('/api/lessons', undefined, ownerId);
     if (res.ok) {
       const data = await res.json();
       const local = loadLocalCatalogEntries(lastBakeRef.current);
       setCatalog(mergeCatalogLessons(data.lessons || [], local));
     }
   };
+
+  useEffect(() => {
+    if (sessionReady && session?.role === 'admin' && selectedOwnerId) {
+      void loadCatalog();
+    }
+    // Owner selection changes the complete request scope; reload only after
+    // that state has committed, never by trusting a lesson id alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOwnerId, session?.role, sessionReady]);
 
   // ===== Warning ack (REVIEW only) =====
   const ackWarning = async (blockId: string) => {
@@ -1315,7 +1360,7 @@ export default function TeacherApp() {
     }
     setLoading(true);
     try {
-      const res = await apiFetch(`/api/lessons/${currentLessonId}/accept`, {
+      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
@@ -1345,7 +1390,7 @@ export default function TeacherApp() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/lessons/${currentLessonId}/draft`, {
+      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
@@ -1479,7 +1524,7 @@ export default function TeacherApp() {
       applyActivityRegeneration(entry);
       return;
     }
-    const resourceResponse = await apiFetch(`/api/lessons/${entry.lesson_id}`);
+    const resourceResponse = await lessonApiFetch(`/api/lessons/${entry.lesson_id}`);
     if (!resourceResponse.ok) {
       // A failed regeneration never changed lesson content, so its durable retry
       // affordance is safe to show even when the resource refetch is transiently
@@ -1507,7 +1552,7 @@ export default function TeacherApp() {
     let timer: number | undefined;
     const poll = async () => {
       try {
-        const response = await apiFetch(
+        const response = await lessonApiFetch(
           `/api/lessons/${lessonId}/regenerations/${regeneration.id}`,
         );
         if (!response.ok) {
@@ -1521,7 +1566,7 @@ export default function TeacherApp() {
         const status: ActivityRegenerationEntry = await response.json();
         if (cancelled) return;
         if (status.status === 'succeeded' || status.status === 'failed') {
-          const resourceResponse = await apiFetch(`/api/lessons/${lessonId}`);
+          const resourceResponse = await lessonApiFetch(`/api/lessons/${lessonId}`);
           if (!cancelled && resourceResponse.ok) {
             const resource: LessonResource = await resourceResponse.json();
             if (cancelled) return;
@@ -1559,7 +1604,7 @@ export default function TeacherApp() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(path, init);
+      const res = await lessonApiFetch(path, init);
       if (res.ok) {
         const lr: LessonResource = await res.json();
         applyLessonResource(lr);
@@ -1637,7 +1682,7 @@ export default function TeacherApp() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch(
+      const response = await lessonApiFetch(
         `/api/lessons/${requestLessonId}/blocks/${blockId}/regenerations`,
         {
           method: 'POST',
@@ -1679,7 +1724,7 @@ export default function TeacherApp() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch(
+      const response = await lessonApiFetch(
         `/api/lessons/${requestLessonId}/regenerations/${regenerationId}/retry`,
         {
           method: 'POST',
@@ -1760,6 +1805,27 @@ export default function TeacherApp() {
               >
                 {t('settings.title')}
               </button>
+              {session.role === 'admin' && (
+                <label className="admin-owner-picker" data-testid="admin-owner-picker">
+                  <span>{t('catalog.owner')}</span>
+                  <select
+                    value={selectedOwnerId ?? session.teacher.id}
+                    onChange={(event) => {
+                      clearPoll();
+                      setSelectedOwnerId(event.target.value);
+                      setLesson(null);
+                      setCurrentLessonId(null);
+                      setCatalog([]);
+                      void loadCatalog(event.target.value);
+                      navigate({ view: 'catalog' });
+                    }}
+                  >
+                    {lessonOwners.map((owner) => (
+                      <option key={owner.id} value={owner.id}>{owner.display_name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </nav>
           )}
           {session && isStudentSurface && (
@@ -2108,7 +2174,7 @@ export default function TeacherApp() {
               <div className="lessons-page-head">
                 <h1>{t('catalog.title')}</h1>
                 <span className="lessons-page-actions">
-                  <button className="btn ghost" onClick={loadCatalog}>{t('catalog.refresh')}</button>
+                  <button className="btn ghost" onClick={() => { void loadCatalog(); }}>{t('catalog.refresh')}</button>
                   <button className="btn primary" onClick={() => navigate({ view: 'paste' })}>{t('catalog.new')}</button>
                 </span>
               </div>

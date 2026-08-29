@@ -189,6 +189,9 @@ class Settings:
     # Google teacher login is disabled unless this public OAuth audience is
     # explicitly configured. It has no client secret and no Google API scope.
     google_client_id: str | None = None
+    # Direct Settings construction is the explicit local test/development
+    # seam. The deployed environment enables this fail-closed policy by default.
+    staff_authorization_required: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "pilot_origin", _validate_origin(self.pilot_origin))
@@ -391,4 +394,7 @@ class Settings:
                 os.environ.get("HRAMATKA_REVIEW_ATTESTATION_JWKS_TTL_SECONDS", "300")
             ),
             google_client_id=os.environ.get("HRAMATKA_GOOGLE_CLIENT_ID"),
+            staff_authorization_required=_parse_zero_or_one_flag(
+                "HRAMATKA_STAFF_AUTHORIZATION_REQUIRED", default="1"
+            ),
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import jwt
 import pytest
@@ -212,6 +213,32 @@ def test_google_link_cannot_relink_another_teachers_subject(monkeypatch, app, cl
     assert _google_callback(client).headers["location"] == "/teacher/#google-sign-in-failed"
 
 
+def test_google_link_never_reuses_a_revoked_subject(monkeypatch, app, client) -> None:
+    first, _ = _invite_session(app, client, "Історична")
+    with app.state.store._write_transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO google_teacher_identities
+            (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+            VALUES (?, ?, 'permanently-bound-sub', 'historic@example.test',
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-02T00:00:00Z')
+            """,
+            (str(uuid4()), first.id),
+        )
+    client.cookies.clear()
+    _, second_session = _invite_session(app, client, "Нова")
+    options = _options(client, second_session["csrf_token"])
+    monkeypatch.setattr(
+        app_module,
+        "verify_google_credential",
+        lambda *_: _identity(
+            "permanently-bound-sub", "new@example.test", options["nonce"]
+        ),
+    )
+    client.cookies.clear()
+    assert _google_callback(client).headers["location"] == "/teacher/#google-sign-in-failed"
+
+
 def test_google_options_fail_closed_without_the_explicit_public_client_id(tmp_path) -> None:
     disabled = create_app(
         settings=Settings(
@@ -373,4 +400,8 @@ def test_v015_preserves_v014_sessions_and_adds_google_identity_tables(tmp_path) 
         assert connection.execute(
             "SELECT 1 FROM sqlite_master "
             "WHERE type = 'table' AND name = 'google_teacher_identities'"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'google_email_preauthorizations'"
         ).fetchone()
