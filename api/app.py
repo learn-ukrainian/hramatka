@@ -727,8 +727,12 @@ def create_app(
         return response
 
     def google_failure_redirect() -> RedirectResponse:
-        """Never reflect a Google credential, identity, or link state to the browser."""
-        response = RedirectResponse(url="/teacher/#google-sign-in-failed", status_code=303)
+        """Never reflect a Google credential, identity, or link state to the browser.
+
+        Use a query flag, not a hash: a 303 after Google's cross-site POST drops
+        fragments, which previously produced a silent bounce to the sign-in card.
+        """
+        response = RedirectResponse(url="/teacher/?google=failed", status_code=303)
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -913,7 +917,7 @@ def create_app(
                     subject=verified.subject,
                     email=verified.email,
                 )
-                response = RedirectResponse(url="/teacher/#google-linked", status_code=303)
+                response = RedirectResponse(url="/teacher/?google=linked", status_code=303)
                 # Google's cross-site POST does not carry our Lax session
                 # cookie. The one-use nonce is the link authorization, and a
                 # fresh ordinary cookie session gets the teacher back into the
@@ -924,7 +928,13 @@ def create_app(
                 return response
             teacher_id = store.authenticate_google_identity(verified.subject)
             if teacher_id is None:
-                return google_failure_redirect()
+                if verified.email.casefold() not in settings.google_allowed_emails:
+                    return google_failure_redirect()
+                teacher_id = store.admit_allowlisted_google_identity(
+                    subject=verified.subject,
+                    email=verified.email,
+                    teacher_id=settings.google_allowed_email_teacher_id,
+                )
             response = RedirectResponse(url="/teacher/", status_code=303)
             established = store.mint_reentry_session(teacher_id, auth_method="google")
             set_session_cookie(response, established.raw_secret, established.session.expires_at)

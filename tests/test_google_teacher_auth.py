@@ -15,7 +15,11 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from hramatka.api import app as app_module
 from hramatka.api import google_identity
 from hramatka.api.app import create_app
-from hramatka.api.config import Settings
+from hramatka.api.config import (
+    Settings,
+    _parse_google_allowed_emails,
+    _validate_google_allowed_email_teacher_id,
+)
 from hramatka.api.google_identity import (
     GoogleCredentialInvalid,
     VerifiedGoogleIdentity,
@@ -27,15 +31,17 @@ from hramatka.api.store import JobStore, SessionUnavailable
 ORIGIN = "https://pilot.example.test"
 CSRF_KEY = b"test-only-hmac-key-that-is-not-a-deployment-secret"
 CLIENT_ID = "123456789-test.apps.googleusercontent.com"
+QA_EMAIL = "u2600322959@gmail.com"
 REPO_ROOT = Path(__file__).parents[1]
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, **overrides: object) -> Settings:
     return Settings(
         database_path=tmp_path / "pilot.sqlite3",
         pilot_origin=ORIGIN,
         csrf_hmac_key=CSRF_KEY,
         google_client_id=CLIENT_ID,
+        **overrides,
     )
 
 
@@ -110,7 +116,7 @@ def test_authenticated_link_then_returning_google_sign_in_uses_same_cookie_seam(
     client.cookies.clear()
     linked = _google_callback(client)
     assert linked.status_code == 303
-    assert linked.headers["location"] == "/teacher/#google-linked"
+    assert linked.headers["location"] == "/teacher/?google=linked"
     assert "__Host-hramatka_session=" in linked.headers["set-cookie"]
     session = client.get("/api/session")
     assert session.status_code == 200
@@ -168,14 +174,14 @@ def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
         data={"credential": "token", "g_csrf_token": "body"},
         follow_redirects=False,
     )
-    assert csrf_rejected.headers["location"] == "/teacher/#google-sign-in-failed"
+    assert csrf_rejected.headers["location"] == "/teacher/?google=failed"
     assert calls == 0
 
     unknown = _google_callback(client)
-    assert unknown.headers["location"] == "/teacher/#google-sign-in-failed"
+    assert unknown.headers["location"] == "/teacher/?google=failed"
     assert calls == 1
     replay = _google_callback(client)
-    assert replay.headers["location"] == "/teacher/#google-sign-in-failed"
+    assert replay.headers["location"] == "/teacher/?google=failed"
     assert calls == 2
 
     bad_nonce = _options(client)
@@ -185,7 +191,7 @@ def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
         lambda *_: _identity("whatever", "teacher@example.test", "A" * 43),
     )
     rejected = _google_callback(client)
-    assert rejected.headers["location"] == "/teacher/#google-sign-in-failed"
+    assert rejected.headers["location"] == "/teacher/?google=failed"
     assert bad_nonce["nonce"] != "A" * 43
 
 
@@ -198,7 +204,7 @@ def test_google_link_cannot_relink_another_teachers_subject(monkeypatch, app, cl
         lambda *_: _identity("shared-sub", "one@example.test", first_options["nonce"]),
     )
     client.cookies.clear()
-    assert _google_callback(client).headers["location"] == "/teacher/#google-linked"
+    assert _google_callback(client).headers["location"] == "/teacher/?google=linked"
 
     client.cookies.clear()
     _, second_session = _invite_session(app, client, "Друга")
@@ -209,7 +215,112 @@ def test_google_link_cannot_relink_another_teachers_subject(monkeypatch, app, cl
         lambda *_: _identity("shared-sub", "two@example.test", second_options["nonce"]),
     )
     client.cookies.clear()
-    assert _google_callback(client).headers["location"] == "/teacher/#google-sign-in-failed"
+    assert _google_callback(client).headers["location"] == "/teacher/?google=failed"
+
+
+def test_allowlisted_qa_email_binds_dedicated_teacher_and_mints_session(
+    monkeypatch, tmp_path
+) -> None:
+    bootstrap = create_app(
+        settings=_settings(tmp_path), baker=SimpleNamespace(bake=lambda *_: {})
+    )
+    teacher = bootstrap.state.store.create_teacher("QA викладач")
+    app = create_app(
+        settings=_settings(
+            tmp_path,
+            google_allowed_emails=frozenset({QA_EMAIL}),
+            google_allowed_email_teacher_id=teacher.id,
+        ),
+        baker=SimpleNamespace(bake=lambda *_: {}),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("qa-google-sub", "U2600322959@Gmail.com", sign_in["nonce"]),
+        )
+        completed = _google_callback(client)
+        assert completed.status_code == 303
+        assert completed.headers["location"] == "/teacher/"
+        assert "__Host-hramatka_session=" in completed.headers["set-cookie"]
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        assert session.json()["teacher"]["id"] == teacher.id
+        assert session.json()["teacher"]["display_name"] == "QA викладач"
+        assert session.json()["google_linked"] is True
+        assert app.state.store.teacher_has_google_identity(teacher.id) is True
+
+        client.cookies.clear()
+        again = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("qa-google-sub", QA_EMAIL, again["nonce"]),
+        )
+        returning = _google_callback(client)
+        assert returning.headers["location"] == "/teacher/"
+        returned = client.get("/api/session")
+        assert returned.status_code == 200
+        assert returned.json()["teacher"]["id"] == teacher.id
+
+
+def test_allowlisted_email_creates_teacher_when_host_omits_teacher_id(
+    monkeypatch, tmp_path
+) -> None:
+    app = create_app(
+        settings=_settings(tmp_path, google_allowed_emails=frozenset({QA_EMAIL})),
+        baker=SimpleNamespace(bake=lambda *_: {}),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("created-google-sub", QA_EMAIL, sign_in["nonce"]),
+        )
+        completed = _google_callback(client)
+        assert completed.headers["location"] == "/teacher/"
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        teacher_id = session.json()["teacher"]["id"]
+        assert session.json()["google_linked"] is True
+        assert app.state.store.teacher_has_google_identity(teacher_id) is True
+
+
+def test_unlisted_google_email_fails_with_visible_query_and_no_session(
+    monkeypatch, app, client
+) -> None:
+    sign_in = _options(client)
+    monkeypatch.setattr(
+        app_module,
+        "verify_google_credential",
+        lambda *_: _identity("stranger-sub", "stranger@example.test", sign_in["nonce"]),
+    )
+    rejected = _google_callback(client)
+    assert rejected.status_code == 303
+    assert rejected.headers["location"] == "/teacher/?google=failed"
+    assert "__Host-hramatka_session=" not in rejected.headers.get("set-cookie", "")
+    assert client.get("/api/session").status_code == 401
+
+
+def test_parse_google_allowed_emails_casefolds_and_deduplicates() -> None:
+    parsed = _parse_google_allowed_emails(
+        f" {QA_EMAIL.upper()}, {QA_EMAIL}, other.teacher@example.test "
+    )
+    assert parsed == frozenset({QA_EMAIL, "other.teacher@example.test"})
+    assert _parse_google_allowed_emails(None) == frozenset()
+    assert _parse_google_allowed_emails("  ") == frozenset()
+    with pytest.raises(ValueError, match="comma-separated emails"):
+        _parse_google_allowed_emails("not-an-email")
+
+
+def test_google_allowed_email_teacher_id_must_be_a_uuid() -> None:
+    teacher_id = "123e4567-e89b-12d3-a456-426614174000"
+    assert _validate_google_allowed_email_teacher_id(teacher_id) == teacher_id
+    assert _validate_google_allowed_email_teacher_id("") is None
+    with pytest.raises(ValueError, match="teacher UUID"):
+        _validate_google_allowed_email_teacher_id("not-a-uuid")
 
 
 def test_google_options_fail_closed_without_the_explicit_public_client_id(tmp_path) -> None:
@@ -253,7 +364,7 @@ def test_google_callback_fails_closed_when_google_key_selection_or_fetch_fails(
     )
     response = _google_callback(client, credential="header.payload.signature")
     assert response.status_code == 303
-    assert response.headers["location"] == "/teacher/#google-sign-in-failed"
+    assert response.headers["location"] == "/teacher/?google=failed"
 
 
 def test_google_link_options_returns_clean_401_when_the_bound_session_races_away(
@@ -278,6 +389,7 @@ def test_frontend_primary_google_cta_keeps_fallbacks_and_never_persists_a_creden
     assert 'data-testid="google-sign-in-button"' in source
     assert "ux_mode: 'redirect'" in source
     assert "login_uri: googleOptions.login_uri" in source
+    assert "params.get('google') === 'failed'" in source
     assert "data-testid=\"passkey-sign-in-btn\"" in source
     assert "data-testid=\"recovery-code-sign-in\"" in source
     assert '<details className="sign-in-alternatives"' in source
