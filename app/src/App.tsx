@@ -395,6 +395,11 @@ export default function TeacherApp() {
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  // GIS may deliver the credential after this effect is cleaned up (Strict
+  // Mode remount, options reload, or a long "Verify it's you" popup). The
+  // delivery function lives on a ref so a later credential still same-origin
+  // POSTs to /api/auth/google/complete even if the sign-in tree unmounted.
+  const deliverGoogleCredentialRef = useRef(postGoogleCredentialSameOrigin);
   // UI disables immediately, while the exact revision sent below makes a
   // repeated click from another tab a server-side idempotent replay.
   const bakeMutationInFlightRef = useRef<'cancel' | 'retry' | null>(null);
@@ -565,8 +570,7 @@ export default function TeacherApp() {
         client_id: googleOptions.client_id,
         ux_mode: 'popup',
         callback: (response: { credential?: string }) => {
-          if (cancelled) return;
-          postGoogleCredentialSameOrigin(
+          deliverGoogleCredentialRef.current(
             typeof response?.credential === 'string' ? response.credential : '',
           );
         },

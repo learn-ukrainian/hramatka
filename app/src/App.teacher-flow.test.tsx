@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { statusCardFromApi, type LessonStatus } from './App';
@@ -766,5 +767,130 @@ describe('passkey chrome for local-auth vs invite sessions (#514)', () => {
     renderApp();
     await screen.findByTestId('teacher-display-name');
     expect(screen.queryByTestId('google-setup-card')).not.toBeInTheDocument();
+  });
+});
+
+function installGoogleIdentityStub() {
+  const initialize = vi.fn();
+  const renderButton = vi.fn();
+  Object.defineProperty(window, 'google', {
+    configurable: true,
+    writable: true,
+    value: { accounts: { id: { initialize, renderButton } } },
+  });
+  if (!document.querySelector('script[data-google-identity-services]')) {
+    const script = document.createElement('script');
+    script.dataset.googleIdentityServices = 'true';
+    document.head.appendChild(script);
+  }
+  return { initialize, renderButton };
+}
+
+function installSignedOutGoogleFetch() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/api/session')) {
+      return errorResponse(401, { code: 'session_required', message: 'session required' });
+    }
+    if (url.endsWith('/api/auth/google/options')) {
+      return response({
+        client_id: '123456789-test.apps.googleusercontent.com',
+        nonce: 'A'.repeat(43),
+        login_uri: 'https://pilot.example.test/api/auth/google/complete',
+      });
+    }
+    return response({});
+  }));
+}
+
+function firstGisCallback(initialize: ReturnType<typeof vi.fn>) {
+  const config = initialize.mock.calls[0]?.[0] as { callback?: (response: { credential?: string }) => void } | undefined;
+  if (!config?.callback) {
+    throw new Error('GIS initialize was not called with a callback');
+  }
+  return config.callback;
+}
+
+function submittedGoogleCompleteForm() {
+  return document.querySelector<HTMLFormElement>('form[action="/api/auth/google/complete"]');
+}
+
+describe('teacher GIS popup callback lifetime (#595)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '/teacher/');
+    document.querySelectorAll('form[action="/api/auth/google/complete"]').forEach((form) => form.remove());
+    document.querySelectorAll('script[data-google-identity-services]').forEach((script) => script.remove());
+    Reflect.deleteProperty(window, 'google');
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('form[action="/api/auth/google/complete"]').forEach((form) => form.remove());
+    document.querySelectorAll('script[data-google-identity-services]').forEach((script) => script.remove());
+    Reflect.deleteProperty(window, 'google');
+  });
+
+  it('still POSTs a GIS credential after the sign-in effect is cancelled', async () => {
+    const { initialize } = installGoogleIdentityStub();
+    installSignedOutGoogleFetch();
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+
+    const view = render(
+      <StrictMode>
+        <LangProvider><App /></LangProvider>
+      </StrictMode>,
+    );
+    await screen.findByTestId('google-sign-in-button');
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    const callback = firstGisCallback(initialize);
+
+    view.unmount();
+    await act(async () => {
+      callback({ credential: 'aaa.bbb.ccc' });
+    });
+
+    expect(submit).toHaveBeenCalled();
+    const form = submittedGoogleCompleteForm();
+    expect(form?.method.toLowerCase()).toBe('post');
+    expect(form?.querySelector('input[name="credential"]')).toHaveValue('aaa.bbb.ccc');
+  });
+
+  it('does not swallow a later GIS credential after cancel without one', async () => {
+    const { initialize } = installGoogleIdentityStub();
+    installSignedOutGoogleFetch();
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    const assign = vi.fn();
+    vi.stubGlobal('location', {
+      ...window.location,
+      assign,
+      pathname: '/teacher/',
+      search: '',
+      href: 'http://localhost/teacher/',
+    });
+
+    const view = render(
+      <StrictMode>
+        <LangProvider><App /></LangProvider>
+      </StrictMode>,
+    );
+    await screen.findByTestId('google-sign-in-button');
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    const callback = firstGisCallback(initialize);
+
+    view.unmount();
+    expect(submit).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+
+    await act(async () => {
+      callback({});
+    });
+    expect(assign).toHaveBeenCalledWith('/teacher/?google=failed');
+    expect(submit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      callback({ credential: 'aaa.bbb.ccc' });
+    });
+    expect(submit).toHaveBeenCalled();
+    expect(submittedGoogleCompleteForm()?.querySelector('input[name="credential"]')).toHaveValue('aaa.bbb.ccc');
   });
 });
