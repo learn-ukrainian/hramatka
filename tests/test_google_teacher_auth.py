@@ -570,12 +570,18 @@ def test_google_link_options_returns_clean_401_when_the_bound_session_races_away
 
 def test_frontend_primary_google_cta_keeps_fallbacks_and_never_persists_a_credential() -> None:
     source = (REPO_ROOT / "hramatka/app/src/App.tsx").read_text(encoding="utf-8")
+    delivery = (REPO_ROOT / "hramatka/app/src/google-sign-in.ts").read_text(encoding="utf-8")
+    combined = f"{source}\n{delivery}"
     assert 'data-testid="google-sign-in-button"' in source
     assert "ux_mode: 'popup'" in source
-    assert "postGoogleCredentialSameOrigin" in source
-    assert "createGoogleCredentialDelivery" in source
-    assert "googleCredentialFromCallback" in source
-    assert "form.action = '/api/auth/google/complete'" in source
+    assert "use_fedcm_for_button: true" in source
+    assert "postGoogleCredentialSameOrigin" in combined
+    assert "createGoogleCredentialDelivery" in combined
+    assert "googleCredentialFromCallback" in combined
+    assert "gis_callback_shape" in delivery
+    assert "credential_len_bucket" in delivery
+    assert "GIS_EMPTY_CREDENTIAL_FAIL_MS" not in combined
+    assert "form.action = '/api/auth/google/complete'" in delivery
     assert "ux_mode: 'redirect'" not in source
     assert "login_uri: googleOptions.login_uri" not in source
     assert "params.get('google') === 'failed'" in source
@@ -588,8 +594,8 @@ def test_frontend_primary_google_cta_keeps_fallbacks_and_never_persists_a_creden
     assert "google.setupTitle" in source and "google.setupLead" in source
     assert "google-link-button" not in source
     assert "prompt(t('invite.prompt'))" not in source
-    assert "localStorage.setItem('credential'" not in source
-    assert "sessionStorage.setItem('credential'" not in source
+    assert "localStorage.setItem('credential'" not in combined
+    assert "sessionStorage.setItem('credential'" not in combined
 
     caddyfile = (REPO_ROOT / "hramatka/api/deploy/Caddyfile").read_text(encoding="utf-8")
     assert "https://accounts.google.com/gsi/client" in caddyfile

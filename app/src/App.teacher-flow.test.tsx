@@ -805,7 +805,9 @@ function installSignedOutGoogleFetch() {
 
 function firstGisCallback(initialize: ReturnType<typeof vi.fn>) {
   const config = initialize.mock.calls[0]?.[0] as {
-    callback?: (response: { credential?: string } | string) => void;
+    callback?: (response: unknown) => void;
+    use_fedcm_for_button?: boolean;
+    ux_mode?: string;
   } | undefined;
   if (!config?.callback) {
     throw new Error('GIS initialize was not called with a callback');
@@ -845,6 +847,10 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
     );
     await screen.findByTestId('google-sign-in-button');
     await waitFor(() => expect(initialize).toHaveBeenCalled());
+    expect(initialize).toHaveBeenCalledWith(expect.objectContaining({
+      use_fedcm_for_button: true,
+      ux_mode: 'popup',
+    }));
     const callback = firstGisCallback(initialize);
 
     view.unmount();
@@ -919,7 +925,7 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
     expect(submittedGoogleCompleteForm()?.querySelector('input[name="credential"]')).toHaveValue('aaa.bbb.ccc');
   });
 
-  it('sends an empty GIS callback to ?google=failed after a short wait', async () => {
+  it('does not send an empty GIS callback to ?google=failed after 250ms', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { initialize } = installGoogleIdentityStub();
     installSignedOutGoogleFetch();
@@ -950,8 +956,48 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250);
     });
-    expect(assign).toHaveBeenCalledWith('/teacher/?google=failed');
+    expect(assign).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      firstGisCallback(initialize)({ credential: 'aaa.bbb.ccc' });
+    });
+    expect(submit).toHaveBeenCalled();
+    expect(submittedGoogleCompleteForm()?.action).toContain('/api/auth/google/complete');
+    expect(submittedGoogleCompleteForm()?.querySelector('input[name="credential"]')).toHaveValue('aaa.bbb.ccc');
+    expect(assign).not.toHaveBeenCalled();
     vi.useRealTimers();
+  });
+
+  it('logs GIS response shape without the JWT and still POSTs complete', async () => {
+    const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJtdXN0LW5vdC1sb2cifQ.signature';
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { initialize } = installGoogleIdentityStub();
+    installSignedOutGoogleFetch();
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+
+    render(
+      <StrictMode>
+        <LangProvider><App /></LangProvider>
+      </StrictMode>,
+    );
+    await screen.findByTestId('google-sign-in-button');
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+
+    await act(async () => {
+      firstGisCallback(initialize)({ credential: jwt, select_by: 'btn' });
+    });
+
+    const shapeLogs = info.mock.calls.filter((call) => call[0] === 'gis_callback_shape');
+    expect(shapeLogs.length).toBeGreaterThan(0);
+    const logged = JSON.stringify(shapeLogs);
+    expect(logged).toContain('has_credential');
+    expect(logged).toContain('credential_len_bucket');
+    expect(logged).toContain('select_by');
+    expect(logged).not.toContain(jwt);
+    expect(logged).not.toContain('eyJhbGciOiJSUzI1NiJ9');
+    expect(submit).toHaveBeenCalled();
+    expect(submittedGoogleCompleteForm()?.action).toContain('/api/auth/google/complete');
+    expect(submittedGoogleCompleteForm()?.querySelector('input[name="credential"]')).toHaveValue(jwt);
   });
 });

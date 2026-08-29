@@ -35,6 +35,7 @@ import {
   type FocusStatus,
   type ActivityRegenerationEntry,
 } from './review-helpers';
+import { createGoogleCredentialDelivery } from './google-sign-in';
 
 /**
  * The error banner holds either translated client chrome (`key`) or a raw server
@@ -253,61 +254,6 @@ function entryNonce(): string {
 
 function clearEntryNonce(): void {
   sessionStorage.removeItem(ENTRY_NONCE_STORAGE_KEY);
-}
-
-// GIS may invoke the callback with an empty payload and then the JWT. A
-// synchronous ?google=failed navigation would unload the page before the
-// real credential can POST. Empty still fails; a later credential wins.
-const GIS_EMPTY_CREDENTIAL_FAIL_MS = 250;
-
-function googleCredentialFromCallback(response: unknown): string {
-  if (typeof response === 'string') return response.trim();
-  if (response && typeof response === 'object') {
-    const credential = (response as { credential?: unknown }).credential;
-    if (typeof credential === 'string') return credential.trim();
-  }
-  return '';
-}
-
-function postGoogleCredentialSameOrigin(credential: string): void {
-  // GIS popup returns the JWT to this page. A same-origin form POST lets the
-  // complete 303 land on /teacher/ or /teacher/?google=failed. Never persist.
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = '/api/auth/google/complete';
-  const field = document.createElement('input');
-  field.type = 'hidden';
-  field.name = 'credential';
-  field.value = credential;
-  form.appendChild(field);
-  document.body.appendChild(form);
-  form.submit();
-}
-
-function createGoogleCredentialDelivery(
-  postCredential: (credential: string) => void = postGoogleCredentialSameOrigin,
-  assignFailed: (url: string) => void = (url) => { window.location.assign(url); },
-): (response: unknown) => void {
-  let posted = false;
-  let failTimer: number | null = null;
-  return (response: unknown) => {
-    const credential = googleCredentialFromCallback(response);
-    if (posted) return;
-    if (!credential) {
-      if (failTimer !== null) return;
-      failTimer = window.setTimeout(() => {
-        failTimer = null;
-        if (!posted) assignFailed('/teacher/?google=failed');
-      }, GIS_EMPTY_CREDENTIAL_FAIL_MS);
-      return;
-    }
-    posted = true;
-    if (failTimer !== null) {
-      window.clearTimeout(failTimer);
-      failTimer = null;
-    }
-    postCredential(credential);
-  };
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -558,8 +504,8 @@ export default function TeacherApp() {
     return () => { cancelled = true; };
   }, [session?.role, session?.teacher.id]);
 
-  // GIS popup returns the signed credential to this page; we immediately POST
-  // it same-origin. The browser never stores that credential in a URL,
+  // GIS returns the signed credential to this page; we immediately POST it
+  // same-origin. The browser never stores that credential in a URL,
   // localStorage, sessionStorage, or React state.
   useEffect(() => {
     let cancelled = false;
@@ -604,8 +550,11 @@ export default function TeacherApp() {
       if (cancelled || !google?.accounts?.id || !googleButtonRef.current) return;
       google.accounts.id.initialize({
         client_id: googleOptions.client_id,
+        // FedCM button is the Chrome path that returns an ID token to callback.
+        // Classic popup remains the non-FedCM fallback. Do not use redirect.
         ux_mode: 'popup',
-        callback: (response: { credential?: string } | string) => {
+        use_fedcm_for_button: true,
+        callback: (response: unknown) => {
           deliverGoogleCredentialRef.current(response);
         },
         nonce: googleOptions.nonce,
