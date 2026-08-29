@@ -255,13 +255,23 @@ function clearEntryNonce(): void {
   sessionStorage.removeItem(ENTRY_NONCE_STORAGE_KEY);
 }
 
+// GIS may invoke the callback with an empty payload and then the JWT. A
+// synchronous ?google=failed navigation would unload the page before the
+// real credential can POST. Empty still fails; a later credential wins.
+const GIS_EMPTY_CREDENTIAL_FAIL_MS = 250;
+
+function googleCredentialFromCallback(response: unknown): string {
+  if (typeof response === 'string') return response.trim();
+  if (response && typeof response === 'object') {
+    const credential = (response as { credential?: unknown }).credential;
+    if (typeof credential === 'string') return credential.trim();
+  }
+  return '';
+}
+
 function postGoogleCredentialSameOrigin(credential: string): void {
   // GIS popup returns the JWT to this page. A same-origin form POST lets the
   // complete 303 land on /teacher/ or /teacher/?google=failed. Never persist.
-  if (!credential) {
-    window.location.assign('/teacher/?google=failed');
-    return;
-  }
   const form = document.createElement('form');
   form.method = 'POST';
   form.action = '/api/auth/google/complete';
@@ -272,6 +282,32 @@ function postGoogleCredentialSameOrigin(credential: string): void {
   form.appendChild(field);
   document.body.appendChild(form);
   form.submit();
+}
+
+function createGoogleCredentialDelivery(
+  postCredential: (credential: string) => void = postGoogleCredentialSameOrigin,
+  assignFailed: (url: string) => void = (url) => { window.location.assign(url); },
+): (response: unknown) => void {
+  let posted = false;
+  let failTimer: number | null = null;
+  return (response: unknown) => {
+    const credential = googleCredentialFromCallback(response);
+    if (posted) return;
+    if (!credential) {
+      if (failTimer !== null) return;
+      failTimer = window.setTimeout(() => {
+        failTimer = null;
+        if (!posted) assignFailed('/teacher/?google=failed');
+      }, GIS_EMPTY_CREDENTIAL_FAIL_MS);
+      return;
+    }
+    posted = true;
+    if (failTimer !== null) {
+      window.clearTimeout(failTimer);
+      failTimer = null;
+    }
+    postCredential(credential);
+  };
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -399,7 +435,7 @@ export default function TeacherApp() {
   // Mode remount, options reload, or a long "Verify it's you" popup). The
   // delivery function lives on a ref so a later credential still same-origin
   // POSTs to /api/auth/google/complete even if the sign-in tree unmounted.
-  const deliverGoogleCredentialRef = useRef(postGoogleCredentialSameOrigin);
+  const deliverGoogleCredentialRef = useRef(createGoogleCredentialDelivery());
   // UI disables immediately, while the exact revision sent below makes a
   // repeated click from another tab a server-side idempotent replay.
   const bakeMutationInFlightRef = useRef<'cancel' | 'retry' | null>(null);
@@ -569,10 +605,8 @@ export default function TeacherApp() {
       google.accounts.id.initialize({
         client_id: googleOptions.client_id,
         ux_mode: 'popup',
-        callback: (response: { credential?: string }) => {
-          deliverGoogleCredentialRef.current(
-            typeof response?.credential === 'string' ? response.credential : '',
-          );
+        callback: (response: { credential?: string } | string) => {
+          deliverGoogleCredentialRef.current(response);
         },
         nonce: googleOptions.nonce,
         auto_select: false,

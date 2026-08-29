@@ -15,7 +15,12 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from hramatka.api import app as app_module
 from hramatka.api import google_identity
-from hramatka.api.app import create_app
+from hramatka.api.app import (
+    create_app,
+    google_complete_origin_reason,
+    log_google_complete_fail,
+    log_google_complete_hit,
+)
 from hramatka.api.config import (
     Settings,
     _parse_google_allowed_emails,
@@ -158,6 +163,53 @@ def test_authenticated_link_then_returning_google_sign_in_uses_same_cookie_seam(
     assert client.get("/api/session").status_code == 401
 
 
+def test_google_complete_origin_reason_allows_missing_and_rejects_mismatch() -> None:
+    assert google_complete_origin_reason(None, ORIGIN) is None
+    assert google_complete_origin_reason("", ORIGIN) is None
+    assert google_complete_origin_reason(ORIGIN, ORIGIN) is None
+    assert google_complete_origin_reason("https://evil.example.test", ORIGIN) == "origin_mismatch"
+    assert google_complete_origin_reason("null", ORIGIN) == "origin_mismatch"
+
+
+def test_google_complete_logs_hit_and_fail_reason_without_secrets(
+    monkeypatch, app, client, caplog
+) -> None:
+    secret_credential = "header.payload.signature-do-not-log"
+    foreign = "https://evil.example.test"
+    sign_in = _options(client)
+    monkeypatch.setattr(
+        app_module,
+        "verify_google_credential",
+        lambda *_: _identity("logged-sub", "teacher@example.test", sign_in["nonce"]),
+    )
+    with caplog.at_level("INFO", logger="hramatka.api.app"):
+        log_google_complete_hit()
+        log_google_complete_fail("origin_mismatch")
+        log_google_complete_fail("not-a-real-reason")
+        rejected = client.post(
+            "/api/auth/google/complete",
+            headers={"Origin": foreign},
+            data={"credential": secret_credential},
+            follow_redirects=False,
+        )
+        empty = client.post(
+            "/api/auth/google/complete",
+            headers={"Origin": ORIGIN},
+            data={},
+            follow_redirects=False,
+        )
+    assert rejected.headers["location"] == "/teacher/?google=failed"
+    assert empty.headers["location"] == "/teacher/?google=failed"
+    assert "google_complete hit" in caplog.text
+    assert "reason=origin_mismatch" in caplog.text
+    assert "reason=missing_credential" in caplog.text
+    assert "reason=unknown" in caplog.text
+    assert secret_credential not in caplog.text
+    assert "teacher@example.test" not in caplog.text
+    assert foreign not in caplog.text
+    assert "Origin:" not in caplog.text
+
+
 def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
     monkeypatch, app, client
 ) -> None:
@@ -170,12 +222,14 @@ def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
         return _identity("unknown-google-sub", "unknown@example.test", sign_in["nonce"])
 
     monkeypatch.setattr(app_module, "verify_google_credential", verified)
-    csrf_rejected = client.post(
+    # Missing Origin is no longer CSRF: a same-origin form POST may omit it.
+    # An empty body still fails before verify, so the nonce stays unused.
+    missing_origin_empty = client.post(
         "/api/auth/google/complete",
-        data={"credential": "token"},
+        data={},
         follow_redirects=False,
     )
-    assert csrf_rejected.headers["location"] == "/teacher/?google=failed"
+    assert missing_origin_empty.headers["location"] == "/teacher/?google=failed"
     assert calls == 0
     foreign_origin = _google_callback(client, origin="https://evil.example.test")
     assert foreign_origin.headers["location"] == "/teacher/?google=failed"
@@ -197,6 +251,40 @@ def test_google_callback_rejects_unknown_nonce_csrf_replay_and_unknown_identity(
     rejected = _google_callback(client)
     assert rejected.headers["location"] == "/teacher/?google=failed"
     assert bad_nonce["nonce"] != "A" * 43
+
+
+def test_google_complete_without_origin_still_mints_allowlisted_session(
+    monkeypatch, tmp_path
+) -> None:
+    bootstrap = create_app(
+        settings=_settings(tmp_path), baker=SimpleNamespace(bake=lambda *_: {})
+    )
+    teacher = bootstrap.state.store.create_teacher("QA викладач")
+    app = create_app(
+        settings=_settings(
+            tmp_path,
+            google_allowed_emails=frozenset({QA_EMAIL}),
+            google_allowed_email_teacher_id=teacher.id,
+        ),
+        baker=SimpleNamespace(bake=lambda *_: {}),
+    )
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("missing-origin-sub", QA_EMAIL, sign_in["nonce"]),
+        )
+        completed = client.post(
+            "/api/auth/google/complete",
+            data={"credential": "signed-google-id-token"},
+            follow_redirects=False,
+        )
+        assert completed.status_code == 303
+        assert completed.headers["location"] == "/teacher/"
+        session = client.get("/api/session")
+        assert session.status_code == 200
+        assert session.json()["teacher"]["id"] == teacher.id
 
 
 def test_google_link_cannot_relink_another_teachers_subject(monkeypatch, app, client) -> None:
@@ -485,6 +573,8 @@ def test_frontend_primary_google_cta_keeps_fallbacks_and_never_persists_a_creden
     assert 'data-testid="google-sign-in-button"' in source
     assert "ux_mode: 'popup'" in source
     assert "postGoogleCredentialSameOrigin" in source
+    assert "createGoogleCredentialDelivery" in source
+    assert "googleCredentialFromCallback" in source
     assert "form.action = '/api/auth/google/complete'" in source
     assert "ux_mode: 'redirect'" not in source
     assert "login_uri: googleOptions.login_uri" not in source

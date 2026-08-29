@@ -7,6 +7,7 @@ import base64
 import binascii
 import copy
 import json
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -117,6 +118,53 @@ def _is_rfc3339_timestamp(value: object) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None
+
+
+log = logging.getLogger(__name__)
+
+# Coarse complete-path taxonomy only. Never log a credential, email, IP, or
+# the raw Origin header (it can embed a host or address).
+_GOOGLE_COMPLETE_FAIL_REASONS = frozenset(
+    {
+        "auth_disabled",
+        "missing_origin",
+        "origin_mismatch",
+        "bad_content_length",
+        "body_too_large",
+        "missing_credential",
+        "bad_body",
+        "verify_fail",
+        "bad_nonce",
+        "link_incomplete",
+        "allowlist",
+        "identity_unavailable",
+        "session_unavailable",
+    }
+)
+
+
+def log_google_complete_hit() -> None:
+    log.info("google_complete hit")
+
+
+def log_google_complete_fail(reason: str) -> None:
+    safe_reason = reason if reason in _GOOGLE_COMPLETE_FAIL_REASONS else "unknown"
+    log.info("google_complete fail reason=%s", safe_reason)
+
+
+def google_complete_origin_reason(origin: str | None, pilot_origin: str) -> str | None:
+    """Return a fail-reason when complete must reject on Origin CSRF.
+
+    A same-origin navigational form POST may omit Origin. The one-use GIS
+    nonce inside the verified JWT is the CSRF token for this ceremony.
+    Cross-site browsers still send Origin, so a present mismatch stays
+    rejected. ``Origin: null`` is a present non-match, not a missing header.
+    """
+    if origin is None or origin == "":
+        return None
+    if origin != pilot_origin:
+        return "origin_mismatch"
+    return None
 
 
 def _google_complete_credential(content_type: str, body: bytes) -> str | None:
@@ -783,6 +831,10 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    def fail_google_complete(reason: str) -> RedirectResponse:
+        log_google_complete_fail(reason)
+        return google_failure_redirect()
+
     def owner_job(scope: OwnerScope, lesson_id: str) -> JobRecord:
         job = store.get(scope.owner_id, lesson_id)
         if job is None:
@@ -979,28 +1031,32 @@ def create_app(
         previously sent the teacher to a Google error page instead of
         ``/teacher/?google=failed``.
         """
+        log_google_complete_hit()
         if not settings.google_auth_enabled:
-            return google_failure_redirect()
-        if request.headers.get("origin") != settings.pilot_origin:
-            return google_failure_redirect()
+            return fail_google_complete("auth_disabled")
+        origin_reason = google_complete_origin_reason(
+            request.headers.get("origin"), settings.pilot_origin
+        )
+        if origin_reason is not None:
+            return fail_google_complete(origin_reason)
         content_type = request.headers.get("content-type", "")
         content_length = request.headers.get("content-length")
         if content_length is not None and (
             not content_length.isdigit() or int(content_length) > 20_000
         ):
-            return google_failure_redirect()
+            return fail_google_complete("bad_content_length")
         body = await request.body()
         if len(body) > 20_000:
-            return google_failure_redirect()
+            return fail_google_complete("body_too_large")
         try:
             credential = _google_complete_credential(content_type, body)
             if credential is None:
-                return google_failure_redirect()
+                return fail_google_complete("missing_credential")
             verified = verify_google_credential(credential, settings)
             ceremony = store.consume_google_login_nonce(verified.nonce)
             if ceremony.kind == "link":
                 if ceremony.teacher_id is None or ceremony.session_id is None:
-                    return google_failure_redirect()
+                    return fail_google_complete("link_incomplete")
                 store.link_google_identity(
                     teacher_id=ceremony.teacher_id,
                     session_id=ceremony.session_id,
@@ -1037,7 +1093,7 @@ def create_app(
                         subject=verified.subject, email=verified.email
                     )
                     if established is None:
-                        return google_failure_redirect()
+                        return fail_google_complete("allowlist")
                     response = RedirectResponse(url="/teacher/", status_code=303)
                     set_session_cookie(
                         response, established.raw_secret, established.session.expires_at
@@ -1045,7 +1101,7 @@ def create_app(
                     response.headers["Cache-Control"] = "no-store"
                     return response
                 else:
-                    return google_failure_redirect()
+                    return fail_google_complete("allowlist")
             response = RedirectResponse(url="/teacher/", status_code=303)
             established = store.mint_reentry_session(
                 teacher_id,
@@ -1055,15 +1111,16 @@ def create_app(
             set_session_cookie(response, established.raw_secret, established.session.expires_at)
             response.headers["Cache-Control"] = "no-store"
             return response
-        except (
-            GoogleCredentialInvalid,
-            GoogleNonceUnavailable,
-            GoogleIdentityUnavailable,
-            SessionUnavailable,
-            UnicodeDecodeError,
-            ValueError,
-        ):
-            return google_failure_redirect()
+        except GoogleCredentialInvalid:
+            return fail_google_complete("verify_fail")
+        except GoogleNonceUnavailable:
+            return fail_google_complete("bad_nonce")
+        except GoogleIdentityUnavailable:
+            return fail_google_complete("identity_unavailable")
+        except SessionUnavailable:
+            return fail_google_complete("session_unavailable")
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return fail_google_complete("bad_body")
 
     @app.post("/api/passkeys/enrollment/options")
     def passkey_enrollment_options(
