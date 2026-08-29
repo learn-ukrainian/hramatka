@@ -1576,6 +1576,94 @@ class JobStore:
             ).fetchone()
         return row is not None
 
+    def admit_allowlisted_google_identity(
+        self, *, subject: str, email: str, teacher_id: str | None
+    ) -> str:
+        """Bind one verified allowlisted Google subject to a dedicated teacher.
+
+        When ``teacher_id`` is set, the existing active row is reused. Otherwise
+        a new teacher is created in the same transaction. Email is an audit
+        snapshot only; later sign-in continues to use the immutable ``sub``.
+        """
+        if (
+            not isinstance(subject, str)
+            or not subject
+            or len(subject) > 255
+            or not isinstance(email, str)
+            or not email
+            or len(email) > 320
+        ):
+            raise GoogleIdentityUnavailable("This Google account is unavailable.")
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            if teacher_id is None:
+                local = email.split("@", 1)[0][:100] or "Викладач"
+                teacher_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO pilot_teachers (id, display_name, created_at, deactivated_at)
+                    VALUES (?, ?, ?, NULL)
+                    """,
+                    (teacher_id, local, timestamp),
+                )
+            else:
+                teacher = connection.execute(
+                    """
+                    SELECT 1 FROM pilot_teachers
+                    WHERE id = ? AND deactivated_at IS NULL
+                    """,
+                    (teacher_id,),
+                ).fetchone()
+                if teacher is None:
+                    raise GoogleIdentityUnavailable("This Google account is unavailable.")
+            existing_subject = connection.execute(
+                "SELECT teacher_id FROM google_teacher_identities "
+                "WHERE subject = ? AND revoked_at IS NULL",
+                (subject,),
+            ).fetchone()
+            if existing_subject is not None and existing_subject["teacher_id"] != teacher_id:
+                raise GoogleIdentityUnavailable("This Google account is unavailable.")
+            existing_teacher = connection.execute(
+                "SELECT subject FROM google_teacher_identities "
+                "WHERE teacher_id = ? AND revoked_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if existing_teacher is not None and existing_teacher["subject"] != subject:
+                raise GoogleIdentityUnavailable("This Google account is unavailable.")
+            if existing_subject is not None:
+                connection.execute(
+                    "UPDATE google_teacher_identities SET last_used_at = ? WHERE subject = ?",
+                    (timestamp, subject),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO google_teacher_identities
+                    (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL)
+                    """,
+                    (str(uuid.uuid4()), teacher_id, subject, email, timestamp, timestamp),
+                )
+            # Env allowlist is the operator authorization. Production session
+            # minting also requires an active staff grant; do not overwrite
+            # an existing role or revive a revoked one.
+            grant = connection.execute(
+                "SELECT role, revoked_at FROM staff_authorization_grants WHERE teacher_id = ?",
+                (teacher_id,),
+            ).fetchone()
+            if grant is None:
+                connection.execute(
+                    """
+                    INSERT INTO staff_authorization_grants
+                    (teacher_id, role, created_at, revoked_at)
+                    VALUES (?, 'teacher', ?, NULL)
+                    """,
+                    (teacher_id, timestamp),
+                )
+            elif grant["revoked_at"] is not None:
+                raise GoogleIdentityUnavailable("This Google account is unavailable.")
+        return teacher_id
+
     # -- WebAuthn and recovery-code lifecycle ------------------------------
 
     def issue_webauthn_challenge(

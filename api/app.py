@@ -757,8 +757,12 @@ def create_app(
         return response
 
     def google_failure_redirect() -> RedirectResponse:
-        """Never reflect a Google credential, identity, or link state to the browser."""
-        response = RedirectResponse(url="/teacher/#google-sign-in-failed", status_code=303)
+        """Never reflect a Google credential, identity, or link state to the browser.
+
+        Use a query flag, not a hash: a 303 after Google's cross-site POST drops
+        fragments, which previously produced a silent bounce to the sign-in card.
+        """
+        response = RedirectResponse(url="/teacher/?google=failed", status_code=303)
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -991,7 +995,7 @@ def create_app(
                     email=verified.email,
                     require_active_grant=production_staff_auth_required,
                 )
-                response = RedirectResponse(url="/teacher/#google-linked", status_code=303)
+                response = RedirectResponse(url="/teacher/?google=linked", status_code=303)
                 # Google's cross-site POST does not carry our Lax session
                 # cookie. The one-use nonce is the link authorization, and a
                 # fresh ordinary cookie session gets the teacher back into the
@@ -1009,17 +1013,26 @@ def create_app(
                 require_active_grant=production_staff_auth_required,
             )
             if teacher_id is None:
-                if not production_staff_auth_required:
+                if verified.email.casefold() in settings.google_allowed_emails:
+                    teacher_id = store.admit_allowlisted_google_identity(
+                        subject=verified.subject,
+                        email=verified.email,
+                        teacher_id=settings.google_allowed_email_teacher_id,
+                    )
+                elif production_staff_auth_required:
+                    established = store.bind_google_email_preauthorization(
+                        subject=verified.subject, email=verified.email
+                    )
+                    if established is None:
+                        return google_failure_redirect()
+                    response = RedirectResponse(url="/teacher/", status_code=303)
+                    set_session_cookie(
+                        response, established.raw_secret, established.session.expires_at
+                    )
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
+                else:
                     return google_failure_redirect()
-                established = store.bind_google_email_preauthorization(
-                    subject=verified.subject, email=verified.email
-                )
-                if established is None:
-                    return google_failure_redirect()
-                response = RedirectResponse(url="/teacher/", status_code=303)
-                set_session_cookie(response, established.raw_secret, established.session.expires_at)
-                response.headers["Cache-Control"] = "no-store"
-                return response
             response = RedirectResponse(url="/teacher/", status_code=303)
             established = store.mint_reentry_session(
                 teacher_id,

@@ -711,6 +711,23 @@ describe('passkey chrome for local-auth vs invite sessions (#514)', () => {
     expect(screen.queryByTestId('passkey-sign-in-btn')).not.toBeInTheDocument();
   });
 
+  it('shows a visible Google failure from the OAuth callback query', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/session')) {
+        return errorResponse(401, { code: 'session_required', message: 'session required' });
+      }
+      return response({});
+    }));
+    window.history.replaceState(null, '', '/teacher/?google=failed');
+    renderApp();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Не вдалося увійти через Google');
+    expect(await screen.findByTestId('sign-in-alternatives')).toBeInTheDocument();
+    expect(window.location.search).toBe('');
+    expect(window.location.pathname).toBe('/teacher/');
+  });
+
   it('still renders sign-in chrome on the unauthenticated invite page', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith('/api/session')) {

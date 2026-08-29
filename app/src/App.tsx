@@ -875,11 +875,13 @@ export default function TeacherApp() {
     (async () => {
       setInitLoading(true);
       setError(null);
+      const params = new URLSearchParams(window.location.search);
       const h = window.location.hash || '';
-      if (h === '#google-sign-in-failed') {
-        history.replaceState(null, '', '/teacher/');
-        setError(errKey('google.failed'));
-      } else if (h === '#google-linked') {
+      // GIS redirect is a cross-site POST + 303; fragments are dropped. The
+      // callback therefore uses ?google=failed so the teacher sees an error.
+      const googleFailed = params.get('google') === 'failed' || h === '#google-sign-in-failed';
+      const googleLinked = params.get('google') === 'linked' || h === '#google-linked';
+      if (googleFailed || googleLinked) {
         history.replaceState(null, '', '/teacher/');
       }
       const inviteToken = h.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/)?.[1];
@@ -896,10 +898,13 @@ export default function TeacherApp() {
           await loadQualifiedModels();
         } else if (inviteToken) {
           await redeemFromFragment(inviteToken);
+        } else if (googleFailed) {
+          // Set after the 401 refresh: that path clears session-scoped error.
+          setError(errKey('google.failed'));
         }
       } catch {
         if (!cancelled) {
-          setError(errKey('err.initSession'));
+          setError(googleFailed ? errKey('google.failed') : errKey('err.initSession'));
         }
       } finally {
         if (!cancelled) setInitLoading(false);

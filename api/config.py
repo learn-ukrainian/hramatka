@@ -9,9 +9,11 @@ from __future__ import annotations
 import base64
 import ipaddress
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import UUID
 
 _DEFAULT_BAKE_WORKERS = 4
 _MAX_BAKE_WORKERS = 8
@@ -21,6 +23,7 @@ _EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
 _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER = "api_observed"
 _DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 _GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_GOOGLE_ALLOWED_EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,63}$")
 
 
 def _clamp_bake_workers(value: int) -> int:
@@ -143,6 +146,48 @@ def _validate_google_client_id(value: str | None) -> str | None:
     return value
 
 
+def _parse_google_allowed_emails(value: str | None) -> frozenset[str]:
+    """Parse a host-owned, casefolded, comma-separated Google email allowlist."""
+    if value is None or value.strip() == "":
+        return frozenset()
+    emails: list[str] = []
+    for part in value.split(","):
+        email = part.strip().casefold()
+        if not email:
+            continue
+        if len(email) > 320 or _GOOGLE_ALLOWED_EMAIL_RE.fullmatch(email) is None:
+            raise ValueError(
+                "HRAMATKA_GOOGLE_ALLOWED_EMAILS must be comma-separated emails."
+            )
+        emails.append(email)
+    return frozenset(emails)
+
+
+def _normalize_google_allowed_emails(emails: frozenset[str]) -> frozenset[str]:
+    """Accept only already-constructed allowlist members in Settings tests."""
+    normalized: list[str] = []
+    for email in emails:
+        if not isinstance(email, str):
+            raise ValueError("google_allowed_emails must contain only emails.")
+        folded = email.strip().casefold()
+        if len(folded) > 320 or _GOOGLE_ALLOWED_EMAIL_RE.fullmatch(folded) is None:
+            raise ValueError("google_allowed_emails must contain only emails.")
+        normalized.append(folded)
+    return frozenset(normalized)
+
+
+def _validate_google_allowed_email_teacher_id(value: str | None) -> str | None:
+    """Accept one existing teacher UUID, or none when the host will create."""
+    if value is None or value.strip() == "":
+        return None
+    try:
+        return str(UUID(value.strip()))
+    except ValueError as error:
+        raise ValueError(
+            "HRAMATKA_GOOGLE_ALLOWED_EMAIL_TEACHER_ID must be one teacher UUID."
+        ) from error
+
+
 @dataclass(frozen=True)
 class Settings:
     """Non-secret process settings plus the in-memory CSRF HMAC key."""
@@ -189,6 +234,10 @@ class Settings:
     # Google teacher login is disabled unless this public OAuth audience is
     # explicitly configured. It has no client secret and no Google API scope.
     google_client_id: str | None = None
+    # Host EnvironmentFile allowlist. Empty means no first-bind from email;
+    # already-linked Google subjects still authenticate.
+    google_allowed_emails: frozenset[str] = frozenset()
+    google_allowed_email_teacher_id: str | None = None
     # Direct Settings construction is the explicit local test/development
     # seam. The deployed environment enables this fail-closed policy by default.
     staff_authorization_required: bool = False
@@ -199,6 +248,16 @@ class Settings:
             raise ValueError("csrf_hmac_key must contain at least 32 random bytes.")
         object.__setattr__(
             self, "google_client_id", _validate_google_client_id(self.google_client_id)
+        )
+        object.__setattr__(
+            self,
+            "google_allowed_emails",
+            _normalize_google_allowed_emails(self.google_allowed_emails),
+        )
+        object.__setattr__(
+            self,
+            "google_allowed_email_teacher_id",
+            _validate_google_allowed_email_teacher_id(self.google_allowed_email_teacher_id),
         )
         if self.bake_hard_timeout_seconds <= 0:
             raise ValueError("bake_hard_timeout_seconds must be positive.")
@@ -394,6 +453,12 @@ class Settings:
                 os.environ.get("HRAMATKA_REVIEW_ATTESTATION_JWKS_TTL_SECONDS", "300")
             ),
             google_client_id=os.environ.get("HRAMATKA_GOOGLE_CLIENT_ID"),
+            google_allowed_emails=_parse_google_allowed_emails(
+                os.environ.get("HRAMATKA_GOOGLE_ALLOWED_EMAILS")
+            ),
+            google_allowed_email_teacher_id=os.environ.get(
+                "HRAMATKA_GOOGLE_ALLOWED_EMAIL_TEACHER_ID"
+            ),
             staff_authorization_required=_parse_zero_or_one_flag(
                 "HRAMATKA_STAFF_AUTHORIZATION_REQUIRED", default="1"
             ),
