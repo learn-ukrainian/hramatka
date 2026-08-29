@@ -8,7 +8,6 @@ import binascii
 import copy
 import json
 import re
-import secrets
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -118,6 +117,24 @@ def _is_rfc3339_timestamp(value: object) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None
+
+
+def _google_complete_credential(content_type: str, body: bytes) -> str | None:
+    """Read one GIS credential from a same-origin JSON or form POST."""
+    media = content_type.split(";", maxsplit=1)[0].strip().lower()
+    if media == "application/json":
+        payload = json.loads(body.decode("utf-8"))
+        credential = payload.get("credential") if isinstance(payload, dict) else None
+        if isinstance(credential, str) and credential:
+            return credential
+        return None
+    if media == "application/x-www-form-urlencoded":
+        form = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
+        values = form.get("credential", [])
+        if len(values) == 1 and values[0]:
+            return values[0]
+        return None
+    return None
 
 
 def _session_cookie_max_age(expires_at: str) -> int:
@@ -955,35 +972,31 @@ def create_app(
 
     @app.post("/api/auth/google/complete")
     async def complete_google_sign_in(request: Request) -> Response:
-        """Receive Google's redirect POST and terminate only in the cookie-session seam."""
+        """Receive a same-origin GIS popup credential and terminate in the cookie seam.
+
+        GIS popup/callback keeps the teacher page as the document that posts
+        the JWT. That avoids Google's Authorized redirect URI check, which
+        previously sent the teacher to a Google error page instead of
+        ``/teacher/?google=failed``.
+        """
         if not settings.google_auth_enabled:
+            return google_failure_redirect()
+        if request.headers.get("origin") != settings.pilot_origin:
             return google_failure_redirect()
         content_type = request.headers.get("content-type", "")
         content_length = request.headers.get("content-length")
-        if (
-            not content_type.startswith("application/x-www-form-urlencoded")
-            or (
-                content_length is not None
-                and (not content_length.isdigit() or int(content_length) > 20_000)
-            )
+        if content_length is not None and (
+            not content_length.isdigit() or int(content_length) > 20_000
         ):
             return google_failure_redirect()
         body = await request.body()
         if len(body) > 20_000:
             return google_failure_redirect()
         try:
-            form = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
-            credential_values = form.get("credential", [])
-            csrf_values = form.get("g_csrf_token", [])
-            if len(credential_values) != 1 or len(csrf_values) != 1:
+            credential = _google_complete_credential(content_type, body)
+            if credential is None:
                 return google_failure_redirect()
-            google_csrf_cookie = request.cookies.get("g_csrf_token")
-            if (
-                google_csrf_cookie is None
-                or not secrets.compare_digest(google_csrf_cookie, csrf_values[0])
-            ):
-                return google_failure_redirect()
-            verified = verify_google_credential(credential_values[0], settings)
+            verified = verify_google_credential(credential, settings)
             ceremony = store.consume_google_login_nonce(verified.nonce)
             if ceremony.kind == "link":
                 if ceremony.teacher_id is None or ceremony.session_id is None:
