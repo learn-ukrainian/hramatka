@@ -152,6 +152,51 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/PersistenceUnavailable'
+  /api/auth/google/options:
+    post:
+      tags: [Session]
+      operationId: issueGoogleTeacherSignInNonce
+      summary: Issue a short-lived one-use nonce for Google Identity Services
+      description: |
+        This same-origin request is the only browser-started state change. An
+        anonymous request issues a sign-in nonce; a valid current session plus
+        CSRF proof issues a nonce bound to that existing teacher for first-time
+        Google linking. It never creates a teacher account or returns a bearer
+        credential. The endpoint is absent until the public OAuth client id is
+        configured.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: GIS public client id, exact callback URI, and one-use nonce
+        '403':
+          $ref: '#/components/responses/CsrfRejected'
+        '404':
+          description: Google sign-in is not configured
+        '409':
+          description: The current teacher already has a Google sign-in linked
+  /api/auth/google/complete:
+    post:
+      tags: [Session]
+      operationId: completeGoogleTeacherSignIn
+      summary: Verify a Google redirect credential and establish the ordinary cookie session
+      description: |
+        Google Identity Services posts form fields `credential` and
+        `g_csrf_token` to this exact same-origin callback. The server compares
+        Google's double-submit CSRF cookie, verifies Google signature/JWKS,
+        issuer, configured audience, expiry, issued-at, verified email, and
+        one-use nonce. Only a pre-existing teacher link may sign in; no public
+        registration or credential persistence occurs. Success redirects to the
+        teacher SPA after setting the ordinary HttpOnly session cookie.
+      security: []
+      responses:
+        '303':
+          description: Redirect to the teacher SPA; failure is deliberately generic
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
   /api/session:
     get:
       tags: [Session]
@@ -1107,7 +1152,7 @@ components:
     Session:
       type: object
       additionalProperties: false
-      required: [teacher, expires_at, csrf_token]
+      required: [teacher, expires_at, csrf_token, google_linked]
       properties:
         teacher:
           $ref: '#/components/schemas/Teacher'
@@ -1118,6 +1163,9 @@ components:
           type: string
           pattern: '^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
           description: Keep in memory only; never put in a URL or persistent browser storage.
+        google_linked:
+          type: boolean
+          description: True only when this teacher has an active durable Google subject link; controls whether the setup CTA is shown.
         local_auth_disabled:
           type: boolean
           description: Present and true only for the explicitly enabled loopback local launcher; the UI must show its persistent local-auth warning.

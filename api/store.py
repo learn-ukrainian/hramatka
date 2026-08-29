@@ -39,6 +39,7 @@ _LOCAL_STATIC_TEACHER_ID = str(
 _LOCAL_STATIC_TEACHER_NAME = "Локальний викладач"
 _SESSION_ABSOLUTE_HOURS = 24 * 7
 _SESSION_IDLE_HOURS = 24
+_GOOGLE_NONCE_SECONDS = 10 * 60
 _FAILURE_CODES = frozenset(
     {
         "bake_timeout",
@@ -74,6 +75,14 @@ class InviteUnavailable(ValueError):
 
 class SessionUnavailable(ValueError):
     """A previously authenticated teacher became inactive before a mutation committed."""
+
+
+class GoogleNonceUnavailable(ValueError):
+    """A Google browser ceremony nonce is unknown, expired, or already consumed."""
+
+
+class GoogleIdentityUnavailable(ValueError):
+    """A verified Google account is not linked to one active pilot teacher."""
 
 
 class IdempotencyConflict(ValueError):
@@ -226,6 +235,17 @@ class RedeemedSession:
 class WebAuthnChallenge:
     id: str
     raw_challenge: bytes
+
+
+@dataclass(frozen=True)
+class GoogleLoginNonce:
+    """One short-lived nonce, never returned to logs or durable public API data."""
+
+    id: str
+    raw_nonce: str
+    kind: str
+    teacher_id: str | None
+    session_id: str | None
 
 
 @dataclass(frozen=True)
@@ -1020,6 +1040,182 @@ class JobStore:
             )
         return cursor.rowcount == 1
 
+    # -- Google identity lifecycle ----------------------------------------
+
+    def issue_google_login_nonce(
+        self,
+        *,
+        kind: str,
+        teacher_id: str | None = None,
+        session_id: str | None = None,
+    ) -> GoogleLoginNonce:
+        """Persist a one-use GIS nonce before the browser starts its redirect.
+
+        A link ceremony is bound to the currently authenticated teacher session;
+        an ordinary sign-in ceremony intentionally has no teacher hint.  The raw
+        nonce leaves this method once and only its SHA-256 digest is retained.
+        """
+        if kind not in {"signin", "link"}:
+            raise ValueError("Unsupported Google login ceremony.")
+        if kind == "link" and (teacher_id is None or session_id is None):
+            raise ValueError("Google link requires the current teacher session.")
+        if kind == "signin" and (teacher_id is not None or session_id is not None):
+            raise ValueError("Google sign-in cannot carry a teacher hint.")
+        raw_nonce = encode_opaque_token(secrets.token_bytes(_OPAQUE_TOKEN_BYTES))
+        timestamp = now_iso()
+        record = GoogleLoginNonce(
+            id=str(uuid.uuid4()),
+            raw_nonce=raw_nonce,
+            kind=kind,
+            teacher_id=teacher_id,
+            session_id=session_id,
+        )
+        with self._write_transaction() as connection:
+            if kind == "link":
+                active_session = connection.execute(
+                    """
+                    SELECT 1 FROM pilot_sessions AS s
+                    JOIN pilot_teachers AS t ON t.id = s.teacher_id
+                    WHERE s.id = ? AND s.teacher_id = ? AND s.revoked_at IS NULL
+                      AND s.expires_at > ? AND s.idle_expires_at > ?
+                      AND t.deactivated_at IS NULL
+                    """,
+                    (session_id, teacher_id, timestamp, timestamp),
+                ).fetchone()
+                if active_session is None:
+                    raise SessionUnavailable("The teacher session is no longer active.")
+            connection.execute(
+                """
+                INSERT INTO google_login_nonces
+                (id, nonce_hash, kind, teacher_id, session_id, created_at, expires_at, used_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    record.id,
+                    hashlib.sha256(raw_nonce.encode("ascii")).digest(),
+                    kind,
+                    teacher_id,
+                    session_id,
+                    timestamp,
+                    _add_seconds(timestamp, _GOOGLE_NONCE_SECONDS),
+                ),
+            )
+        return record
+
+    def consume_google_login_nonce(self, raw_nonce: str) -> GoogleLoginNonce:
+        """Atomically consume a GIS nonce before a session or identity is minted."""
+        if not isinstance(raw_nonce, str) or _OPAQUE_TOKEN_RE.fullmatch(raw_nonce) is None:
+            raise GoogleNonceUnavailable("The Google sign-in is no longer available.")
+        timestamp = now_iso()
+        digest = hashlib.sha256(raw_nonce.encode("ascii")).digest()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT id, kind, teacher_id, session_id
+                FROM google_login_nonces
+                WHERE nonce_hash = ? AND used_at IS NULL AND expires_at > ?
+                """,
+                (digest, timestamp),
+            ).fetchone()
+            if row is None:
+                raise GoogleNonceUnavailable("The Google sign-in is no longer available.")
+            used = connection.execute(
+                "UPDATE google_login_nonces SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                (timestamp, row["id"]),
+            )
+            if used.rowcount != 1:
+                raise GoogleNonceUnavailable("The Google sign-in is no longer available.")
+        return GoogleLoginNonce(
+            id=row["id"],
+            raw_nonce=raw_nonce,
+            kind=row["kind"],
+            teacher_id=row["teacher_id"],
+            session_id=row["session_id"],
+        )
+
+    def link_google_identity(
+        self, *, teacher_id: str, session_id: str, subject: str, email: str
+    ) -> None:
+        """Bind one verified Google subject to the already signed-in teacher.
+
+        Email is an audit snapshot only. Future login routing is strictly the
+        immutable Google ``sub`` claim, never a mutable email address.
+        """
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            session = connection.execute(
+                """
+                SELECT 1 FROM pilot_sessions AS s
+                JOIN pilot_teachers AS t ON t.id = s.teacher_id
+                WHERE s.id = ? AND s.teacher_id = ? AND s.revoked_at IS NULL
+                  AND s.expires_at > ? AND s.idle_expires_at > ?
+                  AND t.deactivated_at IS NULL
+                """,
+                (session_id, teacher_id, timestamp, timestamp),
+            ).fetchone()
+            if session is None:
+                raise SessionUnavailable("The teacher session is no longer active.")
+            existing_subject = connection.execute(
+                "SELECT teacher_id FROM google_teacher_identities "
+                "WHERE subject = ? AND revoked_at IS NULL",
+                (subject,),
+            ).fetchone()
+            if existing_subject is not None and existing_subject["teacher_id"] != teacher_id:
+                raise GoogleIdentityUnavailable("This Google account is unavailable.")
+            existing_teacher = connection.execute(
+                "SELECT subject FROM google_teacher_identities "
+                "WHERE teacher_id = ? AND revoked_at IS NULL",
+                (teacher_id,),
+            ).fetchone()
+            if existing_teacher is not None and existing_teacher["subject"] != subject:
+                raise GoogleIdentityUnavailable("This teacher already has a Google sign-in.")
+            if existing_subject is not None:
+                connection.execute(
+                    "UPDATE google_teacher_identities SET last_used_at = ? WHERE subject = ?",
+                    (timestamp, subject),
+                )
+                return
+            connection.execute(
+                """
+                INSERT INTO google_teacher_identities
+                (id, teacher_id, subject, email_at_link, created_at, last_used_at, revoked_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (str(uuid.uuid4()), teacher_id, subject, email, timestamp, timestamp),
+            )
+
+    def authenticate_google_identity(self, subject: str) -> str | None:
+        """Resolve only an already-linked active teacher from a Google subject."""
+        timestamp = now_iso()
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT g.teacher_id FROM google_teacher_identities AS g
+                JOIN pilot_teachers AS t ON t.id = g.teacher_id
+                WHERE g.subject = ? AND g.revoked_at IS NULL AND t.deactivated_at IS NULL
+                """,
+                (subject,),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                "UPDATE google_teacher_identities SET last_used_at = ? WHERE subject = ?",
+                (timestamp, subject),
+            )
+        return str(row["teacher_id"])
+
+    def teacher_has_google_identity(self, teacher_id: str) -> bool:
+        """Return whether this active teacher already has one usable Google link."""
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM google_teacher_identities
+                WHERE teacher_id = ? AND revoked_at IS NULL
+                """,
+                (teacher_id,),
+            ).fetchone()
+        return row is not None
+
     # -- WebAuthn and recovery-code lifecycle ------------------------------
 
     def issue_webauthn_challenge(
@@ -1132,7 +1328,7 @@ class JobStore:
 
     def mint_reentry_session(self, teacher_id: str, *, auth_method: str) -> RedeemedSession:
         """The shared, opaque session seam used by all non-invite entry doors."""
-        if auth_method not in {"passkey", "recovery"}:
+        if auth_method not in {"passkey", "recovery", "google"}:
             raise ValueError("Unsupported re-entry method.")
         timestamp = now_iso()
         raw_secret = secrets.token_bytes(_OPAQUE_TOKEN_BYTES)

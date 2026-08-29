@@ -8,6 +8,7 @@ import binascii
 import copy
 import json
 import re
+import secrets
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
 from typing import Annotated, Any
+from urllib.parse import parse_qs
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, Path, Request, Response, status
@@ -40,6 +42,7 @@ from .baking.engine_adapter_v3 import (
 )
 from .baking.port import LessonBaker, ProviderUnavailable
 from .config import Settings
+from .google_identity import GoogleCredentialInvalid, verify_google_credential
 from .models import (
     ActivityFeedbackMutation,
     ActivityRegenerationCreate,
@@ -70,6 +73,8 @@ from .store import (
     ActivityRegenerationStateConflict,
     AttemptQuiescing,
     FeedbackNotApplicable,
+    GoogleIdentityUnavailable,
+    GoogleNonceUnavailable,
     IdempotencyConflict,
     InviteUnavailable,
     JobRecord,
@@ -700,6 +705,7 @@ def create_app(
             },
             "expires_at": session.record.expires_at,
             "csrf_token": csrf_token(settings.csrf_hmac_key, session.raw_secret),
+            "google_linked": store.teacher_has_google_identity(session.record.teacher_id),
         }
         if settings.local_static_teacher_enabled and session.record.auth_method == "local":
             payload["local_auth_disabled"] = True
@@ -718,6 +724,12 @@ def create_app(
         session = AuthenticatedSession(record=redeemed.session, raw_secret=redeemed.raw_secret)
         response = JSONResponse(content=session_payload(session))
         set_session_cookie(response, redeemed.raw_secret, redeemed.session.expires_at)
+        return response
+
+    def google_failure_redirect() -> RedirectResponse:
+        """Never reflect a Google credential, identity, or link state to the browser."""
+        response = RedirectResponse(url="/teacher/#google-sign-in-failed", status_code=303)
+        response.headers["Cache-Control"] = "no-store"
         return response
 
     def owner_job(teacher_id: str, lesson_id: str) -> JobRecord:
@@ -823,6 +835,110 @@ def create_app(
                 410, "invite_unavailable", "Це запрошення більше недоступне."
             ) from error
         return session_response(redeemed)
+
+    @app.post("/api/auth/google/options")
+    def google_sign_in_options(
+        request: Request,
+        _: None = Depends(require_origin),
+        supplied_csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+    ) -> dict[str, str]:
+        """Issue a one-use nonce for either sign-in or signed-in identity linking."""
+        if not settings.google_auth_enabled or settings.google_client_id is None:
+            raise PilotError(404, "not_found", "Ресурс не знайдено.")
+        raw_secret = _decode_opaque(request.cookies.get(_SESSION_COOKIE))
+        record = store.lookup_session(raw_secret) if raw_secret is not None else None
+        if record is None:
+            nonce = store.issue_google_login_nonce(kind="signin")
+        else:
+            if raw_secret is None or not csrf_matches(
+                settings.csrf_hmac_key, raw_secret, supplied_csrf
+            ):
+                raise PilotError(
+                    403, "csrf_rejected", "Запит не пройшов перевірку того самого походження."
+                )
+            if store.teacher_has_google_identity(record.teacher_id):
+                raise PilotError(409, "google_already_linked", "Вхід через Google уже підключено.")
+            try:
+                nonce = store.issue_google_login_nonce(
+                    kind="link", teacher_id=record.teacher_id, session_id=record.id
+                )
+            except SessionUnavailable as error:
+                raise PilotError(
+                    401, "session_required", "Потрібна чинна сесія вчителя."
+                ) from error
+        return {
+            "client_id": settings.google_client_id,
+            "nonce": nonce.raw_nonce,
+            "login_uri": f"{settings.pilot_origin}/api/auth/google/complete",
+        }
+
+    @app.post("/api/auth/google/complete")
+    async def complete_google_sign_in(request: Request) -> Response:
+        """Receive Google's redirect POST and terminate only in the cookie-session seam."""
+        if not settings.google_auth_enabled:
+            return google_failure_redirect()
+        content_type = request.headers.get("content-type", "")
+        content_length = request.headers.get("content-length")
+        if (
+            not content_type.startswith("application/x-www-form-urlencoded")
+            or (
+                content_length is not None
+                and (not content_length.isdigit() or int(content_length) > 20_000)
+            )
+        ):
+            return google_failure_redirect()
+        body = await request.body()
+        if len(body) > 20_000:
+            return google_failure_redirect()
+        try:
+            form = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
+            credential_values = form.get("credential", [])
+            csrf_values = form.get("g_csrf_token", [])
+            if len(credential_values) != 1 or len(csrf_values) != 1:
+                return google_failure_redirect()
+            google_csrf_cookie = request.cookies.get("g_csrf_token")
+            if (
+                google_csrf_cookie is None
+                or not secrets.compare_digest(google_csrf_cookie, csrf_values[0])
+            ):
+                return google_failure_redirect()
+            verified = verify_google_credential(credential_values[0], settings)
+            ceremony = store.consume_google_login_nonce(verified.nonce)
+            if ceremony.kind == "link":
+                if ceremony.teacher_id is None or ceremony.session_id is None:
+                    return google_failure_redirect()
+                store.link_google_identity(
+                    teacher_id=ceremony.teacher_id,
+                    session_id=ceremony.session_id,
+                    subject=verified.subject,
+                    email=verified.email,
+                )
+                response = RedirectResponse(url="/teacher/#google-linked", status_code=303)
+                # Google's cross-site POST does not carry our Lax session
+                # cookie. The one-use nonce is the link authorization, and a
+                # fresh ordinary cookie session gets the teacher back into the
+                # app without relying on that absent cookie.
+                established = store.mint_reentry_session(ceremony.teacher_id, auth_method="google")
+                set_session_cookie(response, established.raw_secret, established.session.expires_at)
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            teacher_id = store.authenticate_google_identity(verified.subject)
+            if teacher_id is None:
+                return google_failure_redirect()
+            response = RedirectResponse(url="/teacher/", status_code=303)
+            established = store.mint_reentry_session(teacher_id, auth_method="google")
+            set_session_cookie(response, established.raw_secret, established.session.expires_at)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        except (
+            GoogleCredentialInvalid,
+            GoogleNonceUnavailable,
+            GoogleIdentityUnavailable,
+            SessionUnavailable,
+            UnicodeDecodeError,
+            ValueError,
+        ):
+            return google_failure_redirect()
 
     @app.post("/api/passkeys/enrollment/options")
     def passkey_enrollment_options(

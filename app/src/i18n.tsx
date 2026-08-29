@@ -98,21 +98,33 @@ const DICT = {
   // ---- invite / login ----
   'invite.title': { uk: 'Вхід для викладача', en: 'Teacher sign-in' },
   'invite.lead': {
-    uk: 'Використайте посилання-запрошення. Токен обробляється лише в пам’яті.',
-    en: 'Use the invitation link. The token is processed in memory only.',
-  },
-  'invite.prompt': {
-    uk: 'Тестовий токен (або залиште порожнім для автоматичного):',
-    en: 'Test token (or leave blank for automatic):',
+    uk: 'Маєте запрошення? Просто відкрийте надіслане посилання.',
+    en: 'Have an invitation? Simply open the link you were sent.',
   },
   'invite.badToken': { uk: 'Некоректний формат токена.', en: 'Invalid token format.' },
-  'invite.testBtn': {
-    uk: 'Увійти за тестовим запрошенням (тест)',
-    en: 'Sign in with a test invitation (test)',
+  'google.lead': {
+    uk: 'Увійдіть через свій обліковий запис Google.',
+    en: 'Sign in with your Google account.',
   },
-  'invite.small': {
-    uk: 'У реальному сценарії — відкрийте посилання з #invite=...',
-    en: 'In a real scenario — open a link with #invite=...',
+  'google.unavailable': {
+    uk: 'Вхід через Google ще налаштовується. Скористайтеся ключем доступу або кодом відновлення.',
+    en: 'Google sign-in is still being set up. Use a passkey or recovery code.',
+  },
+  'google.failed': {
+    uk: 'Не вдалося увійти через Google. Спробуйте ще раз або скористайтеся іншим способом входу.',
+    en: 'Google sign-in did not work. Try again or use another sign-in method.',
+  },
+  'google.setupTitle': {
+    uk: 'Зробіть наступний вхід простим',
+    en: 'Make future sign-in simple',
+  },
+  'google.setupLead': {
+    uk: 'Підключіть Google один раз — наступного разу просто оберіть «Продовжити з Google».',
+    en: 'Connect Google once — next time simply choose “Continue with Google.”',
+  },
+  'auth.otherWays': {
+    uk: 'Інші способи входу',
+    en: 'Other ways to sign in',
   },
   'passkey.signIn': { uk: 'Увійти за ключем доступу', en: 'Sign in with a passkey' },
   'passkey.add': { uk: 'Додати ключ доступу', en: 'Add a passkey' },

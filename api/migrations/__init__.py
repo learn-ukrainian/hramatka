@@ -19,6 +19,7 @@ from .v011_anchor_capacity_failure_code import apply as apply_v011
 from .v012_cancellation_retry import apply as apply_v012
 from .v013_attempt_leases import apply as apply_v013
 from .v014_attempt_quiescence import apply as apply_v014
+from .v015_google_teacher_identity import apply as apply_v015
 
 
 class MigrationError(RuntimeError):
@@ -42,6 +43,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (12, "cancellation_retry", apply_v012),
     (13, "attempt_leases", apply_v013),
     (14, "attempt_quiescence", apply_v014),
+    (15, "google_teacher_identity", apply_v015),
 )
 EXPECTED_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

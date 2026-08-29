@@ -38,6 +38,26 @@
 .session { display: flex; gap: 12px; align-items: center; font-size: 0.95em; }
 .session .link { color: inherit; opacity: .85; background: none; border: 0; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
 .session .link:hover { opacity: 1; background: rgba(255,255,255,.14); }
+.google-sign-in { min-height: 44px; max-width: 360px; margin: 18px 0; }
+.google-setup-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--line);
+}
+.google-setup-card p { margin: 4px 0 0; color: var(--ink-soft); }
+.google-setup-card > div:last-child { flex: 0 0 320px; min-height: 40px; }
+@media (max-width: 640px) {
+  .google-setup-card { align-items: flex-start; flex-direction: column; }
+  .google-setup-card > div:last-child { flex-basis: auto; width: 100%; }
+}
+.sign-in-alternatives { margin-top: 20px; max-width: 360px; }
+.sign-in-alternatives > summary { cursor: pointer; color: var(--ink-soft); }
+.sign-in-alternatives[open] > summary { margin-bottom: 12px; }
 .helpbtn {
   width: 22px;
   height: 22px;

@@ -16,7 +16,9 @@
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-		Content-Security-Policy "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+		# Google Identity Services needs only its hosted loader and the isolated
+		# button frame. The credential itself is posted to our same-origin API.
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; frame-src https://accounts.google.com; connect-src 'self' https://accounts.google.com"
 	}
 
 	# This is intentionally a public HTTPS endpoint: GitHub Actions presents an

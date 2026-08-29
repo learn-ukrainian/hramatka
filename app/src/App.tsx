@@ -57,6 +57,7 @@ interface Session {
   expires_at: string;
   csrf_token: string;
   local_auth_disabled?: boolean;
+  google_linked: boolean;
 }
 
 interface ErrorEnvelope {
@@ -64,6 +65,12 @@ interface ErrorEnvelope {
   message: string;
   retryable: boolean;
   lesson_id?: string;
+}
+
+interface GoogleSignInOptions {
+  client_id: string;
+  nonce: string;
+  login_uri: string;
 }
 
 interface LessonBlock {
@@ -314,6 +321,7 @@ export default function TeacherApp() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [recoveryCodesCopyStatus, setRecoveryCodesCopyStatus] = useState<'ok' | 'fail' | null>(null);
   const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
+  const [googleOptions, setGoogleOptions] = useState<GoogleSignInOptions | null>(null);
 
   // Paste form state (level fixed B1)
   const [pasteText, setPasteText] = useState('');
@@ -358,6 +366,7 @@ export default function TeacherApp() {
   const currentLessonIdRef = useRef<string | null>(null);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
   // UI disables immediately, while the exact revision sent below makes a
   // repeated click from another tab a server-side idempotent replay.
   const bakeMutationInFlightRef = useRef<'cancel' | 'retry' | null>(null);
@@ -436,7 +445,13 @@ export default function TeacherApp() {
     const res = await apiFetch('/api/session');
     if (res.ok) {
       const data = await res.json();
-      const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token, local_auth_disabled: data.local_auth_disabled === true };
+      const s: Session = {
+        teacher: data.teacher,
+        expires_at: data.expires_at,
+        csrf_token: data.csrf_token,
+        local_auth_disabled: data.local_auth_disabled === true,
+        google_linked: data.google_linked === true,
+      };
       setSession(s);
       setCsrf(data.csrf_token);
       setSessionReady(true);
@@ -449,6 +464,79 @@ export default function TeacherApp() {
     }
     return null;
   };
+
+  // Google Identity Services posts its signed credential directly to our
+  // same-origin callback.  The browser never stores that credential in a URL,
+  // localStorage, sessionStorage, or React state.
+  useEffect(() => {
+    let cancelled = false;
+    const loadOptions = async () => {
+      try {
+        const res = await apiFetch('/api/auth/google/options', {
+          method: 'POST',
+          headers: csrf ? { 'X-CSRF-Token': csrf } : undefined,
+        });
+        if (!res.ok || cancelled) {
+          if (!cancelled) setGoogleOptions(null);
+          return;
+        }
+        const payload = await res.json();
+        if (
+          typeof payload?.client_id !== 'string'
+          || typeof payload?.nonce !== 'string'
+          || typeof payload?.login_uri !== 'string'
+        ) {
+          if (!cancelled) setGoogleOptions(null);
+          return;
+        }
+        if (!cancelled) setGoogleOptions(payload as GoogleSignInOptions);
+      } catch {
+        if (!cancelled) setGoogleOptions(null);
+      }
+    };
+    if (session?.google_linked) {
+      setGoogleOptions(null);
+    } else if (!initLoading) {
+      void loadOptions();
+    }
+    return () => { cancelled = true; };
+  }, [csrf, initLoading, session?.google_linked, session?.teacher.id]);
+
+  useEffect(() => {
+    const container = googleButtonRef.current;
+    if (!container || !googleOptions) return;
+    let cancelled = false;
+    const render = () => {
+      const google = (window as any).google;
+      if (cancelled || !google?.accounts?.id || !googleButtonRef.current) return;
+      google.accounts.id.initialize({
+        client_id: googleOptions.client_id,
+        ux_mode: 'redirect',
+        login_uri: googleOptions.login_uri,
+        nonce: googleOptions.nonce,
+        auto_select: false,
+      });
+      googleButtonRef.current.replaceChildren();
+      google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'outline', size: 'large', type: 'standard', shape: 'rectangular', text: 'continue_with',
+        width: Math.min(360, Math.max(240, googleButtonRef.current.clientWidth || 320)),
+      });
+    };
+    const existing = document.querySelector<HTMLScriptElement>('script[data-google-identity-services]');
+    if (existing) {
+      if ((window as any).google?.accounts?.id) render();
+      else existing.addEventListener('load', render, { once: true });
+      return () => { cancelled = true; existing.removeEventListener('load', render); };
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentityServices = 'true';
+    script.addEventListener('load', render, { once: true });
+    document.head.appendChild(script);
+    return () => { cancelled = true; script.removeEventListener('load', render); };
+  }, [googleOptions, session?.teacher.id]);
 
   // Invite redemption (token only in memory)
   const redeemFromFragment = useCallback((capturedToken?: string): Promise<boolean> => {
@@ -474,7 +562,12 @@ export default function TeacherApp() {
           clearEntryNonce();
           resetSessionScopedState();
           const data = await res.json();
-          const s: Session = { teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token };
+          const s: Session = {
+            teacher: data.teacher,
+            expires_at: data.expires_at,
+            csrf_token: data.csrf_token,
+            google_linked: data.google_linked === true,
+          };
           setSession(s);
           setCsrf(data.csrf_token);
           setSessionReady(true);
@@ -553,7 +646,12 @@ export default function TeacherApp() {
         return;
       }
       const data = await complete.json();
-      setSession({ teacher: data.teacher, expires_at: data.expires_at, csrf_token: data.csrf_token });
+      setSession({
+        teacher: data.teacher,
+        expires_at: data.expires_at,
+        csrf_token: data.csrf_token,
+        google_linked: data.google_linked === true,
+      });
       setCsrf(data.csrf_token);
       setSessionReady(true);
       navigate({ view: 'paste' });
@@ -677,6 +775,7 @@ export default function TeacherApp() {
         expires_at: data.expires_at,
         csrf_token: data.csrf_token,
         local_auth_disabled: data.local_auth_disabled === true,
+        google_linked: data.google_linked === true,
       });
       setCsrf(data.csrf_token);
       setSessionReady(true);
@@ -741,6 +840,12 @@ export default function TeacherApp() {
       setInitLoading(true);
       setError(null);
       const h = window.location.hash || '';
+      if (h === '#google-sign-in-failed') {
+        history.replaceState(null, '', '/teacher/');
+        setError(errKey('google.failed'));
+      } else if (h === '#google-linked') {
+        history.replaceState(null, '', '/teacher/');
+      }
       const inviteToken = h.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/)?.[1];
       // Keep the fragment token only in this closure, then remove it before
       // any request, including a failing session refresh.
@@ -1808,66 +1913,72 @@ export default function TeacherApp() {
       {!session && !initLoading && (
         <main className="invite">
           <h1>{t('invite.title')}</h1>
-          <p>{t('invite.lead')}</p>
-          <button
-            className="btn primary"
-            onClick={async () => {
-              // Dev helper: allow manual redeem with test token
-              const tok = prompt(t('invite.prompt')) || 'TEST' + 'A'.repeat(39) + 'Q';
-              if (!isValidToken(tok)) { setError(errKey('invite.badToken')); return; }
-              window.location.hash = `#invite=${tok}`;
-              await redeemFromFragment();
-            }}
-            disabled={loading}
-          >
-            {t('invite.testBtn')}
-          </button>
-          {'credentials' in navigator && (
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={signInWithPasskey}
-              disabled={loading}
-              data-testid="passkey-sign-in-btn"
-            >
-              {t('passkey.signIn')}
-            </button>
-          )}
-          <form
-            className="recovery-code-sign-in"
-            onSubmit={(event) => { event.preventDefault(); void redeemRecoveryCode(); }}
-            data-testid="recovery-code-sign-in"
-          >
-            <label htmlFor="recovery-code-input">{t('recovery.signInLabel')}</label>
-            <div className="recovery-code-sign-in-row">
-              <input
-                id="recovery-code-input"
-                type="text"
-                value={recoveryCodeInput}
-                onChange={(event) => setRecoveryCodeInput(event.target.value)}
-                autoComplete="off"
-                autoCapitalize="characters"
-                spellCheck={false}
-                disabled={loading}
-                data-testid="recovery-code-input"
-              />
-              <button
-                type="submit"
-                className="btn secondary"
-                disabled={loading}
-                data-testid="recovery-code-submit"
-              >
-                {t('recovery.signIn')}
-              </button>
+          <p>{t('google.lead')}</p>
+          {googleOptions ? (
+            <div className="google-sign-in" data-testid="google-sign-in-button">
+              <div ref={googleButtonRef} />
             </div>
-            <p className="small">{t('recovery.signInHint')}</p>
-          </form>
-          <p className="small">{t('invite.small')}</p>
+          ) : (
+            <p className="small">{t('google.unavailable')}</p>
+          )}
+          <details className="sign-in-alternatives" data-testid="sign-in-alternatives">
+            <summary>{t('auth.otherWays')}</summary>
+            <p className="small">{t('invite.lead')}</p>
+            {'credentials' in navigator && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={signInWithPasskey}
+                disabled={loading}
+                data-testid="passkey-sign-in-btn"
+              >
+                {t('passkey.signIn')}
+              </button>
+            )}
+            <form
+              className="recovery-code-sign-in"
+              onSubmit={(event) => { event.preventDefault(); void redeemRecoveryCode(); }}
+              data-testid="recovery-code-sign-in"
+            >
+              <label htmlFor="recovery-code-input">{t('recovery.signInLabel')}</label>
+              <div className="recovery-code-sign-in-row">
+                <input
+                  id="recovery-code-input"
+                  type="text"
+                  value={recoveryCodeInput}
+                  onChange={(event) => setRecoveryCodeInput(event.target.value)}
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  disabled={loading}
+                  data-testid="recovery-code-input"
+                />
+                <button
+                  type="submit"
+                  className="btn secondary"
+                  disabled={loading}
+                  data-testid="recovery-code-submit"
+                >
+                  {t('recovery.signIn')}
+                </button>
+              </div>
+              <p className="small">{t('recovery.signInHint')}</p>
+            </form>
+          </details>
         </main>
       )}
 
       {session && (
         <>
+          {session.local_auth_disabled !== true && !isStudentSurface && !session.google_linked && googleOptions && (
+            <aside className="google-setup-card page-shell" data-testid="google-setup-card">
+              <div>
+                <strong>{t('google.setupTitle')}</strong>
+                <p>{t('google.setupLead')}</p>
+              </div>
+              <div ref={googleButtonRef} data-testid="google-setup-button" />
+            </aside>
+          )}
           {/* Paste / Hub — one-screen split create page; text is the centerpiece. */}
           {route.view === 'paste' && (
             <main className="hub create-hub page-shell">

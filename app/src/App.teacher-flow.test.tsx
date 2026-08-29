@@ -130,11 +130,15 @@ function regenerationEntry(lessonId: string, status: 'succeeded' | 'failed') {
 function installFetch(
   lessons: unknown[] = [],
   modelId: string | null = 'pilot',
-  sessionPayload: typeof teacher & { local_auth_disabled?: boolean } = teacher,
+  sessionPayload: typeof teacher & { local_auth_disabled?: boolean; google_linked?: boolean } = teacher,
+  googleOptions: { client_id: string; nonce: string; login_uri: string } | null = null,
 ) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith('/api/session')) return response(sessionPayload);
+    if (url.endsWith('/api/auth/google/options')) {
+      return googleOptions ? response(googleOptions) : errorResponse(404, {});
+    }
     if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
     if (url.endsWith('/api/lesson-models')) {
       return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
@@ -683,7 +687,34 @@ describe('passkey chrome for local-auth vs invite sessions (#514)', () => {
     }));
     renderApp();
 
+    const alternatives = await screen.findByTestId('sign-in-alternatives');
+    expect(alternatives.tagName).toBe('DETAILS');
+    expect(alternatives).not.toHaveAttribute('open');
+    expect(alternatives).toHaveTextContent('Інші способи входу');
     expect(await screen.findByTestId('passkey-sign-in-btn')).toHaveTextContent('Увійти за ключем доступу');
+    expect(screen.getByTestId('recovery-code-sign-in')).toBeInTheDocument();
     expect(screen.queryByTestId('passkey-enroll-btn')).not.toBeInTheDocument();
+  });
+
+  it('explains one-time Google setup only to an invited teacher without a durable link', async () => {
+    const googleOptions = {
+      client_id: '123456789-test.apps.googleusercontent.com',
+      nonce: 'A'.repeat(43),
+      login_uri: 'https://pilot.example.test/api/auth/google/complete',
+    };
+    installFetch([], 'pilot', { ...teacher, google_linked: false }, googleOptions);
+    renderApp();
+    const setup = await screen.findByTestId('google-setup-card');
+    expect(setup).toHaveTextContent('Зробіть наступний вхід простим');
+    expect(setup).toHaveTextContent('Підключіть Google один раз');
+    expect(screen.getByTestId('google-setup-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('google-link-button')).not.toBeInTheDocument();
+  });
+
+  it('does not offer Google setup again once the server marks the teacher linked', async () => {
+    installFetch([], 'pilot', { ...teacher, google_linked: true });
+    renderApp();
+    await screen.findByTestId('teacher-display-name');
+    expect(screen.queryByTestId('google-setup-card')).not.toBeInTheDocument();
   });
 });

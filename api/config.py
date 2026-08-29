@@ -20,6 +20,7 @@ _DEFAULT_BAKE_PROVIDERS = ("antigravity", "openrouter")
 _EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
 _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER = "api_observed"
 _DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+_GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
 
 def _clamp_bake_workers(value: int) -> int:
@@ -128,6 +129,20 @@ def _validate_google_ais_base_url(value: str) -> str:
     return _DEFAULT_GOOGLE_AIS_BASE_URL
 
 
+def _validate_google_client_id(value: str | None) -> str | None:
+    """Accept only the public OAuth audience, never a secret or broad URL."""
+    if value is None or value == "":
+        return None
+    if (
+        not value.isascii()
+        or len(value) > 255
+        or any(char.isspace() for char in value)
+        or not value.endswith(".apps.googleusercontent.com")
+    ):
+        raise ValueError("HRAMATKA_GOOGLE_CLIENT_ID must be one Google OAuth web client id.")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """Non-secret process settings plus the in-memory CSRF HMAC key."""
@@ -171,11 +186,17 @@ class Settings:
     review_attestation_max_diff_bytes: int = 500_000
     review_attestation_provider_timeout_seconds: int = 45
     review_attestation_jwks_ttl_seconds: int = 300
+    # Google teacher login is disabled unless this public OAuth audience is
+    # explicitly configured. It has no client secret and no Google API scope.
+    google_client_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "pilot_origin", _validate_origin(self.pilot_origin))
         if len(self.csrf_hmac_key) < 32:
             raise ValueError("csrf_hmac_key must contain at least 32 random bytes.")
+        object.__setattr__(
+            self, "google_client_id", _validate_google_client_id(self.google_client_id)
+        )
         if self.bake_hard_timeout_seconds <= 0:
             raise ValueError("bake_hard_timeout_seconds must be positive.")
         object.__setattr__(self, "bake_workers", _clamp_bake_workers(self.bake_workers))
@@ -260,6 +281,15 @@ class Settings:
             and _is_loopback_host(self.server_bind_host)
             and _is_loopback_host(origin_host)
         )
+
+    @property
+    def google_auth_enabled(self) -> bool:
+        return self.google_client_id is not None
+
+    @property
+    def google_jwks_url(self) -> str:
+        """The issuer-owned key set is fixed rather than deployment configurable."""
+        return _GOOGLE_ID_TOKEN_JWKS_URL
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -360,4 +390,5 @@ class Settings:
             review_attestation_jwks_ttl_seconds=int(
                 os.environ.get("HRAMATKA_REVIEW_ATTESTATION_JWKS_TTL_SECONDS", "300")
             ),
+            google_client_id=os.environ.get("HRAMATKA_GOOGLE_CLIENT_ID"),
         )
