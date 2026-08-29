@@ -141,6 +141,75 @@ describe('student view — the affordance must not leak (#164)', () => {
     expect(container.textContent).not.toContain(BADGE_UK);
   });
 
+  it('renders unanswered fill-in and cloze gaps as blanks on the student surface (#566)', () => {
+    const fillIn: LessonBlocksBlock = {
+      id: 'block-fill-1',
+      phase: 2,
+      type: 'fill-in',
+      mode: 'письмово',
+      activity: {
+        id: 'activity-fill-in-1',
+        type: 'fill-in',
+        title: 'Вставте слово',
+        level: 'b1',
+        payload: {
+          type: 'fill-in',
+          instruction: 'Оберіть форму.',
+          items: [{ sentence: 'Це ___ текст.', answer: 'книга', options: ['книга', 'книгу'] }],
+        },
+        answer_key: { items: ['книга'] },
+        provenance: { source: 'generated', generator: 'gemma', gates: ['vesum'] },
+      },
+      answer_key: { items: ['книга'] },
+      mark: 'ok',
+      note: null,
+      edited: false,
+    };
+    const { rerender } = renderBlocks(fillIn, 'run');
+    const fillBlank = within(screen.getByTestId('student-block')).getByRole('combobox', {
+      name: 'Оберіть відповідь для пропуску 1: _____',
+    });
+    expect(fillBlank).toHaveDisplayValue('_____');
+    expect(fillBlank).toHaveClass('unanswered');
+    expect(screen.queryByText('Оберіть відповідь')).not.toBeInTheDocument();
+
+    rerender(
+      <LangProvider>
+        <LessonBlocks
+          blocks={[{
+            ...fillIn,
+            id: 'block-cloze-1',
+            type: 'cloze',
+            activity: {
+              id: 'activity-cloze-1',
+              type: 'cloze',
+              title: 'Заповніть пропуски',
+              level: 'b1',
+              payload: {
+                type: 'cloze',
+                text: 'Учні {gap} текст.',
+                blanks: [{ id: 1, answer: 'читають', options: ['читають', 'пишуть'] }],
+              },
+              answer_key: { blanks: [{ id: 1, answer: 'читають' }] },
+              provenance: { source: 'generated', generator: 'gemma', gates: ['vesum'] },
+            },
+            answer_key: { blanks: [{ id: 1, answer: 'читають' }] },
+          }]}
+          viewMode="run"
+          showAnswers={false}
+          acknowledgedIds={[]}
+          onAck={() => {}}
+          loading={false}
+        />
+      </LangProvider>,
+    );
+    const clozeBlank = within(screen.getByTestId('student-block')).getByRole('combobox', {
+      name: 'Оберіть відповідь для пропуску 1: _____',
+    });
+    expect(clozeBlank).toHaveDisplayValue('_____');
+    expect(clozeBlank).toHaveClass('unanswered');
+  });
+
   it('keeps the instruction and the task itself', () => {
     renderBlocks(ecBlock(ENRICHED_KEY), 'run');
 

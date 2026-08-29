@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { LangProvider } from './i18n';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { LangProvider, saveLang } from './i18n';
 import StudentActivityPlayer from './StudentActivityPlayer';
 
 function renderActivity(
@@ -12,13 +12,17 @@ function renderActivity(
 }
 
 describe('student activity player (#410)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it('accepts baked {gap} cloze markers and colours checked answers', () => {
     renderActivity({
       type: 'cloze', title: 'Заповніть пропуски',
       payload: { instruction: 'Доберіть слова.', text: 'Учні {gap} текст.', blanks: [{ id: 1, answer: 'читають', options: ['читають', 'пишуть'] }] },
     });
 
-    const blank = screen.getByLabelText('Пропуск 1');
+    const blank = screen.getByLabelText('Оберіть відповідь для пропуску 1: _____');
     fireEvent.change(blank, { target: { value: 'читають' } });
     fireEvent.click(screen.getByRole('button', { name: 'Перевірити' }));
     expect(blank).toHaveClass('correct');
@@ -42,14 +46,14 @@ describe('student activity player (#410)', () => {
     expect(check).toBeDisabled();
     for (const blank of blanks) {
       const value = blank.id === 8 ? blank.options[1] : blank.answer;
-      fireEvent.change(screen.getByLabelText(`Пропуск ${blank.id}`), { target: { value } });
+      fireEvent.change(screen.getByLabelText(`Оберіть відповідь для пропуску ${blank.id}: _____`), { target: { value } });
     }
     expect(screen.getAllByRole('combobox')).toHaveLength(8);
     expect(check).toBeEnabled();
 
     fireEvent.click(check);
-    expect(screen.getByLabelText('Пропуск 1')).toHaveClass('correct');
-    expect(screen.getByLabelText('Пропуск 8')).toHaveClass('wrong');
+    expect(screen.getByLabelText('Оберіть відповідь для пропуску 1: _____')).toHaveClass('correct');
+    expect(screen.getByLabelText('Оберіть відповідь для пропуску 8: _____')).toHaveClass('wrong');
   });
 
   it('keeps word-adjacent and out-of-range brace expressions as prose', () => {
@@ -72,10 +76,48 @@ describe('student activity player (#410)', () => {
       payload: { items: [{ sentence: 'Це ___ текст.', answer: 'український', options: ['український', 'інший'] }] },
     });
 
-    const blank = screen.getByLabelText('Пропуск 1');
+    const blank = screen.getByLabelText('Оберіть відповідь для пропуску 1: _____');
     fireEvent.change(blank, { target: { value: 'інший' } });
     fireEvent.click(screen.getByRole('button', { name: 'Перевірити' }));
     expect(blank).toHaveClass('wrong');
+  });
+
+  it('does not check fill-in or cloze work after a selected answer is cleared', () => {
+    const { rerender } = renderActivity({
+      type: 'fill-in', title: 'Вставте слово',
+      payload: { items: [{ sentence: 'Це ___ текст.', answer: 'український', options: ['український', 'інший'] }] },
+    });
+
+    let blank = screen.getByLabelText('Оберіть відповідь для пропуску 1: _____');
+    let check = screen.getByRole('button', { name: 'Перевірити' });
+    fireEvent.change(blank, { target: { value: 'інший' } });
+    expect(check).toBeEnabled();
+    fireEvent.change(blank, { target: { value: '' } });
+    expect(check).toBeDisabled();
+
+    rerender(<LangProvider><StudentActivityPlayer activity={{
+      type: 'cloze', title: 'Заповніть пропуски',
+      payload: { text: 'Учні {gap} текст.', blanks: [{ id: 1, answer: 'читають', options: ['читають', 'пишуть'] }] },
+    }} /></LangProvider>);
+
+    blank = screen.getByLabelText('Оберіть відповідь для пропуску 1: _____');
+    check = screen.getByRole('button', { name: 'Перевірити' });
+    fireEvent.change(blank, { target: { value: 'пишуть' } });
+    expect(check).toBeEnabled();
+    fireEvent.change(blank, { target: { value: '' } });
+    expect(check).toBeDisabled();
+  });
+
+  it('uses an explicit zero cloze id consistently when gating the check action', () => {
+    renderActivity({
+      type: 'cloze', title: 'Заповніть пропуски',
+      payload: { text: 'Учні [___:0] текст.', blanks: [{ id: 0, answer: 'читають', options: ['читають', 'пишуть'] }] },
+    });
+
+    const blank = screen.getByLabelText('Оберіть відповідь для пропуску 0: _____');
+    const check = screen.getByRole('button', { name: 'Перевірити' });
+    fireEvent.change(blank, { target: { value: 'читають' } });
+    expect(check).toBeEnabled();
   });
 
   it('retains true-false choices and colours the chosen button after checking', () => {
@@ -137,6 +179,62 @@ describe('student activity player (#410)', () => {
 
     expect(screen.getByText('Я живу в Києв.')).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders unanswered fill-in and cloze gaps as a sentence blank (#566)', () => {
+    const { rerender } = renderActivity({
+      type: 'fill-in', title: 'Вставте слово',
+      payload: { items: [{ sentence: 'Це ___ текст.', answer: 'український', options: ['український', 'інший'] }] },
+    });
+
+    const fillBlank = screen.getByRole('combobox', { name: 'Оберіть відповідь для пропуску 1: _____' });
+    expect(fillBlank).toHaveClass('unanswered');
+    expect(fillBlank).toHaveAttribute('data-unanswered', 'true');
+    expect(fillBlank).toHaveDisplayValue('_____');
+    expect(screen.queryByText('Оберіть відповідь')).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'український' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'інший' })).toBeInTheDocument();
+    expect(fillBlank).not.toHaveValue('український');
+
+    fillBlank.focus();
+    expect(fillBlank).toHaveFocus();
+    fireEvent.change(fillBlank, { target: { value: 'інший' } });
+    expect(fillBlank).toHaveFocus();
+    expect(fillBlank).toHaveDisplayValue('інший');
+    expect(fillBlank).not.toHaveClass('unanswered');
+    expect(fillBlank).toHaveAttribute('data-unanswered', 'false');
+    expect(fillBlank).not.toHaveValue('український');
+
+    rerender(<LangProvider><StudentActivityPlayer activity={{
+      type: 'cloze', title: 'Заповніть пропуски',
+      payload: { text: 'Учні {gap} текст.', blanks: [{ id: 1, answer: 'читають', options: ['читають', 'пишуть'] }] },
+    }} /></LangProvider>);
+
+    const clozeBlank = screen.getByRole('combobox', { name: 'Оберіть відповідь для пропуску 1: _____' });
+    expect(clozeBlank).toHaveClass('unanswered');
+    expect(clozeBlank).toHaveDisplayValue('_____');
+    expect(screen.queryByText('Оберіть відповідь')).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'читають' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'пишуть' })).toBeInTheDocument();
+    clozeBlank.focus();
+    expect(clozeBlank).toHaveFocus();
+    fireEvent.change(clozeBlank, { target: { value: 'пишуть' } });
+    expect(clozeBlank).toHaveDisplayValue('пишуть');
+    expect(clozeBlank).not.toHaveClass('unanswered');
+    expect(clozeBlank).not.toHaveValue('читають');
+  });
+
+  it('keeps the English accessible name while choice options stay Ukrainian (#566)', () => {
+    saveLang('en');
+    renderActivity({
+      type: 'fill-in', title: 'Вставте слово',
+      payload: { items: [{ sentence: 'Це ___ текст.', answer: 'український', options: ['український', 'інший'] }] },
+    });
+
+    const blank = screen.getByRole('combobox', { name: 'Choose an answer for blank 1: _____' });
+    expect(blank).toHaveDisplayValue('_____');
+    expect(screen.getByRole('option', { name: 'український' })).toBeInTheDocument();
+    expect(screen.queryByText('Choose an answer')).not.toBeInTheDocument();
   });
 
   it('shows text questions, hides model answers, and puts guidance first', () => {

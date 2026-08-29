@@ -32,6 +32,36 @@ function CheckButton({ disabled, onClick }: { disabled: boolean; onClick: () => 
   return <button type="button" className="student-check" disabled={disabled} onClick={onClick}>{t('studentActivity.check')}</button>;
 }
 
+function ChoiceBlank({
+  ariaLabel,
+  className,
+  disabled,
+  value,
+  options,
+  onChange,
+}: {
+  ariaLabel: string;
+  className?: string;
+  disabled: boolean;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const { t } = useT();
+  const unanswered = value === '';
+  return <select
+    aria-label={ariaLabel}
+    className={['student-select', unanswered ? 'unanswered' : '', className].filter(Boolean).join(' ')}
+    data-unanswered={unanswered ? 'true' : 'false'}
+    disabled={disabled}
+    value={value}
+    onChange={(event) => onChange(event.target.value)}
+  >
+    <option value="">{t('studentActivity.chooseBlank')}</option>
+    {options.map((option) => <option value={option} key={option}>{option}</option>)}
+  </select>;
+}
+
 function RetryButton({ onClick }: { onClick: () => void }) {
   const { t } = useT();
   return <button type="button" className="student-retry" onClick={onClick}>{t('studentActivity.retry')}</button>;
@@ -114,6 +144,7 @@ function FillIn({ activity }: { activity: Activity }) {
   const items = activity.payload?.items ?? [];
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [checked, setChecked] = useState(false);
+  const allAnswered = items.every((_item: unknown, index: number) => (answers[index] ?? '') !== '');
   const reset = () => { setAnswers({}); setChecked(false); };
 
   return <section className="student-activity" data-student-activity="fill-in">
@@ -124,20 +155,18 @@ function FillIn({ activity }: { activity: Activity }) {
       const parts = String(item.sentence ?? '').split(/(?:_{3,}|\{[^{}]+\})/);
       return <label className="student-fill-row" key={index}>
         <span>{parts[0]}</span>
-        <select
-          aria-label={t('studentActivity.fillBlank', { n: index + 1 })}
-          className={`student-select${checked ? (correct ? ' correct' : ' wrong') : ''}`}
+        <ChoiceBlank
+          ariaLabel={t('studentActivity.fillBlank', { n: index + 1 })}
+          className={checked ? (correct ? 'correct' : 'wrong') : undefined}
           disabled={checked}
           value={answers[index] ?? ''}
-          onChange={(event) => setAnswers((previous) => ({ ...previous, [index]: event.target.value }))}
-        >
-          <option value="">{t('studentActivity.choose')}</option>
-          {(item.options ?? [item.answer]).map((option: string) => <option value={option} key={option}>{option}</option>)}
-        </select>
+          options={item.options ?? [item.answer]}
+          onChange={(next) => setAnswers((previous) => ({ ...previous, [index]: next }))}
+        />
         <span>{parts.slice(1).join('')}</span>
       </label>;
     })}
-    {checked ? <RetryButton onClick={reset} /> : <CheckButton disabled={Object.keys(answers).length !== items.length} onClick={() => setChecked(true)} />}
+    {checked ? <RetryButton onClick={reset} /> : <CheckButton disabled={!allAnswered} onClick={() => setChecked(true)} />}
   </section>;
 }
 
@@ -146,6 +175,10 @@ function Cloze({ activity }: { activity: Activity }) {
   const blanks = activity.payload?.blanks ?? [];
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [checked, setChecked] = useState(false);
+  const allAnswered = blanks.every((blank: any, index: number) => {
+    const blankIndex = blank.id == null ? index + 1 : Number(blank.id);
+    return (answers[blankIndex] ?? '') !== '';
+  });
   const reset = () => { setAnswers({}); setChecked(false); };
   const nodes = useMemo(() => {
     const text = String(activity.payload?.text ?? '');
@@ -163,17 +196,15 @@ function Cloze({ activity }: { activity: Activity }) {
       const blank = blanks.find((candidate: any) => Number(candidate.id) === blankIndex) ?? blanks[blankIndex - 1];
       if (!blank) return <span key={segmentIndex}>{token}</span>;
       const correct = normalize(answers[blankIndex]) === normalize(blank.answer);
-      return <select
+      return <ChoiceBlank
         key={segmentIndex}
-        aria-label={t('studentActivity.clozeBlank', { n: blankIndex })}
-        className={`student-select student-cloze${checked ? (correct ? ' correct' : ' wrong') : ''}`}
+        ariaLabel={t('studentActivity.clozeBlank', { n: blankIndex })}
+        className={['student-cloze', checked ? (correct ? 'correct' : 'wrong') : ''].filter(Boolean).join(' ')}
         disabled={checked}
         value={answers[blankIndex] ?? ''}
-        onChange={(event) => setAnswers((previous) => ({ ...previous, [blankIndex]: event.target.value }))}
-      >
-        <option value="">{t('studentActivity.choose')}</option>
-        {(blank.options ?? []).map((option: string) => <option key={option} value={option}>{option}</option>)}
-      </select>;
+        options={blank.options ?? []}
+        onChange={(next) => setAnswers((previous) => ({ ...previous, [blankIndex]: next }))}
+      />;
     });
   }, [activity.payload?.text, answers, blanks, checked, t]);
 
@@ -181,7 +212,7 @@ function Cloze({ activity }: { activity: Activity }) {
     <Heading activity={activity} />
     {activity.payload?.instruction && <p className="student-instruction">{activity.payload.instruction}</p>}
     <p className="student-cloze-passage">{nodes}</p>
-    {checked ? <RetryButton onClick={reset} /> : <CheckButton disabled={Object.keys(answers).length !== blanks.length} onClick={() => setChecked(true)} />}
+    {checked ? <RetryButton onClick={reset} /> : <CheckButton disabled={!allAnswered} onClick={() => setChecked(true)} />}
   </section>;
 }
 

@@ -18,9 +18,26 @@
 .student-retry { justify-self: start; background: var(--wheat-soft); border-color: var(--wheat); }
 .student-check:disabled { opacity: .55; cursor: not-allowed; }
 .student-fill-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.student-select { min-width: 130px; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.student-select { min-width: 6.5em; max-width: 100%; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font: inherit; color: inherit; }
+.student-select.unanswered {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 4.5em;
+  width: 5.5em;
+  padding: 0 2px;
+  border: none;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  text-align: center;
+  letter-spacing: 0.06em;
+}
+.student-select.unanswered:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .student-cloze-passage { line-height: 2.6; }
-.student-cloze { margin: 0 4px; }
+.student-cloze { margin: 0 4px; display: inline-block; vertical-align: baseline; }
 .student-step-two { font-weight: 600; }
 .student-step-one { font-weight: 600; }
 .student-error-sentence { line-height: 2; }

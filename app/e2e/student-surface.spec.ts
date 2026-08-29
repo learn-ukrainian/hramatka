@@ -131,6 +131,29 @@ test.describe('Student sharing surface (P0-3)', () => {
     const tfBlock = page.locator('[data-activity-type="true-false"]').first();
     await useTrueFalseActivity(tfBlock);
 
+    const fillBlank = page.locator('[data-activity-type="fill-in"] select.student-select').first();
+    await expect(fillBlank).toBeVisible();
+    await expect(fillBlank).toHaveAttribute('aria-label', 'Оберіть відповідь для пропуску 1: _____');
+    await expect(fillBlank).toHaveAttribute('data-unanswered', 'true');
+    await expect(fillBlank).toHaveValue('');
+    await expect(fillBlank.locator('option').first()).toHaveText('_____');
+    await expect(fillBlank).not.toContainText('Оберіть відповідь');
+    await fillBlank.focus();
+    await expect(fillBlank).toBeFocused();
+    await fillBlank.selectOption({ label: 'книга' });
+    await expect(fillBlank).toHaveValue('книга');
+    await expect(fillBlank).toHaveAttribute('data-unanswered', 'false');
+
+    const clozeBlank = page.locator('[data-activity-type="cloze"] select.student-select').first();
+    await expect(clozeBlank).toBeVisible();
+    await expect(clozeBlank).toHaveAttribute('aria-label', /Оберіть відповідь для пропуску/);
+    await expect(clozeBlank).toHaveAttribute('data-unanswered', 'true');
+    await clozeBlank.focus();
+    await expect(clozeBlank).toBeFocused();
+    await clozeBlank.selectOption({ label: 'допомагає' });
+    await expect(clozeBlank).toHaveValue('допомагає');
+    await expect(clozeBlank).toHaveAttribute('data-unanswered', 'false');
+
     // Teacher return restores teacher chrome
     await page.getByTestId('teacher-return-btn').click();
     await expect(page.getByTestId('teacher-surface')).toBeVisible();
