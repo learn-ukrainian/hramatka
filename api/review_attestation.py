@@ -170,6 +170,8 @@ def _parse_lifecycle(body: object, *, is_draft: object) -> str:
     assert isinstance(family, str)
     # This is an honest-author operational declaration in the trusted lifecycle,
     # not cryptographic provenance of the person or model that wrote the PR.
+    # Paid attestation still starts only from draft/blocked. external-review is
+    # an infra review-of-record state and must not authorize provider spend.
     if marker.get("state") not in {"draft", "blocked"} or not is_draft:
         raise ReviewAttestationError("malformed_lifecycle")
     if any(
