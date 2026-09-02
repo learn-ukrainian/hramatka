@@ -202,7 +202,7 @@ sudo -n /opt/hramatka/current/.venv/bin/python \
 The command takes the same host-local lifecycle lock as the attestor over its
 provider call. It therefore rejects recovery while an attestation may still be
 in flight rather than risking two charges. A subsequent trusted workflow run
-still performs all OIDC, exact-head, draft/blocked, and cross-family checks;
+still performs all OIDC, exact-head, draft/blocked/review, and cross-family checks;
 the command never calls a provider or signs/publishes a receipt. Do not edit,
 delete, expire, or reset attestation rows with SQLite tools.
 

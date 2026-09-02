@@ -168,11 +168,21 @@ def _parse_lifecycle(body: object, *, is_draft: object) -> str:
     marker = _parse_lifecycle_marker(body)
     family = marker["author_family"]
     assert isinstance(family, str)
-    # This is an honest-author operational declaration in the trusted lifecycle,
-    # not cryptographic provenance of the person or model that wrote the PR.
-    # Paid attestation still starts only from draft/blocked. external-review is
-    # an infra review-of-record state and must not authorize provider spend.
-    if marker.get("state") not in {"draft", "blocked"} or not is_draft:
+    # Honest-author declaration, not cryptographic provenance. Paid spend is
+    # only for PRs that do not already carry a receipt. Couple GitHub draft
+    # the same way parse_lifecycle does: draft/blocked stay drafts; `review`
+    # is the ready-for-review entry state. Refusing `review` made every
+    # non-draft labelled PR fail CI as opaque "attestor request failed".
+    # ready / external-review / superseded still must not authorize spend.
+    state = marker.get("state")
+    draft = bool(is_draft)
+    if state in {"draft", "blocked"}:
+        if not draft:
+            raise ReviewAttestationError("malformed_lifecycle")
+    elif state == "review":
+        if draft:
+            raise ReviewAttestationError("malformed_lifecycle")
+    else:
         raise ReviewAttestationError("malformed_lifecycle")
     if any(
         marker.get(field) is not None
