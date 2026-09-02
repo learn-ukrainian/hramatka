@@ -64,7 +64,12 @@ _RECOVERY_DISPOSITIONS = frozenset(
 )
 _MAX_RECOVERY_CHAIN_HOPS = 32
 _INSPECTABLE_FAILURE_CODES = frozenset(
-    {"provider_failure", "provider_not_configured", "provider_output_invalid"}
+    {
+        "provider_authentication_failed",
+        "provider_failure",
+        "provider_not_configured",
+        "provider_output_invalid",
+    }
 )
 _PROCESS_REQUEST_LOCK = threading.Lock()
 _BASE64_WRAPPING_WHITESPACE = b" \t\r\n"
@@ -1650,7 +1655,14 @@ class ReviewAttestor:
                 float(self.settings.review_attestation_provider_timeout_seconds), connect=5.0
             ),
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 401:
+                raise ReviewAttestationError(
+                    "provider_authentication_failed", status_code=503
+                ) from error
+            raise
         content = response.json()["choices"][0]["message"]["content"]
         if not isinstance(content, str):
             raise ValueError("provider content is not text")
