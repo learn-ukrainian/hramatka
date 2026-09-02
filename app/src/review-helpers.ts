@@ -505,3 +505,34 @@ export function marginStateChip(block: ReviewBlock, acked: boolean): { className
   if (blockNeedsReview(block) && acked) return { className: 'ok', key: 'chip.confirmed' };
   return { className: 'ok', key: 'chip.verified' };
 }
+
+/**
+ * `answer_key` fields the frozen kit renders straight into the DOM for a teacher.
+ *
+ * `ActivityPlayer` emits a teacher-guidance aside for `text-questions` and
+ * `short-writing` carrying `model_answers`/`model_answer` and `rubric`, and it does
+ * so unconditionally — no interaction gates them. `guidance` is deliberately absent
+ * from this list: the student run view shows it too (`StudentActivityPlayer`), so it
+ * is student-safe and the boundary stays where run already drew it.
+ */
+const STUDENT_WITHHELD_ANSWER_KEY_FIELDS = ['model_answer', 'model_answers', 'rubric'] as const;
+
+/**
+ * Copy of an activity with the teacher-only answer-key fields removed (#587).
+ *
+ * A student print must not carry keys in its page source — a stylesheet that paints
+ * them away still loses to copy-paste and to any print path that drops CSS. Returns
+ * the input unchanged when it holds nothing teacher-only, so the widget keeps
+ * receiving the identical object on the common path.
+ */
+export function withoutTeacherOnlyAnswerKey(
+  activity: Record<string, unknown>,
+): Record<string, unknown> {
+  const answerKey = activity.answer_key;
+  if (answerKey === null || typeof answerKey !== 'object' || Array.isArray(answerKey)) return activity;
+  const fields = answerKey as Record<string, unknown>;
+  if (!STUDENT_WITHHELD_ANSWER_KEY_FIELDS.some((field) => field in fields)) return activity;
+  const kept: Record<string, unknown> = { ...fields };
+  for (const field of STUDENT_WITHHELD_ANSWER_KEY_FIELDS) delete kept[field];
+  return { ...activity, answer_key: kept };
+}

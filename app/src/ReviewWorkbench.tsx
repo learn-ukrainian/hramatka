@@ -18,6 +18,7 @@ import {
   FOCUS_STATUS_ACK_ID,
   activityTypeLabel,
   formatAnswerKeyDisplay,
+  withoutTeacherOnlyAnswerKey,
 } from './review-helpers';
 import { useT, type ChromeKey } from './i18n';
 
@@ -57,6 +58,15 @@ export interface ReviewWorkbenchProps {
   onRegenerateActivity: (blockId: string, feedback: string | null) => void;
   onRetryRegeneration: (regenerationId: string) => void;
   allWarningsAcked: boolean;
+  /**
+   * «Друк для учня» is being prepared (#587). The workbench is the teacher's
+   * surface by construction, so a student print cannot be a stylesheet that
+   * paints the keys away — copy-paste of the print DOM, and any print path that
+   * drops CSS, would still expose them. Under this flag every key, badge, note,
+   * provenance line, engine-flagged block and rejected draft leaves the DOM,
+   * which is the boundary the student run view already holds.
+   */
+  studentPrint?: boolean;
 }
 
 export default function ReviewWorkbench({
@@ -75,6 +85,7 @@ export default function ReviewWorkbench({
   onRegenerateActivity,
   onRetryRegeneration,
   allWarningsAcked,
+  studentPrint = false,
 }: ReviewWorkbenchProps) {
   const { lesson, warning_acknowledgements } = resource;
   const activityFeedback = resource.activity_feedback || {};
@@ -110,7 +121,10 @@ export default function ReviewWorkbench({
 
   const renderBlockContent = (block: ReviewBlock) => {
     const blockBusy = blockIsBusy(block.id);
-    if (editingBlockId === block.id) {
+    // The editor is teacher tooling and shows the raw key fields, so a student
+    // print renders the saved activity instead. `editingBlockId` is untouched:
+    // the editor comes straight back when the print variant clears.
+    if (!studentPrint && editingBlockId === block.id) {
       return (
         <ActivityEditor
           activity={block.activity as Record<string, unknown>}
@@ -123,15 +137,21 @@ export default function ReviewWorkbench({
         />
       );
     }
-    // #164: the workbench is teacher-only by construction — no student path reaches it.
-    const intent = deliberateErrors(block.answer_key);
+    // #164: the workbench is teacher-only by construction — except for the student
+    // print variant (#587), where the deliberate-error intent is exactly what must
+    // not reach the page, badge and list alike.
+    const intent = studentPrint ? [] : deliberateErrors(block.answer_key);
+    // #587: the frozen kit prints model answers and rubrics into a teacher-guidance
+    // aside on its own, so the student print hands it an activity that no longer
+    // carries them.
+    const activity = studentPrint ? withoutTeacherOnlyAnswerKey(block.activity) : block.activity;
     return (
       <div className="bcontent" data-activity data-activity-type={block.type}>
         {/* Marked before the activity: the point is to pre-empt reading the wrong
             Ukrainian below as an engine defect, so it must be seen first. */}
         {intent.length > 0 && <DeliberateErrorBadge />}
-        <ActivityPlayer activity={block.activity} isUkrainian />
-        {showAnswers && (
+        <ActivityPlayer activity={activity} isUkrainian />
+        {showAnswers && !studentPrint && (
           <div className="teacher-key" data-testid="teacher-answer-key">
             <strong>{t('review.answerKey')}</strong>
             {block.type === 'short-writing' ? (
@@ -323,6 +343,10 @@ export default function ReviewWorkbench({
   };
 
   const renderMargin = (block: ReviewBlock) => {
+    // The margin carries the engine's flag reason, the teacher note and the
+    // provenance line. `.noprint` keeps it off paper; #587 keeps it out of the
+    // page source too.
+    if (studentPrint) return null;
     const blockBusy = blockIsBusy(block.id);
     const acked = acks.has(block.id);
     const chip = marginStateChip(block, acked);
@@ -385,7 +409,11 @@ export default function ReviewWorkbench({
         <span><b>Факти перевірте.</b> {t('review.banner')}</span>
       </div>
 
-      {showFocusNotice && (
+      {/* #587: the banner is `.noprint`, but it repeats the same teacher-only
+          caveat as the omitted sheet line, so a student print drops both. The
+          remaining `.noprint` chrome — the honesty banner, the duration toolbar,
+          the accept bar — carries no key, judgement or note about this lesson. */}
+      {showFocusNotice && !studentPrint && (
         <div className="banner honest focus-notice noprint" data-testid="focus-notice">
           <span className="ic">⚠</span>
           <span>
@@ -435,8 +463,15 @@ export default function ReviewWorkbench({
         <div className="anchorbody">{lesson.anchor.text}</div>
 
         {([1, 2, 3] as const).map((phase) => {
-          const phaseData = byPhase[phase];
           const label = PHASE_LABELS[phase];
+          // #402/#587: an engine-flagged block is teacher-review-only, so the
+          // student print drops it exactly as the student run view does — and a
+          // phase left with nothing keeps the teacher's empty-phase notice off
+          // the student's sheet by rendering no section at all.
+          const visible = studentPrint
+            ? byPhase[phase].visible.filter((block) => block.quality !== 'engine_flagged')
+            : byPhase[phase].visible;
+          if (studentPrint && visible.length === 0) return null;
           return (
             <section key={phase} className="review-phase" data-phase={phase}>
               <h4 className="dochead">
@@ -444,21 +479,23 @@ export default function ReviewWorkbench({
                 {t(label.titleKey)}
                 <span className="pd">{t('review.phaseDuration', { minutes: label.pd[lesson.duration] })}</span>
               </h4>
-              {phaseData.visible.length === 0 && (
+              {visible.length === 0 && (
                 <div className="dblock block empty-phase">
                   <p>{t('review.emptyPhase')}</p>
                 </div>
               )}
-              {phaseData.visible.map(renderPlannedBlock)}
+              {visible.map(renderPlannedBlock)}
             </section>
           );
         })}
         <p className="docsheet-footer" data-testid="honesty-footer">
           {t('print.honestyFooter')}
         </p>
-        {/* The banner is screen chrome and prints away with the rest of it. The
-            caveat itself must survive onto paper, so it rides the sheet too. */}
-        {showFocusNotice && (
+        {/* The banner above is screen chrome and prints away with the rest of it,
+            so the caveat rides the sheet to survive onto the teacher's paper.
+            #587: it is addressed to the teacher — it explains what the engine
+            could not ground — so it stays off the student's sheet entirely. */}
+        {showFocusNotice && !studentPrint && (
           <p
             className="docsheet-footer focus-notice-print"
             data-testid="focus-notice-print"
@@ -481,8 +518,12 @@ export default function ReviewWorkbench({
                 {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
               </span>
               <div className="bcontent" data-activity data-activity-type={block.type}>
-                <ActivityPlayer activity={block.activity} isUkrainian />
+                <ActivityPlayer
+                  activity={studentPrint ? withoutTeacherOnlyAnswerKey(block.activity) : block.activity}
+                  isUkrainian
+                />
               </div>
+              {!studentPrint && (
               <div className="dmargin noprint">
                 <span className="mtools">
                   <button type="button" data-action="b-include" onClick={() => onIncludeReserve(block.id)} disabled={blockIsBusy(block.id)}>
@@ -491,12 +532,15 @@ export default function ReviewWorkbench({
                 </span>
                 {renderRegeneration(block)}
               </div>
+              )}
             </div>
           ))}
         </section>
       )}
 
-      {lesson.rejected.length > 0 && (
+      {/* #587: a rejected draft is the teacher's audit trail, not lesson content —
+          the student run view never shows it, and neither does the student print. */}
+      {lesson.rejected.length > 0 && !studentPrint && (
         <section className="rejected-tray" data-testid="rejected-tray">
           <p className="rejected-head">
             {(() => {

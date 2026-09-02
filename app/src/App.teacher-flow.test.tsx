@@ -1001,3 +1001,67 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
     expect(submittedGoogleCompleteForm()?.querySelector('input[name="credential"]')).toHaveValue(jwt);
   });
 });
+
+/**
+ * «Друк для учня» wiring (#587).
+ *
+ * The assertions read the DOM *from inside the `window.print` stub*, which is the
+ * only moment that matters: it is the document the print dialog serialises, and it
+ * proves the variant re-render lands before printing rather than after.
+ */
+describe('student print omits teacher material from the print DOM (#587)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+  });
+
+  function installLessonFetch(resource: unknown) {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      }
+      if (url.endsWith('/api/lessons/lesson-1')) return response(resource);
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+  }
+
+  async function domSeenBy(printTestId: 'print-student' | 'print-teacher') {
+    installLessonFetch(generatedLessonResource('lesson-1'));
+    renderApp();
+    // Answers are on by default — the teacher is reading keys when they print.
+    await screen.findByTestId('teacher-answer-key');
+
+    let printed = '';
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {
+      printed = document.body.innerHTML;
+    });
+    fireEvent.click(screen.getByTestId(printTestId));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    return printed;
+  }
+
+  it('serialises no answer key, note or provenance margin for the student', async () => {
+    const printed = await domSeenBy('print-student');
+
+    expect(printed).toContain('print-variant-student');
+    expect(printed).not.toContain('teacher-answer-key');
+    expect(printed).not.toContain('teacher-key');
+    expect(printed).not.toContain('Ключ відповіді');
+    expect(printed).not.toContain('dmargin');
+    // The activity the student has to do is still on the sheet.
+    expect(printed).toContain('Учні читають текст.');
+  });
+
+  it('still serialises the keys for the teacher', async () => {
+    const printed = await domSeenBy('print-teacher');
+
+    expect(printed).toContain('print-variant-teacher');
+    expect(printed).toContain('teacher-answer-key');
+    expect(printed).toContain('Ключ відповіді');
+    expect(printed).toContain('dmargin');
+  });
+});

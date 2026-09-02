@@ -598,3 +598,184 @@ describe('one-block regeneration (#418)', () => {
     expect((document.querySelector('[data-action="accept-lesson"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+/**
+ * «Друк для учня» from teacher review (#587).
+ *
+ * The leak boundary is DOM ABSENCE, not visibility: a stylesheet that paints the
+ * teacher material away still loses to a copy-paste of the print DOM and to any
+ * print path that drops CSS. Every assertion below therefore queries the document,
+ * never computed styles.
+ */
+describe('ReviewWorkbench student print (#587)', () => {
+  const SENTENCE = 'Я живу в Києв.';
+  const ERROR = 'Києв';
+  const CORRECTION = 'Києві';
+  const CORRECTED = 'Я живу в Києві.';
+  const FLAG_REASON = 'Двигун вважає цю вправу неякісною.';
+  const REJECTED_REASON = 'Не пройшло ґейт.';
+  const NOTE = 'Уточніть відмінок разом з класом.';
+
+  function printResource(): LessonResourceView {
+    const [tf, cloze, shortWriting, questions, modelled] = mockResource.lesson.blocks;
+    return {
+      ...mockResource,
+      lesson: {
+        ...mockResource.lesson,
+        focus_status: UNSUPPORTED_FOCUS_STATUS,
+        rejected: [{ type: 'quiz', activity: null, reason: REJECTED_REASON }],
+        blocks: [
+          { ...tf, note: NOTE },
+          {
+            ...cloze,
+            quality: 'engine_flagged' as const,
+            flag_reason_uk: FLAG_REASON,
+          },
+          shortWriting,
+          {
+            ...shortWriting,
+            id: 'block-ec',
+            type: 'error-correction' as const,
+            activity: {
+              id: 'activity-ec',
+              type: 'error-correction',
+              title: 'Виправте помилку',
+              level: 'b1',
+              payload: { type: 'error-correction', instruction: 'Виправте.', items: [SENTENCE] },
+              answer_key: { items: [CORRECTED] },
+              provenance: { source: 'generated', generator: 'gemma', gates: ['vesum'] },
+            },
+            answer_key: {
+              items: [CORRECTED],
+              corrections: [{ sentence: SENTENCE, error: ERROR, correction: CORRECTION }],
+            },
+          },
+          questions,
+          modelled,
+        ],
+      },
+    };
+  }
+
+  const MODEL_ANSWER = 'Моя родина любить вареники.';
+  const RUBRIC = 'Правильне використання лексики.';
+  const MODEL_ANSWERS_ITEM = 'Відповідь 1.';
+
+  it('keeps every teacher affordance when the teacher is the one printing', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: false });
+
+    expect(screen.getAllByTestId('teacher-answer-key').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('deliberate-error-badge')).toBeTruthy();
+    expect(screen.getByTestId('deliberate-error-list')).toBeTruthy();
+    expect(screen.getByTestId('rejected-tray')).toBeTruthy();
+    expect(screen.getByTestId('focus-notice-print')).toBeTruthy();
+    expect(screen.getByTestId('flagged-badge')).toHaveTextContent(FLAG_REASON);
+    expect(document.querySelector('[data-block-id="block-2"]')).not.toBeNull();
+    expect(document.body.textContent).toContain(NOTE);
+    expect(document.body.textContent).toContain(MODEL_ANSWER);
+    expect(document.body.textContent).toContain(RUBRIC);
+  });
+
+  it('leaves no answer key, model answer or rubric in the student print DOM', () => {
+    // showAnswers stays true: the teacher was reading keys on screen when they
+    // reached for «Друк для учня», which is exactly when the leak used to happen.
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(screen.queryAllByTestId('teacher-answer-key')).toHaveLength(0);
+    expect(document.querySelectorAll('.teacher-key')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Ключ відповіді');
+    // The frozen kit prints these into its own teacher-guidance aside, so the
+    // activity handed to it must no longer carry them.
+    expect(document.querySelectorAll('[data-activity-model-answers]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-activity-rubric]')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain(MODEL_ANSWER);
+    expect(document.body.textContent).not.toContain(RUBRIC);
+    expect(document.body.textContent).not.toContain(MODEL_ANSWERS_ITEM);
+  });
+
+  it('leaves no deliberate-error badge, list or correction in the student print DOM', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(screen.queryByTestId('deliberate-error-badge')).toBeNull();
+    expect(screen.queryByTestId('deliberate-error-list')).toBeNull();
+    expect(screen.queryByTestId('deliberate-error-mark')).toBeNull();
+    // The wrong sentence is the exercise and stays; the correction is the answer.
+    expect(document.body.textContent).toContain(SENTENCE);
+    expect(document.body.textContent).not.toContain(CORRECTED);
+  });
+
+  it('drops engine-flagged blocks and the rejected tray, matching the student run view', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(document.querySelector('[data-block-id="block-2"]')).toBeNull();
+    expect(screen.queryByTestId('flagged-badge')).toBeNull();
+    expect(document.body.textContent).not.toContain(FLAG_REASON);
+    expect(screen.queryByTestId('rejected-tray')).toBeNull();
+    expect(document.body.textContent).not.toContain(REJECTED_REASON);
+  });
+
+  it('leaves no teacher note, provenance line or review margin in the student print DOM', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(document.querySelectorAll('.dmargin')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain(NOTE);
+    expect(document.body.textContent).not.toContain('Джерело');
+    expect(document.body.textContent).not.toContain('генератор');
+    expect(document.body.textContent).not.toContain('gemma');
+  });
+
+  it('omits the printed focus notice, which is addressed to the teacher', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(screen.queryByTestId('focus-notice-print')).toBeNull();
+    // The screen banner repeats the same caveat, so it goes with it — `.noprint`
+    // keeps it off paper but not out of a copy-paste of the print DOM.
+    expect(screen.queryByTestId('focus-notice')).toBeNull();
+    expect(document.body.textContent).not.toContain(NOTICE_UK);
+  });
+
+  it('still prints the lesson the student has to work through', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(document.body.textContent).toContain('Українська кухня: вареники');
+    expect(document.body.textContent).toContain('Текст про вареники.');
+    expect(document.body.textContent).toContain('Це правда.');
+    expect(screen.getByTestId('honesty-footer')).toBeTruthy();
+    // `guidance` is student-safe by the boundary the run view already drew.
+    expect(document.body.textContent).toContain('Вільна відповідь.');
+  });
+
+  it('renders the saved activity instead of an open editor, keeping its raw key fields off the sheet', () => {
+    const resource = printResource();
+    const props = {
+      resource,
+      showAnswers: true,
+      loading: false,
+      onMoveBlock: vi.fn(),
+      onRemoveBlock: vi.fn(),
+      onIncludeReserve: vi.fn(),
+      onRestoreRejected: vi.fn(),
+      onAckWarning: vi.fn(),
+      onSaveActivity: vi.fn(),
+      onActivityFeedback: vi.fn(),
+      onRegenerateActivity: vi.fn(),
+      onRetryRegeneration: vi.fn(),
+      onAcceptLesson: vi.fn(),
+      onReturnToDraft: vi.fn(),
+      allWarningsAcked: true,
+    };
+    const { rerender } = render(
+      <LangProvider><ReviewWorkbench {...props} studentPrint={false} /></LangProvider>,
+    );
+    fireEvent.click(document.querySelector('[data-action="b-edit"]') as HTMLElement);
+    expect(document.querySelector('.activity-editor')).not.toBeNull();
+
+    // Same instance, print variant on: the editor must not ride onto the sheet.
+    rerender(<LangProvider><ReviewWorkbench {...props} studentPrint /></LangProvider>);
+    expect(document.querySelector('.activity-editor')).toBeNull();
+
+    // Clearing the variant brings the teacher straight back to editing.
+    rerender(<LangProvider><ReviewWorkbench {...props} studentPrint={false} /></LangProvider>);
+    expect(document.querySelector('.activity-editor')).not.toBeNull();
+  });
+});

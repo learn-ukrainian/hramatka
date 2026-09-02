@@ -1438,7 +1438,11 @@ export default function TeacherApp() {
     URL.revokeObjectURL(a.href);
   };
 
-  // Browser print (with stylesheet) — teacher keeps keys; student worksheet has none
+  // Browser print — teacher keeps keys; the student worksheet has none. #587: the
+  // student variant re-renders the review sheet without the teacher material rather
+  // than hiding it, so the keys are absent from the print DOM, not merely painted
+  // away. The variant is set first and printed from a frame callback, so React has
+  // committed that render before the print dialog snapshots the document.
   const printLesson = (variant: 'teacher' | 'student') => {
     setPrintVariant(variant);
     requestAnimationFrame(() => {
@@ -2527,6 +2531,7 @@ export default function TeacherApp() {
                       onRegenerateActivity={createActivityRegeneration}
                       onRetryRegeneration={retryActivityRegeneration}
                       allWarningsAcked={allVisibleWarningsAcked(lesson)}
+                      studentPrint={printVariant === 'student'}
                     />
                   )}
 
