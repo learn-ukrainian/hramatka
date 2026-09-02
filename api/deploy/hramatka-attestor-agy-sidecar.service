@@ -1,0 +1,15 @@
+[Unit]
+Description=Hramatka review attestor AGY sidecar
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/hramatka/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/hramatka/current/.venv/bin/python -m hramatka.ops.review_attestor_sidecar --host 127.0.0.1 --port 8791
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

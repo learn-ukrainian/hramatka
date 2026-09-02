@@ -77,11 +77,14 @@ change, provisioning, or disclosure of any secret.
    variable `HRAMATKA_REVIEW_ATTESTOR_URL`; do not put that URL in a workflow,
    source file, Caddy variable, or shell history. The trusted repository ID,
    workflow ref, and workflow-content digest are allow-list inputs, not hints.
-   Review calls use the host's existing Google-AIS credential from
-   `HRAMATKA_AIS_API_KEY` or `HRAMATKA_AIS_API_KEY_FILE`; GitHub Actions
+   Review calls route to the loopback AGY sidecar (`hramatka-attestor-agy-sidecar.service`)
+   at `http://127.0.0.1:8791/v1/review-attestation`, backed by the operator's Antigravity
+   subscription running Gemini 3.8 Flash (High); GitHub Actions
    receives no Google credential. The default reviewer is
-   `google-ais/gemini-3.6-flash`. It never falls back automatically to Pro or
-   another paid model. The signing-key path is the exception: do not assign it
+   `google/gemini-3.8-flash-high`. It never falls back automatically to Pro or
+   another paid model. Start the sidecar user service with
+   `systemctl --user enable --now hramatka-attestor-agy-sidecar.service`.
+   The signing-key path is the exception: do not assign it
    in `api.env`. The service unit sets
    `HRAMATKA_REVIEW_ATTESTATION_SIGNING_KEY_FILE` to its `%d` systemd credential
    copy, sourced from the root-only PEM.

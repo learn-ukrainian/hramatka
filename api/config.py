@@ -21,7 +21,7 @@ _DEFAULT_MAX_PROVIDER_CONCURRENCY = 8
 _DEFAULT_BAKE_PROVIDERS = ("antigravity", "openrouter")
 _EXPLICIT_SUBSCRIPTION_PROVIDER = "antigravity"
 _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER = "api_observed"
-_DEFAULT_GOOGLE_AIS_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+_DEFAULT_REVIEW_ATTESTATION_SIDECAR_URL = "http://127.0.0.1:8791/v1/review-attestation"
 _GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 _GOOGLE_ALLOWED_EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,63}$")
 
@@ -114,22 +114,27 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
-def _validate_google_ais_base_url(value: str) -> str:
-    """Accept only the locked Google OpenAI-compatible HTTPS endpoint."""
+def _validate_review_attestation_sidecar_url(value: str) -> str:
+    """Accept only an unambiguous loopback HTTP sidecar endpoint."""
     parsed = urlsplit(value)
     if (
-        parsed.scheme != "https"
-        or parsed.netloc != "generativelanguage.googleapis.com"
-        or parsed.path.rstrip("/") != "/v1beta/openai"
+        parsed.scheme != "http"
+        or not _is_loopback_host(parsed.hostname)
+        or parsed.port is None
         or parsed.query
         or parsed.fragment
         or parsed.username
         or parsed.password
     ):
         raise ValueError(
-            "review attestation AIS base URL must be the locked Google OpenAI endpoint."
+            "review attestation sidecar URL must be a loopback HTTP endpoint."
         )
-    return _DEFAULT_GOOGLE_AIS_BASE_URL
+    path = parsed.path.rstrip("/")
+    if path and path != "/v1/review-attestation":
+        raise ValueError(
+            "review attestation sidecar URL path must be /v1/review-attestation."
+        )
+    return f"http://{parsed.hostname}:{parsed.port}/v1/review-attestation"
 
 
 def _validate_google_client_id(value: str | None) -> str | None:
@@ -224,8 +229,8 @@ class Settings:
     review_attestation_trusted_runner_label: str | None = None
     review_attestation_db_path: Path | None = None
     review_attestation_signing_key_file: Path | None = None
-    review_attestation_ais_base_url: str = _DEFAULT_GOOGLE_AIS_BASE_URL
-    review_attestation_model: str = "google-ais/gemini-3.6-flash"
+    review_attestation_sidecar_url: str = _DEFAULT_REVIEW_ATTESTATION_SIDECAR_URL
+    review_attestation_model: str = "google/gemini-3.8-flash-high"
     review_attestation_max_calls_per_run: int = 1
     review_attestation_prompt_version: str = "hramatka-review-attestation-prompt.v2"
     review_attestation_max_diff_bytes: int = 500_000
@@ -311,11 +316,13 @@ class Settings:
                 raise ValueError("review attestation runner label must be hramatka-attestor.")
             object.__setattr__(
                 self,
-                "review_attestation_ais_base_url",
-                _validate_google_ais_base_url(self.review_attestation_ais_base_url),
+                "review_attestation_sidecar_url",
+                _validate_review_attestation_sidecar_url(self.review_attestation_sidecar_url),
             )
-            if self.review_attestation_model != "google-ais/gemini-3.6-flash":
-                raise ValueError("review attestation model must be google-ais/gemini-3.6-flash.")
+            if self.review_attestation_model != "google/gemini-3.8-flash-high":
+                raise ValueError(
+                    "review attestation model must be google/gemini-3.8-flash-high."
+                )
             if self.review_attestation_max_calls_per_run != 1:
                 raise ValueError("review attestation cost cap must be exactly one provider call.")
             if not self.review_attestation_prompt_version:
@@ -432,12 +439,13 @@ class Settings:
                 if (value := os.environ.get("HRAMATKA_REVIEW_ATTESTATION_SIGNING_KEY_FILE"))
                 else None
             ),
-            review_attestation_ais_base_url=os.environ.get(
-                "HRAMATKA_AIS_BASE_URL", _DEFAULT_GOOGLE_AIS_BASE_URL
+            review_attestation_sidecar_url=os.environ.get(
+                "HRAMATKA_REVIEW_ATTESTATION_SIDECAR_URL",
+                _DEFAULT_REVIEW_ATTESTATION_SIDECAR_URL,
             ),
             review_attestation_model=os.environ.get(
                 "HRAMATKA_REVIEW_ATTESTATION_REVIEWER_MODEL",
-                "google-ais/gemini-3.6-flash",
+                "google/gemini-3.8-flash-high",
             ),
             review_attestation_prompt_version=os.environ.get(
                 "HRAMATKA_REVIEW_ATTESTATION_PROMPT_VERSION",

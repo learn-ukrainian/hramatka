@@ -24,13 +24,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from hramatka.engine.transport import (
-    AIS_API_KEY_FILE_ENV,
-    AISGeneratorPort,
-    GeneratorUnavailable,
-)
-
-from .config import Settings, _validate_google_ais_base_url
+from .config import Settings
 
 _GITHUB_ISSUER = "https://token.actions.githubusercontent.com"
 _GITHUB_JWKS = f"{_GITHUB_ISSUER}/.well-known/jwks"
@@ -1626,52 +1620,42 @@ class ReviewAttestor:
 
     def _call_provider(self, user_input: str) -> str:
         try:
-            key = AISGeneratorPort(api_key_file_env=AIS_API_KEY_FILE_ENV).resolve_key()
-        except GeneratorUnavailable as exc:
-            raise ReviewAttestationError("provider_not_configured", status_code=503) from exc
-        base_url = _validate_google_ais_base_url(self.settings.review_attestation_ais_base_url)
-        response = self.client.post(
-            f"{base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json={
-                "model": self.settings.review_attestation_model.removeprefix("google-ais/"),
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input},
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "review_attestation",
-                        "strict": True,
-                        "schema": _RESULT_SCHEMA,
-                    },
+            response = self.client.post(
+                self.settings.review_attestation_sidecar_url,
+                json={
+                    "system_prompt": _SYSTEM_PROMPT,
+                    "user_prompt": user_input,
+                    "schema": _RESULT_SCHEMA,
                 },
-                "max_completion_tokens": 1200,
-                "reasoning_effort": "high",
-                "temperature": 0,
-            },
-            timeout=httpx.Timeout(
-                float(self.settings.review_attestation_provider_timeout_seconds), connect=5.0
-            ),
-        )
-        try:
+                timeout=httpx.Timeout(
+                    float(self.settings.review_attestation_provider_timeout_seconds),
+                    connect=5.0,
+                ),
+            )
             response.raise_for_status()
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code == 401:
-                raise ReviewAttestationError(
-                    "provider_authentication_failed", status_code=503
-                ) from error
-            raise
-        content = response.json()["choices"][0]["message"]["content"]
-        if not isinstance(content, str):
-            raise ValueError("provider content is not text")
-        return content
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise ReviewAttestationError("provider_not_configured", status_code=503) from exc
+        except Exception as exc:
+            raise ReviewAttestationError("provider_failure", status_code=503) from exc
+
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise ReviewAttestationError("provider_failure", status_code=503) from exc
+
+        if isinstance(payload, dict) and "structured_output" in payload:
+            structured = payload["structured_output"]
+        else:
+            structured = payload
+
+        if isinstance(structured, (dict, list)):
+            return json.dumps(structured)
+        if isinstance(structured, str):
+            return structured
+        raise ReviewAttestationError("provider_failure", status_code=503)
 
     def _provider_host(self) -> str:
-        parsed = urlsplit(
-            _validate_google_ais_base_url(self.settings.review_attestation_ais_base_url)
-        )
+        parsed = urlsplit(self.settings.review_attestation_sidecar_url)
         return f"{parsed.scheme}://{parsed.netloc}"
 
     def _load_signing_key(self) -> tuple[Ed25519PrivateKey, str]:
