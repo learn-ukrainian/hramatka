@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ReviewWorkbench, { type LessonResourceView } from './ReviewWorkbench';
 import { LangProvider } from './i18n';
@@ -743,6 +743,69 @@ describe('ReviewWorkbench student print (#587)', () => {
     expect(screen.getByTestId('honesty-footer')).toBeTruthy();
     // `guidance` is student-safe by the boundary the run view already drew.
     expect(document.body.textContent).toContain('Вільна відповідь.');
+  });
+
+  it('omits per-block type/mode chips on the student print, matching the student run view (#590)', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: true });
+
+    expect(document.querySelectorAll('.type')).toHaveLength(0);
+    expect(document.querySelectorAll('.mode-chip')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Правда чи ні');
+    expect(document.body.textContent).not.toContain('усно');
+    expect(document.body.textContent).not.toContain('письмово');
+  });
+
+  it('keeps type/mode chips when the teacher prints or reviews on screen (#590)', () => {
+    renderWorkbench(printResource(), { showAnswers: true, studentPrint: false });
+
+    expect(document.querySelectorAll('.type').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('.mode-chip').length).toBeGreaterThan(0);
+    expect(document.body.textContent).toContain('Правда чи ні');
+    expect(document.body.textContent).toContain('усно');
+  });
+
+  it('omits the reserve tray heading on the student print while still printing reserve blocks (#590)', () => {
+    // Duration 45 budgets phase 1 at 2 blocks; a third phase-1 block is reserve.
+    const base = printResource();
+    const overflow = {
+      ...base.lesson.blocks[0],
+      id: 'block-reserve-overflow',
+      phase: 1 as const,
+      mode: 'вдома',
+      activity: {
+        ...base.lesson.blocks[0].activity,
+        id: 'activity-reserve-overflow',
+        title: 'Запасна вправа',
+        payload: {
+          type: 'true-false',
+          instruction: 'Т/Ф запас',
+          items: [{ statement: 'Запасний блок для друку.', correct: true }],
+        },
+      },
+    };
+    const resource: LessonResourceView = {
+      ...base,
+      lesson: {
+        ...base.lesson,
+        duration: 45,
+        blocks: [...base.lesson.blocks, overflow],
+      },
+    };
+
+    renderWorkbench(resource, { showAnswers: true, studentPrint: false });
+    expect(screen.getByTestId('reserve-tray')).toBeTruthy();
+    expect(document.querySelector('.reserve-head')).not.toBeNull();
+    expect(document.body.textContent).toContain('У запасі');
+    expect(document.body.textContent).toContain('Запасний блок для друку.');
+    cleanup();
+
+    renderWorkbench(resource, { showAnswers: true, studentPrint: true });
+    expect(screen.getByTestId('reserve-tray')).toBeTruthy();
+    expect(document.querySelector('.reserve-head')).toBeNull();
+    expect(document.body.textContent).not.toContain('У запасі');
+    expect(document.body.textContent).not.toContain('не входить у');
+    expect(document.body.textContent).toContain('Запасний блок для друку.');
+    expect(document.querySelector('[data-block-id="block-reserve-overflow"]')).not.toBeNull();
   });
 
   it('renders the saved activity instead of an open editor, keeping its raw key fields off the sheet', () => {

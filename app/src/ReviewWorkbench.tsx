@@ -393,10 +393,13 @@ export default function ReviewWorkbench({
       className={`dblock block ${block.mark === 'warn' ? 'warn' : 'ok'} ${block.quality === 'engine_flagged' ? 'flagged' : ''} ${block.edited ? 'edited' : ''} ${editingBlockId === block.id ? 'editing' : ''}`}
       data-block-id={block.id}
     >
-      <span className="type">
-        {t(activityTypeLabel(block.type) as ChromeKey)}
-        {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
-      </span>
+      {/* #590: student run omits `.block-meta` type/mode chrome; student print matches. */}
+      {!studentPrint && (
+        <span className="type">
+          {t(activityTypeLabel(block.type) as ChromeKey)}
+          {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
+        </span>
+      )}
       {renderBlockContent(block)}
       {renderMargin(block)}
     </div>
@@ -508,15 +511,20 @@ export default function ReviewWorkbench({
 
       {reserve.length > 0 && (
         <section className="reserve-tray" data-testid="reserve-tray">
-          <p className="reserve-head">
-            <b>{t('review.reserveHead', { duration: lesson.duration })}</b>
-          </p>
+          {/* #590: reserve heading is teacher planning chrome; blocks stay student-visible. */}
+          {!studentPrint && (
+            <p className="reserve-head">
+              <b>{t('review.reserveHead', { duration: lesson.duration })}</b>
+            </p>
+          )}
           {reserve.map((block) => (
             <div key={block.id} className="dblock block reserve-block" data-block-id={block.id}>
-              <span className="type">
-                {t(activityTypeLabel(block.type) as ChromeKey)}
-                {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
-              </span>
+              {!studentPrint && (
+                <span className="type">
+                  {t(activityTypeLabel(block.type) as ChromeKey)}
+                  {block.mode && <span className="chip muted mode-chip">{block.mode}</span>}
+                </span>
+              )}
               <div className="bcontent" data-activity data-activity-type={block.type}>
                 <ActivityPlayer
                   activity={studentPrint ? withoutTeacherOnlyAnswerKey(block.activity) : block.activity}

@@ -833,6 +833,9 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
     document.querySelectorAll('form[action="/api/auth/google/complete"]').forEach((form) => form.remove());
     document.querySelectorAll('script[data-google-identity-services]').forEach((script) => script.remove());
     Reflect.deleteProperty(window, 'google');
+    // GIS tests stubGlobal('location'); restoreAllMocks does not undo that, and a
+    // frozen location stub breaks later hash replaceState (#587 student-print).
+    vi.unstubAllGlobals();
   });
 
   it('still POSTs a GIS credential after the sign-in effect is cancelled', async () => {
@@ -1011,6 +1014,8 @@ describe('teacher GIS popup callback lifetime (#595)', () => {
  */
 describe('student print omits teacher material from the print DOM (#587)', () => {
   beforeEach(() => {
+    // Undo any leftover stubGlobal('location') from GIS (#595) before routing.
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     window.history.replaceState(null, '', '#/lessons/lesson-1');
   });
