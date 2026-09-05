@@ -24,6 +24,9 @@ _DEFAULT_SUBSCRIPTION_QUALIFICATION_PROVENANCE_TIER = "api_observed"
 _DEFAULT_REVIEW_ATTESTATION_SIDECAR_URL = "http://127.0.0.1:8791/v1/review-attestation"
 _GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 _GOOGLE_ALLOWED_EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,63}$")
+_V4_EXECUTION_AUDIENCE = "hramatka-v4-execution"
+_V4_EXECUTION_REF = "refs/heads/main"
+_V4_EXECUTION_WORKFLOW_PATH = ".github/workflows/v4-real-slot-execution.yml"
 
 
 def _clamp_bake_workers(value: int) -> int:
@@ -236,6 +239,20 @@ class Settings:
     review_attestation_max_diff_bytes: int = 500_000
     review_attestation_provider_timeout_seconds: int = 45
     review_attestation_jwks_ttl_seconds: int = 300
+    # V4 Actions authentication is a separate machine boundary.  It shares no
+    # browser or review-attestation authorization state and stays disabled
+    # until an operator supplies the complete fixed-workflow configuration.
+    v4_execution_enabled: bool = False
+    v4_admission_enabled: bool = False
+    v4_execution_repository: str | None = None
+    v4_execution_repository_id: str | None = None
+    v4_execution_audience: str | None = None
+    v4_execution_workflow_ref: str | None = None
+    v4_execution_workflow_digest: str | None = None
+    v4_execution_trusted_runner_id: str | None = None
+    v4_execution_trusted_runner_group_id: str | None = None
+    v4_execution_trusted_runner_label: str | None = None
+    v4_execution_jwks_ttl_seconds: int = 300
     # Google teacher login is disabled unless this public OAuth audience is
     # explicitly configured. It has no client secret and no Google API scope.
     google_client_id: str | None = None
@@ -339,6 +356,60 @@ class Settings:
                     "review_attestation_db_path",
                     self.database_path.with_name("review-attestations.sqlite3"),
                 )
+        if self.v4_admission_enabled and not self.v4_execution_enabled:
+            raise ValueError("V4 admission requires V4 execution authentication enablement.")
+        if self.v4_execution_enabled:
+            required = {
+                "repository": self.v4_execution_repository,
+                "repository_id": self.v4_execution_repository_id,
+                "audience": self.v4_execution_audience,
+                "workflow_ref": self.v4_execution_workflow_ref,
+                "workflow_digest": self.v4_execution_workflow_digest,
+                "trusted_runner_id": self.v4_execution_trusted_runner_id,
+                "trusted_runner_group_id": self.v4_execution_trusted_runner_group_id,
+                "trusted_runner_label": self.v4_execution_trusted_runner_label,
+            }
+            missing = sorted(name for name, value in required.items() if not value)
+            if missing:
+                raise ValueError(
+                    "V4 execution requires explicit " + ", ".join(missing) + " settings."
+                )
+            for name, value in {
+                "repository_id": self.v4_execution_repository_id,
+                "trusted_runner_id": self.v4_execution_trusted_runner_id,
+                "trusted_runner_group_id": self.v4_execution_trusted_runner_group_id,
+            }.items():
+                if (
+                    not isinstance(value, str)
+                    or not value.isascii()
+                    or not value.isdigit()
+                    or value.startswith("0")
+                    or len(value) > 19
+                    or int(value) <= 0
+                    or int(value) > 9_223_372_036_854_775_807
+                ):
+                    raise ValueError(f"V4 execution {name} must be a positive integer.")
+            if self.v4_execution_trusted_runner_label != "hramatka-attestor":
+                raise ValueError("V4 execution runner label must be hramatka-attestor.")
+            assert self.v4_execution_repository is not None
+            assert self.v4_execution_workflow_ref is not None
+            if self.v4_execution_audience != _V4_EXECUTION_AUDIENCE:
+                raise ValueError("V4 execution audience must be hramatka-v4-execution.")
+            expected_workflow_ref = (
+                f"{self.v4_execution_repository}/{_V4_EXECUTION_WORKFLOW_PATH}@{_V4_EXECUTION_REF}"
+            )
+            if self.v4_execution_workflow_ref != expected_workflow_ref:
+                raise ValueError(
+                    "V4 execution workflow ref must identify the fixed "
+                    ".github/workflows/v4-real-slot-execution.yml on refs/heads/main."
+                )
+            if (
+                not isinstance(self.v4_execution_workflow_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", self.v4_execution_workflow_digest) is None
+            ):
+                raise ValueError("V4 execution workflow digest must be a lowercase SHA-256.")
+            if not 1 <= self.v4_execution_jwks_ttl_seconds <= 3600:
+                raise ValueError("V4 execution JWKS TTL must be 1–3600 seconds.")
 
     @property
     def local_static_teacher_enabled(self) -> bool:
@@ -459,6 +530,29 @@ class Settings:
             ),
             review_attestation_jwks_ttl_seconds=int(
                 os.environ.get("HRAMATKA_REVIEW_ATTESTATION_JWKS_TTL_SECONDS", "300")
+            ),
+            v4_execution_enabled=_parse_zero_or_one_flag("HRAMATKA_V4_EXECUTION_ENABLED"),
+            v4_admission_enabled=_parse_zero_or_one_flag("HRAMATKA_V4_ADMISSION_ENABLED"),
+            v4_execution_repository=os.environ.get("HRAMATKA_V4_EXECUTION_TRUSTED_REPOSITORY"),
+            v4_execution_repository_id=os.environ.get(
+                "HRAMATKA_V4_EXECUTION_TRUSTED_REPOSITORY_ID"
+            ),
+            v4_execution_audience=os.environ.get("HRAMATKA_V4_EXECUTION_EXPECTED_AUDIENCE"),
+            v4_execution_workflow_ref=os.environ.get("HRAMATKA_V4_EXECUTION_TRUSTED_WORKFLOW_REF"),
+            v4_execution_workflow_digest=os.environ.get(
+                "HRAMATKA_V4_EXECUTION_TRUSTED_WORKFLOW_DIGEST"
+            ),
+            v4_execution_trusted_runner_id=os.environ.get(
+                "HRAMATKA_V4_EXECUTION_TRUSTED_RUNNER_ID"
+            ),
+            v4_execution_trusted_runner_group_id=os.environ.get(
+                "HRAMATKA_V4_EXECUTION_TRUSTED_RUNNER_GROUP_ID"
+            ),
+            v4_execution_trusted_runner_label=os.environ.get(
+                "HRAMATKA_V4_EXECUTION_TRUSTED_RUNNER_LABEL"
+            ),
+            v4_execution_jwks_ttl_seconds=int(
+                os.environ.get("HRAMATKA_V4_EXECUTION_JWKS_TTL_SECONDS", "300")
             ),
             google_client_id=os.environ.get("HRAMATKA_GOOGLE_CLIENT_ID"),
             google_allowed_emails=_parse_google_allowed_emails(

@@ -1,0 +1,20 @@
+# Staged drop-in for the EXISTING learn-ukrainian-sources.service.
+# Account matches the existing protected API account; no new OS identity.
+[Service]
+User=hramatka
+Group=hramatka
+UMask=0077
+Environment=HRAMATKA_V4_EXECUTION_ENABLED=0
+Environment=HRAMATKA_V4_ADMISSION_ENABLED=0
+Environment=PYTHONDONTWRITEBYTECODE=1
+PrivateMounts=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=~@debug
+LoadCredential=v4-sources-dsn:<root-owned-sources-only-dsn-file>
+InaccessiblePaths=-/run/credentials/hramatka-api.service
+InaccessiblePaths=<root-owned-v4-signing-key-directory>
+# No signing keys, provider credential, control DSN or generic worker authority.

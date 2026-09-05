@@ -1,0 +1,19 @@
+# Staged drop-in for the EXISTING hramatka-api.service. Do not install until
+# operator deployment authorization and exact-release review. No new unit/UID.
+[Service]
+Environment=HRAMATKA_V4_EXECUTION_ENABLED=0
+Environment=HRAMATKA_V4_ADMISSION_ENABLED=0
+Environment=PYTHONDONTWRITEBYTECODE=1
+PrivateMounts=yes
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=~@debug
+# Let the parent complete or fail its fixed 1800-second claim before exit.
+TimeoutStopSec=1900s
+# Operator substitutes existing root-owned credential sources; never commit values.
+LoadCredential=v4-control-dsn:<root-owned-control-dsn-file>
+LoadCredential=v4-signing-keys:<root-owned-v4-signing-key-directory>
+LoadCredential=v4-unit-qualification.json:<root-owned-actual-unit-qualification-file>
+LoadCredential=v4-provider-codex:<root-owned-selected-provider-credential-file>
+LoadCredential=v4-provider-claude:<root-owned-selected-provider-credential-file>
+InaccessiblePaths=-/run/credentials/learn-ukrainian-sources.service

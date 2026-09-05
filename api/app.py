@@ -93,6 +93,7 @@ from .store import (
     WarningBlockNotFound,
     canonical_request_json,
 )
+from .v4_integration import V4Integration, register_v4_routes
 
 _SESSION_COOKIE = "__Host-hramatka_session"
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
@@ -494,8 +495,9 @@ def create_app(
     baker: LessonBaker | None = None,
     model_registry: QualifiedModelRegistry | None = None,
 ) -> FastAPI:
-    """Create the one-process application; it deliberately exposes no bearer path."""
+    """Create the one-process teacher API and explicitly enabled machine routes."""
     settings = settings or Settings.from_env()
+    v4 = V4Integration(settings)
     production_routing_required = baker is None
     # Direct local tests opt out explicitly through Settings. The deployed
     # environment enables this; an absent Google configuration therefore
@@ -606,11 +608,13 @@ def create_app(
             # Close admission before workers start: a deliberate pause cannot
             # claim a queued job and reach a provider in the background.
             runner.close_admission()
-        runner.start()
         try:
+            await run_in_threadpool(v4.start)
+            runner.start()
             yield
         finally:
             runner.stop()
+            await run_in_threadpool(v4.stop)
 
     app = FastAPI(
         title="Hramatka teacher pilot API",
@@ -626,6 +630,9 @@ def create_app(
     app.state.baker = baker
     app.state.review_attestor = ReviewAttestor(settings)
     app.state.model_registry = model_registry
+    app.state.v4_integration = v4
+    if settings.v4_execution_enabled:
+        register_v4_routes(app, v4)
 
     @app.exception_handler(PilotError)
     async def pilot_error(_: Request, error: PilotError) -> JSONResponse:

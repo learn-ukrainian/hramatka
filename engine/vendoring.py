@@ -35,6 +35,7 @@ PILOT_LU_LESSON = "lu.lesson.v1@1.3.0"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
 TRAILSPEC_V1 = "trailspec.v1@1.0.0-1356e7c4"
 STEP_RECEIPT_V1 = "step-receipt.v1@1.0.0-1356e7c4"
+V4_RUNTIME = "learn_ukrainian_v4_runtime@v1-8d5a24c06bf397f6ea7faaa7ec5a03e822909098"
 
 REGISTERED = (
     LU_ACTIVITY,
@@ -44,6 +45,7 @@ REGISTERED = (
     LINGUISTICS,
     TRAILSPEC_V1,
     STEP_RECEIPT_V1,
+    V4_RUNTIME,
 )
 
 _module_cache: dict[str, tuple[str, ModuleType]] = {}
@@ -70,6 +72,10 @@ def verify_artifact(artifact: str) -> dict:
     Raises `VendorIntegrityError` on a missing file or a sha256/size mismatch.
     Always recomputes — never trusts a cache — so it is a real integrity gate.
     """
+    if artifact == V4_RUNTIME:
+        from .v4_runtime_vendor import verify_vendor
+
+        return verify_vendor()
     d = _artifact_dir(artifact)
     manifest_path = d / "MANIFEST.json"
     if not manifest_path.is_file():
