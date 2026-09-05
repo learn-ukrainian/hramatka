@@ -13,6 +13,7 @@ TimeoutStopSec=1900s
 # Operator substitutes existing root-owned credential sources; never commit values.
 LoadCredential=v4-control-dsn:<root-owned-control-dsn-file>
 LoadCredential=v4-signing-keys:<root-owned-v4-signing-key-directory>
+# Written only by `hramatka.engine.v4_unit_qualification stage` (pending, then qualified).
 LoadCredential=v4-unit-qualification.json:<root-owned-actual-unit-qualification-file>
 LoadCredential=v4-provider-codex:<root-owned-selected-provider-credential-file>
 LoadCredential=v4-provider-claude:<root-owned-selected-provider-credential-file>

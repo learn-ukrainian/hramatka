@@ -16,9 +16,9 @@ from pathlib import Path
 from . import vendoring
 
 PACKAGE = "learn_ukrainian_v4_runtime"
-PUBLIC_COMMIT = "8d5a24c06bf397f6ea7faaa7ec5a03e822909098"
+PUBLIC_COMMIT = "8184cb848d4e5d6cad659232854f019af7175ea9"
 ARTIFACT = f"{PACKAGE}@v1-{PUBLIC_COMMIT}"
-MANIFEST_SHA256 = "c22d05224bb4b55e49920592d5cefd447fdb002b0d99979b519440cbbf14e16d"
+MANIFEST_SHA256 = "344db32d8bfecf351034fecc208aedda5901b36405ce558d9cd337c5d55dca23"
 _verified_root: Path | None = None
 
 
