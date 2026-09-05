@@ -147,7 +147,7 @@ def test_authenticated_link_then_returning_google_sign_in_uses_same_cookie_seam(
     )
     signed_in = _google_callback(client)
     assert signed_in.status_code == 303
-    assert signed_in.headers["location"] == "/teacher/"
+    assert signed_in.headers["location"] == "/teacher/?google=signed-in"
     returned = client.get("/api/session")
     assert returned.status_code == 200
     assert returned.json()["teacher"]["id"] == teacher.id
@@ -281,7 +281,7 @@ def test_google_complete_without_origin_still_mints_allowlisted_session(
             follow_redirects=False,
         )
         assert completed.status_code == 303
-        assert completed.headers["location"] == "/teacher/"
+        assert completed.headers["location"] == "/teacher/?google=signed-in"
         session = client.get("/api/session")
         assert session.status_code == 200
         assert session.json()["teacher"]["id"] == teacher.id
@@ -334,7 +334,7 @@ def test_allowlisted_qa_email_binds_dedicated_teacher_and_mints_session(
         )
         completed = _google_callback(client)
         assert completed.status_code == 303
-        assert completed.headers["location"] == "/teacher/"
+        assert completed.headers["location"] == "/teacher/?google=signed-in"
         assert "__Host-hramatka_session=" in completed.headers["set-cookie"]
         session = client.get("/api/session")
         assert session.status_code == 200
@@ -351,7 +351,7 @@ def test_allowlisted_qa_email_binds_dedicated_teacher_and_mints_session(
             lambda *_: _identity("qa-google-sub", QA_EMAIL, again["nonce"]),
         )
         returning = _google_callback(client)
-        assert returning.headers["location"] == "/teacher/"
+        assert returning.headers["location"] == "/teacher/?google=signed-in"
         returned = client.get("/api/session")
         assert returned.status_code == 200
         assert returned.json()["teacher"]["id"] == teacher.id
@@ -384,7 +384,7 @@ def test_same_origin_json_complete_mints_allowlisted_session(monkeypatch, tmp_pa
             follow_redirects=False,
         )
         assert completed.status_code == 303
-        assert completed.headers["location"] == "/teacher/"
+        assert completed.headers["location"] == "/teacher/?google=signed-in"
         session = client.get("/api/session")
         assert session.status_code == 200
         assert session.json()["teacher"]["id"] == teacher.id
@@ -415,7 +415,12 @@ def test_allowlisted_qa_email_mints_session_when_staff_authorization_is_required
         )
         completed = _google_callback(client)
         assert completed.status_code == 303
-        assert completed.headers["location"] == "/teacher/"
+        assert completed.headers["location"] == "/teacher/?google=signed-in"
+        cookie = completed.headers["set-cookie"]
+        assert cookie.startswith("__Host-hramatka_session=")
+        for attribute in ("Path=/", "HttpOnly", "Secure", "SameSite=Lax", "Max-Age="):
+            assert attribute in cookie
+        assert completed.headers["cache-control"] == "no-store"
         session = client.get("/api/session")
         assert session.status_code == 200
         assert session.json()["teacher"]["id"] == teacher.id
@@ -438,7 +443,7 @@ def test_allowlisted_email_creates_teacher_when_host_omits_teacher_id(
             lambda *_: _identity("created-google-sub", QA_EMAIL, sign_in["nonce"]),
         )
         completed = _google_callback(client)
-        assert completed.headers["location"] == "/teacher/"
+        assert completed.headers["location"] == "/teacher/?google=signed-in"
         session = client.get("/api/session")
         assert session.status_code == 200
         teacher_id = session.json()["teacher"]["id"]
@@ -446,20 +451,31 @@ def test_allowlisted_email_creates_teacher_when_host_omits_teacher_id(
         assert app.state.store.teacher_has_google_identity(teacher_id) is True
 
 
+@pytest.mark.parametrize("staff_authorization_required", [False, True])
 def test_unlisted_google_email_fails_with_visible_query_and_no_session(
-    monkeypatch, app, client
+    monkeypatch, tmp_path, staff_authorization_required
 ) -> None:
-    sign_in = _options(client)
-    monkeypatch.setattr(
-        app_module,
-        "verify_google_credential",
-        lambda *_: _identity("stranger-sub", "stranger@example.test", sign_in["nonce"]),
+    app = create_app(
+        settings=_settings(
+            tmp_path,
+            google_allowed_emails=frozenset({QA_EMAIL}),
+            staff_authorization_required=staff_authorization_required,
+        ),
+        baker=SimpleNamespace(bake=lambda *_: {}),
     )
-    rejected = _google_callback(client)
-    assert rejected.status_code == 303
-    assert rejected.headers["location"] == "/teacher/?google=failed"
-    assert "__Host-hramatka_session=" not in rejected.headers.get("set-cookie", "")
-    assert client.get("/api/session").status_code == 401
+    with TestClient(app, base_url=ORIGIN) as client:
+        sign_in = _options(client)
+        monkeypatch.setattr(
+            app_module,
+            "verify_google_credential",
+            lambda *_: _identity("stranger-sub", "stranger@example.test", sign_in["nonce"]),
+        )
+        rejected = _google_callback(client)
+        assert rejected.status_code == 303
+        assert rejected.headers["location"] == "/teacher/?google=failed"
+        assert rejected.headers["cache-control"] == "no-store"
+        assert "__Host-hramatka_session=" not in rejected.headers.get("set-cookie", "")
+        assert client.get("/api/session").status_code == 401
 
 
 def test_parse_google_allowed_emails_casefolds_and_deduplicates() -> None:

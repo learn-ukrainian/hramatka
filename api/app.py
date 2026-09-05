@@ -1101,7 +1101,7 @@ def create_app(
                     )
                     if established is None:
                         return fail_google_complete("allowlist")
-                    response = RedirectResponse(url="/teacher/", status_code=303)
+                    response = RedirectResponse(url="/teacher/?google=signed-in", status_code=303)
                     set_session_cookie(
                         response, established.raw_secret, established.session.expires_at
                     )
@@ -1109,7 +1109,9 @@ def create_app(
                     return response
                 else:
                     return fail_google_complete("allowlist")
-            response = RedirectResponse(url="/teacher/", status_code=303)
+            # The landing page verifies the cookie before clearing this marker,
+            # so a rejected browser cookie cannot silently look like a sign-out.
+            response = RedirectResponse(url="/teacher/?google=signed-in", status_code=303)
             established = store.mint_reentry_session(
                 teacher_id,
                 auth_method="google",

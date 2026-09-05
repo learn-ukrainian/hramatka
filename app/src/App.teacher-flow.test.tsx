@@ -725,8 +725,36 @@ describe('passkey chrome for local-auth vs invite sessions (#514)', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Не вдалося увійти через Google');
     expect(await screen.findByTestId('sign-in-alternatives')).toBeInTheDocument();
-    expect(window.location.search).toBe('');
+    expect(window.location.search).toBe('?google=failed');
     expect(window.location.pathname).toBe('/teacher/');
+  });
+
+  it.each(['signed-in', 'linked'])('shows a persistent error when Google returns %s without a session cookie', async (result) => {
+    vi.stubGlobal('fetch', vi.fn(async () => errorResponse(401, {})));
+    window.history.replaceState(null, '', `/teacher/?google=${result}`);
+    const app = renderApp();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не вдалося увійти через Google');
+    expect(window.location.search).toBe('?google=failed');
+    app.unmount();
+    renderApp();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не вдалося увійти через Google');
+  });
+
+  it('opens the teacher workspace when Google returns with a usable session', async () => {
+    installFetch([], 'pilot', { ...teacher, google_linked: true });
+    window.history.replaceState(null, '', '/teacher/?google=signed-in');
+    renderApp();
+    expect(await screen.findByTestId('anchor-text-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('sign-in-alternatives')).not.toBeInTheDocument();
+    expect(window.location.search).toBe('');
+  });
+
+  it('shows a Google error when session verification fails to load', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network unavailable'); }));
+    window.history.replaceState(null, '', '/teacher/?google=signed-in');
+    renderApp();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не вдалося увійти через Google');
+    expect(window.location.search).toBe('?google=failed');
   });
 
   it('still renders sign-in chrome on the unauthenticated invite page', async () => {

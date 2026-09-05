@@ -892,9 +892,8 @@ export default function TeacherApp() {
       // callback therefore uses ?google=failed so the teacher sees an error.
       const googleFailed = params.get('google') === 'failed' || h === '#google-sign-in-failed';
       const googleLinked = params.get('google') === 'linked' || h === '#google-linked';
-      if (googleFailed || googleLinked) {
-        history.replaceState(null, '', '/teacher/');
-      }
+      const googleSignedIn = params.get('google') === 'signed-in';
+      const googleReturn = googleFailed || googleLinked || googleSignedIn;
       const inviteToken = h.match(/invite=([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]+)/)?.[1];
       // Keep the fragment token only in this closure, then remove it before
       // any request, including a failing session refresh.
@@ -904,18 +903,22 @@ export default function TeacherApp() {
         // valid session. Confirm that state before attempting another exchange.
         const existing = await refreshSession();
         if (existing) {
+          if (googleReturn && !googleFailed) history.replaceState(null, '', '/teacher/');
           if (inviteToken) history.replaceState(null, '', '/teacher/');
           await loadTeacherDefaultDuration();
           await loadQualifiedModels();
         } else if (inviteToken) {
           await redeemFromFragment(inviteToken);
-        } else if (googleFailed) {
+        }
+        if (googleFailed || (googleReturn && !existing)) {
           // Set after the 401 refresh: that path clears session-scoped error.
+          history.replaceState(null, '', '/teacher/?google=failed');
           setError(errKey('google.failed'));
         }
       } catch {
         if (!cancelled) {
-          setError(googleFailed ? errKey('google.failed') : errKey('err.initSession'));
+          if (googleReturn) history.replaceState(null, '', '/teacher/?google=failed');
+          setError(googleReturn ? errKey('google.failed') : errKey('err.initSession'));
         }
       } finally {
         if (!cancelled) setInitLoading(false);
