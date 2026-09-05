@@ -1,12 +1,27 @@
 """Root-operated staging and in-unit canaries for the actual protected V4 units.
 
 Runbook steps 3-7 of ``runbooks/v4-authenticated-runtime-integration.md``.
-The canary runs inside the EXISTING ``hramatka-api.service`` and
-``learn-ukrainian-sources.service`` through a temporary ``ExecStartPre=-``
-drop-in, so every probe observes the real unit identity, credential
-namespace, sandbox and scoped PostgreSQL login. A same-UID proxy or test
-subprocess never satisfies it: the unit is read from the process cgroup and
-``$CREDENTIALS_DIRECTORY`` and refused when absent.
+The canary runs inside the EXISTING ``hramatka-api.service`` (system
+manager) and ``learn-ukrainian-sources.service`` (the operator account's
+per-user manager) through a temporary ``ExecStartPre=-`` drop-in, so every
+probe observes the real unit identity, credential namespace, sandbox and
+scoped PostgreSQL login. A same-UID proxy or test subprocess never satisfies
+it: the unit, manager scope and owning uid are read from the process cgroup
+(``/system.slice/<unit>`` versus ``/user.slice/user-<uid>.slice/user@<uid>.service/…/<unit>``),
+``$CREDENTIALS_DIRECTORY`` must equal the namespace systemd assigns to that
+scope (``/run/credentials/<unit>`` or ``/run/user/<uid>/credentials/<unit>``)
+and both are refused when absent. Staging addresses each manager explicitly
+(``systemctl --user --machine=<owner>@.host`` for the user unit) and binds
+journal collection to the manager scope, owner uid and invocation ID, so a
+same-named unit under another manager is never accepted.
+
+Sources is a per-user unit by design: it keeps its existing checkout and
+corpus resources, so home/system mount protections are recorded but not
+required for it. Its forbidden capabilities stay tested: the API credential
+namespace, signing-key root and V4 table DML are denied, its DSN is private
+and owned by the unit, and the two units never share a principal (the owner
+of a per-user manager can read that manager's credential sources, so the
+owner must not be the restricted API account).
 
 Output is fixed codes, counts and digests only. No DSN, address, key, token
 or protected text is ever printed. Execution/admission switches stay OFF;
@@ -26,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import dataclasses
 import hashlib
 import json
 import mmap
@@ -46,6 +62,16 @@ CANARY_SCHEMA = "hramatka-v4-unit-canary.v1"
 API_UNIT = "hramatka-api.service"
 SOURCES_UNIT = "learn-ukrainian-sources.service"
 UNITS = {"api": API_UNIT, "sources": SOURCES_UNIT}
+# Manager scope of each existing unit: the API is a system service, Sources an
+# ACTIVE per-user unit of the operator account (fragment under that account's
+# ~/.config/systemd/user). A same-named system Sources unit must not exist.
+UNIT_SCOPES = {"api": "system", "sources": "user"}
+SYSTEM_CGROUP = re.compile(r"/system\.slice/(?:[^/]+/)*(?P<unit>[^/]+\.service)")
+USER_CGROUP = re.compile(
+    r"/user\.slice/user-(?P<uid>[0-9]+)\.slice/user@(?P=uid)\.service/(?:[^/]+/)*"
+    r"(?P<unit>[^/]+\.service)"
+)
+OWNER_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 CANARIES = ("bwrap", "unit_hardening", "credential_separation", "scoped_database_roles")
 CANARY_MARK = "HRAMATKA_V4_CANARY "
 CANARY_DROPIN = "zz-v4-qualification-canary.conf"
@@ -259,32 +285,91 @@ def _canonical(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _unit_from_cgroup(cgroup_text: str) -> str | None:
-    for line in cgroup_text.splitlines():
-        tail = line.split(":", 2)[-1].rstrip("/").rsplit("/", 1)[-1]
-        if tail.endswith(".service"):
-            return tail
-    return None
+def resolve_owner(name) -> tuple[str, int]:
+    """The per-user manager owner: an existing, unprivileged account named without
+    ``@``/``:`` so ``--machine=<owner>@.host`` addresses exactly that manager."""
+    if not isinstance(name, str) or not OWNER_NAME.fullmatch(name):
+        raise QualificationRefused("sources_owner_invalid")
+    try:
+        entry = pwd.getpwnam(name)
+    except KeyError:
+        raise QualificationRefused("sources_owner_unknown") from None
+    if entry.pw_uid == 0:
+        raise QualificationRefused("sources_owner_privileged")
+    return entry.pw_name, entry.pw_uid
 
 
-def in_unit_identity(expected_unit: str, *, cgroup: str | None = None, environ=None) -> dict:
-    """Bind the actual systemd unit: cgroup leaf, credential namespace, invocation."""
+def credential_namespace(unit: str, scope: str, uid: int | None = None) -> str:
+    """Where systemd mounts ``LoadCredential=`` files for ``unit`` under ``scope``."""
+    if scope == "system":
+        return f"/run/credentials/{unit}"
+    if scope == "user" and type(uid) is int and uid > 0:
+        return f"/run/user/{uid}/credentials/{unit}"
+    raise QualificationRefused("unit_scope_invalid")
+
+
+@dataclasses.dataclass(frozen=True)
+class Manager:
+    """The service manager that owns a unit; ``argv`` selects it explicitly."""
+
+    scope: str
+    owner: str | None = None
+    uid: int | None = None
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        if self.scope == "system":
+            return ()
+        return ("--user", f"--machine={self.owner}@.host")
+
+    def namespace(self, unit: str) -> str:
+        return credential_namespace(unit, self.scope, self.uid)
+
+
+def managers_for(sources_owner) -> dict[str, Manager]:
+    owner, uid = resolve_owner(sources_owner)
+    return {"api": Manager("system"), "sources": Manager("user", owner, uid)}
+
+
+def _cgroup_paths(cgroup_text: str) -> list[str]:
+    return [line.split(":", 2)[-1].rstrip("/") for line in cgroup_text.splitlines() if ":" in line]
+
+
+def in_unit_identity(
+    expected_unit: str,
+    *,
+    scope: str = "system",
+    owner_uid: int | None = None,
+    cgroup: str | None = None,
+    environ=None,
+) -> dict:
+    """Bind the actual unit: manager scope, owning uid, cgroup leaf, namespace, invocation."""
     environ = os.environ if environ is None else environ
     if cgroup is None:
         cgroup = Path("/proc/self/cgroup").read_text()
-    unit = _unit_from_cgroup(cgroup)
+    uid = os.getuid()
+    pattern = {"system": SYSTEM_CGROUP, "user": USER_CGROUP}.get(scope)
+    if pattern is None:
+        raise QualificationRefused("unit_scope_invalid")
+    matches = [m for path in _cgroup_paths(cgroup) if (m := pattern.fullmatch(path))]
+    if not matches or matches[0]["unit"] != expected_unit:
+        raise QualificationRefused("not_in_expected_unit")
+    if scope == "user":
+        cgroup_uid = int(matches[0]["uid"])
+        if owner_uid is None or cgroup_uid != owner_uid or cgroup_uid != uid:
+            raise QualificationRefused("unit_principal_mismatch")
     invocation = environ.get("INVOCATION_ID", "")
     credentials = environ.get("CREDENTIALS_DIRECTORY", "")
-    if unit != expected_unit:
-        raise QualificationRefused("not_in_expected_unit")
     if not HEX32.fullmatch(invocation):
         raise QualificationRefused("invocation_id_required")
-    if credentials != f"/run/credentials/{expected_unit}":
+    if credentials != credential_namespace(expected_unit, scope, uid):
         raise QualificationRefused("credential_namespace_mismatch")
     return {
-        "unit": unit,
+        "unit": expected_unit,
+        "scope": scope,
+        "uid": uid,
         "invocation_id": invocation,
-        "uid_name": pwd.getpwuid(os.getuid()).pw_name,
+        "uid_name": pwd.getpwuid(uid).pw_name,
         "credentials_directory": credentials,
     }
 
@@ -351,8 +436,16 @@ def _release_binding() -> dict:
     }
 
 
-def probe_api_credentials(credentials: Path) -> dict:
-    """Parent-only signing succeeds; Sources namespace and modes are closed."""
+def peer_denied_paths(namespace: str) -> tuple[str, ...]:
+    """The peer credential namespace plus, for a per-user peer, its runtime directory."""
+    paths = [namespace]
+    if namespace.startswith("/run/user/"):
+        paths.append("/".join(namespace.split("/")[:4]))
+    return tuple(paths)
+
+
+def probe_api_credentials(credentials: Path, *, sources_namespace: str) -> dict:
+    """Parent-only signing succeeds; the ACTUAL Sources namespace and modes are closed."""
     from learn_ukrainian_v4_runtime import v4_trust_authority as trust
 
     names = sorted(p.name for p in credentials.iterdir())
@@ -362,7 +455,9 @@ def probe_api_credentials(credentials: Path) -> dict:
         "qualification_private": _mode_private(credentials / "v4-unit-qualification.json"),
         "signing_root_private": signing.is_dir() and not signing.is_symlink(),
         "provider_credential_count": sum(n.startswith("v4-provider-") for n in names),
-        "sources_namespace_denied": not os.access(f"/run/credentials/{SOURCES_UNIT}", os.R_OK),
+        "sources_namespace_denied": not any(
+            os.access(path, os.R_OK) for path in peer_denied_paths(sources_namespace)
+        ),
         "credential_names_sha256": _digest(_canonical(names)),
     }
     challenge = {}
@@ -554,12 +649,35 @@ def probe_sources_database(dsn: str) -> dict:
     return result
 
 
+def _owned_private_directory(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and not path.is_symlink()
+        and path.stat().st_uid == os.getuid()
+        and not path.stat().st_mode & 0o077
+    )
+
+
+def _transport_bound(credentials: Path) -> bool:
+    """The installed public transport resolves exactly this unit's credential."""
+    try:
+        from learn_ukrainian_v4_runtime import sources_transport
+
+        return sources_transport.credential_path() == credentials / "v4-sources-dsn"
+    except Exception:
+        return False
+
+
 def probe_sources_credentials(credentials: Path) -> dict:
     from learn_ukrainian_v4_runtime import v4_trust_authority as trust
 
     names = sorted(p.name for p in credentials.iterdir())
+    dsn = credentials / "v4-sources-dsn"
     return {
-        "sources_dsn_private": _mode_private(credentials / "v4-sources-dsn"),
+        "sources_dsn_private": _mode_private(dsn),
+        "sources_dsn_owned_by_unit": dsn.is_file() and dsn.stat().st_uid == os.getuid(),
+        "credentials_directory_private": _owned_private_directory(credentials),
+        "transport_credential_path_bound": _transport_bound(credentials),
         "api_credentials_absent": not any(
             n in names or n.startswith("v4-provider-")
             for n in ("v4-control-dsn", "v4-signing-keys", "v4-unit-qualification.json")
@@ -971,9 +1089,17 @@ UNIT_HARDENING_FLAGS = frozenset(
         "memory_deny_write_execute",
     }
 )
+# Sources keeps its existing checkout/corpus in the owner's home and runs in a
+# per-user manager (ProtectProc=/ProcSubset= are not available there). Its
+# required hardening is therefore privilege containment; the mount/proc
+# consequences are still observed and typed but do not gate qualification.
+SOURCES_HARDENING_FLAGS = frozenset({"no_new_privs", "unprivileged"})
 PROBE_SCHEMAS = {
     ("api", "unit_hardening"): (UNIT_HARDENING_FLAGS, {}),
-    ("sources", "unit_hardening"): (UNIT_HARDENING_FLAGS, {}),
+    ("sources", "unit_hardening"): (
+        SOURCES_HARDENING_FLAGS,
+        {k: (lambda v: type(v) is bool) for k in UNIT_HARDENING_FLAGS - SOURCES_HARDENING_FLAGS},
+    ),
     ("api", "credential_separation"): (
         frozenset(
             {
@@ -994,6 +1120,9 @@ PROBE_SCHEMAS = {
         frozenset(
             {
                 "sources_dsn_private",
+                "sources_dsn_owned_by_unit",
+                "credentials_directory_private",
+                "transport_credential_path_bound",
                 "api_credentials_absent",
                 "api_namespace_denied",
                 "signing_root_denied",
@@ -1086,12 +1215,15 @@ def canary_pass(name: str, probe: dict, *, kind: str = "api") -> bool:
     return True
 
 
-def run_canary(kind: str) -> dict:
+def run_canary(kind: str, *, sources_owner=None) -> dict:
     """In-unit entrypoint; prints one machine line, never raises key material."""
     unit = UNITS[kind]
     report = {"schema": CANARY_SCHEMA, "kind": kind, "at": datetime.now(UTC).isoformat()}
     try:
-        report["identity"] = in_unit_identity(unit)
+        owner_uid = resolve_owner(sources_owner)[1] if sources_owner is not None else None
+        report["identity"] = in_unit_identity(
+            unit, scope=UNIT_SCOPES[kind], owner_uid=owner_uid if kind == "sources" else None
+        )
         # The switches the unit actually started with (Environment, every
         # EnvironmentFile and the manager environment applied): both must be OFF.
         report["switches"] = {switch: os.environ.get(switch) for switch in SWITCHES}
@@ -1100,8 +1232,13 @@ def run_canary(kind: str) -> dict:
         credentials = Path(report["identity"]["credentials_directory"])
         report["release"] = _release_binding()
         if kind == "api":
+            if owner_uid is None:
+                raise QualificationRefused("sources_owner_required")
             hardening = probe_unit_hardening()
-            separation = probe_api_credentials(credentials)
+            separation = probe_api_credentials(
+                credentials,
+                sources_namespace=credential_namespace(SOURCES_UNIT, "user", owner_uid),
+            )
             from learn_ukrainian_v4_runtime.child_runtime import load_profile
             from learn_ukrainian_v4_runtime.scoped_store import ScopedAuthorityStore
 
@@ -1176,6 +1313,8 @@ def _validate_report(kind: str, report: dict, unit: str) -> None:
     invocation = identity.get("invocation_id")
     if not isinstance(invocation, str) or not HEX32.fullmatch(invocation):
         raise QualificationRefused(f"{kind}_canary_invocation_invalid")
+    if identity.get("scope") != UNIT_SCOPES[kind] or type(identity.get("uid")) is not int:
+        raise QualificationRefused(f"{kind}_canary_scope_invalid")
     switches = report.get("switches")
     if (
         not isinstance(switches, dict)
@@ -1206,6 +1345,10 @@ def compose_qualification(api: dict, sources: dict, *, unit_properties: dict) ->
         _validate_report(kind, report, unit)
     if api["release"] != sources["release"]:
         raise QualificationRefused("release_mismatch_between_units")
+    # The owner of a per-user manager can read that manager's credential sources;
+    # the restricted API account must therefore never be the Sources principal.
+    if api["identity"]["uid"] == sources["identity"]["uid"] or sources["identity"]["uid"] <= 0:
+        raise QualificationRefused("unit_principals_shared")
     release = api["release"]
     if not release["trust_policy_active"]:
         raise QualificationRefused("trust_policy_empty")
@@ -1232,6 +1375,7 @@ def compose_qualification(api: dict, sources: dict, *, unit_properties: dict) ->
         "canaries": canaries,
         "api_invocation_id": api["identity"]["invocation_id"],
         "sources_invocation_id": sources["identity"]["invocation_id"],
+        "sources_manager": {"scope": "user", "uid": sources["identity"]["uid"]},
         "unit_configuration_sha256": _digest(_canonical(unit_properties)),
         "probe_digests": {
             "api": _digest(_canonical(api["probes"])),
@@ -1307,9 +1451,15 @@ _TIMESPAN_UNITS = {
 }
 
 
-def _systemctl(*args: str, systemctl: str = "systemctl", timeout: float = COMMAND_TIMEOUT) -> str:
+def _systemctl(
+    *args: str,
+    systemctl: str = "systemctl",
+    timeout: float = COMMAND_TIMEOUT,
+    manager: tuple[str, ...] = (),
+) -> str:
+    """Run systemctl against an explicitly selected manager (``manager`` = scope argv)."""
     return subprocess.run(
-        [systemctl, *args], check=True, capture_output=True, text=True, timeout=timeout
+        [systemctl, *manager, *args], check=True, capture_output=True, text=True, timeout=timeout
     ).stdout
 
 
@@ -1450,10 +1600,17 @@ def _effective_environment(show_output: str) -> tuple[dict[str, str], list[Path]
     return values, files
 
 
-def effective_switches(unit: str, *, systemctl: str = "systemctl") -> dict[str, str | None]:
+def effective_switches(
+    unit: str, *, systemctl: str = "systemctl", manager: tuple[str, ...] = ()
+) -> dict[str, str | None]:
     """Effective unit switches as systemd will start the unit: Environment + EnvironmentFile."""
     out = _systemctl(
-        "show", unit, "--property=Environment", "--property=EnvironmentFiles", systemctl=systemctl
+        "show",
+        unit,
+        "--property=Environment",
+        "--property=EnvironmentFiles",
+        systemctl=systemctl,
+        manager=manager,
     )
     values, _ = _effective_environment(out)
     return {switch: values.get(switch) for switch in SWITCHES}
@@ -1476,9 +1633,15 @@ def timespan_seconds(text: str) -> float | None:
     return total
 
 
-def unit_properties(unit: str, *, systemctl: str = "systemctl") -> dict:
+def unit_properties(
+    unit: str, *, systemctl: str = "systemctl", manager: tuple[str, ...] = ()
+) -> dict:
     out = _systemctl(
-        "show", unit, *(f"--property={p}" for p in UNIT_PROPERTIES), systemctl=systemctl
+        "show",
+        unit,
+        *(f"--property={p}" for p in UNIT_PROPERTIES),
+        systemctl=systemctl,
+        manager=manager,
     )
     props = dict(
         line.split("=", 1)
@@ -1495,7 +1658,14 @@ def unit_properties(unit: str, *, systemctl: str = "systemctl") -> dict:
     props["Environment"] = sorted(values)
     props["EnvironmentFiles"] = [str(path) for path in files]
     props["EffectiveSwitches"] = {switch: values.get(switch) for switch in SWITCHES}
+    props["ManagerScope"] = "user" if manager else "system"
     return props
+
+
+def unit_load_state(unit: str, *, systemctl: str, manager: tuple[str, ...] = ()) -> str:
+    out = _systemctl("show", unit, "--property=LoadState", systemctl=systemctl, manager=manager)
+    props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    return props.get("LoadState", "").strip()
 
 
 def preflight(
@@ -1506,11 +1676,25 @@ def preflight(
     release_root: Path,
     systemctl: str = "systemctl",
     require_root: bool = True,
+    sources_owner=None,
 ) -> dict:
     """Explicit prerequisite report; each failure is a fixed code, never a guess."""
     problems = []
     if require_root and os.geteuid() != 0:
         problems.append("root_required")
+    try:
+        managers = managers_for(sources_owner)
+    except QualificationRefused as exc:
+        managers = {"api": Manager("system"), "sources": Manager("system")}
+        problems.append(str(exc) if sources_owner is not None else "sources_owner_required")
+    else:
+        # A same-named unit under the system manager would be a different unit.
+        try:
+            state = unit_load_state(SOURCES_UNIT, systemctl=systemctl)
+        except (subprocess.CalledProcessError, OSError):
+            state = "unknown"
+        if state != "not-found":
+            problems.append(f"sources_unit_ambiguous:{state or 'unknown'}")
     for kind, directory in dropin_dirs.items():
         staged = directory / STAGED_DROPINS[kind]
         if not staged.is_file():
@@ -1540,14 +1724,15 @@ def preflight(
     ):
         problems.append("qualification_file_not_private")
     for kind, unit in UNITS.items():
+        manager = managers[kind].argv
         try:
-            state = _systemctl("is-active", unit, systemctl=systemctl).strip()
+            state = _systemctl("is-active", unit, systemctl=systemctl, manager=manager).strip()
         except (subprocess.CalledProcessError, OSError):
             state = "unknown"
         if state != "active":
             problems.append(f"{unit}:not_active:{state}")
         try:
-            effective = effective_switches(unit, systemctl=systemctl)
+            effective = effective_switches(unit, systemctl=systemctl, manager=manager)
         except (subprocess.CalledProcessError, OSError):
             effective = {}
         except QualificationRefused as exc:
@@ -1558,14 +1743,44 @@ def preflight(
     return {"ok": not problems, "problems": problems}
 
 
-def canary_dropin(kind: str, *, python: Path, release_root: Path) -> str:
-    return (
+def canary_dropin(kind: str, *, python: Path, release_root: Path, sources_owner: str) -> str:
+    """Temporary ``ExecStartPre=-`` drop-in for one existing unit.
+
+    The qualifier is invoked as the module installed in ``python``'s own
+    environment (the release interpreter), so no unit needs a checkout on its
+    working directory to import it. The API canary keeps the release root as
+    its working directory, which is the API service's normal cwd. The Sources
+    canary must not change the Sources process context: a ``WorkingDirectory=``
+    override would move the whole per-user server to the release root for the
+    staged restart and stay in effect after the drop-in is removed. Sources
+    therefore runs from the unit's own cwd (its checkout), and ``-P`` keeps that
+    cwd off ``sys.path`` so only the installed qualifier is ever imported;
+    ``PYTHONPATH`` (the unit's verified runtime selection) is unaffected.
+    """
+    owner, _ = resolve_owner(sources_owner)
+    text = (
         "# Temporary in-unit canary installed by hramatka.engine.v4_unit_qualification stage.\n"
         "# Removed after collection. Failure never blocks the service start.\n"
         "[Service]\n"
-        f"ExecStartPre=-{python} -B -m hramatka.engine.v4_unit_qualification canary --unit {kind}\n"
-        f"WorkingDirectory={release_root}\n"
     )
+    if kind == "api":
+        return text + (
+            f"ExecStartPre=-{python} -B -m hramatka.engine.v4_unit_qualification canary"
+            f" --unit api --sources-owner {owner}\n"
+            f"WorkingDirectory={release_root}\n"
+        )
+    if kind != "sources":
+        raise QualificationRefused("unit_kind_invalid")
+    return text + (
+        f"ExecStartPre=-{python} -P -B -m hramatka.engine.v4_unit_qualification canary"
+        f" --unit sources --sources-owner {owner}\n"
+    )
+
+
+def user_dropin_dir(owner: str) -> Path:
+    """The per-user manager's drop-in directory for the existing Sources unit."""
+    name, _ = resolve_owner(owner)
+    return Path(pwd.getpwnam(name).pw_dir) / ".config" / "systemd" / "user" / f"{SOURCES_UNIT}.d"
 
 
 def _write_private(path: Path, payload: dict) -> None:
@@ -1600,16 +1815,39 @@ def _strict_json(text: str):
     return json.loads(text, object_pairs_hook=unique)
 
 
+def journal_match(unit: str, invocation: str, manager: Manager) -> list[str]:
+    """Journal field matches binding the unit to its manager scope, owner and invocation."""
+    if manager.scope == "system":
+        return [f"_SYSTEMD_UNIT={unit}", f"_SYSTEMD_INVOCATION_ID={invocation}"]
+    return [
+        f"_SYSTEMD_USER_UNIT={unit}",
+        f"_UID={manager.uid}",
+        f"_SYSTEMD_OWNER_UID={manager.uid}",
+        f"_SYSTEMD_INVOCATION_ID={invocation}",
+    ]
+
+
 def collect_canary(
-    unit: str, kind: str, *, systemctl: str = "systemctl", journalctl: str = "journalctl"
+    unit: str,
+    kind: str,
+    *,
+    systemctl: str = "systemctl",
+    journalctl: str = "journalctl",
+    manager: Manager | None = None,
 ) -> dict:
+    manager = Manager("system") if manager is None else manager
     invocation = _systemctl(
-        "show", unit, "--property=InvocationID", "--value", systemctl=systemctl
+        "show",
+        unit,
+        "--property=InvocationID",
+        "--value",
+        systemctl=systemctl,
+        manager=manager.argv,
     ).strip()
     if not HEX32.fullmatch(invocation):
         raise QualificationRefused(f"{kind}_canary_invocation_invalid")
     out = subprocess.run(
-        [journalctl, "-u", unit, f"_SYSTEMD_INVOCATION_ID={invocation}", "-o", "cat", "--no-pager"],
+        [journalctl, *journal_match(unit, invocation, manager), "-o", "cat", "--no-pager"],
         check=True,
         capture_output=True,
         text=True,
@@ -1622,18 +1860,27 @@ def collect_canary(
         report = _strict_json(lines[0])
     except ValueError:
         raise QualificationRefused(f"{kind}_canary_schema") from None
-    if (
-        not isinstance(report, dict)
-        or report.get("identity", {}).get("invocation_id") != invocation
-    ):
+    identity = report.get("identity", {}) if isinstance(report, dict) else {}
+    if not isinstance(identity, dict) or identity.get("invocation_id") != invocation:
         raise QualificationRefused(f"{kind}_canary_invocation_mismatch")
+    if identity.get("scope") != manager.scope or (
+        manager.scope == "user" and identity.get("uid") != manager.uid
+    ):
+        raise QualificationRefused(f"{kind}_canary_scope_mismatch")
     return report
 
 
-def restart_deadline(unit: str, *, systemctl: str = "systemctl") -> float:
+def restart_deadline(
+    unit: str, *, systemctl: str = "systemctl", manager: tuple[str, ...] = ()
+) -> float:
     """Blocking allowance derived from the unit's own stop timeout (drain) plus a fixed margin."""
     text = _systemctl(
-        "show", unit, "--property=TimeoutStopUSec", "--value", systemctl=systemctl
+        "show",
+        unit,
+        "--property=TimeoutStopUSec",
+        "--value",
+        systemctl=systemctl,
+        manager=manager,
     ).strip()
     drain = timespan_seconds(text)
     if drain is None:
@@ -1641,13 +1888,22 @@ def restart_deadline(unit: str, *, systemctl: str = "systemctl") -> float:
     return drain + RESTART_MARGIN
 
 
-def _unit_state(unit: str, *, systemctl: str) -> tuple[str, str]:
-    out = _systemctl("show", unit, "--property=ActiveState", "--property=Job", systemctl=systemctl)
+def _unit_state(unit: str, *, systemctl: str, manager: tuple[str, ...] = ()) -> tuple[str, str]:
+    out = _systemctl(
+        "show",
+        unit,
+        "--property=ActiveState",
+        "--property=Job",
+        systemctl=systemctl,
+        manager=manager,
+    )
     props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
     return props.get("ActiveState", "unknown"), props.get("Job", "")
 
 
-def wait_restarted(unit: str, allowance: float, *, systemctl: str = "systemctl") -> None:
+def wait_restarted(
+    unit: str, allowance: float, *, systemctl: str = "systemctl", manager: tuple[str, ...] = ()
+) -> None:
     """Wait until the restart job has settled and the unit is active, within the drain allowance.
 
     A job that settles into a non-active state refuses at once; a job still
@@ -1655,7 +1911,7 @@ def wait_restarted(unit: str, allowance: float, *, systemctl: str = "systemctl")
     """
     deadline = time.monotonic() + allowance
     while True:
-        state, job = _unit_state(unit, systemctl=systemctl)
+        state, job = _unit_state(unit, systemctl=systemctl, manager=manager)
         if not job:
             if state == "active":
                 return
@@ -1665,7 +1921,9 @@ def wait_restarted(unit: str, allowance: float, *, systemctl: str = "systemctl")
         time.sleep(1)
 
 
-def _job_settlement(unit: str, deadline: float, *, systemctl: str) -> str | None:
+def _job_settlement(
+    unit: str, deadline: float, *, systemctl: str, manager: tuple[str, ...] = ()
+) -> str | None:
     """Rollback safety: verified settlement (``None``) or the specific reason it is not.
 
     Waits until the deadline, then queries once more. Elapsed time is never
@@ -1675,7 +1933,7 @@ def _job_settlement(unit: str, deadline: float, *, systemctl: str) -> str | None
     """
     while True:
         try:
-            _, job = _unit_state(unit, systemctl=systemctl)
+            _, job = _unit_state(unit, systemctl=systemctl, manager=manager)
         except (subprocess.CalledProcessError, OSError):
             return "unit_state_unknown"
         if not job:
@@ -1685,28 +1943,53 @@ def _job_settlement(unit: str, deadline: float, *, systemctl: str) -> str | None
         time.sleep(1)
 
 
-def _rollback(installed: list[Path], pending: dict[str, float], *, systemctl: str) -> dict:
+def _rollback(
+    installed: list[Path],
+    pending: dict[str, float],
+    *,
+    systemctl: str,
+    managers: dict[str, tuple[str, ...]] | None = None,
+) -> dict:
     """Remove the owned canary drop-ins only after every restart job verifiably settled.
 
     Running units are never stopped. When a job is still pending or its state
     is unknown, the staging is retained and reported for operator recovery.
+    ``managers`` maps each unit to its manager argv; every distinct manager
+    that received a drop-in is reloaded after removal.
     """
+    managers = managers or {}
     retained = {
         unit: reason
         for unit, deadline in pending.items()
-        if (reason := _job_settlement(unit, deadline, systemctl=systemctl)) is not None
+        if (
+            reason := _job_settlement(
+                unit, deadline, systemctl=systemctl, manager=managers.get(unit, ())
+            )
+        )
+        is not None
     }
     if retained:
         return {"retained": retained, "retained_dropins": sorted(str(p) for p in installed)}
     for path in installed:
         path.unlink(missing_ok=True)
     if installed:
-        _systemctl("daemon-reload", systemctl=systemctl)
+        for manager in sorted({(), *managers.values()}):
+            _systemctl("daemon-reload", systemctl=systemctl, manager=manager)
     return {"retained": {}, "retained_dropins": []}
 
 
 def stage(args) -> int:
-    dropin_dirs = {"api": args.api_dropin_dir, "sources": args.sources_dropin_dir}
+    sources_owner = getattr(args, "sources_owner", None)
+    sources_dir = args.sources_dropin_dir
+    if sources_dir is None and sources_owner is not None:
+        try:
+            sources_dir = user_dropin_dir(sources_owner)
+        except QualificationRefused:
+            sources_dir = None
+    if sources_dir is None:
+        print(json.dumps({"outcome": "refused", "code": "sources_owner_required"}, sort_keys=True))
+        return 2
+    dropin_dirs = {"api": args.api_dropin_dir, "sources": sources_dir}
     report = preflight(
         dropin_dirs=dropin_dirs,
         qualification_file=args.qualification_file,
@@ -1714,11 +1997,13 @@ def stage(args) -> int:
         release_root=args.release_root,
         systemctl=args.systemctl,
         require_root=not args.dry_run,
+        sources_owner=sources_owner,
     )
     plan = {
         "preflight": report,
         "canary_dropins": {k: str(d / CANARY_DROPIN) for k, d in dropin_dirs.items()},
         "restart_order": [API_UNIT, SOURCES_UNIT],
+        "managers": {"api": "system", "sources": f"user:{sources_owner}"},
         "qualification_file": str(args.qualification_file),
         "switches": "execution and admission remain OFF; "
         "credential is read at the next operator restart",
@@ -1726,6 +2011,8 @@ def stage(args) -> int:
     if args.dry_run or not report["ok"]:
         print(json.dumps(plan, sort_keys=True))
         return 0 if report["ok"] else 2
+    managers = managers_for(sources_owner)
+    manager_argv = {UNITS[kind]: managers[kind].argv for kind in UNITS}
     installed: list[Path] = []
     pending: dict[str, float] = {}
     try:
@@ -1734,29 +2021,43 @@ def stage(args) -> int:
         for kind, directory in dropin_dirs.items():
             path = directory / CANARY_DROPIN
             path.write_text(
-                canary_dropin(kind, python=args.unit_python, release_root=args.release_root)
+                canary_dropin(
+                    kind,
+                    python=args.unit_python,
+                    release_root=args.release_root,
+                    sources_owner=sources_owner,
+                )
             )
             os.chmod(path, 0o644)
             installed.append(path)
-        _systemctl("daemon-reload", systemctl=args.systemctl)
+        for manager in sorted(set(manager_argv.values())):
+            _systemctl("daemon-reload", systemctl=args.systemctl, manager=manager)
         reports = {}
         for kind, unit in (("api", API_UNIT), ("sources", SOURCES_UNIT)):
+            manager = managers[kind]
             # Effective OFF (Environment= and every EnvironmentFile=) must hold
             # for the configuration about to be started.
-            if not switches_off(effective_switches(unit, systemctl=args.systemctl)):
+            if not switches_off(
+                effective_switches(unit, systemctl=args.systemctl, manager=manager.argv)
+            ):
                 raise QualificationRefused(f"{kind}_effective_switch_not_off")
-            allowance = restart_deadline(unit, systemctl=args.systemctl)
+            allowance = restart_deadline(unit, systemctl=args.systemctl, manager=manager.argv)
             pending[unit] = time.monotonic() + allowance
             _systemctl(
-                "restart", "--no-block", unit, systemctl=args.systemctl
+                "restart", "--no-block", unit, systemctl=args.systemctl, manager=manager.argv
             )  # honors TimeoutStopSec drain
-            wait_restarted(unit, allowance, systemctl=args.systemctl)
+            wait_restarted(unit, allowance, systemctl=args.systemctl, manager=manager.argv)
             del pending[unit]
             reports[kind] = collect_canary(
-                unit, kind, systemctl=args.systemctl, journalctl=args.journalctl
+                unit,
+                kind,
+                systemctl=args.systemctl,
+                journalctl=args.journalctl,
+                manager=manager,
             )
         properties = {
-            unit: unit_properties(unit, systemctl=args.systemctl) for unit in UNITS.values()
+            unit: unit_properties(unit, systemctl=args.systemctl, manager=manager_argv[unit])
+            for unit in UNITS.values()
         }
         if not all(switches_off(p["EffectiveSwitches"]) for p in properties.values()):
             raise QualificationRefused("effective_switch_not_off")
@@ -1777,7 +2078,7 @@ def stage(args) -> int:
     finally:
         # Rollback: the temporary canary drop-ins are removed only after every
         # pending restart job has verifiably settled; running units stay up.
-        rollback = _rollback(installed, pending, systemctl=args.systemctl)
+        rollback = _rollback(installed, pending, systemctl=args.systemctl, managers=manager_argv)
     if rollback["retained"]:
         # Recoverable: the operator settles/inspects the job, then removes the
         # listed drop-ins and daemon-reloads. Nothing else was changed.
@@ -1792,12 +2093,20 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     canary = sub.add_parser("canary", help="run inside the actual unit (ExecStartPre)")
     canary.add_argument("--unit", choices=sorted(UNITS), required=True)
+    canary.add_argument("--sources-owner", help="account owning the per-user Sources manager")
     staging = sub.add_parser("stage", help="root-operated staging, collection and rollback")
     staging.add_argument(
         "--api-dropin-dir", type=Path, default=Path(f"/etc/systemd/system/{API_UNIT}.d")
     )
     staging.add_argument(
-        "--sources-dropin-dir", type=Path, default=Path(f"/etc/systemd/system/{SOURCES_UNIT}.d")
+        "--sources-owner",
+        help="account whose per-user manager runs the existing Sources unit (required)",
+    )
+    staging.add_argument(
+        "--sources-dropin-dir",
+        type=Path,
+        default=None,
+        help=f"default: <owner home>/.config/systemd/user/{SOURCES_UNIT}.d",
     )
     staging.add_argument(
         "--qualification-file",
@@ -1816,7 +2125,7 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     if args.command == "canary":
-        report = run_canary(args.unit)
+        report = run_canary(args.unit, sources_owner=args.sources_owner)
         sys.stdout.write(
             CANARY_MARK + json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n"
         )

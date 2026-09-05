@@ -17,4 +17,7 @@ LoadCredential=v4-signing-keys:<root-owned-v4-signing-key-directory>
 LoadCredential=v4-unit-qualification.json:<root-owned-actual-unit-qualification-file>
 LoadCredential=v4-provider-codex:<root-owned-selected-provider-credential-file>
 LoadCredential=v4-provider-claude:<root-owned-selected-provider-credential-file>
-InaccessiblePaths=-/run/credentials/learn-ukrainian-sources.service
+# The Sources unit is a per-user unit; its credential namespace lives under the
+# owner's runtime directory, which ProtectHome= and the 0700 directory already
+# deny to the API account. Substitute the owner's uid.
+InaccessiblePaths=-/run/user/<sources-owner-uid>/credentials/learn-ukrainian-sources.service
