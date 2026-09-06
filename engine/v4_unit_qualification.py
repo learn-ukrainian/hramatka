@@ -446,13 +446,57 @@ def _signing_credential_paths(credentials: Path, trust) -> tuple[Path, ...]:
     return expected if release == expected else ()
 
 
-def probe_unit_hardening() -> dict:
+KERNEL_OVERFLOW_PATHS = (
+    Path("/proc/sys/kernel/overflowuid"),
+    Path("/proc/sys/kernel/overflowgid"),
+)
+
+
+def _kernel_overflow_ids_readable(
+    paths: tuple[Path, ...] = KERNEL_OVERFLOW_PATHS,
+) -> bool:
+    """Observable read-only access to the kernel overflow UID/GID required by bwrap.
+
+    Validates readable, nonempty valid numeric kernel IDs, denying missing,
+    malformed, symlinked, non-regular, or writable sysctl targets without ever
+    writing sysctls.
+    """
+    if len(paths) != 2:
+        return False
+    for path in paths:
+        try:
+            if path.is_symlink() or not path.is_file():
+                return False
+            # Never write sysctls; check read access and ensure NOT writable.
+            if not os.access(path, os.R_OK) or os.access(path, os.W_OK):
+                return False
+            mode = path.stat().st_mode
+            if mode & 0o022:
+                return False
+            text = path.read_text(encoding="utf-8").strip()
+            if not text or not text.isascii() or not text.isdigit():
+                return False
+            kernel_id = int(text)
+            if not (0 < kernel_id <= 4294967295):
+                return False
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+    return True
+
+
+def probe_unit_hardening(
+    *,
+    kernel_overflow_paths: tuple[Path, ...] | None = None,
+) -> dict:
     """Observable consequences of the staged drop-in inside the running unit."""
     status = Path("/proc/self/status").read_text()
+    overflow_paths = (
+        kernel_overflow_paths if kernel_overflow_paths is not None else KERNEL_OVERFLOW_PATHS
+    )
     result = {
         "no_new_privs": "NoNewPrivs:\t1" in status,
         "protect_proc_invisible": not Path("/proc/1/status").exists(),
-        "proc_subset_pid": not Path("/proc/cpuinfo").exists(),
+        "kernel_overflow_ids": _kernel_overflow_ids_readable(overflow_paths),
         "protect_home": not any(
             Path(p).is_dir() and os.listdir(p) for p in ("/home", "/root") if os.access(p, os.R_OK)
         ),
@@ -1199,7 +1243,7 @@ UNIT_HARDENING_FLAGS = frozenset(
     {
         "no_new_privs",
         "protect_proc_invisible",
-        "proc_subset_pid",
+        "kernel_overflow_ids",
         "protect_home",
         "protect_system_strict",
         "unprivileged",
@@ -1207,7 +1251,7 @@ UNIT_HARDENING_FLAGS = frozenset(
     }
 )
 # Sources keeps its existing checkout/corpus in the owner's home and runs in a
-# per-user manager (ProtectProc=/ProcSubset= are not available there). Its
+# per-user manager (ProtectProc= is not available there). Its
 # required hardening is therefore privilege containment; the mount/proc
 # consequences are still observed and typed but do not gate qualification.
 SOURCES_HARDENING_FLAGS = frozenset({"no_new_privs", "unprivileged"})
