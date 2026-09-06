@@ -35,7 +35,7 @@ PILOT_LU_LESSON = "lu.lesson.v1@1.3.0"
 LINGUISTICS = "learn_ukrainian_linguistics@1.0.0"
 TRAILSPEC_V1 = "trailspec.v1@1.0.0-1356e7c4"
 STEP_RECEIPT_V1 = "step-receipt.v1@1.0.0-1356e7c4"
-V4_RUNTIME = "learn_ukrainian_v4_runtime@v1-7a9950a10694e2e3a8ac406212e4fb2b1e656087"
+V4_RUNTIME = "learn_ukrainian_v4_runtime@v1-a0fdffa5f98727d432591268a7183f29633ca29e"
 
 REGISTERED = (
     LU_ACTIVITY,

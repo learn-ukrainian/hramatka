@@ -16,9 +16,10 @@ from pathlib import Path
 from . import vendoring
 
 PACKAGE = "learn_ukrainian_v4_runtime"
-PUBLIC_COMMIT = "7a9950a10694e2e3a8ac406212e4fb2b1e656087"
-ARTIFACT = f"{PACKAGE}@v1-{PUBLIC_COMMIT}"
-MANIFEST_SHA256 = "8d888122438d014adb4dd5eee8e4a9cf9ebc695ea339f6d8aede8c0631d83b74"
+# The generic loader and strict verifier share one reviewed release selection.
+ARTIFACT = vendoring.V4_RUNTIME
+PUBLIC_COMMIT = ARTIFACT.removeprefix(f"{PACKAGE}@v1-")
+MANIFEST_SHA256 = "73fb25686087af64750737c34a3d4b11d5872da2176ec02fc2779cec1b7e0cc3"
 _verified_root: Path | None = None
 
 

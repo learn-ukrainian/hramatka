@@ -17,7 +17,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # pure-Python wheel of the current private pin, no dependencies. Sources keeps
 # its own interpreter and MCP/psycopg/starlette environment; never place a
 # Python 3.14 release venv's site-packages here. Substitute the actual path.
-Environment=PYTHONPATH=/opt/hramatka/v4-runtime/learn_ukrainian_v4_runtime@v1-7a9950a10694e2e3a8ac406212e4fb2b1e656087
+Environment=PYTHONPATH=/opt/hramatka/v4-runtime/learn_ukrainian_v4_runtime@v1-a0fdffa5f98727d432591268a7183f29633ca29e
 NoNewPrivileges=yes
 SystemCallFilter=~@debug
 # systemd exposes this as $CREDENTIALS_DIRECTORY/v4-sources-dsn under
