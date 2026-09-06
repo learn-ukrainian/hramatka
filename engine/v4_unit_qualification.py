@@ -484,6 +484,28 @@ def _kernel_overflow_ids_readable(
     return True
 
 
+HOST_CAPABILITY_FIELDS = frozenset({"CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"})
+
+
+def _host_capabilities_absent(status: str) -> bool:
+    """Require all five observed host capability sets to be empty, fail closed."""
+    seen = set()
+    for line in status.splitlines():
+        key, separator, raw = line.partition(":")
+        if key not in HOST_CAPABILITY_FIELDS:
+            continue
+        value = raw.strip()
+        if (
+            not separator
+            or key in seen
+            or re.fullmatch(r"[0-9a-fA-F]{16}", value) is None
+            or int(value, 16) != 0
+        ):
+            return False
+        seen.add(key)
+    return seen == HOST_CAPABILITY_FIELDS
+
+
 def probe_unit_hardening(
     *,
     kernel_overflow_paths: tuple[Path, ...] | None = None,
@@ -497,6 +519,7 @@ def probe_unit_hardening(
         "no_new_privs": "NoNewPrivs:\t1" in status,
         "protect_proc_invisible": not Path("/proc/1/status").exists(),
         "kernel_overflow_ids": _kernel_overflow_ids_readable(overflow_paths),
+        "host_capabilities_absent": _host_capabilities_absent(status),
         "protect_home": not any(
             Path(p).is_dir() and os.listdir(p) for p in ("/home", "/root") if os.access(p, os.R_OK)
         ),
@@ -1244,6 +1267,7 @@ UNIT_HARDENING_FLAGS = frozenset(
         "no_new_privs",
         "protect_proc_invisible",
         "kernel_overflow_ids",
+        "host_capabilities_absent",
         "protect_home",
         "protect_system_strict",
         "unprivileged",
@@ -1566,6 +1590,9 @@ UNIT_PROPERTIES = (
     "PrivateMounts",
     "ProtectProc",
     "ProcSubset",
+    "ProtectKernelTunables",
+    "CapabilityBoundingSet",
+    "AmbientCapabilities",
     "NoNewPrivileges",
     "ProtectHome",
     "ProtectSystem",

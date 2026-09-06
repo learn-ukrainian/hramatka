@@ -11,6 +11,12 @@ ProtectProc=invisible
 # causes bwrap startup failure; ProcSubset=all preserves process privacy via
 # ProtectProc=invisible while permitting required read-only kernel API access.
 ProcSubset=all
+# Kernel-tunable proc submounts prevent unprivileged bwrap from mounting the
+# child's own procfs. Keep host privilege absent instead of these submounts:
+# DAC still denies writes to root-owned sysctls; the canary observes that.
+ProtectKernelTunables=no
+CapabilityBoundingSet=
+AmbientCapabilities=
 SystemCallFilter=~@debug
 # Let the parent complete or fail its fixed 1800-second claim before exit.
 TimeoutStopSec=1900s
