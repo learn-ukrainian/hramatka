@@ -19,7 +19,7 @@ PACKAGE = "learn_ukrainian_v4_runtime"
 # The generic loader and strict verifier share one reviewed release selection.
 ARTIFACT = vendoring.V4_RUNTIME
 PUBLIC_COMMIT = ARTIFACT.removeprefix(f"{PACKAGE}@v1-")
-MANIFEST_SHA256 = "73fb25686087af64750737c34a3d4b11d5872da2176ec02fc2779cec1b7e0cc3"
+MANIFEST_SHA256 = "386f21a6e7aeeb87b4f1973007e65e67800229476033503c68e145277ffa0553"
 _verified_root: Path | None = None
 
 

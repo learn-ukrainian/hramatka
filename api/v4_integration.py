@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 _REFUSAL_CODES = frozenset(
     {
         "adapter_executable_unpinned",
+        "adapter_tool_runner_unpinned",
         "adapter_model_unqualified",
         "adapter_separability_unqualified",
         "adapter_unqualified",
@@ -61,6 +62,7 @@ _REFUSAL_CODES = frozenset(
         "child_credential_disclosure",
         "child_event_invalid",
         "child_identity_or_terminal_unproved",
+        "child_sources_tools_unavailable",
         "child_launch_failed",
         "child_unsuccessful",
         "constraint_fields",
@@ -122,6 +124,7 @@ _REFUSAL_CODES = frozenset(
         "request_schema",
         "request_size",
         "review_verdict_absent",
+        "reviewer_sources_evidence_absent",
         "reviewer_semantic_origin_mismatch",
         "reviewer_snapshot",
         "rubric_digest",
