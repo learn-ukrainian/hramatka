@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,134 @@ from .v4_execution_auth import (
     parse_v4_authorization_request,
     parse_v4_execution_request,
 )
+
+log = logging.getLogger(__name__)
+
+# Only literal codes from the pinned public runtime may enter private logs.
+# Never log arbitrary exception arguments, captures, credentials or tracebacks.
+_REFUSAL_CODES = frozenset(
+    {
+        "adapter_executable_unpinned",
+        "adapter_model_unqualified",
+        "adapter_separability_unqualified",
+        "adapter_unqualified",
+        "admitted_constraints_required",
+        "assignment_not_freezable",
+        "author_required_fields",
+        "author_row_absent",
+        "author_row_json",
+        "author_row_marker",
+        "author_row_shape",
+        "author_semantic_input_missing",
+        "author_snapshot",
+        "authored_capture_digest",
+        "authored_capture_unresolved",
+        "authored_row_digest",
+        "authored_row_keys",
+        "authored_row_required",
+        "authored_row_values",
+        "authorization_id",
+        "authorization_inactive",
+        "authorization_ownership",
+        "authorship_receipt_digest",
+        "authorship_unresolved",
+        "binding_digest",
+        "binding_ownership",
+        "canonical_preparation_reference_required",
+        "capture_limit",
+        "child_capture_invalid",
+        "child_credential_disclosure",
+        "child_event_invalid",
+        "child_identity_or_terminal_unproved",
+        "child_launch_failed",
+        "child_unsuccessful",
+        "constraint_fields",
+        "constraint_language",
+        "constraint_level",
+        "constraint_stratum",
+        "constraint_task",
+        "constraint_tools",
+        "consumed_jti",
+        "control_role_required",
+        "correction_authority_required",
+        "correction_source_role_required",
+        "correction_target_separate",
+        "credential_memfd_unavailable",
+        "duplicate_key",
+        "execution_expired",
+        "execution_release_changed",
+        "execution_timeout",
+        "finalization_ownership",
+        "foreign_child_capture",
+        "invalid_authenticated_policy",
+        "invalid_authenticated_principal",
+        "invalid_request",
+        "linguistic_authority_unresolved",
+        "linguistic_claim_type",
+        "linguistic_dependencies",
+        "linguistic_dependency",
+        "linguistic_dependency_index",
+        "linguistic_dependency_relation",
+        "linguistic_feature_value",
+        "linguistic_features",
+        "linguistic_matcher",
+        "linguistic_matcher_kind",
+        "linguistic_mechanism",
+        "linguistic_pos",
+        "linguistic_protections",
+        "linguistic_scope",
+        "linguistic_target_required",
+        "linguistic_token",
+        "linguistic_tokens",
+        "noncanonical_request",
+        "normative_source_role_required",
+        "operation_role",
+        "preparation_artifact_digest",
+        "preparation_artifact_noncanonical",
+        "preparation_artifact_schema",
+        "preparation_artifact_shape",
+        "provider_credential_auth_json",
+        "provider_credential_expired",
+        "provider_credential_file",
+        "provider_credential_file_changed",
+        "provider_credential_mismatch",
+        "provider_credential_schema",
+        "provider_credential_scope",
+        "provider_credential_token",
+        "request_deadline_ownership",
+        "request_inactive",
+        "request_keys",
+        "request_schema",
+        "request_size",
+        "review_verdict_absent",
+        "reviewer_semantic_origin_mismatch",
+        "reviewer_snapshot",
+        "rubric_digest",
+        "runtime_closure_digest",
+        "runtime_closure_keys",
+        "runtime_closure_mount",
+        "runtime_closure_writable",
+        "runtime_profile",
+        "runtime_profile_digest",
+        "semantic_input_digest",
+        "semantic_input_size",
+        "semantic_preparation_digest",
+        "source_qualified_target_required",
+        "target_assignment_binding",
+        "target_evidence_binding",
+        "target_evidence_locators",
+        "target_evidence_required",
+        "target_source_role",
+        "target_upstream_binding",
+    }
+)
+
+
+def _refusal_code(error: BaseException) -> str:
+    args = error.args
+    if len(args) == 1 and type(args[0]) is str and args[0] in _REFUSAL_CODES:
+        return args[0]
+    return "unknown_refusal"
 
 
 class ActionsVerifierAdapter:
@@ -153,13 +282,22 @@ class V4Integration:
                 method = runtime.execute if execution else runtime.authorize
                 try:
                     return method(raw, oidc_token=oidc_token, github_bearer=github_bearer)
-                except OperationRefused:
+                except OperationRefused as error:
+                    log.warning(
+                        "v4 operation refused phase=%s code=%s",
+                        "execute" if execution else "authorize",
+                        _refusal_code(error),
+                    )
                     raise V4ExecutionAuthError("v4_operation_refused", status_code=409) from None
             finally:
                 scoped.close()
         except V4ExecutionAuthError:
             raise
         except Exception:
+            log.warning(
+                "v4 operation failed phase=%s code=unhandled_failure",
+                "execute" if execution else "authorize",
+            )
             raise V4ExecutionAuthError("v4_unavailable", status_code=503) from None
         finally:
             with self._condition:
