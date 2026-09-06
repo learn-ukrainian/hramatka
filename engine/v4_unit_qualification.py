@@ -18,8 +18,8 @@ same-named unit under another manager is never accepted.
 Sources is a per-user unit by design: it keeps its existing checkout and
 corpus resources, so home/system mount protections are recorded but not
 required for it. Its forbidden capabilities stay tested: the API credential
-namespace, signing-key root and V4 table DML are denied, its DSN is private
-and owned by the unit, and the two units never share a principal (the owner
+namespace, the flattened signing-key credentials and V4 table DML are denied,
+its DSN is private and owned by the unit, and the two units never share a principal (the owner
 of a per-user manager can read that manager's credential sources, so the
 owner must not be the restricted API account).
 
@@ -27,6 +27,16 @@ Output is fixed codes, counts and digests only. No DSN, address, key, token
 or protected text is ever printed. Execution/admission switches stay OFF;
 the produced qualification credential is read by public readiness only when
 an operator later enables execution with a separate restart.
+
+Credential privacy is never a bitmask guess. systemd materializes the API's
+root-owned credentials at ``0440`` with a named-user access ACL for the service
+uid (the group triplet is the ACL mask), and a per-user unit's as owner-private
+``0400`` files. Every privacy flag and every credential read here goes through
+the verified release's descriptor-bound ``credential_custody`` (directory
+descriptor, ``O_NOFOLLOW``, ``fstat``/``fgetxattr`` on the open descriptor,
+kernel ACL semantics), the same reader the runtime itself uses. Signing keys are
+the flattened ``v4-signing-keys_<role>.key`` / ``.key_id`` credentials of the
+fixed role set inside the unit's own namespace; no nested directory exists.
 
 Every qualification flag is recomputed by the root composer from the complete
 probe evidence against a fixed schema. Summaries never override evidence; an
@@ -110,6 +120,15 @@ FORBIDDEN_TOOLS = (
 HARNESSES = ("codex", "claude")
 # Exact production signing-key roles (the verified runtime's KEYRING_ROLES).
 SIGNING_ROLES = ("sources", "a3", "fleet_execution")
+# systemd flattens ``LoadCredential=v4-signing-keys:<dir>`` into the unit's
+# single namespace as ``v4-signing-keys_<file>``; the fixed role files are the
+# only signing credentials (the verified runtime's fixed loader layout).
+SIGNING_CREDENTIAL = "v4-signing-keys"
+SIGNING_SUFFIXES = (".key", ".key_id")
+SIGNING_CREDENTIAL_NAMES = tuple(
+    f"{SIGNING_CREDENTIAL}_{role}{suffix}" for role in SIGNING_ROLES for suffix in SIGNING_SUFFIXES
+)
+API_ONLY_CREDENTIALS = ("v4-control-dsn", "v4-unit-qualification.json", *SIGNING_CREDENTIAL_NAMES)
 PROBE_MOUNT_ROOT = "/canary"
 PROBE_HOST_ROOT = PROBE_MOUNT_ROOT + "/host"
 PROBE_BASE = PROBE_MOUNT_ROOT + "/base"
@@ -218,7 +237,8 @@ r["pid_namespace"] = os.getpid() in (1, 2) and procs is not None and "1" in proc
 r["parent_proc_invisible"] = all(not e.isdigit() or int(e) <= 2 for e in listing("/proc") or ["x"])
 r["credentials_absent"] = absent("/run/credentials") and absent(
     "/run/credentials/hramatka-api.service")
-r["signing_absent"] = absent("/run/credentials/hramatka-api.service/v4-signing-keys")
+r["signing_absent"] = bool(expect["signing_credentials"]) and all(
+    absent(p) for p in expect["signing_credentials"])
 r["home_isolated"] = listing("/home") == ["v4"] and listing("/home/v4") in ([], [".codex"])
 r["protected_state_absent"] = all(
     absent(p) for p in ("/etc/hramatka", "/var/lib/hramatka", "/opt/hramatka", "/root"))
@@ -374,8 +394,56 @@ def in_unit_identity(
     }
 
 
-def _mode_private(path: Path) -> bool:
-    return path.exists() and not path.is_symlink() and not path.stat().st_mode & 0o077
+def _credential_private(path: Path) -> bool:
+    """The verified release's descriptor-bound custody verdict for this principal.
+
+    Accepts only the two shapes systemd produces for the running uid: an
+    owner-private ``0400`` regular file, or a root-owned ``0440`` file whose
+    access ACL names exactly this uid read-only (``group::---``, ``other::---``,
+    the mask being the reported group triplet). Absent, unreadable, symlinked,
+    non-regular, empty, oversized, writable, group/world/extra-principal
+    readable or incoherent objects are all False; nothing is read.
+    """
+    from learn_ukrainian_v4_runtime import credential_custody as custody
+
+    try:
+        custody.verify_credential(Path(path))
+    except (OSError, custody.CredentialCustodyError):
+        return False
+    return True
+
+
+def _read_credential(path: Path, code: str) -> str:
+    """Read one verified credential through the same custody reader, or refuse."""
+    from learn_ukrainian_v4_runtime import credential_custody as custody
+
+    try:
+        return custody.read_credential(Path(path)).decode("utf-8").strip()
+    except (OSError, UnicodeDecodeError, custody.CredentialCustodyError):
+        raise QualificationRefused(code) from None
+
+
+def _signing_credential_paths(credentials: Path, trust) -> tuple[Path, ...]:
+    """The verified loader's fixed flattened signing credentials, bound to
+    exactly this unit's namespace and the fixed role/suffix set; empty when
+    the release's layout, roles or namespace differ."""
+    expected = tuple(credentials / name for name in SIGNING_CREDENTIAL_NAMES)
+    try:
+        if (
+            tuple(trust.KEYRING_ROLES) != SIGNING_ROLES
+            or tuple(trust.SIGNING_KEY_SUFFIXES) != SIGNING_SUFFIXES
+            or trust.SIGNING_KEY_CREDENTIAL != SIGNING_CREDENTIAL
+            or Path(trust.HRAMATKA_CREDENTIAL_NAMESPACE) != credentials
+        ):
+            return ()
+        release = tuple(
+            trust.signing_credential_path(role, suffix)
+            for role in SIGNING_ROLES
+            for suffix in SIGNING_SUFFIXES
+        )
+    except Exception:
+        return ()
+    return expected if release == expected else ()
 
 
 def probe_unit_hardening() -> dict:
@@ -445,15 +513,22 @@ def peer_denied_paths(namespace: str) -> tuple[str, ...]:
 
 
 def probe_api_credentials(credentials: Path, *, sources_namespace: str) -> dict:
-    """Parent-only signing succeeds; the ACTUAL Sources namespace and modes are closed."""
+    """Parent-only signing succeeds; the ACTUAL Sources namespace and custody are closed.
+
+    ``signing_root_private`` is True only when the verified loader's fixed
+    flattened role credentials are exactly this namespace's
+    ``v4-signing-keys_<role>.key``/``.key_id`` files for the fixed role set and
+    EVERY one of them passes the descriptor-bound custody check.
+    """
     from learn_ukrainian_v4_runtime import v4_trust_authority as trust
 
     names = sorted(p.name for p in credentials.iterdir())
-    signing = credentials / "v4-signing-keys"
+    signing = _signing_credential_paths(credentials, trust)
     result = {
-        "control_dsn_private": _mode_private(credentials / "v4-control-dsn"),
-        "qualification_private": _mode_private(credentials / "v4-unit-qualification.json"),
-        "signing_root_private": signing.is_dir() and not signing.is_symlink(),
+        "control_dsn_private": _credential_private(credentials / "v4-control-dsn"),
+        "qualification_private": _credential_private(credentials / "v4-unit-qualification.json"),
+        "signing_root_private": bool(signing)
+        and all(p.name in names and _credential_private(p) for p in signing),
         "provider_credential_count": sum(n.startswith("v4-provider-") for n in names),
         "sources_namespace_denied": not any(
             os.access(path, os.R_OK) for path in peer_denied_paths(sources_namespace)
@@ -668,23 +743,61 @@ def _transport_bound(credentials: Path) -> bool:
         return False
 
 
+def _api_signing_denied(trust) -> bool:
+    """Sources can neither list the API namespace nor load any fixed-role key.
+
+    The verified loader is exercised for every role: a load that returns key
+    material (or any role/suffix the loader would resolve outside the fixed
+    API namespace) is a failure; only a refusal is a denial.
+    """
+    api_namespace = Path(credential_namespace(API_UNIT, "system"))
+    try:
+        if (
+            Path(trust.HRAMATKA_CREDENTIAL_NAMESPACE) != api_namespace
+            or tuple(trust.KEYRING_ROLES) != SIGNING_ROLES
+        ):
+            return False
+        paths = [
+            trust.signing_credential_path(role, suffix)
+            for role in SIGNING_ROLES
+            for suffix in SIGNING_SUFFIXES
+        ]
+    except Exception:
+        return False
+    if [p.name for p in paths] != list(SIGNING_CREDENTIAL_NAMES):
+        return False
+    if any(os.access(str(p), os.R_OK) for p in paths):
+        return False
+    for role in SIGNING_ROLES:
+        try:
+            trust.load_production_signing_key(role)
+        except Exception:
+            continue
+        return False
+    return True
+
+
 def probe_sources_credentials(credentials: Path) -> dict:
     from learn_ukrainian_v4_runtime import v4_trust_authority as trust
 
     names = sorted(p.name for p in credentials.iterdir())
     dsn = credentials / "v4-sources-dsn"
     return {
-        "sources_dsn_private": _mode_private(dsn),
+        "sources_dsn_private": _credential_private(dsn),
         "sources_dsn_owned_by_unit": dsn.is_file() and dsn.stat().st_uid == os.getuid(),
         "credentials_directory_private": _owned_private_directory(credentials),
         "transport_credential_path_bound": _transport_bound(credentials),
+        # Nothing of the API's: control DSN, qualification, any provider
+        # credential, the flattened signing-key files or a nested/oddly named
+        # ``v4-signing-keys*`` entry.
         "api_credentials_absent": not any(
-            n in names or n.startswith("v4-provider-")
-            for n in ("v4-control-dsn", "v4-signing-keys", "v4-unit-qualification.json")
-        )
-        and not any(n.startswith("v4-provider-") for n in names),
-        "api_namespace_denied": not os.access(f"/run/credentials/{API_UNIT}", os.R_OK),
-        "signing_root_denied": not os.access(str(trust.HRAMATKA_SIGNING_KEY_ROOT), os.R_OK),
+            n in API_ONLY_CREDENTIALS
+            or n.startswith("v4-provider-")
+            or n.startswith(SIGNING_CREDENTIAL)
+            for n in names
+        ),
+        "api_namespace_denied": not os.access(credential_namespace(API_UNIT, "system"), os.R_OK),
+        "signing_root_denied": _api_signing_denied(trust),
         "credential_names_sha256": _digest(_canonical(names)),
     }
 
@@ -973,6 +1086,10 @@ def _run_probe(plan: dict, target: dict, *, timeout: float) -> dict | None:
         "env_keys": sorted(plan["env"]),
         "pg": target,
         "auth_destination": plan["auth_destination"],
+        "signing_credentials": [
+            credential_namespace(API_UNIT, "system") + "/" + name
+            for name in SIGNING_CREDENTIAL_NAMES
+        ],
     }
     cmd = [*plan["prefix"], *mounts]
     env = {
@@ -1247,11 +1364,9 @@ def run_canary(kind: str, *, sources_owner=None) -> dict:
                 database = probe_control_database(store.connection)
             finally:
                 store.close()
-            dsn_path = credentials / "v4-control-dsn"
-            if not _mode_private(dsn_path):
-                raise QualificationRefused("control_credential_required")
+            dsn = _read_credential(credentials / "v4-control-dsn", "control_credential_required")
             try:
-                bwrap = probe_bwrap(load_profile(), dsn_path.read_text().strip())
+                bwrap = probe_bwrap(load_profile(), dsn)
             except QualificationRefused as exc:
                 bwrap = {"probe_completed": False, "code": str(exc)}
             report["probes"] = {
@@ -1261,13 +1376,11 @@ def run_canary(kind: str, *, sources_owner=None) -> dict:
                 "bwrap": bwrap,
             }
         else:
-            dsn_path = credentials / "v4-sources-dsn"
-            if not _mode_private(dsn_path):
-                raise QualificationRefused("sources_credential_required")
+            dsn = _read_credential(credentials / "v4-sources-dsn", "sources_credential_required")
             report["probes"] = {
                 "unit_hardening": probe_unit_hardening(),
                 "credential_separation": probe_sources_credentials(credentials),
-                "scoped_database_roles": probe_sources_database(dsn_path.read_text().strip()),
+                "scoped_database_roles": probe_sources_database(dsn),
             }
         report["passed"] = {
             name: canary_pass(name, probe, kind=kind) for name, probe in report["probes"].items()

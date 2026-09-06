@@ -16,9 +16,9 @@ from pathlib import Path
 from . import vendoring
 
 PACKAGE = "learn_ukrainian_v4_runtime"
-PUBLIC_COMMIT = "5ed344c3c7f9ee3058e0a4924cdf21cd2bbfb2e7"
+PUBLIC_COMMIT = "7a9950a10694e2e3a8ac406212e4fb2b1e656087"
 ARTIFACT = f"{PACKAGE}@v1-{PUBLIC_COMMIT}"
-MANIFEST_SHA256 = "62bb82b34a0f72a771d80dc495503eb1ec8ac0934619f333819da7aed99d027c"
+MANIFEST_SHA256 = "8d888122438d014adb4dd5eee8e4a9cf9ebc695ea339f6d8aede8c0631d83b74"
 _verified_root: Path | None = None
 
 
@@ -48,10 +48,7 @@ def verify_vendor() -> dict:
             if wheel.is_symlink() or not wheel.is_file():
                 _refuse()
             raw = wheel.read_bytes()
-            if (
-                len(raw) != metadata["size"]
-                or _hash(raw) != metadata["sha256"]
-            ):
+            if len(raw) != metadata["size"] or _hash(raw) != metadata["sha256"]:
                 _refuse()
             with zipfile.ZipFile(wheel) as archive:
                 names = archive.namelist()
