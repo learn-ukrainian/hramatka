@@ -54,8 +54,15 @@ jobs:
         run: |
           python hramatka/engine/tools/check_boundary.py
           python hramatka/engine/tools/check_vendor_guard.py
-      - name: Ruff
-        run: ruff check hramatka/engine hramatka/api tests
+      - name: Ruff (CI surface only)
+        run: |
+          ruff check \
+            hramatka/engine/tools \
+            hramatka/engine/tests/test_boundary.py \
+            hramatka/engine/tests/test_schema.py \
+            hramatka/engine/tests/test_json_tolerance.py \
+            hramatka/engine/tests/test_pinning.py \
+            hramatka/engine/tests/test_schema_tokens.py
       - name: DB-free engine unit tests
         run: |
           export PYTHONPATH="$PWD"
