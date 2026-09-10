@@ -62,7 +62,9 @@ jobs:
             hramatka/engine/tests/test_schema.py \
             hramatka/engine/tests/test_json_tolerance.py \
             hramatka/engine/tests/test_pinning.py \
-            hramatka/engine/tests/test_schema_tokens.py
+            hramatka/engine/tests/test_schema_tokens.py \
+            hramatka/engine/tests/test_vesum_gate.py \
+            hramatka/engine/tests/test_vesum_tags.py
       - name: DB-free engine unit tests
         run: |
           pytest -q \
@@ -71,5 +73,41 @@ jobs:
             hramatka/engine/tests/test_json_tolerance.py \
             hramatka/engine/tests/test_pinning.py \
             hramatka/engine/tests/test_schema_tokens.py
+        env:
+          CI: true
+      - name: VESUM / Atlas fixture engine suite (P2.3b)
+        run: |
+          pytest -q \
+            hramatka/engine/tests/test_vesum_gate.py \
+            hramatka/engine/tests/test_vesum_tags.py \
+            hramatka/engine/tests/test_russianism_e2e.py
+        env:
+          CI: true
+
+  e2e:
+    name: Frontend Playwright (packaged e2e)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hramatka/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: hramatka/app/package-lock.json
+      - name: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && break
+            sleep $((attempt * 10))
+            if [[ $attempt -eq 3 ]]; then exit 1; fi
+          done
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Playwright e2e (default config; no live teacher stack)
+        run: npm run test:e2e -- --project=chromium
         env:
           CI: true
