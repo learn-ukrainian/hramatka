@@ -2,7 +2,7 @@
 
 - **Status**: APPROVED ADVISOR DESIGN (Sol `gpt-5.6-sol` @ `xhigh`, 2026-07-22)
 - **Target Repo**: `learn-ukrainian-infra-private` (`hramatka/api/agent_monitor.py`)
-- **Host Target**: Hetzner VPS (`hramatka` / `46.225.212.209` — 2 vCPU, 4GB RAM)
+- **Host Target**: (private infra) — size/topology live only in `learn-ukrainian-infra-private`; not recorded here.
 
 ---
 
