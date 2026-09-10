@@ -15,15 +15,15 @@ import pytest
 
 from hramatka.engine import data, pipeline, vendoring
 
-_FP_KW = dict(
-    anchor_hash="fixed-anchor-hash",
-    level="B1",
-    pedagogy="ttt",
-    phase="1",
-    types=["true-false", "cloze", "match-up"],
-    grounding_text="fixed grounding",
-    prompt_template="fixed prompt",
-)
+_FP_KW = {
+    "anchor_hash": "fixed-anchor-hash",
+    "level": "B1",
+    "pedagogy": "ttt",
+    "phase": "1",
+    "types": ["true-false", "cloze", "match-up"],
+    "grounding_text": "fixed grounding",
+    "prompt_template": "fixed prompt",
+}
 
 
 # ---------------------------------------------------------------------------

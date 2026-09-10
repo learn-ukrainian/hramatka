@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint + typecheck + unit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hramatka/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: hramatka/app/package-lock.json
+      - name: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && break
+            sleep $((attempt * 10))
+            if [[ $attempt -eq 3 ]]; then exit 1; fi
+          done
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: unit + build guard
+        run: npm test
+        env:
+          CI: true
+
+  python:
+    name: Python (guards + ruff + DB-free unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Boundary + vendor guards
+        run: |
+          python hramatka/engine/tools/check_boundary.py
+          python hramatka/engine/tools/check_vendor_guard.py
+      - name: Ruff (CI surface only)
+        run: |
+          ruff check \
+            hramatka/engine/tools \
+            hramatka/engine/tests/test_boundary.py \
+            hramatka/engine/tests/test_schema.py \
+            hramatka/engine/tests/test_json_tolerance.py \
+            hramatka/engine/tests/test_pinning.py \
+            hramatka/engine/tests/test_schema_tokens.py
+      - name: DB-free engine unit tests
+        run: |
+          pytest -q \
+            hramatka/engine/tests/test_boundary.py \
+            hramatka/engine/tests/test_schema.py \
+            hramatka/engine/tests/test_json_tolerance.py \
+            hramatka/engine/tests/test_pinning.py \
+            hramatka/engine/tests/test_schema_tokens.py
+        env:
+          CI: true

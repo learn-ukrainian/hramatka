@@ -2,6 +2,10 @@
 
 Fails when the PR diff (merge-base vs HEAD) touches hramatka/vendor/
 unless a commit in the range carries a 'Revendor:' trailer.
+
+Pure nest renames ``vendor/<path>`` → ``hramatka/vendor/<path>`` with
+identical content (git R100) are allowed without a trailer — they are
+layout moves, not hand edits of vendored payloads.
 """
 
 from __future__ import annotations
@@ -13,6 +17,9 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+VENDOR_NEST = "hramatka/vendor/"
+LEGACY_VENDOR = "vendor/"
+VENDOR_README = "hramatka/vendor/README.md"
 
 
 def get_git_executable() -> str:
@@ -59,10 +66,49 @@ def get_base_ref(cwd: Path = REPO_ROOT) -> str | None:
         branch = run_git(["branch", "--show-current"], cwd)
         if branch not in ("main", "master", ""):
             return "HEAD~1"
-    except Exception:
-        pass
+    except (OSError, subprocess.CalledProcessError, RuntimeError):
+        return None
 
     return None
+
+
+def _is_pure_vendor_nest_rename(status: str, old_path: str, new_path: str) -> bool:
+    """True when a file moved vendor/X → hramatka/vendor/X with identical bytes."""
+    if not status.startswith("R"):
+        return False
+    similarity = status[1:]
+    if similarity != "100":
+        return False
+    if not old_path.startswith(LEGACY_VENDOR):
+        return False
+    if not new_path.startswith(VENDOR_NEST):
+        return False
+    return old_path.removeprefix(LEGACY_VENDOR) == new_path.removeprefix(VENDOR_NEST)
+
+
+def vendor_paths_requiring_revendor(
+    name_status_lines: list[str],
+) -> list[str]:
+    """Return hramatka/vendor paths that are real edits, not pure nest renames."""
+    touched: list[str] = []
+    for line in name_status_lines:
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0]
+        if status.startswith(("R", "C")) and len(parts) >= 3:
+            old_path, new_path = parts[1], parts[2]
+            if _is_pure_vendor_nest_rename(status, old_path, new_path):
+                continue
+            path = new_path
+        elif len(parts) >= 2:
+            path = parts[1]
+        else:
+            continue
+
+        if path.startswith(VENDOR_NEST) and path != VENDOR_README:
+            touched.append(path)
+    return touched
 
 
 def check_vendor_violations(cwd: Path = REPO_ROOT, base_ref: str | None = None) -> list[str]:
@@ -96,11 +142,12 @@ def check_vendor_violations(cwd: Path = REPO_ROOT, base_ref: str | None = None) 
     if merge_base == head_commit:
         return []
 
-    changed_files = run_git(["diff", "--name-only", merge_base, "HEAD"], cwd).splitlines()
-    vendor_changes = [
-        f for f in changed_files
-        if f.startswith("hramatka/vendor/") and f != "hramatka/vendor/README.md"
-    ]
+    # -M100% so only byte-identical renames count as R100 (layout nest moves).
+    name_status = run_git(
+        ["diff", "--name-status", "-M100%", merge_base, "HEAD"],
+        cwd,
+    ).splitlines()
+    vendor_changes = vendor_paths_requiring_revendor(name_status)
 
     if not vendor_changes:
         return []

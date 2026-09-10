@@ -90,10 +90,13 @@ def find_violations(repo_root: Path | None = None) -> list[str]:
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         from hramatka.engine import vendoring
-
-        vendoring.verify_all()
-    except Exception as exc:  # VendorIntegrityError or an import failure
+    except ImportError as exc:
         violations.append(f"vendored artifact verification failed: {exc}")
+    else:
+        try:
+            vendoring.verify_all()
+        except vendoring.VendorIntegrityError as exc:
+            violations.append(f"vendored artifact verification failed: {exc}")
 
     return violations
 

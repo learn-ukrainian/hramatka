@@ -1,11 +1,25 @@
 # Hramatka
 
-Secret-free teacher product repository (app, API, lesson engine, product docs/tests).
+Secret-free teacher product repository.
 
-- Product code lives here.
-- Host inventory, credentials, and deploy topology live in `learn-ukrainian-infra-private` only.
-- Shared curriculum contracts remain in `learn-ukrainian/learn-ukrainian.github.io`.
+## Layout
 
-Migrated from infra-private per `#672` P2.2 / `#444`. Visibility may become public after the `#444` public-readiness audit.
+- `hramatka/app` — teacher frontend (Vite/React)
+- `hramatka/api` — teacher API
+- `hramatka/engine` — lesson engine
+- `hramatka/` — Python package (`import hramatka…`)
+- `tests/` — product qualification / teacher API tests
+- `docs/` — product docs
 
-Do not place credentials, host inventory, private teacher text, or protected data bundles here.
+Host inventory, credentials, and deploy topology stay in `learn-ukrainian-infra-private` only.
+
+## Local checks
+
+```bash
+# Frontend
+cd hramatka/app && npm ci && npm run typecheck && npm run lint && npm test
+
+# Python (from repo root)
+export PYTHONPATH="$PWD"
+pytest -q hramatka/engine/tests
+```
