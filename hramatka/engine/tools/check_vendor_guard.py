@@ -59,8 +59,8 @@ def get_base_ref(cwd: Path = REPO_ROOT) -> str | None:
         branch = run_git(["branch", "--show-current"], cwd)
         if branch not in ("main", "master", ""):
             return "HEAD~1"
-    except Exception:
-        pass
+    except (OSError, subprocess.CalledProcessError, RuntimeError):
+        return None
 
     return None
 

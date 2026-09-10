@@ -25,7 +25,7 @@ import shutil
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 REQUIRED_INPUTS = ("vesum.db", "atlas.db", "sources.db")
@@ -131,7 +131,7 @@ def create_data_release(
     source_inputs = _source_inputs(source)
     root = Path(releases_root or DEFAULT_RELEASES_ROOT).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    today = release_date or date.today()
+    today = release_date or datetime.now(UTC).date()
 
     stage = Path(tempfile.mkdtemp(prefix=f".{today.isoformat()}-", dir=root))
     try:
