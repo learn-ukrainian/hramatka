@@ -1,0 +1,18 @@
+[project]
+name = "hramatka"
+version = "0.1.0"
+description = "Hramatka teacher product — app, API, lesson engine"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["hramatka*"]
+exclude = ["hramatka.app*", "hramatka.vendor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "hramatka/engine/tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+src = ["hramatka", "tests"]

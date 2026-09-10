@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+hramatka/app/node_modules/
+hramatka/app/dist/
+hramatka/app/test-results/
