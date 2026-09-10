@@ -1,9 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "hramatka"
 version = "0.1.0"
 description = "Hramatka teacher product — app, API, lesson engine"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "cryptography>=49,<51",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "jsonschema>=4.23,<5",
+  "psycopg[binary]>=3.2,<4",
+  "PyJWT[crypto]>=2.10,<3",
+  "PyYAML>=6.0,<7",
+  "uvicorn>=0.30,<1",
+  "webauthn>=2.8,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<10",
+  "ruff>=0.9,<1",
+]
 
 [tool.setuptools.packages.find]
 include = ["hramatka*"]
@@ -12,7 +32,12 @@ exclude = ["hramatka.app*", "hramatka.vendor*"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "hramatka/engine/tests"]
 pythonpath = ["."]
+addopts = "-ra --strict-markers"
+markers = [
+  "slow: tests that load ML models or require long execution time",
+]
 
 [tool.ruff]
 target-version = "py312"
+line-length = 100
 src = ["hramatka", "tests"]
