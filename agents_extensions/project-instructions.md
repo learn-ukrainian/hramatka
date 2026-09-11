@@ -8,8 +8,11 @@ still follows its authorized task contract.
 
 ## Boundaries that always apply
 
-- Keep this repository secret-free. Host inventory, deploy topology, credentials,
-  secret wiring, and backup destinations belong in `learn-ukrainian-infra-private`.
+- Keep this repository secret-free. Non-secret host inventory, deploy topology,
+  secret-wiring procedures, and backup configuration belong in
+  `learn-ukrainian-infra-private`. That repository is not a secrets store: live
+  credentials and secret values stay in approved external or local secret stores
+  outside Git.
   Product work does not authorize a host change, production deployment, or access
   to credentials. [Ops orientation](../hramatka/ops/README.md) defines the boundary.
 - Consume curriculum artifacts through reviewed, digest-pinned vendored packages.
