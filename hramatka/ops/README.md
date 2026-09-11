@@ -48,3 +48,12 @@ default PR gate.
 - Private extract / residual board: `learn-ukrainian-infra-private#444`
 - Private teacher-ready epic board: `learn-ukrainian-infra-private#349`
 - CI layout (P2.3): `.github/workflows/ci.yml` in this repo
+
+## Release artifacts (CI)
+
+Public workflow `Release artifact` packs an immutable tarball + `manifest.json`
+for an exact git SHA after CI succeeds on `main` (or via `workflow_dispatch`).
+That artifact is the product input to private Hramatka CD in
+`learn-ukrainian/learn-ukrainian-infra-private`. Host promote, SSH, and secrets
+never run from this repository.
+

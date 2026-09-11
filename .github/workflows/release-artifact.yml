@@ -1,0 +1,84 @@
+name: Release artifact
+
+# Builds an immutable product artifact for an exact git SHA.
+# Host deploy / secrets stay in learn-ukrainian-infra-private (Hramatka CD).
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: release-artifact-${{ github.repository }}-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  pack:
+    name: Pack release artifact
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve SHA
+        id: rev
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.rev.outputs.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: hramatka/app/package-lock.json
+
+      - name: Build teacher app
+        working-directory: hramatka/app
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && break
+            sleep $((attempt * 10))
+            if [[ $attempt -eq 3 ]]; then exit 1; fi
+          done
+          npm run build
+          node scripts/csp-guard.mjs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pack + verify artifact
+        run: |
+          set -euo pipefail
+          python hramatka/ci/release_artifact.py pack --repo . --out-dir "$RUNNER_TEMP/hramatka-release"
+          python hramatka/ci/release_artifact.py verify \
+            "$RUNNER_TEMP/hramatka-release/hramatka-release-${{ steps.rev.outputs.sha }}.tar.gz" \
+            --expect-sha "${{ steps.rev.outputs.sha }}"
+          cat "$RUNNER_TEMP/hramatka-release/manifest.json"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hramatka-release-${{ steps.rev.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/hramatka-release/hramatka-release-${{ steps.rev.outputs.sha }}.tar.gz
+            ${{ runner.temp }}/hramatka-release/manifest.json
+          if-no-files-found: error
+          retention-days: 30

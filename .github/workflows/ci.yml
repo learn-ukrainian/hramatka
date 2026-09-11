@@ -75,6 +75,12 @@ jobs:
             hramatka/engine/tests/test_schema_tokens.py
         env:
           CI: true
+      - name: Release artifact packer unit tests
+        run: |
+          PYTHONPATH=hramatka/ci pytest -q hramatka/ci/tests/test_release_artifact.py
+        env:
+          CI: true
+
       - name: VESUM / Atlas fixture engine suite (P2.3b)
         run: |
           pytest -q \
