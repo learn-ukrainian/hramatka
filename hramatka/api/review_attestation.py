@@ -458,7 +458,7 @@ class _StateStore:
         try:
             database_stat = os.stat(self.path)
             descriptor = os.open(
-                lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o660
+                lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )
         except OSError as error:
             raise ReviewAttestationError(
@@ -472,8 +472,8 @@ class _StateStore:
                     database_stat.st_gid,
                 ):
                     os.fchown(descriptor, database_stat.st_uid, database_stat.st_gid)
-                if stat.S_IMODE(lock_stat.st_mode) != 0o660:
-                    os.fchmod(descriptor, 0o660)
+                if stat.S_IMODE(lock_stat.st_mode) != 0o600:
+                    os.fchmod(descriptor, 0o600)
             except OSError as error:
                 raise ReviewAttestationError(
                     "review_attestation_lock_ownership_mismatch", status_code=503

@@ -1479,6 +1479,39 @@ def test_old_run_refuses_to_delete_recreated_successor_state(tmp_path: Path) -> 
     shutil.rmtree(state_directory)
 
 
+def test_real_backend_proxy_requires_private_state_directory(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the real-backend proxy")
+    directory = tmp_path / "e2e"
+    directory.mkdir()
+    script = directory / "https-static-proxy.mjs"
+    shutil.copyfile(REPO_ROOT / "hramatka" / "app" / "e2e" / script.name, script)
+    state_directory = tmp_path / ".real-e2e"
+    state_directory.mkdir()
+    state_directory.chmod(0o750)
+    marker = "a" * 64
+    (state_directory / "owner").write_text(f"{marker}\n", encoding="ascii")
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    fake_python.chmod(0o700)
+
+    completed = subprocess.run(
+        [node, str(script)],
+        env=_isolated_test_environment(
+            HRAMATKA_E2E_STATE_DIR=str(state_directory),
+            HRAMATKA_E2E_OWNER_TOKEN=marker,
+            HRAMATKA_E2E_PYTHON=str(fake_python),
+        ),
+        stdin=subprocess.DEVNULL,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert not (state_directory / "api.log").exists()
+
+
 def test_real_backend_server_rejects_unexpected_state_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1823,6 +1856,7 @@ def test_readiness_probe_succeeds_with_ca_signed_trusted_certificate(
     httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
     port = httpd.server_port
     server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     server_ctx.load_cert_chain(certfile=str(leaf_cert), keyfile=str(leaf_key))
     httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
 
@@ -1871,6 +1905,7 @@ def test_readiness_probe_fails_when_served_certificate_mismatches_expected(
     httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
     port = httpd.server_port
     server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     server_ctx.load_cert_chain(certfile=str(leaf_cert_b), keyfile=str(leaf_key_b))
     httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
 

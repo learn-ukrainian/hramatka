@@ -121,11 +121,7 @@ def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     with tarfile.open(tarball, "r:gz") as tar:
-        # filter='data' is the Python 3.12+ safe default; fall back on older runtimes.
-        try:
-            tar.extractall(staging, filter="data")
-        except TypeError:
-            tar.extractall(staging)
+        tar.extractall(staging, filter="data")
     manifest_path = staging / MANIFEST_NAME
     if not manifest_path.is_file():
         candidates = list(staging.rglob(MANIFEST_NAME))
