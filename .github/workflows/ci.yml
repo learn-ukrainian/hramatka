@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           venv="$RUNNER_TEMP/hramatka-venv"
           rm -rf "$venv"
-          UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --extra dev --python 3.12
+          UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --no-install-project --no-build --extra dev --python 3.12
           printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
       - name: Boundary + vendor guards
         run: |
@@ -146,3 +146,45 @@ jobs:
         run: npm run test:e2e -- --project=chromium
         env:
           CI: true
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs: [frontend, python, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify every required CI job succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          if ! actual="$(jq -r 'if type == "object" then keys[] else error("not an object") end' \
+                <<< "$NEEDS_JSON" 2> /dev/null)"; then
+            echo "::error::Job results are not a JSON object; failing closed"
+            exit 1
+          fi
+          expected=(frontend python e2e)
+          failed=0
+          for job in "${expected[@]}"; do
+            result="$(jq -r --arg job "$job" \
+              '.[$job].result // "missing" | if type == "string" then . else "invalid" end' \
+              <<< "$NEEDS_JSON")"
+            echo "${job}: ${result} (required success)"
+            if [ "$result" != "success" ]; then
+              echo "::error::Required job ${job} finished with result ${result}"
+              failed=1
+            fi
+          done
+          while IFS= read -r job; do
+            [ -n "$job" ] || continue
+            if ! printf '%s\n' "${expected[@]}" | grep -qxF -- "$job"; then
+              echo "::error::Unexpected job ${job} in CI Gate needs"
+              failed=1
+            fi
+          done <<< "$actual"
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+          echo "CI Gate green: ${#expected[@]} required job(s) succeeded."

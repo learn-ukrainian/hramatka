@@ -22,7 +22,7 @@ concurrency:
 jobs:
   fleet-security:
     name: Fleet security
-    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@0555c28c3093609fbd6101f2b1b50a0f94a801a6 # machinery#1080 (PR #1098)
+    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@078285f3192049bc5d795c5c5e59339fd0c974ab # machinery#1080 (PR #1107)
     permissions:
       contents: read
     with:
@@ -38,7 +38,21 @@ jobs:
       run-trivy-fs: true
       trivy-fs-targets: |
         hramatka/app/package-lock.json
-        uv.lock
       trivy-scanners: vuln,license
       trivy-severity: HIGH,CRITICAL
       trivy-include-dev-deps: true
+
+  # Trivy 0.76.2's uv.lock parser inventories Python packages for CVEs without
+  # emitting SPDX licence metadata, so run uv.lock with vuln-only scanning and
+  # never emit a misleading zero-finding licence receipt for Python.
+  python-dependencies:
+    name: Python dependencies
+    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@078285f3192049bc5d795c5c5e59339fd0c974ab # machinery#1080 (PR #1107)
+    permissions:
+      contents: read
+    with:
+      run-trivy-fs: true
+      trivy-fs-targets: |
+        uv.lock
+      trivy-scanners: vuln
+      trivy-severity: HIGH,CRITICAL
