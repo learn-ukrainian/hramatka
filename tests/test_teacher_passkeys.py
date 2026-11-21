@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import hashlib
 import json
 import sqlite3
@@ -12,6 +13,10 @@ from types import SimpleNamespace
 
 import cbor2
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 from hramatka.api import app as app_module
 from hramatka.api.app import create_app
@@ -263,6 +268,26 @@ def _attestation_object(
     return _b64url(cbor2.dumps({"fmt": fmt, "attStmt": att_stmt or {}, "authData": auth_data}))
 
 
+def _invalid_version_x509_der() -> bytes:
+    key = Ed25519PrivateKey.generate()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, algorithm=None)
+    )
+    der = bytearray(cert.public_bytes(Encoding.DER))
+    version_offset = der.index(bytes([0xA0, 0x03, 0x02, 0x01, 0x02]))
+    der[version_offset + 4] = 0x03  # Invalid X.509 v4 triggers x509.InvalidVersion
+    return bytes(der)
+
+
 def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) -> None:
     """Defect class: malformed WebAuthn payload returns 5xx (unmocked webauthn paths)."""
     expected_422 = {
@@ -388,6 +413,21 @@ def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) 
                     valid_ed25519_cose,
                     fmt="android-safetynet",
                     att_stmt={"ver": "1", "response": 123},
+                ),
+            },
+        },
+        # Packed attestation leaf with invalid X.509 version -> x509.InvalidVersion
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(
+                    credential_id,
+                    valid_ed25519_cose,
+                    fmt="packed",
+                    att_stmt={"alg": -8, "sig": b"sig", "x5c": [_invalid_version_x509_der()]},
                 ),
             },
         },

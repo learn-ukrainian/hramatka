@@ -19,6 +19,8 @@ from typing import Annotated, Any
 from urllib.parse import parse_qs
 from uuid import UUID
 
+from cryptography import x509
+from cryptography.exceptions import InvalidKey, InvalidSignature, UnsupportedAlgorithm
 from fastapi import Depends, FastAPI, Header, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -100,6 +102,14 @@ _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _WEBAUTHN_VERIFY_ERRORS = (
     WebAuthnException,
+    InvalidKey,
+    InvalidSignature,
+    UnsupportedAlgorithm,
+    x509.AttributeNotFound,
+    x509.DuplicateExtension,
+    x509.ExtensionNotFound,
+    x509.InvalidVersion,
+    x509.UnsupportedGeneralNameType,
     AttributeError,
     IndexError,
     KeyError,
