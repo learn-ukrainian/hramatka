@@ -203,7 +203,8 @@ export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }:
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [isRunning, blocks]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- cond.i intentionally restarts the 1s interval on activity change so elapsed time does not bleed into the next phase
+  }, [isRunning, cond.i, blocks]);
 
   const c = cond;
 
