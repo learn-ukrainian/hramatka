@@ -3,6 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^22.22.2 || ^24.15.0 || >=26.0.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "prebuild": "node scripts/gen-activity-validator.mjs",
@@ -20,26 +30,26 @@
   },
   "dependencies": {
     "@learn-ukrainian/activity-kit": "file:../vendor/activity-kit/learn-ukrainian-activity-kit-0.1.0-ffd54054.tgz",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.0.1",
-    "@types/node": "^22.7.5",
-    "@types/react": "^18.3.11",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^6.0.5",
-    "ajv": "8.18.0",
-    "eslint": "^9.12.0",
-    "eslint-plugin-react-hooks": "^5.1.0",
-    "eslint-plugin-react-refresh": "^0.4.12",
-    "jsdom": "^25.0.1",
-    "oxlint": "^0.15.0",
-    "typescript": "^5.6.3",
+    "@playwright/test": "^1.65.1",
+    "@testing-library/jest-dom": "^8.0.0",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "ajv": "8.20.0",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.8",
+    "jsdom": "^31.0.1",
+    "oxlint": "^1.94.0",
+    "typescript": "^7.0.2",
     "vite": "^8.3.3",
-    "vitest": "^4.1.10"
+    "vitest": "^5.1.1"
   },
   "overrides": {
     "brace-expansion": "^1.1.20",
