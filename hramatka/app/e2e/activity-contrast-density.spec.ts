@@ -46,7 +46,7 @@ async function loginAndBake(page: Page) {
   await page.waitForSelector('[data-testid="review-workbench"]', { timeout: 15000 });
 }
 
-async function effectiveBackgroundColor(el: HTMLElement): string {
+async function effectiveBackgroundColor(el: HTMLElement): Promise<string> {
   let current: Element | null = el;
   while (current && current !== document.body) {
     const style = getComputedStyle(current as HTMLElement);

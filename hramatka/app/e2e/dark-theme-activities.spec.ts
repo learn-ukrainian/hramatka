@@ -54,7 +54,7 @@ async function createReadyLesson(page: Page) {
  *  value is `rgb(…)` (opaque) rather than mid-transition `rgba(…)`. */
 async function waitForOpaqueBg(
   page: Page,
-  handle: import('playwright').ElementHandle<HTMLElement>,
+  handle: import('playwright').ElementHandle<HTMLElement | SVGElement>,
   timeout = 5000,
 ) {
   await page.waitForFunction(

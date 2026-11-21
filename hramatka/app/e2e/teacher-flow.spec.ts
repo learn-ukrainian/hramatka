@@ -979,7 +979,7 @@ test.describe('Hramatka teacher frontend E2E (stub)', () => {
     await expect(cloneBtn).toBeEnabled({ timeout: 1000 });
     await cloneBtn.click();
 
-    releaseAck?.();
+    (releaseAck as (() => void) | null)?.();
     await page.unroute('**/api/lessons/*/blocks/*/accept').catch(() => {});
 
     await expect(page.getByPlaceholder(/Вставте/)).toHaveValue(anchorOne, { timeout: 5000 });
