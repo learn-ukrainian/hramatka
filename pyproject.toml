@@ -16,7 +16,7 @@ dependencies = [
   "PyJWT[crypto]>=2.10,<3",
   "PyYAML>=6.0,<7",
   "uvicorn>=0.30,<1",
-  "webauthn>=2.8,<3",
+  "webauthn>=2.8,<4",
 ]
 
 [project.optional-dependencies]
