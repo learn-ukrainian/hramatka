@@ -19,7 +19,7 @@
     "build": "vite build",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
     "test": "vitest run && npm run build && node scripts/csp-guard.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

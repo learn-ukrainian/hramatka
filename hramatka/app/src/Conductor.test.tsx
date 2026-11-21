@@ -6,8 +6,8 @@
  * in the teacher panel; student preview reuses the shared surface and must not
  * receive intent, correction, or key markup in the DOM.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Conductor, { type ConductorLessonDoc } from './Conductor';
 import { saveLang, translate } from './i18n';
 import { LangProvider } from './LangProvider';
@@ -129,5 +129,29 @@ describe('Conductor phase-minute budgets', () => {
     );
     expect(planned).toEqual(expected);
     expect(expected.reduce((total, value) => total + Number(value.slice(0, -3)), 0)).toBe(duration);
+  });
+});
+
+describe('Conductor phase clock', () => {
+  it('restarts the interval on activity change so partial seconds do not bleed into the next phase', () => {
+    vi.useFakeTimers();
+    const doc = lessonDoc(ENRICHED_KEY);
+    const firstBlock = doc.blocks[0];
+    const { unmount } = renderConductor({
+      ...doc,
+      blocks: [firstBlock, { ...firstBlock, id: 'block-2', phase: 2 }],
+    });
+
+    try {
+      act(() => { vi.advanceTimersByTime(900); });
+      fireEvent.click(screen.getByRole('button', { name: /Готово/ }));
+      act(() => { vi.advanceTimersByTime(100); });
+      expect(document.querySelector('.cond-clock .big')).toHaveTextContent('0:00');
+      act(() => { vi.advanceTimersByTime(900); });
+      expect(document.querySelector('.cond-clock .big')).toHaveTextContent('0:01');
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 });
