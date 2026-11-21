@@ -24,7 +24,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
+from webauthn.helpers.exceptions import WebAuthnException
 
 from hramatka.engine import data
 from hramatka.engine.providers import (
@@ -304,15 +304,20 @@ def _webauthn_challenge(credential: dict[str, object]) -> bytes:
     """Read only the ceremony challenge needed to match a persisted digest."""
     try:
         response = credential["response"]
-        assert isinstance(response, dict)
+        if not isinstance(response, dict):
+            raise TypeError("WebAuthn response must be an object.")
         encoded = response["clientDataJSON"]
-        assert isinstance(encoded, str)
+        if not isinstance(encoded, str):
+            raise TypeError("WebAuthn clientDataJSON must be a string.")
         decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        challenge = json.loads(decoded)["challenge"]
-        assert isinstance(challenge, str)
+        payload = json.loads(decoded)
+        if not isinstance(payload, dict):
+            raise TypeError("WebAuthn clientDataJSON must decode to an object.")
+        challenge = payload["challenge"]
+        if not isinstance(challenge, str):
+            raise TypeError("WebAuthn challenge must be a string.")
         return base64.urlsafe_b64decode(challenge + "=" * (-len(challenge) % 4))
     except (
-        AssertionError,
         KeyError,
         TypeError,
         ValueError,
@@ -1179,27 +1184,27 @@ def create_app(
                 challenge=challenge,
                 origin=settings.pilot_origin,
             )
-            if (
-                store.consume_webauthn_challenge(
-                    challenge_id=str(challenge_id),
-                    raw_challenge=challenge,
-                    kind="enrollment",
-                    session_id=session.record.id,
-                )
-                != session.teacher_id
-            ):
-                raise PilotError(
-                    410, "passkey_challenge_unavailable", "Перевірка ключа більше недоступна."
-                )
-            store.add_webauthn_credential(
-                teacher_id=session.teacher_id,
-                credential_id=verified.credential_id,
-                public_key=verified.credential_public_key,
-                sign_count=verified.sign_count,
-            )
-            recovery_codes = store.regenerate_recovery_codes(session.teacher_id)
-        except (InvalidRegistrationResponse, ValueError, TypeError) as error:
+        except (WebAuthnException, KeyError, IndexError, ValueError, TypeError) as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
+        if (
+            store.consume_webauthn_challenge(
+                challenge_id=str(challenge_id),
+                raw_challenge=challenge,
+                kind="enrollment",
+                session_id=session.record.id,
+            )
+            != session.teacher_id
+        ):
+            raise PilotError(
+                410, "passkey_challenge_unavailable", "Перевірка ключа більше недоступна."
+            )
+        store.add_webauthn_credential(
+            teacher_id=session.teacher_id,
+            credential_id=verified.credential_id,
+            public_key=verified.credential_public_key,
+            sign_count=verified.sign_count,
+        )
+        recovery_codes = store.regenerate_recovery_codes(session.teacher_id)
         return {"recovery_codes": recovery_codes}
 
     @app.post("/api/passkeys/authentication/options")
@@ -1220,11 +1225,11 @@ def create_app(
     ) -> Response:
         challenge = _webauthn_challenge(request_body.credential)
         try:
-            credential_id = base64.urlsafe_b64decode(
-                str(request_body.credential["rawId"])
-                + "=" * (-len(str(request_body.credential["rawId"])) % 4)
-            )
-        except (KeyError, ValueError, binascii.Error) as error:
+            raw_id = request_body.credential["rawId"]
+            if not isinstance(raw_id, str) or not raw_id:
+                raise TypeError("WebAuthn rawId must be a non-empty string.")
+            credential_id = base64.urlsafe_b64decode(raw_id + "=" * (-len(raw_id) % 4))
+        except (KeyError, TypeError, ValueError, binascii.Error) as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         credential = store.lookup_webauthn_credential(credential_id)
         if credential is None:
@@ -1237,7 +1242,7 @@ def create_app(
                 public_key=credential.public_key,
                 sign_count=credential.sign_count,
             )
-        except (InvalidAuthenticationResponse, ValueError, TypeError) as error:
+        except (WebAuthnException, KeyError, IndexError, ValueError, TypeError) as error:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
         if (
             store.consume_webauthn_challenge(

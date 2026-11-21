@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sqlite3
+import struct
 from pathlib import Path
 from types import SimpleNamespace
 
+import cbor2
 import pytest
 from fastapi.testclient import TestClient
-
 from hramatka.api import app as app_module
 from hramatka.api.app import create_app
 from hramatka.api.config import Settings
@@ -235,3 +237,173 @@ def test_two_authenticators_can_be_enrolled_and_either_can_reenter(
             _assertion(monkeypatch, client, credential_id)["payload"]["teacher"]
             == session["teacher"]
         )
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _attestation_object(credential_id: bytes, cose_public_key: bytes) -> str:
+    rp_id_hash = hashlib.sha256(b"pilot.example.test").digest()
+    auth_data = (
+        rp_id_hash
+        + bytes([0x45])  # UP | UV | AT
+        + struct.pack(">I", 0)
+        + (b"\x11" * 16)
+        + struct.pack(">H", len(credential_id))
+        + credential_id
+        + cose_public_key
+    )
+    return _b64url(cbor2.dumps({"fmt": "none", "attStmt": {}, "authData": auth_data}))
+
+
+def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) -> None:
+    """Defect class: malformed WebAuthn payload returns 5xx (unmocked webauthn paths)."""
+    expected_422 = {
+        "code": "invalid_input",
+        "message": "Запит містить помилку.",
+        "retryable": False,
+    }
+    expected_401 = {
+        "code": "session_required",
+        "message": "Потрібна чинна сесія вчителя.",
+        "retryable": False,
+    }
+
+    teacher, token = _issue_invite(app)
+    session = _redeem(client, token)
+    headers = _mutation_headers(session["csrf_token"])
+    options = client.post("/api/passkeys/enrollment/options", headers=headers).json()
+    challenge_id = options["challenge_id"]
+    challenge = options["publicKey"]["challenge"]
+    credential_id = b"unmocked-credential"
+    encoded_id = _b64url(credential_id)
+    create_client_data = _b64url(
+        json.dumps({"type": "webauthn.create", "challenge": challenge, "origin": ORIGIN}).encode()
+    )
+
+    # Enrollment: sibling WebAuthnException subclasses (InvalidJSONStructure,
+    # UnsupportedPublicKeyType) and COSE decode KeyError / IndexError must return 422.
+    enrollment_cases = [
+        # Missing attestationObject -> InvalidJSONStructure
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {"clientDataJSON": create_client_data},
+        },
+        # Unsupported COSE kty=99 -> UnsupportedPublicKeyType
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(
+                    credential_id, cbor2.dumps({1: 99, 3: -7})
+                ),
+            },
+        },
+        # EC2 COSE key missing required CRV/X/Y -> KeyError in decode_credential_public_key
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(
+                    credential_id, cbor2.dumps({1: 2, 3: -7})
+                ),
+            },
+        },
+        # Non-map CBOR public key ([]) -> IndexError in decode_credential_public_key
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(credential_id, cbor2.dumps([])),
+            },
+        },
+    ]
+    for credential_payload in enrollment_cases:
+        response = client.post(
+            f"/api/passkeys/enrollment/{challenge_id}",
+            headers=headers,
+            json={"credential": credential_payload},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json() == expected_422
+
+    # Sign-in: enroll a credential with a missing-key COSE map so unmocked verify_assertion
+    # exercises both InvalidJSONStructure (missing credential keys) and KeyError (COSE decode).
+    app.state.store.add_webauthn_credential(
+        teacher_id=teacher.id,
+        credential_id=credential_id,
+        public_key=cbor2.dumps({1: 2, 3: -7}),
+        sign_count=0,
+    )
+    client.cookies.clear()
+    auth_options = client.post(
+        "/api/passkeys/authentication/options", headers={"Origin": ORIGIN}
+    ).json()
+    get_client_data = _b64url(
+        json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": auth_options["publicKey"]["challenge"],
+                "origin": ORIGIN,
+            }
+        ).encode()
+    )
+
+    # Pre-lookup malformed rawId (missing, non-string, empty) -> 422 invalid_input
+    for malformed_raw_id_credential in (
+        {"response": {"clientDataJSON": get_client_data}},
+        {"rawId": 12345, "response": {"clientDataJSON": get_client_data}},
+        {"rawId": "", "response": {"clientDataJSON": get_client_data}},
+    ):
+        response = client.post(
+            "/api/passkeys/authentication",
+            headers={"Origin": ORIGIN},
+            json={
+                "challenge_id": auth_options["challenge_id"],
+                "credential": malformed_raw_id_credential,
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert response.json() == expected_422
+
+    # Post-lookup failures against an enrolled credential -> 401 session_required (never 5xx
+    # and indistinguishable from an unknown credential).
+    auth_data = hashlib.sha256(b"pilot.example.test").digest() + bytes([0x05]) + struct.pack(">I", 1)
+    assertion_cases = [
+        # Missing id, authenticatorData, signature -> InvalidJSONStructure
+        {
+            "rawId": encoded_id,
+            "response": {"clientDataJSON": get_client_data},
+        },
+        # Structurally complete assertion hitting COSE KeyError in decode_credential_public_key
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": get_client_data,
+                "authenticatorData": _b64url(auth_data),
+                "signature": _b64url(b"not-a-valid-signature"),
+            },
+        },
+    ]
+    for assertion_credential in assertion_cases:
+        response = client.post(
+            "/api/passkeys/authentication",
+            headers={"Origin": ORIGIN},
+            json={
+                "challenge_id": auth_options["challenge_id"],
+                "credential": assertion_credential,
+            },
+        )
+        assert response.status_code == 401, response.text
+        assert response.json() == expected_401
