@@ -136,7 +136,7 @@ def _is_rfc3339_timestamp(value: object) -> bool:
     if not isinstance(value, str) or _RFC3339_TIMESTAMP_RE.fullmatch(value) is None:
         return False
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return False
     return parsed.tzinfo is not None
@@ -209,7 +209,8 @@ def _google_complete_credential(content_type: str, body: bytes) -> str | None:
 
 def _session_cookie_max_age(expires_at: str) -> int:
     """Never keep a browser credential after its server-side absolute lifetime."""
-    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    # Direct parsing can accept malformed expiries with Z as the date-time separator.
+    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))  # noqa: FURB162
     return max(0, int((expiry - datetime.now(UTC)).total_seconds()))
 
 
