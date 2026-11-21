@@ -243,7 +243,13 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _attestation_object(credential_id: bytes, cose_public_key: bytes) -> str:
+def _attestation_object(
+    credential_id: bytes,
+    cose_public_key: bytes,
+    *,
+    fmt: str = "none",
+    att_stmt: dict[str, object] | None = None,
+) -> str:
     rp_id_hash = hashlib.sha256(b"pilot.example.test").digest()
     auth_data = (
         rp_id_hash
@@ -254,7 +260,7 @@ def _attestation_object(credential_id: bytes, cose_public_key: bytes) -> str:
         + credential_id
         + cose_public_key
     )
-    return _b64url(cbor2.dumps({"fmt": "none", "attStmt": {}, "authData": auth_data}))
+    return _b64url(cbor2.dumps({"fmt": fmt, "attStmt": att_stmt or {}, "authData": auth_data}))
 
 
 def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) -> None:
@@ -283,8 +289,37 @@ def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) 
     )
 
     # Enrollment: sibling WebAuthnException subclasses (InvalidJSONStructure,
-    # UnsupportedPublicKeyType) and COSE decode KeyError / IndexError must return 422.
+    # UnsupportedPublicKeyType), COSE decode KeyError/IndexError, deeply nested JSON
+    # RecursionError, invalid base64url, and SafetyNet AttributeError must return 422.
+    valid_ed25519_cose = cbor2.dumps({1: 1, 3: -8, -1: 6, -2: b"\x01" * 32})
+    safetynet_array_jws = f"{_b64url(b'[]')}.{_b64url(b'{}')}.{_b64url(b'sig')}".encode("ascii")
     enrollment_cases = [
+        # Deeply nested JSON in clientDataJSON -> RecursionError in json.loads
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {"clientDataJSON": _b64url(("[" * 5000 + "]" * 5000).encode("ascii"))},
+        },
+        # Invalid base64url in clientDataJSON and challenge -> 422
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {"clientDataJSON": "!!!!"},
+        },
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": _b64url(
+                    json.dumps(
+                        {"type": "webauthn.create", "challenge": "!!!!", "origin": ORIGIN}
+                    ).encode()
+                )
+            },
+        },
         # Missing attestationObject -> InvalidJSONStructure
         {
             "id": encoded_id,
@@ -326,6 +361,36 @@ def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) 
                 "attestationObject": _attestation_object(credential_id, cbor2.dumps([])),
             },
         },
+        # SafetyNet JWS header decoding to JSON array -> AttributeError in verify_android_safetynet
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(
+                    credential_id,
+                    valid_ed25519_cose,
+                    fmt="android-safetynet",
+                    att_stmt={"ver": "1", "response": safetynet_array_jws},
+                ),
+            },
+        },
+        # SafetyNet non-bytes response -> AttributeError in verify_android_safetynet
+        {
+            "id": encoded_id,
+            "rawId": encoded_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": create_client_data,
+                "attestationObject": _attestation_object(
+                    credential_id,
+                    valid_ed25519_cose,
+                    fmt="android-safetynet",
+                    att_stmt={"ver": "1", "response": 123},
+                ),
+            },
+        },
     ]
     for credential_payload in enrollment_cases:
         response = client.post(
@@ -358,11 +423,16 @@ def test_malformed_webauthn_payload_returns_client_error_never_5xx(app, client) 
         ).encode()
     )
 
-    # Pre-lookup malformed rawId (missing, non-string, empty) -> 422 invalid_input
+    # Pre-lookup malformed rawId (missing, non-string, empty, invalid or non-canonical base64url)
+    # -> 422 invalid_input
     for malformed_raw_id_credential in (
         {"response": {"clientDataJSON": get_client_data}},
         {"rawId": 12345, "response": {"clientDataJSON": get_client_data}},
         {"rawId": "", "response": {"clientDataJSON": get_client_data}},
+        {"rawId": "!!!!", "response": {"clientDataJSON": get_client_data}},
+        {"rawId": "ab+c", "response": {"clientDataJSON": get_client_data}},
+        {"rawId": "YWI=", "response": {"clientDataJSON": get_client_data}},
+        {"rawId": "ab", "response": {"clientDataJSON": get_client_data}},
     ):
         response = client.post(
             "/api/passkeys/authentication",

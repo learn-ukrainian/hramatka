@@ -97,6 +97,17 @@ from .v4_integration import V4Integration, register_v4_routes
 
 _SESSION_COOKIE = "__Host-hramatka_session"
 _OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")
+_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_WEBAUTHN_VERIFY_ERRORS = (
+    WebAuthnException,
+    AttributeError,
+    IndexError,
+    KeyError,
+    OverflowError,
+    RecursionError,
+    TypeError,
+    ValueError,
+)
 _TEACHER_PROGRESS_STEPS = frozenset({"generation", "gates", "assembly"})
 _TEACHER_PROGRESS_FIELDS = (
     "phase",
@@ -300,25 +311,30 @@ def _decode_opaque(value: str | None) -> bytes | None:
     return raw
 
 
+def _decode_base64url(value: object) -> bytes:
+    """Return non-empty bytes only from canonical unpadded base64url text."""
+    if not isinstance(value, str) or not _BASE64URL_RE.fullmatch(value) or len(value) % 4 == 1:
+        raise ValueError("Invalid base64url encoding.")
+    raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if not raw or _encode_opaque(raw) != value:
+        raise ValueError("Invalid base64url encoding.")
+    return raw
+
+
 def _webauthn_challenge(credential: dict[str, object]) -> bytes:
     """Read only the ceremony challenge needed to match a persisted digest."""
     try:
         response = credential["response"]
         if not isinstance(response, dict):
             raise TypeError("WebAuthn response must be an object.")
-        encoded = response["clientDataJSON"]
-        if not isinstance(encoded, str):
-            raise TypeError("WebAuthn clientDataJSON must be a string.")
-        decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        decoded = _decode_base64url(response["clientDataJSON"])
         payload = json.loads(decoded)
         if not isinstance(payload, dict):
             raise TypeError("WebAuthn clientDataJSON must decode to an object.")
-        challenge = payload["challenge"]
-        if not isinstance(challenge, str):
-            raise TypeError("WebAuthn challenge must be a string.")
-        return base64.urlsafe_b64decode(challenge + "=" * (-len(challenge) % 4))
+        return _decode_base64url(payload["challenge"])
     except (
         KeyError,
+        RecursionError,
         TypeError,
         ValueError,
         binascii.Error,
@@ -1184,7 +1200,7 @@ def create_app(
                 challenge=challenge,
                 origin=settings.pilot_origin,
             )
-        except (WebAuthnException, KeyError, IndexError, ValueError, TypeError) as error:
+        except _WEBAUTHN_VERIFY_ERRORS as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         if (
             store.consume_webauthn_challenge(
@@ -1225,10 +1241,7 @@ def create_app(
     ) -> Response:
         challenge = _webauthn_challenge(request_body.credential)
         try:
-            raw_id = request_body.credential["rawId"]
-            if not isinstance(raw_id, str) or not raw_id:
-                raise TypeError("WebAuthn rawId must be a non-empty string.")
-            credential_id = base64.urlsafe_b64decode(raw_id + "=" * (-len(raw_id) % 4))
+            credential_id = _decode_base64url(request_body.credential["rawId"])
         except (KeyError, TypeError, ValueError, binascii.Error) as error:
             raise PilotError(422, "invalid_input", "Запит містить помилку.") from error
         credential = store.lookup_webauthn_credential(credential_id)
@@ -1242,7 +1255,7 @@ def create_app(
                 public_key=credential.public_key,
                 sign_count=credential.sign_count,
             )
-        except (WebAuthnException, KeyError, IndexError, ValueError, TypeError) as error:
+        except _WEBAUTHN_VERIFY_ERRORS as error:
             raise PilotError(401, "session_required", "Потрібна чинна сесія вчителя.") from error
         if (
             store.consume_webauthn_challenge(
