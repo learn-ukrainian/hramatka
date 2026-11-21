@@ -23,10 +23,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "erasableSyntaxOnly": false,
-    "noFallthroughCasesInSwitch": true,
-
-    /* No cross-repo paths. Resolution uses node_modules from vendored tarball + ambient types. */
-    "baseUrl": "."
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "dev"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/i18n-chrome-guard.ts"]
