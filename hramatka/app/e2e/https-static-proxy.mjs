@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import fs, { constants } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -26,17 +26,30 @@ let stopping = false;
 
 async function ownerMatches() {
   const stateStats = await fs.lstat(stateDirectory).catch(() => null);
-  const markerStats = await fs.lstat(ownerMarkerPath).catch(() => null);
   if (
     !stateStats?.isDirectory()
-    || stateStats.isSymbolicLink()
-    || !markerStats?.isFile()
-    || markerStats.isSymbolicLink()
+    || stateStats.uid !== process.getuid()
+    || (stateStats.mode & 0o077) !== 0
   ) {
     return false;
   }
-  const marker = await fs.readFile(ownerMarkerPath, 'utf8').catch(() => null);
-  return marker === `${ownerToken}\n`;
+  // Read only the object whose type was checked, even if the path changes.
+  const marker = await fs.open(
+    ownerMarkerPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch(() => null);
+  if (!marker) return false;
+  try {
+    const stats = await marker.stat();
+    if (!stats.isFile() || stats.size !== ownerToken.length + 1) return false;
+    const contents = Buffer.alloc(ownerToken.length + 2);
+    const { bytesRead } = await marker.read(contents);
+    return contents.subarray(0, bytesRead).equals(Buffer.from(`${ownerToken}\n`));
+  } catch {
+    return false;
+  } finally {
+    await marker.close();
+  }
 }
 
 function delay(milliseconds) {
@@ -233,7 +246,7 @@ async function runRealBackendProxy() {
   if (!python) {
     throw new Error('missing HRAMATKA_E2E_PYTHON');
   }
-  const apiLog = await fs.open(apiLogPath, 'w', 0o600);
+  const apiLog = await fs.open(apiLogPath, 'wx', 0o600);
   const childEnvironment = {
     ...process.env,
     HRAMATKA_E2E_READY_FD: '3',

@@ -121,8 +121,8 @@ button.pedcard .d{font-size:12.5px;color:var(--ink-soft)}
 .paper{background:var(--card);border:1px solid var(--line);border-radius:3px;box-shadow:var(--shadow);padding:30px 36px;font-size:15.5px;line-height:1.66}
 .paper.anchorpaper{min-height:320px}
 .paper.anchorpaper:empty::before{content:attr(data-ph);color:var(--ink-soft)}
-.paper[contenteditable="true"]{cursor:text}
-.paper[contenteditable="true"]:focus{outline:2px solid var(--accent);outline-offset:0}
+.paper[contenteditable="plaintext-only"]{cursor:text}
+.paper[contenteditable="plaintext-only"]:focus{outline:2px solid var(--accent);outline-offset:0}
 .sidepanel{display:flex;flex-direction:column;gap:16px}
 .sidepanel .field label{font-size:12.5px}
 .urlrow{display:flex;gap:8px}
@@ -139,7 +139,7 @@ button.pedcard .d{font-size:12.5px;color:var(--ink-soft)}
 .dblock .type{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--accent);font-weight:700;display:block;margin-bottom:4px}
 .dblock p{margin:4px 0;font-size:14.5px}
 .dblock .q{padding:6px 10px;background:var(--paper);border-radius:6px;margin:5px 0;font-size:14px}
-.dblock .bcontent[contenteditable="true"]{outline:none}
+.dblock .bcontent[contenteditable="plaintext-only"]{outline:none}
 .gap{border-bottom:1.5px solid var(--accent);padding:0 22px;display:inline-block;min-width:44px}
 .dmargin{padding:14px 0 8px;font-size:12.5px;color:var(--ink-soft);border-bottom:1px solid transparent}
 .dmargin .chip{display:block;width:max-content;margin-bottom:6px}
@@ -360,9 +360,20 @@ footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:v
 "use strict";
 /* ============ helpers ============ */
 var $=function(s,r){return (r||document).querySelector(s)};
+if(typeof Element.prototype.setHTML!=='function'){
+  $('#app').textContent='This standalone demo requires a browser with the HTML Sanitizer API.';
+  return;
+}
+var demoSanitizer={
+  removeElements:['style','link','meta','base'],
+  removeAttributes:['src','srcset','href','action','formaction','poster','ping']
+};
+function renderMarkup(target,markup){
+  target.setHTML(markup,{sanitizer:demoSanitizer});
+}
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
 function nowLabel(){try{return 'сьогодні, '+new Date().toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}catch(e){return 'сьогодні'}}
-function toast(html){var w=$('#toasts');var t=document.createElement('div');t.className='toast';t.innerHTML=html;w.appendChild(t);try{trNode(t)}catch(e){}setTimeout(function(){t.remove()},5200)}
+function toast(html){var w=$('#toasts');var t=document.createElement('div');t.className='toast';renderMarkup(t,html);w.appendChild(t);try{trNode(t)}catch(e){}setTimeout(function(){t.remove()},5200)}
 function bubble(anchor,text){var old=document.body.querySelector('.bubble[data-float]');if(old)old.remove();var b=document.createElement('span');b.className='bubble';b.setAttribute('data-float','1');b.textContent=(uiLang&&uiLang()==='en')?trStr(text):text;document.body.appendChild(b);var r=anchor.getBoundingClientRect();b.style.position='fixed';b.style.zIndex='60';b.style.maxWidth='300px';b.style.left=Math.max(8,Math.min(r.left,window.innerWidth-320))+'px';b.style.top=(r.bottom+6)+'px';b.style.marginTop='0';setTimeout(function(){b.remove()},3800)}
 
 /* ============ qualified lesson sizing: 45 minutes → six planned tasks ============ */
@@ -747,7 +758,7 @@ function vNew(){
   if(d.tab==='url'){
     anchor='<div class="urlrow" style="margin-bottom:10px"><input class="inputbox" id="urlin" placeholder="https://… адреса статті чи оголошення" value="'+esc(d.url)+'"><button class="btn ghost" data-action="fetch-url" style="white-space:nowrap">Отримати текст</button></div>';
   }
-  anchor+='<div class="paper anchorpaper" id="anchor" contenteditable="true" data-ph="…вставте чи напишіть текст просто тут, як у Word — на весь аркуш, без обмежень і маленьких віконець…">'+esc(d.text).replace(/\n/g,'<br>')+'</div>'
+  anchor+='<div class="paper anchorpaper" id="anchor" contenteditable="plaintext-only" data-ph="…вставте чи напишіть текст просто тут, як у Word — на весь аркуш, без обмежень і маленьких віконець…">'+esc(d.text).replace(/\n/g,'<br>')+'</div>'
     +'<p class="hint" style="margin-top:8px">Завдання будуються лише з цього тексту — нічого вигаданого.</p><span id="anchorwarn"></span>';
   var lv=['A1','A2','B1','B2'].map(function(v){return '<button class="choice'+(v===d.level?' on':(v==='B1'?'':' off'))+'" data-action="level" data-v="'+v+'">'+v+'</button>'}).join('');
   var methods=[
@@ -832,7 +843,7 @@ function stRender(b,num){
   }
   return '<div class="dblock" style="border-bottom:0;padding:8px 2px">'+head+body+'</div>';
 }
-function stripHtml(h){var d=document.createElement('div');d.innerHTML=String(h).replace(/<span class="gap"><\/span>/g,'____').replace(/<div class="q">/g,'\n').replace(/<br\s*\/?>/g,'\n');return d.textContent.replace(/\n{3,}/g,'\n\n').trim()}
+function stripHtml(h){var d=document.createElement('div');renderMarkup(d,String(h).replace(/<span class="gap"><\/span>/g,'____').replace(/<div class="q">/g,'\n').replace(/<br\s*\/?>/g,'\n'));return d.textContent.replace(/\n{3,}/g,'\n\n').trim()}
 function lessonAsText(l,withAns){
   var split=planSplit(l.duration||45),num=0,reserve=[],out=[l.title,'',l.level+' · Тест → Навчання → Тест · ≈ '+(l.duration||45)+' хв','','ТЕКСТ ДЛЯ ЧИТАННЯ','',l.anchor||'',''];
   [1,2,3].forEach(function(ph){
@@ -1074,9 +1085,9 @@ function condReceipt(b){
   };
 }
 function condRepaintTimers(){
-  var r=document.getElementById('cond-rail');if(r)r.innerHTML=condRailHTML();
-  var c=document.getElementById('cond-clock');if(c)c.innerHTML=condClockHTML();
-  var b=document.getElementById('cond-reb');if(b)b.innerHTML=condRebHTML();
+  var r=document.getElementById('cond-rail');if(r)renderMarkup(r,condRailHTML());
+  var c=document.getElementById('cond-clock');if(c)renderMarkup(c,condClockHTML());
+  var b=document.getElementById('cond-reb');if(b)renderMarkup(b,condRebHTML());
 }
 function condRailHTML(){
   var cp=condCurPhase(),out='';
@@ -1221,7 +1232,7 @@ var condTimer=setInterval(function(){
 /* overlays live outside #app (render() rebuilds #app) */
 function condOverlay(inner){
   var o=document.createElement('div');o.className='cond-overlay';
-  o.innerHTML='<div class="cond-modal">'+inner+'</div>';
+  renderMarkup(o,'<div class="cond-modal">'+inner+'</div>');
   o.addEventListener('click',function(e){if(e.target===o||e.target.getAttribute('data-close'))o.remove()});
   document.body.appendChild(o);trNode(o);
 }
@@ -1267,7 +1278,7 @@ function render(){
   $('#screenhead').innerHTML='<h2>'+c.n+'</h2><p class="role">'+c.role+'</p><div class="tags">'+c.tags+'</div>';
   var HINTS={dash:'Натисніть на заняття, щоб відкрити його. «+ Нове заняття» — щоб створити.',new:'Вставте чи напишіть текст на аркуші, оберіть тривалість праворуч — і «Приготувати заняття».',bake:'Це справжні етапи роботи. Можна повернутися до «Моїх занять» — ми повідомимо, коли буде готово.',review:'Тривалість — перемикач угорі. На полях: ✎ редагувати · ↑↓ пересунути · ✕ вилучити. Наприкінці — «Прийняти заняття».',final:'🔑 відповіді — лише для вас · ⧉ Копіювати у свій документ · 👩‍🎓 «Показати як учневі» перед шерингом у Zoom · 🌐 на екрані учня можна перемкнути мову інтерфейсу (укр/EN) — завдання завжди українською.'};
   var hint=(HINTS[route.name]&&!(S.hintsOff&&S.hintsOff[route.name]))?'<div class="hintbar noprint"><span>💡 '+HINTS[route.name]+'</span><button data-action="hint-off" title="сховати підказку">×</button></div>':'';
-  $('#app').innerHTML=hint+VIEWS[route.name]();
+  renderMarkup($('#app'),hint+VIEWS[route.name]());
   var smNow=false;
   if(route.name==='final'){var lf=route.id?lesson(route.id):lastBy('ready');smNow=!!(lf&&lf.studentMode)}
   if(route.name==='conduct'&&COND&&COND.stud)smNow=true; /* A1: student badge + frame in conduct preview */
@@ -1348,7 +1359,7 @@ document.addEventListener('click',function(e){
       l=lesson(route.id);var blk=$('#blk'+id),bc=blk.querySelector('.bcontent');
       var b=l.blocks.filter(function(x){return x.id===+id})[0];
       if(bc.isContentEditable){bc.contentEditable='false';blk.classList.remove('editing');b.html=bc.innerHTML;b.edited=true;if(b.mark==='warn'){b.mark='ok';b.note=null}save();render();toast('Зміни збережено у занятті')}
-      else{bc.contentEditable='true';blk.classList.add('editing');bc.focus();act.textContent='зберегти'}
+      else{bc.contentEditable='plaintext-only';blk.classList.add('editing');bc.focus();act.textContent='зберегти'}
       break;
     case 'b-accept':
       l=lesson(route.id);l.blocks.forEach(function(x){if(x.id===+id){x.mark='ok';x.note=null}});save();render();break;

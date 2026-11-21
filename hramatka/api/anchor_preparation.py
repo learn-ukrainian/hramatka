@@ -8,8 +8,8 @@ from hramatka.engine.gates.vesum_tags import parse_word
 
 _SENTENCE_RE = re.compile(r"[^.!?…]+[.!?…]*")
 _UKRAINIAN_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ][А-Яа-яІіЇїЄєҐґ’'\-]*")
-_HYPHENATED_UKRAINIAN_WORD_RE = re.compile(
-    r"[А-Яа-яІіЇїЄєҐґ]+(?:-[А-Яа-яІіЇїЄєҐґ]+)+"
+_UKRAINIAN_WORD_RUN_RE = re.compile(
+    r"[А-Яа-яІіЇїЄєҐґ]+(?:-[А-Яа-яІіЇїЄєҐґ]+)*"
 )
 _ALPHA_RE = re.compile(r"[A-Za-zА-Яа-яІіЇїЄєҐґ]")
 _CYRILLIC_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ]")
@@ -86,7 +86,7 @@ def _normalize_hyphenated_ocr(text: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
-        if _vesum_attested(token):
+        if "-" not in token or _vesum_attested(token):
             return token
         parts = tuple(token.split("-"))
         part_attested = tuple(_vesum_attested(part) for part in parts)
@@ -94,19 +94,20 @@ def _normalize_hyphenated_ocr(text: str) -> str:
             joined = "".join(parts)
             if _vesum_attested(joined):
                 return joined
-        if (
+        if len(unresolved) < 5 and token not in unresolved and (
             _has_suspicious_line_break(parts, part_attested)
             or _has_suspicious_noun_adjective_hyphen(parts)
             or _has_lost_dash_before_repeated_sound(parts, part_attested)
-        ) and token not in unresolved:
+        ):
             unresolved.append(token)
         return token
 
-    normalized = _HYPHENATED_UKRAINIAN_WORD_RE.sub(replace, text)
+    # Also consume plain words so a failed hyphen match never retries their suffixes.
+    normalized = _UKRAINIAN_WORD_RUN_RE.sub(replace, text)
     if unresolved:
         raise AnchorPreparationError(
             "Unresolved OCR-like hyphenation in anchor text.",
-            suspicious_tokens=tuple(token[:64] for token in unresolved[:5]),
+            suspicious_tokens=tuple(token[:64] for token in unresolved),
         )
     return normalized
 

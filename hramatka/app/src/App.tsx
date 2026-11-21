@@ -211,18 +211,6 @@ export function statusCardFromApi(
   };
 }
 
-const API_BASE = ''; // same-origin in prod; in dev we proxy or use full for stub via fetch override in E2E
-const STUB_BASE = 'http://localhost:8787'; // used when ?useStub or in dev e2e
-
-function getApiBase() {
-  // For local dev: use relative /api (vite dev server proxies /api -> stub on 8787).
-  // ?stub=1 forces direct to stub (rare, for standalone).
-  if (typeof window !== 'undefined' && window.location.search.includes('stub=1')) {
-    return STUB_BASE;
-  }
-  return API_BASE; // '' or proxied in dev
-}
-
 function isValidToken(t: string): boolean {
   return /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(t);
 }
@@ -257,14 +245,17 @@ function clearEntryNonce(): void {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const base = getApiBase();
-  const url = base ? `${base}${path}` : path;
+  const origin = window.location.origin;
+  const url = new URL(path, origin);
+  if (url.origin !== origin || !url.pathname.startsWith('/api/') || path !== url.pathname + url.search) {
+    throw new TypeError('Expected a same-origin API path');
+  }
   const headers = new Headers(init?.headers || {});
   // Always send Origin for mutations (contract)
   if (!headers.has('Origin')) {
-    headers.set('Origin', window.location.origin);
+    headers.set('Origin', origin);
   }
-  return fetch(url, { ...init, headers, credentials: 'include' });
+  return fetch(path, { ...init, headers, mode: 'same-origin', credentials: 'same-origin' });
 }
 
 // ===== Simple SPA router (lightweight, no extra deps) =====
@@ -299,9 +290,13 @@ function useSimpleRouter() {
       } else if (h === '#/settings') {
         setRoute({ view: 'settings' });
       } else if (h.startsWith('#/lessons/')) {
-        const id = h.split('/')[2]?.split('?')[0];
-        const params = new URLSearchParams(h.split('?')[1] || '');
-        setRoute({ view: 'lesson', lessonId: id, mode: (params.get('mode') as any) || 'review' });
+        const [id, query] = h.slice('#/lessons/'.length).split('?', 2);
+        if (!id || /[^A-Za-z0-9_-]/.test(id)) {
+          setRoute({ view: 'paste' });
+          return;
+        }
+        const mode = new URLSearchParams(query).get('mode');
+        setRoute({ view: 'lesson', lessonId: id, mode: mode === 'run' || mode === 'conduct' ? mode : 'review' });
       } else {
         setRoute({ view: 'paste' });
       }

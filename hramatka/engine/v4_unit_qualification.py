@@ -2204,16 +2204,26 @@ def stage(args) -> int:
             _write_private(args.qualification_file, pending_qualification())
         for kind, directory in dropin_dirs.items():
             path = directory / CANARY_DROPIN
-            path.write_text(
-                canary_dropin(
-                    kind,
-                    python=args.unit_python,
-                    release_root=args.release_root,
-                    sources_owner=sources_owner,
-                )
+            text = canary_dropin(
+                kind,
+                python=args.unit_python,
+                release_root=args.release_root,
+                sources_owner=sources_owner,
             )
-            os.chmod(path, 0o644)
-            installed.append(path)
+            try:
+                descriptor = os.open(
+                    path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                )
+                installed.append(path)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as dropin:
+                    dropin.write(text)
+                    dropin.flush()
+                    os.fchmod(dropin.fileno(), 0o600)
+                    # The per-user manager must be able to read its own drop-in.
+                    if (uid := managers[kind].uid) is not None:
+                        os.fchown(dropin.fileno(), uid, -1)
+            except OSError as exc:
+                raise QualificationRefused(f"{kind}_canary_dropin_write_failed") from exc
         for manager in sorted(set(manager_argv.values())):
             _systemctl("daemon-reload", systemctl=args.systemctl, manager=manager)
         reports = {}

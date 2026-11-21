@@ -1823,6 +1823,7 @@ def test_readiness_probe_succeeds_with_ca_signed_trusted_certificate(
     httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
     port = httpd.server_port
     server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     server_ctx.load_cert_chain(certfile=str(leaf_cert), keyfile=str(leaf_key))
     httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
 
@@ -1871,6 +1872,7 @@ def test_readiness_probe_fails_when_served_certificate_mismatches_expected(
     httpd = http.server.HTTPServer(("127.0.0.1", 0), ReadyzHandler)
     port = httpd.server_port
     server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     server_ctx.load_cert_chain(certfile=str(leaf_cert_b), keyfile=str(leaf_key_b))
     httpd.socket = server_ctx.wrap_socket(httpd.socket, server_side=True)
 
