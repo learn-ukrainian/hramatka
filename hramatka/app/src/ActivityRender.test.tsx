@@ -4,7 +4,7 @@
  * (no second hardcoded list).
  */
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import fs from 'fs';
 import path from 'path';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';

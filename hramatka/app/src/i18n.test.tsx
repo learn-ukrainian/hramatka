@@ -10,7 +10,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import fs from 'fs';
 import path from 'path';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
-import { LangProvider, useT, translate, loadLang, saveLang, clearLang, recoveryBodyKey, modelUnavailableKey } from './i18n';
+import { useT, translate, loadLang, saveLang, clearLang, recoveryBodyKey, modelUnavailableKey } from './i18n';
+import { LangProvider } from './LangProvider';
 
 const VENDOR_FIXTURES = path.resolve(
   __dirname,

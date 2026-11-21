@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { LangProvider, saveLang } from './i18n';
+import { saveLang } from './i18n';
+import { LangProvider } from './LangProvider';
 import StudentActivityPlayer from './StudentActivityPlayer';
 
 function renderActivity(

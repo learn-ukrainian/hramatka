@@ -2,7 +2,7 @@ import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { LangProvider } from './i18n';
+import { LangProvider } from './LangProvider';
 
 const teacher = {
   teacher: { id: 'teacher-1', display_name: 'Марія' },

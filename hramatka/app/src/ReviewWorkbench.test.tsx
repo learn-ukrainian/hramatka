@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ReviewWorkbench, { type LessonResourceView } from './ReviewWorkbench';
-import { LangProvider } from './i18n';
+import { LangProvider } from './LangProvider';
 
 const mockResource: LessonResourceView = {
   lesson_id: 'test-lesson-id',

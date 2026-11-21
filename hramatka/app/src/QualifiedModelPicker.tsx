@@ -1,19 +1,7 @@
+import type { QualifiedModelChoice } from './app-helpers';
 import type { ChromeKey } from './i18n';
 
-export interface QualifiedModelChoice {
-  id: string;
-  label: string;
-  description: string;
-}
-
-export function resolveQualifiedModelId(
-  models: QualifiedModelChoice[],
-  requestedId: string | null | undefined,
-): string {
-  return requestedId && models.some(model => model.id === requestedId)
-    ? requestedId
-    : (models[0]?.id || '');
-}
+export type { QualifiedModelChoice };
 
 interface Props {
   models: QualifiedModelChoice[];

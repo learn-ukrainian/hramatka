@@ -18,11 +18,6 @@
 import {
   createContext,
   useContext,
-  useMemo,
-  useState,
-  useCallback,
-  useEffect,
-  type ReactNode,
 } from 'react';
 
 export type Lang = 'uk' | 'en';
@@ -964,7 +959,7 @@ export function modelUnavailableKey(
 
 export type TFn = (key: ChromeKey, params?: Params) => string;
 
-interface LangValue {
+export interface LangValue {
   lang: Lang;
   setLang: (l: Lang) => void;
   toggleLang: () => void;
@@ -973,48 +968,7 @@ interface LangValue {
   t: TFn;
 }
 
-const LangContext = createContext<LangValue | null>(null);
-
-export function LangProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(() => loadLang());
-
-  const setLang = useCallback((l: Lang) => {
-    setLangState(l);
-    saveLang(l);
-  }, []);
-
-  const toggleLang = useCallback(() => {
-    setLangState((prev) => {
-      const next: Lang = prev === 'en' ? 'uk' : 'en';
-      saveLang(next);
-      return next;
-    });
-  }, []);
-
-  const resetLang = useCallback(() => {
-    setLangState('uk');
-    clearLang();
-  }, []);
-
-  // Keep browser-level chrome in the chosen language for assistive technology.
-  useEffect(() => {
-    document.title = translate(lang, 'doc.title');
-    document.documentElement.lang = lang;
-  }, [lang]);
-
-  const value = useMemo<LangValue>(
-    () => ({
-      lang,
-      setLang,
-      toggleLang,
-      resetLang,
-      t: (key, params) => translate(lang, key, params),
-    }),
-    [lang, setLang, toggleLang, resetLang],
-  );
-
-  return <LangContext.Provider value={value}>{children}</LangContext.Provider>;
-}
+export const LangContext = createContext<LangValue | null>(null);
 
 export function useT(): LangValue {
   const ctx = useContext(LangContext);

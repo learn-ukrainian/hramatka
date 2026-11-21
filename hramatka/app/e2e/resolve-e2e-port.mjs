@@ -15,7 +15,7 @@
  */
 import net from 'node:net';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 export const DEFAULT_LOCAL_E2E_PORT = 5174;
 

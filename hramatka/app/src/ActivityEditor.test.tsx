@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ActivityEditor from './ActivityEditor';
-import { LangProvider } from './i18n';
+import { LangProvider } from './LangProvider';
 
 function baseActivity(type: 'quiz' | 'fill-in' | 'error-correction' | 'text-questions') {
   const common = {

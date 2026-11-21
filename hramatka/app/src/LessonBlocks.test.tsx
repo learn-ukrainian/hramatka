@@ -11,7 +11,8 @@
 import { render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import LessonBlocks, { type LessonBlocksBlock, type LessonViewMode } from './LessonBlocks';
-import { LangProvider, saveLang, translate, type Lang } from './i18n';
+import { saveLang, translate, type Lang } from './i18n';
+import { LangProvider } from './LangProvider';
 
 const BADGE_UK = translate('uk', 'blocks.deliberateError');
 const BADGE_EN = translate('en', 'blocks.deliberateError');

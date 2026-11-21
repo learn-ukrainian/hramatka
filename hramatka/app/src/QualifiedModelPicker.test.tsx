@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolveQualifiedModelId } from './app-helpers';
 import { translate, type ChromeKey } from './i18n';
-import QualifiedModelPicker, { resolveQualifiedModelId } from './QualifiedModelPicker';
+import QualifiedModelPicker from './QualifiedModelPicker';
 
 const t = (key: ChromeKey) => translate('uk', key);
 

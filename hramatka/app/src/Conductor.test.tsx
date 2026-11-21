@@ -9,7 +9,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Conductor, { type ConductorLessonDoc } from './Conductor';
-import { LangProvider, saveLang, translate } from './i18n';
+import { saveLang, translate } from './i18n';
+import { LangProvider } from './LangProvider';
 
 const BADGE_UK = translate('uk', 'blocks.deliberateError');
 const BADGE_EN = translate('en', 'blocks.deliberateError');

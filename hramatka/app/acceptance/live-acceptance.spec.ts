@@ -55,7 +55,6 @@ function attachErrorListeners(page: Page, label = 'page') {
         text,
         timestamp: new Date().toISOString(),
       });
-      // eslint-disable-next-line no-console
       console.error(`[LIVE-ERR ${label} ${type}] ${text}`);
     }
   });
@@ -67,7 +66,6 @@ function attachErrorListeners(page: Page, label = 'page') {
       text,
       timestamp: new Date().toISOString(),
     });
-    // eslint-disable-next-line no-console
     console.error(`[LIVE-PAGEERROR ${label}] ${text}`);
   });
 
@@ -171,7 +169,6 @@ async function assertEmptyCatalog(page: Page, lang: 'uk' | 'en') {
   if (!/Поки немає уроків|No lessons yet/i.test(text)) {
     // Not empty (leftover from prior partial runs on this test teacher) — acceptable for live harness reuse.
     // We still exercise "open failed/ready from catalog" using whatever is there.
-    // eslint-disable-next-line no-console
     console.log('[CATALOG] not empty on start (previous test artifacts ok): ' + text.slice(0, 120));
     return;
   }
@@ -222,7 +219,6 @@ async function waitForBakeTerminal(page: Page, maxMs = 25 * 60 * 1000): Promise<
 
       const now = Date.now();
       if (now - lastLog > 15000) {
-        // eslint-disable-next-line no-console
         console.log(`[BAKE-POLL] elapsed=${Math.round((now - start) / 1000)}s status=${lastStatus} url=${url.slice(0, 120)} sub="${txt.slice(0, 80)}"`);
         lastLog = now;
       }
@@ -237,7 +233,6 @@ async function waitForBakeTerminal(page: Page, maxMs = 25 * 60 * 1000): Promise<
       const url = page.url();
       const m = url.match(/#\/lessons\/([0-9a-f-]{8,})/i) || url.match(/lessons\/([0-9a-f-]{8,})/i);
       const lessonId = m ? m[1] : undefined;
-      // eslint-disable-next-line no-console
       console.log(`[BAKE-READY] direct blocks visible, lessonId=${lessonId}`);
       return { status: 'ready', lessonId };
     }
@@ -249,7 +244,6 @@ async function waitForBakeTerminal(page: Page, maxMs = 25 * 60 * 1000): Promise<
       await checkNow.click().catch(() => {});
     }
   }
-  // eslint-disable-next-line no-console
   console.log(`[BAKE-TIMEOUT] lastStatus=${lastStatus}`);
   return { status: lastStatus };
 }
@@ -299,8 +293,6 @@ async function exerciseReviewWorkbench(page: Page) {
   await expect(page.locator('.dblock, .block, [data-activity-player]').first()).toBeAttached({ timeout: 15000 });
   await page.waitForTimeout(600);
 
-  // Warnings/notes visible (or none — still ok)
-  const warnChips = page.locator('.chip:has-text("⚠"), .chip.look, text=попередження');
   // Rejected tray present (may be empty)
   const rejectedTray = page.getByTestId('rejected-tray');
   await expect(rejectedTray).toBeAttached();
@@ -464,9 +456,9 @@ async function exerciseConductor(page: Page) {
 
   // Phase timer runs (clock updates)
   const clock = page.locator('.cond-clock .big, .cond-clock');
-  const t0 = (await clock.textContent().catch(() => '')) || '';
+  await clock.textContent().catch(() => '');
   await page.waitForTimeout(1500);
-  const t1 = (await clock.textContent().catch(() => '')) || '';
+  await clock.textContent().catch(() => '');
   // Not a strict equality check (may be same second), just that UI is live.
 
   // Shorten works (if candidate visible)
@@ -554,7 +546,6 @@ async function verifyStudentModeFromReady(page: Page) {
 test.describe('hramatka live pilot — full acceptance (Sol 9-item + workbench) [LIVE]', () => {
   test.beforeAll(() => {
     if (!INVITE_URL) {
-      // eslint-disable-next-line no-console
       console.warn('LIVE_INVITE_URL not set — test will fail on redeem step. Provide via env.');
     }
   });
@@ -601,7 +592,6 @@ test.describe('hramatka live pilot — full acceptance (Sol 9-item + workbench) 
 
       // Now wait for terminal
       bakeResult = await waitForBakeTerminal(page);
-      // eslint-disable-next-line no-console
       console.log(`[BAKE-RESULT] status=${bakeResult.status} lessonId=${bakeResult.lessonId || 'n/a'}`);
 
       if (bakeResult.status === 'failed') {
@@ -679,9 +669,7 @@ test.describe('hramatka live pilot — full acceptance (Sol 9-item + workbench) 
     assertNoConsoleErrors('final-sweep');
 
     // Emit structured data for the report extractor
-    // eslint-disable-next-line no-console
     console.log('=== ACCEPTANCE-SUMMARY ===');
-    // eslint-disable-next-line no-console
     console.log(JSON.stringify({
       verdictBase: 'see final table',
       jobId: bakeResult.lessonId || bakeResult.jobId || 'n/a (extract from UI/URL)',

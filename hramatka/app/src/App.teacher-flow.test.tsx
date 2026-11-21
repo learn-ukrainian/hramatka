@@ -2,8 +2,9 @@ import '@testing-library/jest-dom';
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import App, { statusCardFromApi, type LessonStatus } from './App';
-import { LangProvider } from './i18n';
+import App from './App';
+import { statusCardFromApi, type LessonStatus } from './app-helpers';
+import { LangProvider } from './LangProvider';
 
 const teacher = {
   teacher: { id: 'teacher-1', display_name: 'Марія' },
