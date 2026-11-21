@@ -113,6 +113,17 @@ jobs:
             hramatka/engine/tests/test_russianism_e2e.py
         env:
           CI: true
+      - name: DB-free API unit tests
+        run: |
+          pytest -q \
+            tests/test_google_teacher_auth.py \
+            tests/test_local_static_teacher.py \
+            tests/test_pilot_backend_contract.py \
+            tests/test_teacher_api_surface.py \
+            tests/test_teacher_passkeys.py \
+            tests/test_teacher_sample_semantic_review.py
+        env:
+          CI: true
 
   e2e:
     name: Frontend Playwright (packaged e2e)
