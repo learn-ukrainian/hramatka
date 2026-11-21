@@ -4,7 +4,7 @@ import './index.css'
 import './teacher.css'
 import './student-activities.css'
 import App from './App.tsx'
-import { LangProvider } from './i18n.tsx'
+import { LangProvider } from './LangProvider.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

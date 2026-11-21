@@ -51,6 +51,72 @@ export interface BakeRequestPayload {
   logicalModelId?: string;
 }
 
+export interface QualifiedModelChoice {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export function resolveQualifiedModelId(
+  models: QualifiedModelChoice[],
+  requestedId: string | null | undefined,
+): string {
+  return requestedId && models.some(model => model.id === requestedId)
+    ? requestedId
+    : (models[0]?.id || '');
+}
+
+export interface LessonAttempt {
+  attempt: number;
+  status: 'ready' | 'failed' | 'cancelled';
+  failure_code: string | null;
+  started_at: string | null;
+  completed_at: string;
+  retry_requested_revision: number | null;
+}
+
+export interface LessonStatus {
+  id: string;
+  status: LessonState;
+  step: string;
+  revision: number;
+  attempt: number;
+  attempt_history: LessonAttempt[];
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Current attempt start; absent only when reading an older API deployment. */
+  started_at?: string | null;
+  progress?: BakeProgress;
+}
+
+export function statusCardFromApi(
+  status: LessonStatus,
+  previous?: { attempt?: number; startedAt?: string },
+) {
+  const isNewAttempt = previous?.attempt !== status.attempt;
+  // Older API deployments do not expose started_at.  Keep their same-attempt
+  // clock stable, but never carry an earlier attempt into a retry.  updated_at
+  // is the least stale durable fallback at the current attempt transition.
+  const fallbackStartedAt = status.status === 'baking'
+    ? (isNewAttempt
+      ? status.updated_at || status.created_at
+      : previous?.startedAt || status.updated_at || status.created_at)
+    : (isNewAttempt ? undefined : previous?.startedAt);
+  return {
+    status: status.status,
+    step: status.step || '',
+    revision: status.revision,
+    attempt: status.attempt,
+    attempt_history: status.attempt_history || [],
+    failure: status.failure_message || undefined,
+    failure_code: status.failure_code ?? null,
+    progress: status.progress || undefined,
+    startedAt: status.started_at ?? fallbackStartedAt,
+  };
+}
+
 const LAST_BAKE_KEY = 'hramatka:last-bake-request';
 
 /** UA status chip labels — delegates to i18n (UA default for standalone tests). */

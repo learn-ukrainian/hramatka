@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import { useT } from './i18n';
 
@@ -172,7 +172,7 @@ function FillIn({ activity }: { activity: Activity }) {
 
 function Cloze({ activity }: { activity: Activity }) {
   const { t } = useT();
-  const blanks = activity.payload?.blanks ?? [];
+  const blanks = useMemo(() => activity.payload?.blanks ?? [], [activity.payload?.blanks]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [checked, setChecked] = useState(false);
   const allAnswered = blanks.every((blank: any, index: number) => {
@@ -183,20 +183,32 @@ function Cloze({ activity }: { activity: Activity }) {
   const nodes = useMemo(() => {
     const text = String(activity.payload?.text ?? '');
     const segments = text.split(/(\[___:\d+\]|\{(?:gap|blank)\}|(?<![\p{L}\p{N}_])\{[1-9]\d*\}(?![\p{L}\p{N}_]))/gu);
+    const rendered: ReactNode[] = [];
     let implicitIndex = 0;
-    return segments.map((segment, segmentIndex) => {
-      const token = segment ?? '';
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+      const token = segments[segmentIndex] ?? '';
       const indexed = token.match(/^\[___:(\d+)\]$/);
       const singleBraceIndex = token.match(/^\{(\d+)\}$/);
       const numberedIndex = indexed ?? singleBraceIndex;
-      if (!numberedIndex && token !== '{gap}' && token !== '{blank}') return <span key={segmentIndex}>{token}</span>;
-      const blankIndex = numberedIndex
-        ? Number(numberedIndex[1])
-        : (blanks[implicitIndex++]?.id ?? implicitIndex);
+      if (!numberedIndex && token !== '{gap}' && token !== '{blank}') {
+        rendered.push(<span key={segmentIndex}>{token}</span>);
+        continue;
+      }
+      let blankIndex: number;
+      if (numberedIndex) {
+        blankIndex = Number(numberedIndex[1]);
+      } else {
+        const currentImplicit = implicitIndex;
+        implicitIndex += 1;
+        blankIndex = blanks[currentImplicit]?.id ?? implicitIndex;
+      }
       const blank = blanks.find((candidate: any) => Number(candidate.id) === blankIndex) ?? blanks[blankIndex - 1];
-      if (!blank) return <span key={segmentIndex}>{token}</span>;
+      if (!blank) {
+        rendered.push(<span key={segmentIndex}>{token}</span>);
+        continue;
+      }
       const correct = normalize(answers[blankIndex]) === normalize(blank.answer);
-      return <ChoiceBlank
+      rendered.push(<ChoiceBlank
         key={segmentIndex}
         ariaLabel={t('studentActivity.clozeBlank', { n: blankIndex })}
         className={['student-cloze', checked ? (correct ? 'correct' : 'wrong') : ''].filter(Boolean).join(' ')}
@@ -204,8 +216,9 @@ function Cloze({ activity }: { activity: Activity }) {
         value={answers[blankIndex] ?? ''}
         options={blank.options ?? []}
         onChange={(next) => setAnswers((previous) => ({ ...previous, [blankIndex]: next }))}
-      />;
-    });
+      />);
+    }
+    return rendered;
   }, [activity.payload?.text, answers, blanks, checked, t]);
 
   return <section className="student-activity" data-student-activity="cloze">

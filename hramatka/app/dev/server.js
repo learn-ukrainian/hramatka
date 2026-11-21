@@ -21,7 +21,6 @@ const VENDOR_FIXTURES = path.resolve(__dirname, '../../vendor/lu.activity.v1@1.0
 const CONTRACTS_SCHEMA = path.resolve(__dirname, '../../contracts/pilot_activity_types.schema.json');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
-const ORIGIN = process.env.ORIGIN || 'http://localhost:5173'; // for dev; prod uses real https origin
 
 let goldenActivities = [];
 try {
@@ -135,7 +134,6 @@ function buildGoldenLesson(id, opts = {}) {
     if (f && f.type) fixtureByType[f.type] = f;
   }
 
-  let phase = 1;
   let i = 0;
   for (const t of pilotTypes) {
     const act = fixtureByType[t] || {
@@ -465,7 +463,7 @@ function errorBody(code, message, retryable = false, lesson_id = null) {
   return body;
 }
 
-function setCorsLike(res, originHeader) {
+function setCorsLike(res) {
   // No real CORS — same origin only in contract. For local dev allow our dev origin.
   res.setHeader('Cache-Control', 'no-store');
 }
@@ -476,19 +474,6 @@ function sendJSON(res, status, obj, headers = {}) {
     ...headers,
   });
   res.end(JSON.stringify(obj));
-}
-
-function getOrigin(req) {
-  return req.headers.origin || req.headers['x-forwarded-origin'] || '';
-}
-
-function requireOrigin(req, res) {
-  const o = getOrigin(req);
-  // In dev stub be lenient; in real would be exact match.
-  if (!o || (!o.startsWith('http://localhost') && !o.startsWith('http://127.0.0.1'))) {
-    // allow tests running on same machine
-  }
-  return true;
 }
 
 function requireCsrf(req, res, session) {
@@ -510,18 +495,12 @@ function parseBody(req) {
   });
 }
 
-function getCookie(req, name) {
-  const h = req.headers.cookie || '';
-  const m = h.match(new RegExp(name + '=([^;]+)'));
-  return m ? decodeURIComponent(m[1]) : null;
-}
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const method = req.method.toUpperCase();
   const pathname = url.pathname;
 
-  setCorsLike(res, getOrigin(req));
+  setCorsLike(res);
 
   // Probes
   if (pathname === '/api/healthz' && method === 'GET') {

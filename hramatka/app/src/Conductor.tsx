@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ActivityPlayer } from '@learn-ukrainian/activity-kit';
 import './conductor.css';
 import { DeliberateErrorBadge } from './DeliberateError';
@@ -167,56 +167,46 @@ const COND_PROFILE_KEYS: Array<{ k: ChromeKey; v: ChromeKey }> = [
 export default function Conductor({ lessonDoc, onExit, onStudentPreviewChange }: ConductorProps) {
   const { t } = useT();
   const phaseName = (ph: 1 | 2 | 3) => t(phaseKey(ph));
-  const [cond, setCond] = useState<CondState | null>(null);
+  const [prevLessonDoc, setPrevLessonDoc] = useState(lessonDoc);
+  const [cond, setCond] = useState<CondState>(() => initCond(lessonDoc));
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
-  // blocks reference (stable for this run)
-  const blocks = lessonDoc.blocks || [];
-
-  // Initialize on mount / lesson change
-  useEffect(() => {
-    const c = initCond(lessonDoc);
-    setCond(c);
+  if (prevLessonDoc !== lessonDoc) {
+    setPrevLessonDoc(lessonDoc);
+    setCond(initCond(lessonDoc));
     setShowProfile(false);
     setShowHelp(false);
-    onStudentPreviewChange?.(false);
-  }, [lessonDoc, onStudentPreviewChange]);
+  }
+
+  // blocks reference (stable for this run)
+  const blocks = useMemo(() => lessonDoc.blocks || [], [lessonDoc.blocks]);
 
   useEffect(() => {
-    onStudentPreviewChange?.(!!cond?.stud);
-  }, [cond?.stud, onStudentPreviewChange]);
+    onStudentPreviewChange?.(!!cond.stud);
+  }, [cond.stud, onStudentPreviewChange]);
 
   useEffect(() => {
     return () => { onStudentPreviewChange?.(false); };
   }, [onStudentPreviewChange]);
 
   // Live per-second clock — only current phase, only while running
+  const isRunning = cond.started && !cond.ended;
   useEffect(() => {
-    if (!cond || cond.ended || !cond.started) return undefined;
+    if (!isRunning) return undefined;
     const timer = setInterval(() => {
       setCond((prev) => {
-        if (!prev || prev.ended) return prev;
+        if (prev.ended) return prev;
         const ph = getCurPhase(prev, blocks) as 1 | 2 | 3;
         const nextElapsed = { ...prev.elapsed, [ph]: (prev.elapsed[ph] || 0) + 1 };
         return { ...prev, elapsed: nextElapsed };
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [cond?.started, cond?.ended, cond?.i, blocks]); // i changes reset phase context
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- cond.i intentionally restarts the 1s interval on activity change so elapsed time does not bleed into the next phase
+  }, [isRunning, cond.i, blocks]);
 
-  if (!cond) {
-    return (
-      <div className="emptystate">
-        <h3>{t('cond.empty.title')}</h3>
-        <p>{t('cond.empty.body')}</p>
-        <button className="btn primary" onClick={onExit}>{t('cond.empty.toList')}</button>
-      </div>
-    );
-  }
-
-  // non-null after guard for render (TS control flow for nested fns)
-  const c = cond!;
+  const c = cond;
 
   const l = lessonDoc;
   const curB = getCurBlock(c, blocks);

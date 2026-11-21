@@ -15,18 +15,20 @@ import {
   NEW_LESSON_DURATION,
   resolveDefaultDurationFromPref,
   formatLessonForClipboard,
+  resolveQualifiedModelId,
+  statusCardFromApi,
   type BakeRequestPayload,
   type BakeProgress,
   type ClipboardMode,
+  type LessonAttempt,
+  type LessonStatus,
+  type QualifiedModelChoice,
 } from './app-helpers';
 import Conductor from './Conductor';
 import { useT, statusKey, recoveryBodyKey, modelUnavailableKey, type ChromeKey } from './i18n';
 import LessonBlocks from './LessonBlocks';
 import ReviewWorkbench from './ReviewWorkbench';
-import QualifiedModelPicker, {
-  resolveQualifiedModelId,
-  type QualifiedModelChoice,
-} from './QualifiedModelPicker';
+import QualifiedModelPicker from './QualifiedModelPicker';
 import {
   splitReviewBlocks,
   blockNeedsReview,
@@ -158,57 +160,6 @@ interface LessonCatalogItem {
   failure_code: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface LessonAttempt {
-  attempt: number;
-  status: 'ready' | 'failed' | 'cancelled';
-  failure_code: string | null;
-  started_at: string | null;
-  completed_at: string;
-  retry_requested_revision: number | null;
-}
-
-export interface LessonStatus {
-  id: string;
-  status: LessonState;
-  step: string;
-  revision: number;
-  attempt: number;
-  attempt_history: LessonAttempt[];
-  failure_code: string | null;
-  failure_message: string | null;
-  created_at: string;
-  updated_at: string;
-  /** Current attempt start; absent only when reading an older API deployment. */
-  started_at?: string | null;
-  progress?: BakeProgress;
-}
-
-export function statusCardFromApi(
-  status: LessonStatus,
-  previous?: { attempt?: number; startedAt?: string },
-) {
-  const isNewAttempt = previous?.attempt !== status.attempt;
-  // Older API deployments do not expose started_at.  Keep their same-attempt
-  // clock stable, but never carry an earlier attempt into a retry.  updated_at
-  // is the least stale durable fallback at the current attempt transition.
-  const fallbackStartedAt = status.status === 'baking'
-    ? (isNewAttempt
-      ? status.updated_at || status.created_at
-      : previous?.startedAt || status.updated_at || status.created_at)
-    : (isNewAttempt ? undefined : previous?.startedAt);
-  return {
-    status: status.status,
-    step: status.step || '',
-    revision: status.revision,
-    attempt: status.attempt,
-    attempt_history: status.attempt_history || [],
-    failure: status.failure_message || undefined,
-    failure_code: status.failure_code ?? null,
-    progress: status.progress || undefined,
-    startedAt: status.started_at ?? fallbackStartedAt,
-  };
 }
 
 function isValidToken(t: string): boolean {
@@ -394,13 +345,13 @@ export default function TeacherApp() {
   const [pendingPrintLessonId, setPendingPrintLessonId] = useState<string | null>(null);
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
 
-  const lessonApiFetch = (path: string, init?: RequestInit, ownerId = selectedOwnerId): Promise<Response> => {
+  const lessonApiFetch = useCallback((path: string, init?: RequestInit, ownerId = selectedOwnerId): Promise<Response> => {
     if (session?.role !== 'admin' || !ownerId || !path.startsWith('/api/lessons')) {
       return apiFetch(path, init);
     }
     const separator = path.includes('?') ? '&' : '?';
     return apiFetch(`${path}${separator}owner_id=${encodeURIComponent(ownerId)}`, init);
-  };
+  }, [session?.role, selectedOwnerId]);
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
 
@@ -459,7 +410,7 @@ export default function TeacherApp() {
     setRestoredTextNotice(true);
   }, [qualifiedModels]);
 
-  const refreshSession = async () => {
+  const refreshSession = useCallback(async () => {
     const res = await apiFetch('/api/session');
     if (res.ok) {
       const data = await res.json();
@@ -483,7 +434,64 @@ export default function TeacherApp() {
       resetSessionScopedState();
     }
     return null;
-  };
+  }, [resetSessionScopedState]);
+
+  const loadCatalog = useCallback(async (ownerId?: string) => {
+    // #93 item 2: auto-loaded once session ready; guard removed, manual button remains
+    const res = await lessonApiFetch('/api/lessons', undefined, ownerId);
+    if (res.ok) {
+      const data = await res.json();
+      const local = loadLocalCatalogEntries(lastBakeRef.current);
+      setCatalog(mergeCatalogLessons(data.lessons || [], local));
+    }
+  }, [lessonApiFetch]);
+
+  const loadTeacherDefaultDuration = useCallback(async () => {
+    // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
+    try {
+      const res = await apiFetch('/api/teacher/preferences');
+      if (res.ok) {
+        const p = await res.json();
+        setDuration(resolveDefaultDurationFromPref(p));
+      }
+    } catch {
+      /* silent; keep the qualified 45-minute default */
+    }
+  }, []);
+
+  const loadQualifiedModels = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/lesson-models');
+      if (!res.ok) throw new Error('model list unavailable');
+      const payload: QualifiedModelList = await res.json();
+      const models = Array.isArray(payload.models) ? payload.models : [];
+      setQualifiedModels(models);
+      setModelUnavailableMessage(
+        models.length === 0
+          ? t(modelUnavailableKey(payload.unavailable_code))
+          : (payload.unavailable_message || null),
+      );
+      setSelectedModelId(previous => resolveQualifiedModelId(models, previous));
+    } catch {
+      // Availability is fail-closed: a failed list read never revives cached choices.
+      setQualifiedModels([]);
+      setSelectedModelId('');
+      setModelUnavailableMessage(null);
+    }
+  }, [t]);
+
+  const handleApiError = useCallback((e: ErrorEnvelope) => {
+    if (e.code === 'session_required') {
+      setSession(null);
+      setCsrf(null);
+      setSessionReady(false);
+      resetSessionScopedState();
+      setError(errKey('err.sessionExpired'));
+      navigate({ view: 'invite' });
+    } else {
+      setError(errOr(e.message, 'err.genericDot'));
+    }
+  }, [navigate, resetSessionScopedState]);
 
   useEffect(() => {
     if (session?.role !== 'admin') {
@@ -642,7 +650,7 @@ export default function TeacherApp() {
     });
     redeemInFlightRef.current = promise;
     return promise;
-  }, [resetSessionScopedState, navigate]);
+  }, [loadCatalog, loadQualifiedModels, loadTeacherDefaultDuration, navigate, refreshSession, resetSessionScopedState]);
 
   const signInWithPasskey = async () => {
     try {
@@ -833,40 +841,6 @@ export default function TeacherApp() {
     }
   };
 
-  const loadTeacherDefaultDuration = useCallback(async () => {
-    // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
-    try {
-      const res = await apiFetch('/api/teacher/preferences');
-      if (res.ok) {
-        const p = await res.json();
-        setDuration(resolveDefaultDurationFromPref(p));
-      }
-    } catch {
-      /* silent; keep the qualified 45-minute default */
-    }
-  }, []);
-
-  const loadQualifiedModels = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/lesson-models');
-      if (!res.ok) throw new Error('model list unavailable');
-      const payload: QualifiedModelList = await res.json();
-      const models = Array.isArray(payload.models) ? payload.models : [];
-      setQualifiedModels(models);
-      setModelUnavailableMessage(
-        models.length === 0
-          ? t(modelUnavailableKey(payload.unavailable_code))
-          : (payload.unavailable_message || null),
-      );
-      setSelectedModelId(previous => resolveQualifiedModelId(models, previous));
-    } catch {
-      // Availability is fail-closed: a failed list read never revives cached choices.
-      setQualifiedModels([]);
-      setSelectedModelId('');
-      setModelUnavailableMessage(null);
-    }
-  }, [t]);
-
   // On mount (and on hashchange for invite fragment): try redeem from fragment.
   // This ensures E2E direct-goto with hash (or late hash set) triggers redeem without requiring full reload.
   // #93 item1: drive sessionReady; UA «Завантаження…» during init, never blank.
@@ -925,7 +899,7 @@ export default function TeacherApp() {
       cancelled = true;
       window.removeEventListener('hashchange', onHash);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only session init; adding loadQualifiedModels/t would re-run init on language toggle
   }, []);
 
   // #93 item 1: gate route action on sessionReady. When resolves, re-run openLesson for direct-link/refresh.
@@ -948,6 +922,7 @@ export default function TeacherApp() {
       // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
       loadCatalog().catch(() => {});
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- openLesson is unmemoized and admin owner reloads run in their dedicated effect; adding them would re-fetch on unrelated renders
   }, [sessionReady, route.view, route.lessonId, route.mode, lesson, bakeStatus, currentLessonId]);
 
   // #93 item 3 cleanup: never orphan poll loops
@@ -1323,24 +1298,13 @@ export default function TeacherApp() {
     }
   };
 
-  const loadCatalog = async (ownerId?: string) => {
-    // #93 item 2: auto-loaded once session ready; guard removed, manual button remains
-    const res = await lessonApiFetch('/api/lessons', undefined, ownerId);
-    if (res.ok) {
-      const data = await res.json();
-      const local = loadLocalCatalogEntries(lastBakeRef.current);
-      setCatalog(mergeCatalogLessons(data.lessons || [], local));
-    }
-  };
-
   useEffect(() => {
     if (sessionReady && session?.role === 'admin' && selectedOwnerId) {
       void loadCatalog();
     }
     // Owner selection changes the complete request scope; reload only after
     // that state has committed, never by trusting a lesson id alone.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOwnerId, session?.role, sessionReady]);
+  }, [loadCatalog, selectedOwnerId, session?.role, sessionReady]);
 
   // ===== Warning ack (REVIEW only) =====
   const ackWarning = async (blockId: string) => {
@@ -1463,17 +1427,19 @@ export default function TeacherApp() {
   };
 
   // Live elapsed clock while baking (honest wait — not a fake percent)
+  const bakeRunning = bakeStatus?.status === 'baking';
+  const bakeStartedAt = bakeStatus?.startedAt;
   useEffect(() => {
-    if (!bakeStatus || bakeStatus.status !== 'baking' || !bakeStatus.startedAt) {
+    if (!bakeRunning || !bakeStartedAt) {
       setBakeElapsedMs(0);
       return undefined;
     }
-    const started = new Date(bakeStatus.startedAt).getTime();
+    const started = new Date(bakeStartedAt).getTime();
     const tick = () => setBakeElapsedMs(Math.max(0, Date.now() - started));
     tick();
     const id = window.setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [bakeStatus?.status, bakeStatus?.startedAt]);
+  }, [bakeRunning, bakeStartedAt]);
 
   const CLIENT_BAKE_STEP_KEYS = new Set<ChromeKey>([
     'bake.step.textReceived',
@@ -1506,25 +1472,12 @@ export default function TeacherApp() {
     <div className="anchorbody" {...(testId ? { 'data-testid': testId } : {})}>{text}</div>
   );
 
-  function handleApiError(e: ErrorEnvelope) {
-    if (e.code === 'session_required') {
-      setSession(null);
-      setCsrf(null);
-      setSessionReady(false);
-      resetSessionScopedState();
-      setError(errKey('err.sessionExpired'));
-      navigate({ view: 'invite' });
-    } else {
-      setError(errOr(e.message, 'err.genericDot'));
-    }
-  }
-
-  const applyLessonResource = (lr: LessonResource) => {
+  const applyLessonResource = useCallback((lr: LessonResource) => {
     setLesson(lr);
     setLocalAcks(lr.warning_acknowledgements || []);
-  };
+  }, []);
 
-  const applyActivityRegeneration = (entry: ActivityRegenerationEntry) => {
+  const applyActivityRegeneration = useCallback((entry: ActivityRegenerationEntry) => {
     setLesson((current) => {
       if (!current || current.lesson_id !== entry.lesson_id) return current;
       return {
@@ -1535,7 +1488,7 @@ export default function TeacherApp() {
         ],
       };
     });
-  };
+  }, []);
 
   const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry) => {
     if (entry.status !== 'succeeded' && entry.status !== 'failed') {
@@ -1562,16 +1515,16 @@ export default function TeacherApp() {
 
   // A replacement is a separate durable job. Reloading the page reconstructs
   // this poll from `activity_regenerations`; the old block stays visible meanwhile.
+  const activeRegenerationId = activeActivityRegeneration?.id;
   useEffect(() => {
-    const regeneration = activeActivityRegeneration;
     const lessonId = lesson?.lesson_id;
-    if (!regeneration || !lessonId) return undefined;
+    if (!activeRegenerationId || !lessonId) return undefined;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
       try {
         const response = await lessonApiFetch(
-          `/api/lessons/${lessonId}/regenerations/${regeneration.id}`,
+          `/api/lessons/${lessonId}/regenerations/${activeRegenerationId}`,
         );
         if (!response.ok) {
           if (response.status === 401) {
@@ -1605,7 +1558,7 @@ export default function TeacherApp() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [lesson?.lesson_id, activeActivityRegeneration?.id]);
+  }, [lesson?.lesson_id, activeRegenerationId, applyActivityRegeneration, applyLessonResource, handleApiError, lessonApiFetch, loadCatalog]);
 
   const handleRevisionConflict = async (expectedLessonId?: string) => {
     const lessonId = expectedLessonId || currentLessonIdRef.current;
