@@ -1,0 +1,44 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  merge_group:
+    branches: [main]
+    types: [checks_requested]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fleet-security:
+    name: Fleet security
+    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@0555c28c3093609fbd6101f2b1b50a0f94a801a6 # machinery#1080 (PR #1098)
+    permissions:
+      contents: read
+    with:
+      run-actionlint: true
+      run-shellcheck: true
+      shellcheck-paths: |
+        hramatka/api/deploy|style
+        hramatka|error
+      shellcheck-severity: style
+      run-zizmor: true
+      run-secret-scan: true
+      secret-scan-required-extensions: .py,.ts,.tsx,.sh
+      run-trivy-fs: true
+      trivy-fs-targets: |
+        hramatka/app/package-lock.json
+        uv.lock
+      trivy-scanners: vuln,license
+      trivy-severity: HIGH,CRITICAL
+      trivy-include-dev-deps: true

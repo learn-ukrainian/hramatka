@@ -5,7 +5,11 @@ name: Release artifact
 
 on:
   workflow_dispatch:
-  workflow_run:
+  # Preserve existing push-to-main release packing trigger. Safe because this
+  # job holds read-only contents permission, restricts workflow_run to
+  # same-repository successful push runs on main, checks out refs/heads/main,
+  # and verifies RELEASE_SHA is a 40-hex ancestor of main before detaching.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["CI"]
     types: [completed]
     branches: [main]
@@ -14,8 +18,7 @@ concurrency:
   group: release-artifact-${{ github.repository }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   pack:
@@ -26,9 +29,12 @@ jobs:
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/heads/main
           fetch-depth: 0
@@ -48,7 +54,7 @@ jobs:
           git checkout --detach "$RELEASE_SHA"
           echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
@@ -64,21 +70,23 @@ jobs:
           npm run build
           node scripts/csp-guard.mjs
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Pack + verify artifact
+        env:
+          RELEASE_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           set -euo pipefail
           python hramatka/ci/release_artifact.py pack --repo . --out-dir "$RUNNER_TEMP/hramatka-release"
           python hramatka/ci/release_artifact.py verify \
-            "$RUNNER_TEMP/hramatka-release/hramatka-release-${{ steps.rev.outputs.sha }}.tar.gz" \
-            --expect-sha "${{ steps.rev.outputs.sha }}"
+            "$RUNNER_TEMP/hramatka-release/hramatka-release-${RELEASE_SHA}.tar.gz" \
+            --expect-sha "$RELEASE_SHA"
           cat "$RUNNER_TEMP/hramatka-release/manifest.json"
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hramatka-release-${{ steps.rev.outputs.sha }}
           path: |
