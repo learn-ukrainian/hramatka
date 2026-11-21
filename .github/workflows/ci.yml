@@ -4,26 +4,31 @@ on:
   pull_request:
   push:
     branches: [main]
+  merge_group:
+    branches: [main]
+    types: [checks_requested]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   frontend:
     name: Frontend (lint + typecheck + unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: hramatka/app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -45,18 +50,30 @@ jobs:
 
   python:
     name: Python (guards + ruff + DB-free unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
+          version: "0.13.9"
+          checksum: "a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+          download-from-astral-mirror: 'false'
+          enable-cache: 'false'
           python-version: "3.12"
-      - name: Install tooling
+      - name: Install tooling (uv.lock)
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          set -euo pipefail
+          venv="$RUNNER_TEMP/hramatka-venv"
+          rm -rf "$venv"
+          UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --no-install-project --no-build --extra dev --python 3.12
+          printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
       - name: Boundary + vendor guards
         run: |
           python hramatka/engine/tools/check_boundary.py
@@ -99,15 +116,18 @@ jobs:
 
   e2e:
     name: Frontend Playwright (packaged e2e)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: hramatka/app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -126,3 +146,45 @@ jobs:
         run: npm run test:e2e -- --project=chromium
         env:
           CI: true
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs: [frontend, python, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify every required CI job succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          if ! actual="$(jq -r 'if type == "object" then keys[] else error("not an object") end' \
+                <<< "$NEEDS_JSON" 2> /dev/null)"; then
+            echo "::error::Job results are not a JSON object; failing closed"
+            exit 1
+          fi
+          expected=(frontend python e2e)
+          failed=0
+          for job in "${expected[@]}"; do
+            result="$(jq -r --arg job "$job" \
+              '.[$job].result // "missing" | if type == "string" then . else "invalid" end' \
+              <<< "$NEEDS_JSON")"
+            echo "${job}: ${result} (required success)"
+            if [ "$result" != "success" ]; then
+              echo "::error::Required job ${job} finished with result ${result}"
+              failed=1
+            fi
+          done
+          while IFS= read -r job; do
+            [ -n "$job" ] || continue
+            if ! printf '%s\n' "${expected[@]}" | grep -qxF -- "$job"; then
+              echo "::error::Unexpected job ${job} in CI Gate needs"
+              failed=1
+            fi
+          done <<< "$actual"
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+          echo "CI Gate green: ${#expected[@]} required job(s) succeeded."
