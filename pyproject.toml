@@ -41,3 +41,6 @@ markers = [
 target-version = "py312"
 line-length = 100
 src = ["hramatka", "tests"]
+
+[tool.uv]
+exclude-newer = "7 days"

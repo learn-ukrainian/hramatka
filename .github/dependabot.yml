@@ -9,6 +9,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     labels:
@@ -25,6 +27,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps"
     labels:
@@ -41,6 +45,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps"
     labels:
