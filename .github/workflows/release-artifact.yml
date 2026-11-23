@@ -56,17 +56,14 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24.22.3" # Bundles npm 11.19.1 for strict-allow-scripts.
 
       - name: Build teacher app
         working-directory: hramatka/app
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            npm ci && break
-            sleep $((attempt * 10))
-            if [[ $attempt -eq 3 ]]; then exit 1; fi
-          done
+          npm --version
+          npm ci
           npm run build
           node scripts/csp-guard.mjs
 
