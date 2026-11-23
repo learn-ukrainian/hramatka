@@ -218,10 +218,14 @@ interface RouteState {
   mode?: 'review' | 'run' | 'conduct';
 }
 
-function useSimpleRouter() {
+// `onLeaveLesson` runs synchronously, before the route changes, for every route that is not
+// a lesson (navigation buttons and browser back/forward alike), so a late async result for
+// the lesson the teacher just left finds no current lesson to act on.
+function useSimpleRouter(onLeaveLesson: () => void) {
   const [route, setRoute] = useState<RouteState>({ view: 'invite' });
 
   const navigate = useCallback((r: RouteState) => {
+    if (r.view !== 'lesson') onLeaveLesson();
     const hash = r.lessonId
       ? `#/lessons/${r.lessonId}${r.mode ? '?mode=' + r.mode : ''}`
       : r.view === 'catalog'
@@ -231,24 +235,28 @@ function useSimpleRouter() {
           : '#/';
     history.pushState(null, '', hash);
     setRoute(r);
-  }, []);
+  }, [onLeaveLesson]);
 
   useEffect(() => {
     const parse = () => {
       const h = window.location.hash || '#/';
       if (h === '#/lessons') {
+        onLeaveLesson();
         setRoute({ view: 'catalog' });
       } else if (h === '#/settings') {
+        onLeaveLesson();
         setRoute({ view: 'settings' });
       } else if (h.startsWith('#/lessons/')) {
         const [id, query] = h.slice('#/lessons/'.length).split('?', 2);
         if (!id || /[^A-Za-z0-9_-]/.test(id)) {
+          onLeaveLesson();
           setRoute({ view: 'paste' });
           return;
         }
         const mode = new URLSearchParams(query).get('mode');
         setRoute({ view: 'lesson', lessonId: id, mode: mode === 'run' || mode === 'conduct' ? mode : 'review' });
       } else {
+        onLeaveLesson();
         setRoute({ view: 'paste' });
       }
     };
@@ -256,14 +264,13 @@ function useSimpleRouter() {
     const onPop = () => parse();
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [onLeaveLesson]);
 
   return { route, navigate };
 }
 
 // ===== Main App =====
 export default function TeacherApp() {
-  const { route, navigate } = useSimpleRouter();
   const { t, lang, toggleLang, resetLang } = useT();
 
   const [session, setSession] = useState<Session | null>(null);
@@ -327,6 +334,8 @@ export default function TeacherApp() {
     currentLessonIdRef.current = id;
     setCurrentLessonIdState(id);
   }, []);
+  const clearCurrentLesson = useCallback(() => setCurrentLessonId(null), [setCurrentLessonId]);
+  const { route, navigate } = useSimpleRouter(clearCurrentLesson);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -932,16 +941,6 @@ export default function TeacherApp() {
   useEffect(() => {
     return () => { clearPoll(); };
   }, [clearPoll]);
-  // F2 fix: only clear if the active poll id is *not* the one we just switched to.
-  // The pollStatus(new) call (which sets activePollIdRef) happens before this effect runs,
-  // so we avoid cancelling the freshly started poll for the target lesson when switching
-  // catalog rows mid-bake. Still stops orphans from prior lessons.
-  useEffect(() => {
-    if (activePollIdRef.current && activePollIdRef.current !== currentLessonId) {
-      clearPoll();
-    }
-  }, [currentLessonId, clearPoll]);
-
   const logout = async () => {
     if (!csrf) return;
     await apiFetch('/api/session', {
@@ -1179,21 +1178,25 @@ export default function TeacherApp() {
     const schedule = (delay: number) => {
       pollTimerRef.current = window.setTimeout(tick, delay);
     };
+    // A tick may act only while this poll is the active one AND the teacher still wants
+    // this lesson: the current-lesson ref moves synchronously when they leave or open
+    // another lesson, so an orphaned poll ends itself here instead of waiting for a
+    // passive effect. It clears only its own poll, never a newer one.
+    const isStale = () => {
+      if (activePollIdRef.current !== id) return true;
+      if (currentLessonIdRef.current === id) return false;
+      clearPoll();
+      return true;
+    };
     const tick = async () => {
-      // F2: guard against a stale timer from a previous lesson that wasn't cleared in time.
-      // If we switched catalog rows, active will be the new id; old scheduled tick aborts.
-      if (activePollIdRef.current !== id) {
-        return;
-      }
+      if (isStale()) return;
       attempts++;
       let st: any = null;
       try {
         const res = await lessonApiFetch(`/api/lessons/${id}/status`);
         st = await res.json();
-        // Re-check after await in case switch happened during network
-        if (activePollIdRef.current !== id) {
-          return;
-        }
+        // Re-check after await in case the teacher moved on during the network call.
+        if (isStale()) return;
         setBakeStatus((prev) => statusCardFromApi(st as LessonStatus, prev || undefined));
         if (st.status === 'ready') {
           clearPoll();
@@ -1206,9 +1209,7 @@ export default function TeacherApp() {
           return;
         }
       } catch {
-        if (activePollIdRef.current !== id) {
-          return;
-        }
+        if (isStale()) return;
         setBakeStatus((prev) => prev || {
           status: 'baking', step: 'bake.step.updating', revision: 1, attempt: 1, attempt_history: [],
         });
@@ -1227,10 +1228,20 @@ export default function TeacherApp() {
 
   // ===== Lesson load + modes =====
   const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
+    // Opening a lesson is the teacher's latest intent: record it synchronously in the same
+    // ref that guards every other late result. A later open, or leaving for the catalog,
+    // paste or settings, replaces it, and each continuation below then drops itself.
+    const previousLessonId = currentLessonIdRef.current;
+    currentLessonIdRef.current = id;
+    const superseded = () => currentLessonIdRef.current !== id;
+    // An open that shows nothing hands the intent back, keeping the ref equal to the state.
+    let shown = false;
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
       const s = await refreshSession();
+      if (superseded()) return;
       if (!s) {
+        currentLessonIdRef.current = previousLessonId;
         setError(errKey('err.sessionRequired'));
         return;
       }
@@ -1249,10 +1260,13 @@ export default function TeacherApp() {
     }
     try {
       const res = await lessonApiFetch(`/api/lessons/${id}`);
+      if (superseded()) return;
       if (res.status === 200) {
         const lr: LessonResource = await res.json();
+        if (superseded()) return;
         setLesson(lr);
         setBakeStatus(null);
+        shown = true;
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
         // The student must receive the source text before the exercises; keep the
@@ -1261,13 +1275,17 @@ export default function TeacherApp() {
         navigate({ view: 'lesson', lessonId: id, mode });
       } else if (res.status === 409) {
         await res.json().catch(() => ({}));
+        if (superseded()) return;
         setLesson(null);
+        shown = true;
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
         try {
           const statusRes = await lessonApiFetch(`/api/lessons/${id}/status`);
+          if (superseded()) return;
           if (statusRes.ok) {
             const st = await statusRes.json();
+            if (superseded()) return;
             if (st.status === 'failed' || st.status === 'cancelled') {
               setBakeStatus(statusCardFromApi(st as LessonStatus));
               setBakeElapsedMs(0);
@@ -1286,6 +1304,7 @@ export default function TeacherApp() {
         } catch {
           // fall through to generic baking poll
         }
+        if (superseded()) return;
         const startedAt = new Date().toISOString();
         setBakeStatus({
           status: 'baking', step: 'bake.step.tasksComposed', revision: 1, attempt: 1, attempt_history: [], startedAt,
@@ -1296,11 +1315,13 @@ export default function TeacherApp() {
         setError(errKey('err.lessonNotFound'));
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({ code: '', message: '' }));
+        if (superseded()) return;
         handleApiError(e);
       }
     } catch {
-      setError(errKey('err.loadLesson'));
+      if (!superseded()) setError(errKey('err.loadLesson'));
     } finally {
+      if (!shown && !superseded()) currentLessonIdRef.current = previousLessonId;
       setLoading(false);
     }
   };

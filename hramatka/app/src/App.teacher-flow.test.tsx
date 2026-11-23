@@ -654,6 +654,120 @@ describe('activity regeneration reconciliation (#418)', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('drops a lesson reload still in flight after the teacher opens another lesson', async () => {
+    const first = generatedLessonResource('lesson-1', 'Перший урок');
+    const second = generatedLessonResource('lesson-2', 'Другий урок');
+    let resolveReload!: (value: Response) => void;
+    const pendingReload = new Promise<Response>((resolve) => {
+      resolveReload = resolve;
+    });
+    let firstLessonReads = 0;
+    const catalog = [{
+      id: 'lesson-2',
+      title: 'Другий урок',
+      anchor_snippet: 'Учні уважно читають український текст.',
+      status: 'ready',
+      level: 'B1',
+      duration: 45,
+      methodology: 'ttt',
+      grammar_focus: null,
+      revision: 1,
+      accepted: false,
+      accepted_at: null,
+      accepted_revision: null,
+      failure_code: null,
+      created_at: '2026-08-13T00:00:00Z',
+      updated_at: '2026-08-13T00:00:00Z',
+    }];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      }
+      if (url.endsWith('/api/lessons/lesson-1')) {
+        firstLessonReads += 1;
+        // The first read opens the lesson; the second is the reload that follows the conflict.
+        return firstLessonReads === 1 ? response(first) : pendingReload;
+      }
+      if (url.endsWith('/api/lessons/lesson-2')) return response(second);
+      if (url.endsWith('/blocks/block-1/regenerations') && init?.method === 'POST') {
+        return errorResponse(409, { code: 'revision_conflict', message: 'Урок змінився.' });
+      }
+      if (url.endsWith('/api/lessons')) return response({ lessons: catalog });
+      return response({});
+    }));
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Створити інший варіант'));
+    fireEvent.click(screen.getByText('Створити новий варіант'));
+    await waitFor(() => expect(firstLessonReads).toBe(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    await screen.findByText('Другий урок');
+    fireEvent.click(screen.getByTestId('catalog-open-btn'));
+    await screen.findByTestId('lesson-model');
+    expect(window.location.hash).toContain('/lessons/lesson-2');
+
+    // The reload of the lesson the teacher left answers last and must change nothing.
+    await act(async () => {
+      resolveReload(response(first));
+      await pendingReload;
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    });
+
+    expect(window.location.hash).toContain('/lessons/lesson-2');
+    expect(screen.getAllByText('Другий урок').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Перший урок')).not.toBeInTheDocument();
+  });
+
+  it('ends a bake poll for a lesson the teacher left before its status turns ready', async () => {
+    const first = generatedLessonResource('lesson-1', 'Перший урок');
+    let lessonReads = 0;
+    let statusReads = 0;
+    let resolveTick!: (value: Response) => void;
+    const pendingTick = new Promise<Response>((resolve) => {
+      resolveTick = resolve;
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      }
+      if (url.endsWith('/api/lessons/lesson-1')) {
+        lessonReads += 1;
+        return lessonReads === 1
+          ? errorResponse(409, { code: 'lesson_not_ready', message: 'Ще не готово.' })
+          : response(first);
+      }
+      if (url.endsWith('/api/lessons/lesson-1/status')) {
+        statusReads += 1;
+        // The first read is the open's own; the second is the poll tick that stays in flight.
+        return statusReads === 1 ? response(jobStatus('baking', 1)) : pendingTick;
+      }
+      if (url.endsWith('/api/lessons')) return response({ lessons: [] });
+      return response({});
+    }));
+    renderApp();
+
+    await waitFor(() => expect(statusReads).toBe(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    expect(window.location.hash).toBe('#/lessons');
+
+    await act(async () => {
+      resolveTick(response({ ...jobStatus('baking', 1), status: 'ready' }));
+      await pendingTick;
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    });
+
+    expect(lessonReads).toBe(1);
+    expect(window.location.hash).toBe('#/lessons');
+    expect(screen.queryByText('Перший урок')).not.toBeInTheDocument();
+  });
+
   it('coalesces a same-frame double submit before disabled state paints', async () => {
     const resource = generatedLessonResource('lesson-1');
     let regenerationRequests = 0;
