@@ -334,16 +334,24 @@ export default function TeacherApp() {
   // is already current (Check now, the route effect, a poll reopening its lesson) reuses it,
   // so a reload never supersedes the load or poll it belongs to.
   const navIntentRef = useRef<{ key: string | null }>({ key: null });
+  // One number per openLesson call: two calls with the same intent (Check now twice, a poll
+  // reopening its lesson) may both be in flight, and only the latest may commit.
+  const openSeqRef = useRef(0);
   const beginIntent = (key: string) => {
     if (navIntentRef.current.key !== key) navIntentRef.current = { key };
     return navIntentRef.current;
   };
   const currentLessonIdRef = useRef<string | null>(null);
+  // The lesson the teacher is actually on. openLesson moves currentLessonIdRef tentatively;
+  // only setCurrentLessonId writes this one, so a failed open restores it, never a render
+  // closure's older `currentLessonId`.
+  const committedLessonIdRef = useRef<string | null>(null);
   // The ref is what late async results compare against, so it must change in the same
   // tick as the lesson itself. Mirroring state through a passive effect leaves a window
   // after the commit in which a stale response still sees the lesson the teacher left.
   const setCurrentLessonId = useCallback((id: string | null) => {
     currentLessonIdRef.current = id;
+    committedLessonIdRef.current = id;
     setCurrentLessonIdState(id);
   }, []);
   const clearPoll = useCallback(() => {
@@ -1092,7 +1100,7 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (currentLessonIdRef.current !== lid) return;
+      if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
       if (res.ok) {
         const next = statusCardFromApi(data as LessonStatus, current);
         setBakeStatus(next);
@@ -1112,7 +1120,7 @@ export default function TeacherApp() {
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
         const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
-        if (currentLessonIdRef.current !== lid) return;
+        if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
           if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
@@ -1259,16 +1267,14 @@ export default function TeacherApp() {
     // from any other intent, even for the same lesson; the lesson ref moves now so that late
     // results of the lesson being left find another lesson current.
     const intent = beginIntent(`${id}|${mode}`);
-    const movesRef = currentLessonIdRef.current !== id;
+    const seq = ++openSeqRef.current;
     currentLessonIdRef.current = id;
-    const superseded = () => navIntentRef.current !== intent;
-    // An open of another lesson that shows nothing hands the ref back to the lesson that was
-    // current when it was called, so a failed open never leaves late actions of the lesson
-    // the teacher is on admitted (or those of one they left).
-    let shown = false;
-    const committedLessonId = currentLessonId;
+    const superseded = () => navIntentRef.current !== intent || openSeqRef.current !== seq;
+    // The latest open that ends without showing anything hands the ref back to the lesson the
+    // teacher is on (none after leaving), so a failed open never leaves late actions of the
+    // lesson it tried, or of one left behind, admitted. After a shown lesson it is a no-op.
     const handBack = () => {
-      if (movesRef && !shown && !superseded()) currentLessonIdRef.current = committedLessonId;
+      if (!superseded()) currentLessonIdRef.current = committedLessonIdRef.current;
     };
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
@@ -1300,7 +1306,6 @@ export default function TeacherApp() {
         if (superseded()) return;
         setLesson(lr);
         setBakeStatus(null);
-        shown = true;
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
         // The student must receive the source text before the exercises; keep the
@@ -1311,7 +1316,6 @@ export default function TeacherApp() {
         await res.json().catch(() => ({}));
         if (superseded()) return;
         setLesson(null);
-        shown = true;
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
         try {
@@ -2454,7 +2458,7 @@ export default function TeacherApp() {
                       >
                         {bakeMutation === 'cancel' ? t('bake.cancelling') : t('bake.cancel')}
                       </button>
-                      <button className="btn ghost" onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)} disabled={bakeMutation !== null}>{t('bake.checkNow')}</button>
+                      <button className="btn ghost" onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!, currentMode)} disabled={bakeMutation !== null}>{t('bake.checkNow')}</button>
                       <p className="hint bake-cancel-hint">{t('bake.cancelHint')}</p>
                     </div>
                   )}

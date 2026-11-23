@@ -768,6 +768,70 @@ describe('activity regeneration reconciliation (#418)', () => {
     expect(screen.queryByText('Перший урок')).not.toBeInTheDocument();
   });
 
+  it('admits no late action of a lesson whose latest open failed after the teacher left it', async () => {
+    const first = generatedLessonResource('lesson-1', 'Перший урок');
+    let lessonReads = 0;
+    let resolveRegeneration!: (value: Response) => void;
+    const pendingRegeneration = new Promise<Response>((resolve) => {
+      resolveRegeneration = resolve;
+    });
+    const catalog = [{
+      id: 'lesson-1',
+      title: 'Перший урок',
+      anchor_snippet: 'Учні уважно читають український текст.',
+      status: 'ready',
+      level: 'B1',
+      duration: 45,
+      methodology: 'ttt',
+      grammar_focus: null,
+      revision: 1,
+      accepted: false,
+      accepted_at: null,
+      accepted_revision: null,
+      failure_code: null,
+      created_at: '2026-08-13T00:00:00Z',
+      updated_at: '2026-08-13T00:00:00Z',
+    }];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/session')) return response(teacher);
+      if (url.endsWith('/api/teacher/preferences')) return response({ default_duration: 60 });
+      if (url.endsWith('/api/lesson-models')) {
+        return response({ registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null });
+      }
+      if (url.endsWith('/api/lessons/lesson-1')) {
+        lessonReads += 1;
+        if (lessonReads === 1) return response(first);
+        // The first open from the catalog stays in flight; the latest one fails.
+        return lessonReads === 2 ? new Promise<Response>(() => {}) : errorResponse(404, { code: 'lesson_not_found', message: 'Немає.' });
+      }
+      if (url.endsWith('/blocks/block-1/regenerations') && init?.method === 'POST') return pendingRegeneration;
+      if (url.endsWith('/api/lessons')) return response({ lessons: catalog });
+      return response({});
+    }));
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Створити інший варіант'));
+    fireEvent.click(screen.getByText('Створити новий варіант'));
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    await screen.findByText('Перший урок');
+    fireEvent.click(screen.getByTestId('catalog-open-btn'));
+    await waitFor(() => expect(lessonReads).toBe(2));
+    fireEvent.click(screen.getByTestId('catalog-open-btn'));
+    await screen.findByRole('alert');
+    expect(window.location.hash).toBe('#/lessons');
+
+    // The regeneration the teacher left behind fails last and must not reach the screen.
+    await act(async () => {
+      resolveRegeneration(errorResponse(500, { code: 'server_error', message: 'Збій сервера.' }));
+      await pendingRegeneration;
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    });
+
+    expect(screen.queryByText('Збій сервера.')).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('#/lessons');
+  });
+
   it('coalesces a same-frame double submit before disabled state paints', async () => {
     const resource = generatedLessonResource('lesson-1');
     let regenerationRequests = 0;
