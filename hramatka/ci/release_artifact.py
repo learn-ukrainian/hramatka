@@ -60,8 +60,14 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
     public_sha = git_sha(repo)
     try:
         lockfile = subprocess.check_output(
-            ["git", "-C", str(repo), "cat-file", "blob", f"{public_sha}:uv.lock"],
+            [
+                "git", "-C", str(repo), "--no-replace-objects",
+                "cat-file", "blob", f"{public_sha}:uv.lock",
+            ],
+            timeout=60,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit("timed out reading uv.lock from the release commit") from exc
     except subprocess.CalledProcessError as exc:
         raise SystemExit("cannot read uv.lock from the release commit") from exc
 
@@ -137,7 +143,12 @@ def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
         manifest_path = staging / MANIFEST_NAME
         if manifest_path.is_symlink() or not manifest_path.is_file():
             raise SystemExit("manifest.json missing or not a regular file at the archive root")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit("invalid release manifest JSON") from exc
+        if not isinstance(manifest, dict):
+            raise SystemExit("release manifest must be a JSON object")
         if manifest.get("schema") != SCHEMA:
             raise SystemExit(f"unsupported schema: {manifest.get('schema')!r}")
         if expected_sha is not None and manifest["public_sha"] != expected_sha:
