@@ -1737,6 +1737,66 @@ describe('late results never move the teacher (D-STALENAV-A)', () => {
     expect(screen.getByRole('heading', { name: 'Урок Б' })).toBeInTheDocument();
   });
 
+  it('F17: a lesson proven gone never reopens from a navigation issued before the proof, whichever screen is shown', async () => {
+    window.history.replaceState(null, '', '#/lessons');
+    const reviewA = held();
+    const conductA = held();
+    const openB = held();
+    const conductC = held();
+    let aReads = 0;
+    let cReads = 0;
+    let cStatusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        aReads += 1;
+        return aReads === 1 ? reviewA.promise : conductA.promise;
+      }
+      if (p === '/api/lessons/lesson-2' && isGet(init)) return openB.promise;
+      if (p === '/api/lessons/lesson-3' && isGet(init)) {
+        cReads += 1;
+        return cReads === 1 ? notReady() : conductC.promise;
+      }
+      if (p === '/api/lessons/lesson-3/status') {
+        cStatusReads += 1;
+        return cStatusReads === 1
+          ? response({ ...status('baking', 2), id: 'lesson-3' })
+          : errorResponse(404, { code: 'lesson_not_found', message: 'Урок не знайдено.' });
+      }
+      if (p === '/api/lessons') {
+        return response({ lessons: [row('lesson-1', 'Урок А', true), row('lesson-2', 'Урок Б', true), row('lesson-3', 'Урок В', true)] });
+      }
+      return undefined;
+    });
+    renderApp();
+    const opens = await screen.findAllByTestId('catalog-open-btn');
+    const conducts = screen.getAllByRole('button', { name: 'Проведення' });
+
+    // Off-lesson: the older Review of A answers 404 first, so nothing shows it; the Conduct of
+    // A that read before the deletion answers last.
+    fireEvent.click(opens[0]);
+    fireEvent.click(conducts[0]);
+    await waitFor(() => expect(aReads).toBe(2));
+    await reviewA.release(errorResponse(404, { code: 'lesson_not_found', message: 'Урок не знайдено.' }));
+    await conductA.release(response({ ...generatedLessonResource('lesson-1', 'Урок А'), revision: 1 }));
+    expect(window.location.hash).toBe('#/lessons');
+    expect(screen.queryByRole('heading', { name: 'Урок А' })).not.toBeInTheDocument();
+
+    // On another lesson: C commits, B and the Conduct of C are pending; C's poll proves it gone;
+    // B commits; the Conduct of C that read before the deletion answers last.
+    fireEvent.click(opens[2]);
+    fireEvent.click(opens[1]);
+    fireEvent.click(conducts[2]);
+    await screen.findByTestId('baking-status-view');
+    await waitFor(() => expect(cStatusReads).toBe(2), { timeout: 3000 });
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    await openB.release(response({ ...generatedLessonResource('lesson-2', 'Урок Б'), revision: 1 }));
+    expect(screen.getByRole('heading', { name: 'Урок Б' })).toBeInTheDocument();
+    await conductC.release(response({ ...generatedLessonResource('lesson-3', 'Урок В'), revision: 3 }));
+    expect(window.location.hash).toContain('/lessons/lesson-2');
+    expect(screen.getByRole('heading', { name: 'Урок Б' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Урок В' })).not.toBeInTheDocument();
+  });
+
   it('F17: a navigation 401 with an empty body ends the session', async () => {
     serve((p, init) => {
       if (p === '/api/lessons/lesson-1' && isGet(init)) return errorResponse(401, {});

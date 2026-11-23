@@ -294,6 +294,12 @@ interface BakeCard {
  */
 interface Scope {
   session: object;
+  /**
+   * Lessons proven gone in this scope, each with the navigation number issued when its 404
+   * was learned: a navigation numbered at or below the mark read before the proof and never
+   * commits that lesson.
+   */
+  gone: Map<string, number>;
 }
 
 interface Visit {
@@ -307,7 +313,7 @@ interface Visit {
   ready: boolean;
 }
 
-const offLessonVisit = (scope: Scope = { session: {} }): Visit => ({
+const offLessonVisit = (scope: Scope = { session: {}, gone: new Map() }): Visit => ({
   scope, lessonId: null, mode: null, revision: 0, doc: false, card: null, ready: false,
 });
 
@@ -344,9 +350,6 @@ const docFrom = async (res: Response): Promise<LessonResource> => {
  */
 const lessonGone = (status: number, envelope: unknown, lessonLevel: boolean): boolean =>
   status === 404 && (lessonLevel || (envelope as { code?: unknown } | null)?.code === 'lesson_not_found');
-
-/** The visit of a lesson known to be gone (see `endOnTerminal`): it never accepts a payload. */
-const retired = (visit: Visit): boolean => visit.revision === Number.POSITIVE_INFINITY;
 
 /**
  * A lesson read: the document, the bake status (null when a transient failure hid it), or a
@@ -393,7 +396,8 @@ export default function TeacherApp() {
     const { scope } = visitRef.current;
     if (!newScope && visitRef.current.lessonId === null) return;
     visitRef.current = offLessonVisit(
-      newScope === 'session' ? { session: {} } : newScope === 'owner' ? { session: scope.session } : scope,
+      newScope === 'session' ? { session: {}, gone: new Map() }
+        : newScope === 'owner' ? { session: scope.session, gone: new Map() } : scope,
     );
     setCurrentLessonId(null);
   }, [clearPoll]);
@@ -1174,17 +1178,6 @@ export default function TeacherApp() {
     });
   };
 
-  /**
-   * A cancel or retry whose outcome is unknown (an unusable answer, a failed request or a
-   * failed re-read). A read started now orders after the request, so a status read before it
-   * that answers later (an older or equal revision) cannot strand a request that landed: the
-   * apply rule keeps whichever is newer. The bounded poll covers a failed re-read.
-   */
-  const reconcileBake = (visit: Visit) => {
-    ensurePoll(visit);
-    void refreshLesson(visit);
-  };
-
   const mutateBake = async (operation: 'cancel' | 'retry') => {
     const visit = visitRef.current;
     const lid = visit.lessonId;
@@ -1220,7 +1213,7 @@ export default function TeacherApp() {
         // An idempotent replay may answer with a later state, including ready. An unreadable
         // body proves only that the request landed: keep the card and re-read the visit.
         if (usableStatus(data)) showStatus(visit, data);
-        else reconcileBake(visit);
+        else ensurePoll(visit); // the card stays; the visit's bounded poll learns the real state
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
@@ -1229,16 +1222,16 @@ export default function TeacherApp() {
         const read = await readStatus(lid);
         if (endOnTerminal(read, visit) || !owned()) return;
         if ('status' in read && usableStatus(read.status)) showStatus(visit, read.status);
-        else reconcileBake(visit);
+        else ensurePoll(visit);
       } else {
-        // The outcome is unknown (the request may have landed).
-        reconcileBake(visit);
+        // The outcome is unknown (the request may have landed): let the bounded poll reconcile.
+        ensurePoll(visit);
       }
       handleApiError(data as ErrorEnvelope);
     } catch {
       if (owned()) {
-        reconcileBake(visit);
         setError(errKey('err.bakeFailed'));
+        ensurePoll(visit);
       }
     } finally {
       bakeMutationInFlightRef.current = null;
@@ -1345,6 +1338,7 @@ export default function TeacherApp() {
     const isDoc = 'doc' in payload;
     const revision: unknown = 'doc' in payload ? payload.doc?.revision : payload.card.revision;
     if (!isRevision(revision) || revision < visit.revision || (visit.doc && !isDoc)) return false;
+    const newer = revision > visit.revision;
     visit.revision = revision;
     visit.doc = isDoc;
     if ('doc' in payload) {
@@ -1358,8 +1352,11 @@ export default function TeacherApp() {
     visit.card = payload.card;
     setLesson(null);
     setBakeStatus(payload.card);
+    // A terminal card ends the poll when it is newer than what the visit showed. At the shown
+    // revision it may be a read that started before a cancel or retry whose outcome the poll is
+    // still learning, so only the poll's own read ends the poll then.
     if (payload.card.status === 'draft' || payload.card.status === 'baking') ensurePoll(visit);
-    else clearPoll();
+    else if (newer) clearPoll();
     return true;
   };
 
@@ -1410,18 +1407,23 @@ export default function TeacherApp() {
 
   /**
    * A terminal failure ends what it proves, whoever read it: a 401 expires the session it was
-   * read in (if that is still the session); a 404 retires the visit of the lesson that is gone
-   * (if that visit is still current). The retired visit keeps the lesson and mode, so the route
+   * read in (if that is still the session); a 404 retires the current visit of the lesson that
+   * is gone, in the scope it was read in, whichever visit of that lesson read it (a mode switch
+   * keeps some readers alive across visits). The retired visit keeps the lesson and mode, so the route
    * effect does not reopen it, accepts no payload (its floor is unreachable), and leaves
    * navigations to other screens pending.
    */
   const endOnTerminal = (read: LessonRead, visit: Visit): boolean => {
     if (!('error' in read) || !read.terminal) return false;
+    const current = visitRef.current;
     if (read.terminal === 'session') {
       endedSession(401, visit.scope);
-    } else if (visitRef.current === visit) {
+      return true;
+    }
+    if (visit.lessonId !== null) visit.scope.gone.set(visit.lessonId, navRef.current.issued);
+    if (current.lessonId !== null && current.lessonId === visit.lessonId && current.scope === visit.scope) {
       clearPoll();
-      visitRef.current = { ...offLessonVisit(visit.scope), lessonId: visit.lessonId, mode: visit.mode, revision: Number.POSITIVE_INFINITY };
+      visitRef.current = { ...offLessonVisit(current.scope), lessonId: current.lessonId, mode: current.mode, revision: Number.POSITIVE_INFINITY };
       setLesson(null);
       setBakeStatus(null);
       setPendingPrintLessonId(null);
@@ -1496,6 +1498,12 @@ export default function TeacherApp() {
         if (!visit.ready && 'status' in read && read.status) {
           showStatus(visit, read.status);
           if (!current()) return;
+          // The poll read this status after every request it reconciles: unless it learned
+          // readiness (the document is read next), a terminal card the visit shows is the outcome.
+          if (!visit.ready && visit.card && visit.card.status !== 'draft' && visit.card.status !== 'baking') {
+            clearPoll();
+            return;
+          }
           if (visit.ready) {
             read = await readLesson(id, current);
             if (endOnTerminal(read, visit)) {
@@ -1542,12 +1550,16 @@ export default function TeacherApp() {
         endedSession(401, scope);
         return;
       }
-      // A 404 proves the lesson gone whichever navigation read it: the visit showing it retires.
+      // A 404 proves the lesson gone whichever navigation read it: it is recorded in the scope
+      // the navigation was issued in, and the visit showing that lesson retires.
       const shown = visitRef.current;
-      if ('error' in read && read.terminal === 'gone' && shown.lessonId === id && shown.scope === scope) {
-        if (n === navRef.current.issued) navRef.current.floor = n;
-        endOnTerminal(read, shown);
-        return;
+      if ('error' in read && read.terminal === 'gone') {
+        scope.gone.set(id, navRef.current.issued);
+        if (shown.lessonId === id && shown.scope === scope) {
+          if (n === navRef.current.issued) navRef.current.floor = n;
+          endOnTerminal(read, shown);
+          return;
+        }
       }
       if (!live()) return;
       if ('error' in read) {
@@ -1558,8 +1570,8 @@ export default function TeacherApp() {
         return;
       }
       if ('stale' in read) return;
-      // A lesson known to be gone never reopens from a response read before its deletion.
-      if (shown.lessonId === id && retired(shown)) {
+      // A lesson proven gone never reopens from a navigation issued before the proof.
+      if (n <= (scope.gone.get(id) ?? 0)) {
         if (n === navRef.current.issued) {
           navRef.current.floor = n;
           goneRead().error();
