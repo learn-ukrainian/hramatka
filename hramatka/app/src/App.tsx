@@ -288,6 +288,8 @@ interface BakeCard {
  * document is shown) never replaces it.
  */
 interface Visit {
+  /** Owner and session scope; replaced only on an owner switch or a session boundary. */
+  scope: object;
   lessonId: string | null;
   mode: LessonMode | null;
   revision: number;
@@ -295,13 +297,16 @@ interface Visit {
   card: BakeCard | null;
 }
 
-const offLessonVisit = (): Visit => ({ lessonId: null, mode: null, revision: 0, doc: false, card: null });
+const offLessonVisit = (scope: object = {}): Visit => ({ scope, lessonId: null, mode: null, revision: 0, doc: false, card: null });
 
-/** A lesson read: the document, the bake status (null when the status read failed), or a failure. */
+/**
+ * A lesson read: the document, the bake status (null when a transient failure hid it), or a
+ * failure. A terminal failure (401 session, 404 lesson) ends what the reader was doing.
+ */
 type LessonRead =
   | { doc: LessonResource }
   | { status: LessonStatus | null }
-  | { error: () => void }
+  | { error: () => void; terminal: boolean }
   | { stale: true };
 
 // ===== Main App =====
@@ -336,7 +341,7 @@ export default function TeacherApp() {
     clearPoll();
     setPendingPrintLessonId(null);
     if (!newScope && visitRef.current.lessonId === null) return;
-    visitRef.current = offLessonVisit();
+    visitRef.current = offLessonVisit(newScope ? {} : visitRef.current.scope);
     setCurrentLessonId(null);
   }, [clearPoll]);
   const leaveForRoute = useCallback(() => leaveScreen(), [leaveScreen]);
@@ -983,7 +988,8 @@ export default function TeacherApp() {
   const logout = async () => {
     if (!csrf) return;
     // Leaving is synchronous with the click: nothing that answers during the DELETE may
-    // still navigate or paint.
+    // still navigate or paint, and no route effect may start a new lesson read.
+    setSessionReady(false);
     leaveScreen(true);
     await apiFetch('/api/session', {
       method: 'DELETE',
@@ -1022,6 +1028,7 @@ export default function TeacherApp() {
     // Submitting is a navigation to the new lesson: leaving Paste before the 202 cancels it.
     const n = ++navRef.current.issued;
     const latest = () => n > navRef.current.floor && n === navRef.current.issued;
+    const scope = visitRef.current.scope;
     const id = crypto.randomUUID();
     const payload: BakeRequestPayload = {
       text,
@@ -1053,7 +1060,9 @@ export default function TeacherApp() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 202) {
-        // The recovery copy is kept even when the teacher has already left.
+        // The recovery copy is kept when the teacher has only moved on, never across an
+        // owner switch or a session boundary.
+        if (visitRef.current.scope !== scope) return;
         saveLastBakeRequest(payload);
         lastBakeRef.current = payload;
         if (n <= navRef.current.floor) return;
@@ -1061,10 +1070,14 @@ export default function TeacherApp() {
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
         const visit = enterScreen(n, id, 'review', true);
-        show(visit, { card: {
-          status: data.status || 'baking', step: 'bake.step.textReceived',
-          revision: data.revision || 1, attempt: 1, attempt_history: [], startedAt: new Date().toISOString(),
-        } });
+        if (data.status === 'ready') {
+          showStatus(visit, data as LessonStatus);
+        } else {
+          show(visit, { card: {
+            status: data.status || 'baking', step: 'bake.step.textReceived',
+            revision: data.revision || 1, attempt: 1, attempt_history: [], startedAt: new Date().toISOString(),
+          } });
+        }
       } else if (latest()) {
         navRef.current.floor = n;
         const e: ErrorEnvelope = data;
@@ -1117,19 +1130,20 @@ export default function TeacherApp() {
       const data = await res.json().catch(() => ({}));
       if (!owned()) return;
       if (res.ok) {
-        show(visit, { card: statusCardFromApi(data as LessonStatus, current) });
+        // An idempotent replay may answer with a later state, including ready.
+        showStatus(visit, data as LessonStatus);
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
-        const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
+        const read = await readStatus(lid);
         if (!owned()) return;
-        if (statusRes.ok) {
-          const refreshed = await statusRes.json() as LessonStatus;
-          if (!owned()) return;
-          showStatus(visit, refreshed);
+        if ('error' in read) {
+          read.error();
+          return;
         }
+        if ('status' in read) showStatus(visit, read.status);
       }
       const e: ErrorEnvelope = data;
       handleApiError(e);
@@ -1208,9 +1222,15 @@ export default function TeacherApp() {
     const current = visitRef.current;
     if (current.lessonId === lessonId && current.mode === mode) return current;
     clearPoll();
-    const visit: Visit = { lessonId, mode, revision: 0, doc: false, card: null };
+    const visit: Visit = { scope: current.scope, lessonId, mode, revision: 0, doc: false, card: null };
     visitRef.current = visit;
     setCurrentLessonId(lessonId);
+    // Until this visit's own payload arrives it shows nothing of the previous one; a print
+    // request belongs to the open that armed it, which sets it again after this commit.
+    setLesson(null);
+    setBakeStatus(null);
+    setLocalAcks([]);
+    setPendingPrintLessonId(null);
     setError(null);
     // The student must receive the source text before the exercises; keep the
     // teacher's review view compact, but open the reading on the run surface.
@@ -1251,11 +1271,24 @@ export default function TeacherApp() {
     return true;
   };
 
-  /** A bake status for the visit; `ready` is never painted as a card, its poll reads the document. */
+  /**
+   * A ready status: its revision becomes the visit's floor, so no older card can replace what
+   * is about to be shown or stop the poll that reads the document. Returns false when stale.
+   */
+  const noteReady = (visit: Visit, status: LessonStatus): boolean => {
+    if (visitRef.current !== visit || visit.doc || status.revision < visit.revision) return false;
+    visit.revision = status.revision;
+    return true;
+  };
+
+  /**
+   * The one status handler (opens, re-reads, the poll, cancel/retry). A `ready` status is never
+   * painted as a card: it raises the floor and the poll reads the document.
+   */
   const showStatus = (visit: Visit, status: LessonStatus | null) => {
     if (visitRef.current !== visit || visit.doc) return;
     if (status?.status === 'ready') {
-      ensurePoll(visit);
+      if (noteReady(visit, status)) ensurePoll(visit);
       return;
     }
     if (status) {
@@ -1270,6 +1303,24 @@ export default function TeacherApp() {
   };
 
   /** One read of a lesson. The status is fetched only while `live()` still holds. */
+  const readFailure = async (res: Response): Promise<{ error: () => void; terminal: boolean }> => {
+    if (res.status === 404) return { error: () => setError(errKey('err.lessonNotFound')), terminal: true };
+    const e: ErrorEnvelope = await res.json().catch(() => ({ code: res.status === 401 ? 'session_required' : '', message: '', retryable: false }));
+    return { error: () => handleApiError(e), terminal: res.status === 401 };
+  };
+
+  /** A bake status read; 401 and 404 are terminal failures, other failures hide the status. */
+  const readStatus = async (id: string): Promise<LessonRead> => {
+    try {
+      const res = await lessonApiFetch(`/api/lessons/${id}/status`);
+      if (res.ok) return { status: await res.json() as LessonStatus };
+      if (res.status === 401 || res.status === 404) return readFailure(res);
+      return { status: null };
+    } catch {
+      return { status: null };
+    }
+  };
+
   const readLesson = async (id: string, live: () => boolean): Promise<LessonRead> => {
     try {
       const res = await lessonApiFetch(`/api/lessons/${id}`);
@@ -1277,18 +1328,11 @@ export default function TeacherApp() {
       if (res.status === 409) {
         await res.json().catch(() => ({}));
         if (!live()) return { stale: true };
-        try {
-          const statusRes = await lessonApiFetch(`/api/lessons/${id}/status`);
-          return { status: statusRes.ok ? await statusRes.json() as LessonStatus : null };
-        } catch {
-          return { status: null };
-        }
+        return readStatus(id);
       }
-      if (res.status === 404) return { error: () => setError(errKey('err.lessonNotFound')) };
-      const e: ErrorEnvelope = await res.json().catch(() => ({ code: '', message: '', retryable: false }));
-      return { error: () => handleApiError(e) };
+      return readFailure(res);
     } catch {
-      return { error: () => setError(errKey('err.loadLesson')) };
+      return { error: () => setError(errKey('err.loadLesson')), terminal: false };
     }
   };
 
@@ -1312,32 +1356,21 @@ export default function TeacherApp() {
       if (!current()) return;
       attempts++;
       try {
-        const res = await lessonApiFetch(`/api/lessons/${id}/status`);
+        let read = await readStatus(id);
         if (!current()) return;
-        if (res.status === 401) {
-          const e: ErrorEnvelope = await res.json().catch(() => ({ code: 'session_required', message: '', retryable: false }));
+        if ('status' in read && read.status?.status === 'ready' && noteReady(visit, read.status)) {
+          // A transient failure of the document read keeps the loop going within its bound.
+          read = await readLesson(id, current);
           if (!current()) return;
-          clearPoll();
-          handleApiError(e);
-          return;
-        }
-        if (res.status === 404) {
-          clearPoll();
-          setError(errKey('err.lessonNotFound'));
-          return;
-        }
-        if (res.ok) {
-          const st = await res.json() as LessonStatus;
+          if ('doc' in read && show(visit, { doc: read.doc })) return;
+        } else if ('status' in read && read.status) {
+          showStatus(visit, read.status);
           if (!current()) return;
-          if (st.status === 'ready') {
-            // A failed document read keeps the loop going within its bound.
-            const read = await readLesson(id, current);
-            if (!current()) return;
-            if ('doc' in read && show(visit, { doc: read.doc })) return;
-          } else {
-            show(visit, { card: statusCardFromApi(st, visit.card ?? undefined) });
-            if (!current()) return;
-          }
+        }
+        if ('error' in read && read.terminal) {
+          clearPoll();
+          read.error();
+          return;
         }
       } catch {
         // A transient failure keeps the shown card; the next tick asks again.
@@ -1612,9 +1645,17 @@ export default function TeacherApp() {
     <div className="anchorbody" {...(testId ? { 'data-testid': testId } : {})}>{text}</div>
   );
 
+  // A regeneration entry only moves forward: a later attempt, or the same attempt at the same
+  // or a later stage (queued, running, then succeeded or failed). An older entry that answers
+  // last never replaces a newer one.
   const applyActivityRegeneration = useCallback((entry: ActivityRegenerationEntry) => {
+    const stage = (status: ActivityRegenerationEntry['status']) =>
+      status === 'queued' ? 0 : status === 'running' ? 1 : 2;
     setLesson((current) => {
       if (!current || current.lesson_id !== entry.lesson_id) return current;
+      const known = current.activity_regenerations?.find((item) => item.id === entry.id);
+      if (known && (entry.attempt < known.attempt
+        || (entry.attempt === known.attempt && stage(entry.status) < stage(known.status)))) return current;
       return {
         ...current,
         activity_regenerations: [
@@ -1657,6 +1698,10 @@ export default function TeacherApp() {
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
+      // Each read belongs to the visit it starts in; a mode switch keeps this effect alive
+      // (same lesson and job), so its results land only while that visit is current.
+      const visit = visitRef.current;
+      const owned = () => !cancelled && visitRef.current === visit && visit.lessonId === lessonId;
       try {
         const response = await lessonApiFetch(
           `/api/lessons/${lessonId}/regenerations/${activeRegenerationId}`,
@@ -1671,15 +1716,17 @@ export default function TeacherApp() {
         }
         const status: ActivityRegenerationEntry = await response.json();
         if (cancelled) return;
-        if (status.status === 'succeeded' || status.status === 'failed') {
+        if (!owned()) {
+          // The teacher is elsewhere: ask again from whichever visit is current then.
+        } else if (status.status === 'succeeded' || status.status === 'failed') {
           const resourceResponse = await lessonApiFetch(`/api/lessons/${lessonId}`);
           if (!cancelled && resourceResponse.ok) {
             const resource: LessonResource = await resourceResponse.json();
             if (cancelled) return;
-            // Content goes through the one apply rule; the visit decides who may see it.
-            const visit = visitRef.current;
-            if (visit.lessonId === lessonId) show(visit, { doc: resource });
-            return;
+            if (owned()) {
+              show(visit, { doc: resource });
+              return;
+            }
           }
         } else {
           applyActivityRegeneration(status);
