@@ -295,18 +295,23 @@ interface Visit {
   revision: number;
   doc: boolean;
   card: BakeCard | null;
+  /** A ready status was seen: the document exists and is read directly from now on. */
+  ready: boolean;
 }
 
-const offLessonVisit = (scope: object = {}): Visit => ({ scope, lessonId: null, mode: null, revision: 0, doc: false, card: null });
+const offLessonVisit = (scope: object = {}): Visit => ({
+  scope, lessonId: null, mode: null, revision: 0, doc: false, card: null, ready: false,
+});
 
 /**
  * A lesson read: the document, the bake status (null when a transient failure hid it), or a
- * failure. A terminal failure (401 session, 404 lesson) ends what the reader was doing.
+ * failure. A terminal failure proves something beyond one request: `session` (401) that the
+ * session it was read in has ended, `gone` (404) that the lesson no longer exists.
  */
 type LessonRead =
   | { doc: LessonResource }
   | { status: LessonStatus | null }
-  | { error: () => void; terminal: boolean }
+  | { error: () => void; terminal?: 'session' | 'gone' }
   | { stale: true };
 
 // ===== Main App =====
@@ -485,25 +490,6 @@ export default function TeacherApp() {
     return null;
   }, [resetSessionScopedState]);
 
-  // Catalog rows belong to the visit (an owner switch is a new visit) and to the latest
-  // successful load: an older load that answers last never replaces newer rows.
-  const catalogLoadRef = useRef({ issued: 0, applied: 0 });
-  const loadCatalog = useCallback(async () => {
-    const visit = visitRef.current;
-    const n = ++catalogLoadRef.current.issued;
-    const owned = () => visitRef.current === visit && n > catalogLoadRef.current.applied;
-    try {
-      const res = await lessonApiFetch('/api/lessons');
-      if (!res.ok || !owned()) return;
-      const data = await res.json();
-      if (!owned()) return;
-      catalogLoadRef.current.applied = n;
-      const local = loadLocalCatalogEntries(lastBakeRef.current);
-      setCatalog(mergeCatalogLessons(data.lessons || [], local));
-    } catch {
-      // A failed refresh keeps the rows already shown; «Оновити список» stays available.
-    }
-  }, [lessonApiFetch]);
 
   const loadTeacherDefaultDuration = useCallback(async () => {
     // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
@@ -551,6 +537,36 @@ export default function TeacherApp() {
       setError(errOr(e.message, 'err.genericDot'));
     }
   }, [navigate, resetSessionScopedState]);
+
+  /** A 401 from any request ends the session it was sent in, if that is still the session. */
+  const endedSession = (status: number, scope: object): boolean => {
+    if (status !== 401) return false;
+    if (visitRef.current.scope === scope) handleApiError({ code: 'session_required', message: '', retryable: false });
+    return true;
+  };
+
+  // Catalog rows belong to the visit (an owner switch is a new visit) and to the latest
+  // successful load: an older load that answers last never replaces newer rows.
+  const catalogLoadRef = useRef({ issued: 0, applied: 0 });
+  const loadCatalog = useCallback(async () => {
+    if (!sessionReady) return;
+    const visit = visitRef.current;
+    const n = ++catalogLoadRef.current.issued;
+    const owned = () => visitRef.current === visit && n > catalogLoadRef.current.applied;
+    try {
+      const res = await lessonApiFetch('/api/lessons');
+      if (endedSession(res.status, visit.scope)) return;
+      if (!res.ok || !owned()) return;
+      const data = await res.json();
+      if (!owned()) return;
+      catalogLoadRef.current.applied = n;
+      const local = loadLocalCatalogEntries(lastBakeRef.current);
+      setCatalog(mergeCatalogLessons(data.lessons || [], local));
+    } catch {
+      // A failed refresh keeps the rows already shown; «Оновити список» stays available.
+    }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- endedSession is unmemoized; it reads only refs and handleApiError
+  }, [handleApiError, lessonApiFetch, sessionReady]);
 
   useEffect(() => {
     if (session?.role !== 'admin') {
@@ -1010,7 +1026,7 @@ export default function TeacherApp() {
     grammarFocus: string | null;
     logicalModelId: string;
   }) => {
-    if (!session || !csrf) {
+    if (!session || !csrf || !sessionReady) {
       setError(errKey('err.sessionRequired'));
       return;
     }
@@ -1059,6 +1075,7 @@ export default function TeacherApp() {
         }),
       });
       const data = await res.json().catch(() => ({}));
+      if (endedSession(res.status, scope)) return;
       if (res.status === 202) {
         // The recovery copy is kept when the teacher has only moved on, never across an
         // owner switch or a session boundary.
@@ -1128,21 +1145,23 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!owned()) return;
+      if (endedSession(res.status, visit.scope) || !owned()) return;
       if (res.ok) {
-        // An idempotent replay may answer with a later state, including ready.
-        showStatus(visit, data as LessonStatus);
+        // An idempotent replay may answer with a later state, including ready. An unreadable
+        // body proves only that the request landed: keep the card and re-read the visit.
+        const answer = data as Partial<LessonStatus>;
+        if (typeof answer.status === 'string' && typeof answer.revision === 'number') {
+          showStatus(visit, data as LessonStatus);
+        } else {
+          void refreshLesson(visit);
+        }
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
         const read = await readStatus(lid);
-        if (!owned()) return;
-        if ('error' in read) {
-          read.error();
-          return;
-        }
+        if (endOnTerminal(read, visit) || !owned()) return;
         if ('status' in read) showStatus(visit, read.status);
       }
       const e: ErrorEnvelope = data;
@@ -1222,7 +1241,7 @@ export default function TeacherApp() {
     const current = visitRef.current;
     if (current.lessonId === lessonId && current.mode === mode) return current;
     clearPoll();
-    const visit: Visit = { scope: current.scope, lessonId, mode, revision: 0, doc: false, card: null };
+    const visit: Visit = { scope: current.scope, lessonId, mode, revision: 0, doc: false, card: null, ready: false };
     visitRef.current = visit;
     setCurrentLessonId(lessonId);
     // Until this visit's own payload arrives it shows nothing of the previous one; a print
@@ -1278,6 +1297,7 @@ export default function TeacherApp() {
   const noteReady = (visit: Visit, status: LessonStatus): boolean => {
     if (visitRef.current !== visit || visit.doc || status.revision < visit.revision) return false;
     visit.revision = status.revision;
+    visit.ready = true;
     return true;
   };
 
@@ -1302,11 +1322,27 @@ export default function TeacherApp() {
     }
   };
 
-  /** One read of a lesson. The status is fetched only while `live()` still holds. */
-  const readFailure = async (res: Response): Promise<{ error: () => void; terminal: boolean }> => {
-    if (res.status === 404) return { error: () => setError(errKey('err.lessonNotFound')), terminal: true };
+  /** A failed lesson or status response as a read result. */
+  const readFailure = async (res: Response): Promise<LessonRead> => {
+    if (res.status === 404) return { error: () => setError(errKey('err.lessonNotFound')), terminal: 'gone' };
     const e: ErrorEnvelope = await res.json().catch(() => ({ code: res.status === 401 ? 'session_required' : '', message: '', retryable: false }));
-    return { error: () => handleApiError(e), terminal: res.status === 401 };
+    return { error: () => handleApiError(e), terminal: res.status === 401 ? 'session' : undefined };
+  };
+
+  /**
+   * A terminal failure ends what it proves, whoever read it: a 401 expires the session it was
+   * read in (if that is still the session); a 404 ends the visit of the lesson that is gone (if
+   * that visit is still current), so no read still pending for it can land.
+   */
+  const endOnTerminal = (read: LessonRead, visit: Visit): boolean => {
+    if (!('error' in read) || !read.terminal) return false;
+    if (read.terminal === 'session') {
+      endedSession(401, visit.scope);
+    } else if (visitRef.current === visit) {
+      leaveScreen();
+      read.error();
+    }
+    return true;
   };
 
   /** A bake status read; 401 and 404 are terminal failures, other failures hide the status. */
@@ -1321,6 +1357,7 @@ export default function TeacherApp() {
     }
   };
 
+  /** One read of a lesson. The status is fetched only while `live()` still holds. */
   const readLesson = async (id: string, live: () => boolean): Promise<LessonRead> => {
     try {
       const res = await lessonApiFetch(`/api/lessons/${id}`);
@@ -1332,7 +1369,7 @@ export default function TeacherApp() {
       }
       return readFailure(res);
     } catch {
-      return { error: () => setError(errKey('err.loadLesson')), terminal: false };
+      return { error: () => setError(errKey('err.loadLesson')) };
     }
   };
 
@@ -1356,22 +1393,27 @@ export default function TeacherApp() {
       if (!current()) return;
       attempts++;
       try {
-        let read = await readStatus(id);
-        if (!current()) return;
-        if ('status' in read && read.status?.status === 'ready' && noteReady(visit, read.status)) {
-          // A transient failure of the document read keeps the loop going within its bound.
-          read = await readLesson(id, current);
-          if (!current()) return;
-          if ('doc' in read && show(visit, { doc: read.doc })) return;
-        } else if ('status' in read && read.status) {
-          showStatus(visit, read.status);
-          if (!current()) return;
-        }
-        if ('error' in read && read.terminal) {
-          clearPoll();
-          read.error();
+        // Once readiness is known the document is read directly; a transient failure of either
+        // read keeps the loop going within its bound.
+        let read = visit.ready ? await readLesson(id, current) : await readStatus(id);
+        if (endOnTerminal(read, visit)) {
+          if (pollRef.current === poll) clearPoll();
           return;
         }
+        if (!current()) return;
+        if (!visit.ready && 'status' in read && read.status) {
+          showStatus(visit, read.status);
+          if (!current()) return;
+          if (visit.ready) {
+            read = await readLesson(id, current);
+            if (endOnTerminal(read, visit)) {
+              if (pollRef.current === poll) clearPoll();
+              return;
+            }
+            if (!current()) return;
+          }
+        }
+        if ('doc' in read && show(visit, { doc: read.doc })) return;
       } catch {
         // A transient failure keeps the shown card; the next tick asks again.
       }
@@ -1400,9 +1442,14 @@ export default function TeacherApp() {
     opts: { push: boolean; print?: boolean },
   ) => {
     const live = () => n > navRef.current.floor;
+    const scope = visitRef.current.scope;
     setLoading(true);
     try {
       const read = await readLesson(id, live);
+      if ('error' in read && read.terminal === 'session') {
+        if (visitRef.current.scope === scope) read.error();
+        return;
+      }
       if (!live()) return;
       if ('error' in read) {
         if (n === navRef.current.issued) {
@@ -1437,7 +1484,7 @@ export default function TeacherApp() {
     setError(null);
     try {
       const read = await readLesson(visit.lessonId!, live);
-      if (!live() || 'stale' in read) return;
+      if ('stale' in read || endOnTerminal(read, visit) || !live()) return;
       if ('error' in read) {
         if (unchanged()) read.error();
       } else if ('doc' in read) {
@@ -1454,6 +1501,8 @@ export default function TeacherApp() {
 
   /** Every teacher click that opens a lesson screen. */
   const openLesson = (id: string, mode: LessonMode = 'review', opts: { print?: boolean } = {}) => {
+    // Sign-out (or an expired session) makes the session unavailable to lesson reads at once.
+    if (!sessionReady) return Promise.resolve();
     const visit = visitRef.current;
     if (visit.lessonId === id && visit.mode === mode) {
       // The teacher chose the screen they are on: pending navigations elsewhere are cancelled.
@@ -1515,7 +1564,7 @@ export default function TeacherApp() {
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
-        if (!owned()) return;
+        if (endedSession(res.status, visit.scope) || !owned()) return;
         if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
@@ -1549,7 +1598,7 @@ export default function TeacherApp() {
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-        if (!owned()) return;
+        if (endedSession(res.status, visit.scope) || !owned()) return;
         if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload'));
           await refreshLesson(visit);
@@ -1673,7 +1722,7 @@ export default function TeacherApp() {
       return;
     }
     const resourceResponse = await lessonApiFetch(`/api/lessons/${entry.lesson_id}`);
-    if (visitRef.current !== visit) return;
+    if (endedSession(resourceResponse.status, visit.scope) || visitRef.current !== visit) return;
     if (!resourceResponse.ok) {
       // A failed regeneration never changed lesson content, so its durable retry
       // affordance is safe to show even when the resource refetch is transiently
@@ -1761,7 +1810,7 @@ export default function TeacherApp() {
         return show(visit, { doc: lr }) ? lr : null;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-      if (!owned()) return null;
+      if (endedSession(res.status, visit.scope) || !owned()) return null;
       if (e.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         if (opts?.reloadOnConflict !== false) await refreshLesson(visit);
@@ -1850,7 +1899,7 @@ export default function TeacherApp() {
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (!owned()) return;
+      if (endedSession(response.status, visit.scope) || !owned()) return;
       if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         await refreshLesson(visit);
@@ -1890,7 +1939,7 @@ export default function TeacherApp() {
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (!owned()) return;
+      if (endedSession(response.status, visit.scope) || !owned()) return;
       if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         await refreshLesson(visit);
