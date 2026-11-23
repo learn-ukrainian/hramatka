@@ -289,7 +289,7 @@ export default function TeacherApp() {
   const pasteTextMissing = !pasteText.trim();
 
   // Baking / lesson state
-  const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
+  const [currentLessonId, setCurrentLessonIdState] = useState<string | null>(null);
   const [lesson, setLesson] = useState<LessonResource | null>(null);
   const [catalog, setCatalog] = useState<LessonCatalogItem[]>([]);
   const [bakeStatus, setBakeStatus] = useState<{
@@ -320,6 +320,13 @@ export default function TeacherApp() {
   // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
   const activePollIdRef = useRef<string | null>(null);
   const currentLessonIdRef = useRef<string | null>(null);
+  // The ref is what late async results compare against, so it must change in the same
+  // tick as the lesson itself. Mirroring state through a passive effect leaves a window
+  // after the commit in which a stale response still sees the lesson the teacher left.
+  const setCurrentLessonId = useCallback((id: string | null) => {
+    currentLessonIdRef.current = id;
+    setCurrentLessonIdState(id);
+  }, []);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -359,10 +366,6 @@ export default function TeacherApp() {
     (item) => item.status === 'queued' || item.status === 'running',
   );
 
-  useEffect(() => {
-    currentLessonIdRef.current = currentLessonId;
-  }, [currentLessonId]);
-
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
       clearTimeout(pollTimerRef.current);
@@ -400,7 +403,7 @@ export default function TeacherApp() {
     setRecoveryCodes(null);
     setRecoveryCodesCopyStatus(null);
     setRecoveryCodeInput('');
-  }, [clearPoll, resetLang]);
+  }, [clearPoll, resetLang, setCurrentLessonId]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
@@ -1572,27 +1575,30 @@ export default function TeacherApp() {
     opts?: { reloadOnConflict?: boolean },
   ): Promise<LessonResource | null> => {
     if (!lesson || !currentLessonId || !csrf) return null;
+    const requestLessonId = currentLessonId;
     setLoading(true);
     setError(null);
     try {
       const res = await lessonApiFetch(path, init);
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return null;
         applyLessonResource(lr);
         return lr;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+      if (currentLessonIdRef.current !== requestLessonId) return null;
       if (e.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
-        if (opts?.reloadOnConflict !== false && currentLessonId) {
-          await handleRevisionConflict();
+        if (opts?.reloadOnConflict !== false) {
+          await handleRevisionConflict(requestLessonId);
         }
       } else {
         setError(errOr(e.message, 'err.generic'));
       }
       return null;
     } catch {
-      setError(errKey('err.generic'));
+      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
       return null;
     } finally {
       setLoading(false);

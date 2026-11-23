@@ -620,19 +620,36 @@ describe('activity regeneration reconciliation (#418)', () => {
     fireEvent.click(screen.getByText('Створити новий варіант'));
     fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
     await screen.findByText('Другий урок');
-    fireEvent.click(screen.getByTestId('catalog-open-btn'));
-    await screen.findByTestId('lesson-model');
-    expect(window.location.hash).toContain('/lessons/lesson-2');
 
+    // Deliver the 409 in the microtask that follows the commit of lesson 2, the
+    // exact window in which a ref refreshed by a passive effect still names lesson 1.
+    let conflictDelivered = false;
+    const commitObserver = new MutationObserver(() => {
+      if (window.location.hash.includes('/lessons/lesson-2') && screen.queryByTestId('lesson-model')) {
+        commitObserver.disconnect();
+        conflictDelivered = true;
+        resolveRegeneration(errorResponse(409, {
+          code: 'revision_conflict',
+          message: 'Урок змінився.',
+        }));
+      }
+    });
+    commitObserver.observe(document.body, { childList: true, subtree: true });
+    try {
+      fireEvent.click(screen.getByTestId('catalog-open-btn'));
+      await screen.findByTestId('lesson-model');
+    } finally {
+      commitObserver.disconnect();
+    }
+    expect(conflictDelivered).toBe(true);
+    // Promise chains in the fetch fakes need no timers, so one macrotask turn
+    // lets the conflict handler run to completion, including any wrong reopen.
     await act(async () => {
-      resolveRegeneration(errorResponse(409, {
-        code: 'revision_conflict',
-        message: 'Урок змінився.',
-      }));
       await pendingRegeneration;
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
     });
 
-    await waitFor(() => expect(window.location.hash).toContain('/lessons/lesson-2'));
+    expect(window.location.hash).toContain('/lessons/lesson-2');
     expect(screen.getAllByText('Другий урок').length).toBeGreaterThan(0);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
