@@ -30,17 +30,34 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24.22.3" # Bundles npm 11.19.1 for strict-allow-scripts.
           cache: npm
           cache-dependency-path: hramatka/app/package-lock.json
-      - name: npm ci
+      - name: Verify npm install-script policy
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            npm ci && break
-            sleep $((attempt * 10))
-            if [[ $attempt -eq 3 ]]; then exit 1; fi
-          done
+          npm --version
+          # Use the app policy with one local tarball so the probe needs no registry packages.
+          probe="$(mktemp -d "$RUNNER_TEMP/npm-script-policy.XXXXXX")"
+          cp .npmrc "$probe/"
+          cd "$probe"
+          mkdir dependency
+          printf '%s\n' '{"name":"hramatka-npm-policy-probe","version":"1.0.0","scripts":{"postinstall":"touch unexpected-install-script"}}' > dependency/package.json
+          npm pack ./dependency --ignore-scripts --offline --quiet
+          printf '%s\n' '{"private":true,"dependencies":{"hramatka-npm-policy-probe":"file:hramatka-npm-policy-probe-1.0.0.tgz"}}' > package.json
+          npm install --package-lock-only --ignore-scripts --offline --no-audit
+          if npm ci --offline --no-audit --color=false > probe.log 2>&1; then
+            cat probe.log
+            echo "::error::npm ci accepted an unapproved install script"
+            exit 1
+          fi
+          cat probe.log
+          grep -Fxq 'npm error code ESTRICTALLOWSCRIPTS' probe.log
+          grep -Fq 'hramatka-npm-policy-probe@1.0.0' probe.log
+          test ! -e node_modules/hramatka-npm-policy-probe/unexpected-install-script
+          echo "npm ci refused the unapproved probe postinstall script."
+      - name: npm ci
+        run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - name: unit + build guard
@@ -140,17 +157,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24.22.3"
           cache: npm
           cache-dependency-path: hramatka/app/package-lock.json
       - name: npm ci
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            npm ci && break
-            sleep $((attempt * 10))
-            if [[ $attempt -eq 3 ]]; then exit 1; fi
-          done
+          npm --version
+          npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Playwright e2e (default config; no live teacher stack)
