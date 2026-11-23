@@ -368,6 +368,11 @@ export default function TeacherApp() {
     clearPoll();
     setCurrentLessonId(null);
   }, [clearPoll, setCurrentLessonId]);
+  // A late result of an action may touch the screen only while the teacher is still on the
+  // lesson the action started on AND on the navigation intent it started under: an id alone
+  // cannot tell a reopen, another mode or a returned-to lesson from the screen it left.
+  const onScreen = (lessonId: string, intent: object) =>
+    currentLessonIdRef.current === lessonId && navIntentRef.current === intent;
   const { route, navigate } = useSimpleRouter(clearCurrentLesson);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
@@ -952,7 +957,7 @@ export default function TeacherApp() {
       // if we already have either lesson content or active bakeStatus for this exact id.
       // This prevents double 409 on catalog open of non-ready, and keeps failure card stable.
       if (currentLessonId !== route.lessonId || (!haveContent && !haveBakeForIt)) {
-        openLesson(route.lessonId, (route.mode as 'review' | 'run' | 'conduct') || 'review').catch(() => {});
+        openLesson(route.lessonId, (route.mode as 'review' | 'run' | 'conduct') || 'review', true).catch(() => {});
       }
     } else if (route.view !== 'lesson') {
       // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
@@ -1100,14 +1105,14 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
+      if (!onScreen(lid, intent)) return;
       if (res.ok) {
         const next = statusCardFromApi(data as LessonStatus, current);
         setBakeStatus(next);
         setCurrentLessonId(lid);
         setLesson(null);
         await loadCatalog();
-        if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
+        if (!onScreen(lid, intent)) return;
         if (next.status === 'draft' || next.status === 'baking') {
           setBakeElapsedMs(0);
           pollStatus(lid);
@@ -1120,10 +1125,10 @@ export default function TeacherApp() {
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
         const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
-        if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
+        if (!onScreen(lid, intent)) return;
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
-          if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
+          if (!onScreen(lid, intent)) return;
           setBakeStatus(refreshed);
           if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
         }
@@ -1131,7 +1136,7 @@ export default function TeacherApp() {
       const e: ErrorEnvelope = data;
       handleApiError(e);
     } catch {
-      if (currentLessonIdRef.current === lid) setError(errKey('err.bakeFailed'));
+      if (onScreen(lid, intent)) setError(errKey('err.bakeFailed'));
     } finally {
       bakeMutationInFlightRef.current = null;
       setBakeMutation(null);
@@ -1235,7 +1240,7 @@ export default function TeacherApp() {
         setBakeStatus((prev) => statusCardFromApi(st as LessonStatus, prev || undefined));
         if (st.status === 'ready') {
           clearPoll();
-          await openLesson(id, 'review');
+          await openLesson(id, 'review', true);
           await loadCatalog();
           return;
         }
@@ -1262,7 +1267,23 @@ export default function TeacherApp() {
   };
 
   // ===== Lesson load + modes =====
-  const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
+  // An open the teacher asks for always supersedes the earlier one. An automatic open (the
+  // route effect, a ready poll) joins the open of the same intent that is already in flight:
+  // a duplicate read must not replace it, or a failure of the duplicate would discard the
+  // original's result.
+  const openFlightRef = useRef<{ intent: object; key: string; promise: Promise<void> } | null>(null);
+  const openLesson = (id: string, mode: 'review' | 'run' | 'conduct' = 'review', join = false): Promise<void> => {
+    const key = `${id}|${mode}`;
+    const flight = openFlightRef.current;
+    if (join && flight && flight.key === key && flight.intent === navIntentRef.current) return flight.promise;
+    const promise: Promise<void> = loadLesson(id, mode).finally(() => {
+      if (openFlightRef.current?.promise === promise) openFlightRef.current = null;
+    });
+    // loadLesson has already taken its intent, synchronously, before its first await.
+    openFlightRef.current = { intent: navIntentRef.current, key, promise };
+    return promise;
+  };
+  const loadLesson = async (id: string, mode: 'review' | 'run' | 'conduct') => {
     // Opening a lesson in a mode is the teacher's latest intent. The token tells this open
     // from any other intent, even for the same lesson; the lesson ref moves now so that late
     // results of the lesson being left find another lesson current.
@@ -1307,6 +1328,7 @@ export default function TeacherApp() {
         if (superseded()) return;
         setLesson(lr);
         setBakeStatus(null);
+        clearPoll();
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
         // The student must receive the source text before the exercises; keep the
@@ -1326,6 +1348,7 @@ export default function TeacherApp() {
             const st = await statusRes.json();
             if (superseded()) return;
             if (st.status === 'failed' || st.status === 'cancelled') {
+              clearPoll();
               setBakeStatus(statusCardFromApi(st as LessonStatus));
               setBakeElapsedMs(0);
               return;
@@ -1416,16 +1439,15 @@ export default function TeacherApp() {
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return;
+        if (!onScreen(requestLessonId, intent)) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
-        if (currentLessonIdRef.current !== requestLessonId) return;
+        if (!onScreen(requestLessonId, intent)) return;
         if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
-          if (navIntentRef.current !== intent) return;
           setError(errKey('err.lessonChangedReload2'));
           await openLesson(requestLessonId, 'review');
         } else {
@@ -1453,14 +1475,13 @@ export default function TeacherApp() {
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return;
+        if (!onScreen(requestLessonId, intent)) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-        if (currentLessonIdRef.current !== requestLessonId) return;
+        if (!onScreen(requestLessonId, intent)) return;
         if (e.code === 'revision_conflict') {
-          if (navIntentRef.current !== intent) return;
           setError(errKey('err.lessonChangedReload'));
           await handleRevisionConflict(requestLessonId);
         } else {
@@ -1571,7 +1592,8 @@ export default function TeacherApp() {
     });
   }, []);
 
-  const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry) => {
+  const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry, intent: object) => {
+    if (!onScreen(entry.lesson_id, intent)) return;
     if (entry.status !== 'succeeded' && entry.status !== 'failed') {
       applyActivityRegeneration(entry);
       return;
@@ -1583,13 +1605,13 @@ export default function TeacherApp() {
       // unavailable. Success is different: never paint a success badge over the
       // stale block that the teacher is still looking at.
       if (entry.status === 'failed') {
-        applyActivityRegeneration(entry);
+        if (onScreen(entry.lesson_id, intent)) applyActivityRegeneration(entry);
         return;
       }
       throw new Error('regeneration lesson refresh unavailable');
     }
     const resource: LessonResource = await resourceResponse.json();
-    if (currentLessonIdRef.current !== entry.lesson_id) return;
+    if (!onScreen(entry.lesson_id, intent)) return;
     applyLessonResource(resource);
     if (entry.status === 'succeeded') await loadCatalog();
   };
@@ -1663,14 +1685,13 @@ export default function TeacherApp() {
       const res = await lessonApiFetch(path, init);
       if (res.ok) {
         const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return null;
+        if (!onScreen(requestLessonId, intent)) return null;
         applyLessonResource(lr);
         return lr;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return null;
+      if (!onScreen(requestLessonId, intent)) return null;
       if (e.code === 'revision_conflict') {
-        if (navIntentRef.current !== intent) return null;
         setError(errKey('err.lessonChangedReload'));
         if (opts?.reloadOnConflict !== false) {
           await handleRevisionConflict(requestLessonId);
@@ -1680,7 +1701,7 @@ export default function TeacherApp() {
       }
       return null;
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (onScreen(requestLessonId, intent)) setError(errKey('err.generic'));
       return null;
     } finally {
       setLoading(false);
@@ -1757,20 +1778,19 @@ export default function TeacherApp() {
         },
       );
       if (response.ok) {
-        await reconcileActivityRegeneration(await response.json());
+        await reconcileActivityRegeneration(await response.json(), intent);
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return;
+      if (!onScreen(requestLessonId, intent)) return;
       if (envelope.code === 'revision_conflict') {
-        if (navIntentRef.current !== intent) return;
         setError(errKey('err.lessonChangedReload'));
         await handleRevisionConflict(requestLessonId);
       } else {
         setError(errOr(envelope.message, 'err.generic'));
       }
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (onScreen(requestLessonId, intent)) setError(errKey('err.generic'));
     } finally {
       regenerationMutationInFlightRef.current = false;
       setLoading(false);
@@ -1799,20 +1819,19 @@ export default function TeacherApp() {
         },
       );
       if (response.ok) {
-        await reconcileActivityRegeneration(await response.json());
+        await reconcileActivityRegeneration(await response.json(), intent);
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return;
+      if (!onScreen(requestLessonId, intent)) return;
       if (envelope.code === 'revision_conflict') {
-        if (navIntentRef.current !== intent) return;
         setError(errKey('err.lessonChangedReload'));
         await handleRevisionConflict(requestLessonId);
       } else {
         setError(errOr(envelope.message, 'err.generic'));
       }
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (onScreen(requestLessonId, intent)) setError(errKey('err.generic'));
     } finally {
       regenerationMutationInFlightRef.current = false;
       setLoading(false);
