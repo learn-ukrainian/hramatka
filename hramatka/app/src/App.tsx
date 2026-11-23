@@ -218,10 +218,14 @@ interface RouteState {
   mode?: 'review' | 'run' | 'conduct';
 }
 
-function useSimpleRouter() {
+// `onLeave` runs synchronously before every route change that is not a lesson commit:
+// navigation to another view and every browser Back/Forward.
+function useSimpleRouter(onLeave: () => void) {
   const [route, setRoute] = useState<RouteState>({ view: 'invite' });
 
-  const navigate = useCallback((r: RouteState) => {
+  // `push: false` is for a commit of the route the browser already shows.
+  const navigate = useCallback((r: RouteState, push = true) => {
+    if (r.view !== 'lesson') onLeave();
     const hash = r.lessonId
       ? `#/lessons/${r.lessonId}${r.mode ? '?mode=' + r.mode : ''}`
       : r.view === 'catalog'
@@ -229,12 +233,13 @@ function useSimpleRouter() {
         : r.view === 'settings'
           ? '#/settings'
           : '#/';
-    history.pushState(null, '', hash);
+    if (push) history.pushState(null, '', hash);
     setRoute(r);
-  }, []);
+  }, [onLeave]);
 
   useEffect(() => {
     const parse = () => {
+      onLeave();
       const h = window.location.hash || '#/';
       if (h === '#/lessons') {
         setRoute({ view: 'catalog' });
@@ -256,14 +261,149 @@ function useSimpleRouter() {
     const onPop = () => parse();
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [onLeave]);
 
   return { route, navigate };
 }
 
+type LessonMode = 'review' | 'run' | 'conduct';
+
+interface BakeCard {
+  status: LessonState;
+  step: string;
+  revision: number;
+  attempt: number;
+  attempt_history: LessonAttempt[];
+  failure?: string;
+  failure_code?: string | null;
+  progress?: BakeProgress;
+  startedAt?: string;
+}
+
+/**
+ * One stay of the teacher on a lesson in one mode, or off lessons within one owner and
+ * session scope. Its identity is the only thing a late result compares: a result applies
+ * only while its visit is current. It also records the freshness of what it shows, so a
+ * payload older than the shown one (a lower aggregate revision, or any bake card once a
+ * document is shown) never replaces it.
+ */
+/**
+ * The request scope of a visit: replaced on an owner switch and at a session boundary. Its
+ * `session` part is replaced only at a session boundary, so a 401 sent for an earlier owner
+ * still ends the login it was sent in.
+ */
+interface Scope {
+  session: object;
+  /**
+   * Lessons proven gone in this scope, each with the navigation number issued when its 404
+   * was learned: a navigation numbered at or below the mark read before the proof and never
+   * commits that lesson.
+   */
+  gone: Map<string, number>;
+}
+
+interface Visit {
+  scope: Scope;
+  lessonId: string | null;
+  mode: LessonMode | null;
+  revision: number;
+  doc: boolean;
+  card: BakeCard | null;
+  /** A ready status was seen: the document exists and is read directly from now on. */
+  ready: boolean;
+}
+
+const offLessonVisit = (scope: Scope = { session: {}, gone: new Map() }): Visit => ({
+  scope, lessonId: null, mode: null, revision: 0, doc: false, card: null, ready: false,
+});
+
+/** The persistence contract's aggregate revision: an integer that starts at 1. */
+const isRevision = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
+
+const BAKE_STATES: readonly unknown[] = ['draft', 'baking', 'ready', 'failed', 'cancelled'];
+
+/**
+ * A status answer the apply rule can order: a supported state and a contract revision. Any
+ * other answer (an empty or unreadable body, an unknown state) says nothing about the lesson.
+ */
+const usableStatus = (value: unknown): value is LessonStatus => {
+  const status = value as Partial<LessonStatus> | null;
+  return !!status && typeof status === 'object'
+    && BAKE_STATES.includes(status.status) && isRevision(status.revision);
+};
+
+/** A lesson document the apply rule can order: an object with a contract revision. */
+const usableDoc = (value: unknown): value is LessonResource =>
+  !!value && typeof value === 'object' && isRevision((value as Partial<LessonResource>).revision);
+
+/** A success body that is no usable document fails its action the way a network error does. */
+const docFrom = async (res: Response): Promise<LessonResource> => {
+  const value: unknown = await res.json();
+  if (!usableDoc(value)) throw new TypeError('unusable lesson document');
+  return value;
+};
+
+/**
+ * A 404 that proves the lesson is gone. On a lesson-level endpoint (the lesson, its status,
+ * cancel, retry, accept, draft) every 404 is `lesson_not_found`; a block or regeneration
+ * endpoint proves it only with that code.
+ */
+const lessonGone = (status: number, envelope: unknown, lessonLevel: boolean): boolean =>
+  status === 404 && (lessonLevel || (envelope as { code?: unknown } | null)?.code === 'lesson_not_found');
+
+/**
+ * A lesson read: the document, the bake status (null when a transient failure hid it), or a
+ * failure. A terminal failure proves something beyond one request: `session` (401) that the
+ * session it was read in has ended, `gone` (404) that the lesson no longer exists.
+ */
+type LessonRead =
+  | { doc: LessonResource }
+  | { status: LessonStatus | null }
+  | { error: () => void; terminal?: 'session' | 'gone' }
+  | { stale: true };
+
 // ===== Main App =====
 export default function TeacherApp() {
-  const { route, navigate } = useSimpleRouter();
+  // ----- Screen owner. Written only by enterScreen and leaveScreen. -----
+  const visitRef = useRef<Visit>(offLessonVisit());
+  // Navigations numbered at or below `floor` can no longer commit.
+  const navRef = useRef({ issued: 0, floor: 0 });
+  const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
+  const [pendingPrintLessonId, setPendingPrintLessonId] = useState<string | null>(null);
+  // The one bake status loop; its token is replaced on every start and stop.
+  const pollRef = useRef<{ visit: Visit } | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const [polling, setPolling] = useState(false);
+
+  const clearPoll = useCallback(() => {
+    pollRef.current = null;
+    if (pollTimerRef.current != null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setPolling(false);
+  }, []);
+
+  /**
+   * The teacher is no longer on a lesson. Pending navigations are cancelled and the poll
+   * stops. A new owner or session scope always starts a new visit; otherwise moving
+   * between non-lesson views keeps the visit, so a catalog load in flight survives.
+   */
+  const leaveScreen = useCallback((newScope: 'owner' | 'session' | null = null) => {
+    navRef.current.floor = navRef.current.issued;
+    clearPoll();
+    setPendingPrintLessonId(null);
+    const { scope } = visitRef.current;
+    if (!newScope && visitRef.current.lessonId === null) return;
+    visitRef.current = offLessonVisit(
+      newScope === 'session' ? { session: {}, gone: new Map() }
+        : newScope === 'owner' ? { session: scope.session, gone: new Map() } : scope,
+    );
+    setCurrentLessonId(null);
+  }, [clearPoll]);
+  const leaveForRoute = useCallback(() => leaveScreen(), [leaveScreen]);
+
+  const { route, navigate } = useSimpleRouter(leaveForRoute);
   const { t, lang, toggleLang, resetLang } = useT();
 
   const [session, setSession] = useState<Session | null>(null);
@@ -288,22 +428,10 @@ export default function TeacherApp() {
   const [modelUnavailableMessage, setModelUnavailableMessage] = useState<string | null>(null);
   const pasteTextMissing = !pasteText.trim();
 
-  // Baking / lesson state
-  const [currentLessonId, setCurrentLessonIdState] = useState<string | null>(null);
+  // Baking / lesson state. `lesson` and `bakeStatus` are written only through `show`.
   const [lesson, setLesson] = useState<LessonResource | null>(null);
   const [catalog, setCatalog] = useState<LessonCatalogItem[]>([]);
-  const [bakeStatus, setBakeStatus] = useState<{
-    status: LessonState;
-    step: string;
-    revision: number;
-    attempt: number;
-    attempt_history: LessonAttempt[];
-    failure?: string;
-    failure_code?: string | null;
-    progress?: BakeProgress;
-    startedAt?: string;
-  } | null>(null);
-  const [polling, setPolling] = useState(false);
+  const [bakeStatus, setBakeStatus] = useState<BakeCard | null>(null);
   const [bakeElapsedMs, setBakeElapsedMs] = useState(0);
 
   // Per-lesson local acks (until server confirms)
@@ -314,19 +442,6 @@ export default function TeacherApp() {
   const [sessionReady, setSessionReady] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
 
-  // Poll ref (prepared; used robust in item 3)
-  const pollTimerRef = useRef<number | null>(null);
-  // Track the id we are actively polling for. Used to make clear-on-id-change + start
-  // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
-  const activePollIdRef = useRef<string | null>(null);
-  const currentLessonIdRef = useRef<string | null>(null);
-  // The ref is what late async results compare against, so it must change in the same
-  // tick as the lesson itself. Mirroring state through a passive effect leaves a window
-  // after the commit in which a stale response still sees the lesson the teacher left.
-  const setCurrentLessonId = useCallback((id: string | null) => {
-    currentLessonIdRef.current = id;
-    setCurrentLessonIdState(id);
-  }, []);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -349,15 +464,14 @@ export default function TeacherApp() {
   const [restoredTextNotice, setRestoredTextNotice] = useState(false);
   const [anchorOpen, setAnchorOpen] = useState(false);
   const [printVariant, setPrintVariant] = useState<'teacher' | 'student' | null>(null);
-  const [pendingPrintLessonId, setPendingPrintLessonId] = useState<string | null>(null);
   const [conductStudentPreview, setConductStudentPreview] = useState(false);
 
-  const lessonApiFetch = useCallback((path: string, init?: RequestInit, ownerId = selectedOwnerId): Promise<Response> => {
-    if (session?.role !== 'admin' || !ownerId || !path.startsWith('/api/lessons')) {
+  const lessonApiFetch = useCallback((path: string, init?: RequestInit): Promise<Response> => {
+    if (session?.role !== 'admin' || !selectedOwnerId || !path.startsWith('/api/lessons')) {
       return apiFetch(path, init);
     }
     const separator = path.includes('?') ? '&' : '?';
-    return apiFetch(`${path}${separator}owner_id=${encodeURIComponent(ownerId)}`, init);
+    return apiFetch(`${path}${separator}owner_id=${encodeURIComponent(selectedOwnerId)}`, init);
   }, [session?.role, selectedOwnerId]);
   // Clipboard export notice (Sol P1-5 folded to i18n): stores key so t() reflects current lang.
   const [clipboardNotice, setClipboardNotice] = useState<{ kind: 'ok' | 'fail'; key: ChromeKey } | null>(null);
@@ -366,18 +480,9 @@ export default function TeacherApp() {
     (item) => item.status === 'queued' || item.status === 'running',
   );
 
-  const clearPoll = useCallback(() => {
-    if (pollTimerRef.current != null) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    activePollIdRef.current = null;
-    setPolling(false);
-  }, []);
-
   /** Reset all lesson/session-scoped client state (logout + invite redeem boundaries). */
   const resetSessionScopedState = useCallback(() => {
-    clearPoll();
+    leaveScreen('session');
     clearLastBakeRequest();
     lastBakeRef.current = null;
     setPasteText('');
@@ -386,7 +491,6 @@ export default function TeacherApp() {
     setQualifiedModels([]);
     setSelectedModelId('');
     setModelUnavailableMessage(null);
-    setCurrentLessonId(null);
     setLesson(null);
     setCatalog([]);
     setBakeStatus(null);
@@ -396,14 +500,13 @@ export default function TeacherApp() {
     setRestoredTextNotice(false);
     setAnchorOpen(false);
     setPrintVariant(null);
-    setPendingPrintLessonId(null);
     setBakeElapsedMs(0);
     resetLang(); // #106 boundary: UI language back to default UA + clear persisted choice
     setClipboardNotice(null);
     setRecoveryCodes(null);
     setRecoveryCodesCopyStatus(null);
     setRecoveryCodeInput('');
-  }, [clearPoll, resetLang, setCurrentLessonId]);
+  }, [leaveScreen, resetLang]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
@@ -439,15 +542,6 @@ export default function TeacherApp() {
     return null;
   }, [resetSessionScopedState]);
 
-  const loadCatalog = useCallback(async (ownerId?: string) => {
-    // #93 item 2: auto-loaded once session ready; guard removed, manual button remains
-    const res = await lessonApiFetch('/api/lessons', undefined, ownerId);
-    if (res.ok) {
-      const data = await res.json();
-      const local = loadLocalCatalogEntries(lastBakeRef.current);
-      setCatalog(mergeCatalogLessons(data.lessons || [], local));
-    }
-  }, [lessonApiFetch]);
 
   const loadTeacherDefaultDuration = useCallback(async () => {
     // Silent load; preselects new-lesson duration from teacher-owned preference (P2-6).
@@ -483,7 +577,8 @@ export default function TeacherApp() {
     }
   }, [t]);
 
-  const handleApiError = useCallback((e: ErrorEnvelope) => {
+  const handleApiError = useCallback((envelope: ErrorEnvelope | null | undefined) => {
+    const e: Partial<ErrorEnvelope> = envelope && typeof envelope === 'object' ? envelope : {};
     if (e.code === 'session_required') {
       setSession(null);
       setCsrf(null);
@@ -495,6 +590,39 @@ export default function TeacherApp() {
       setError(errOr(e.message, 'err.genericDot'));
     }
   }, [navigate, resetSessionScopedState]);
+
+  /**
+   * A 401 from any request ends the session it was sent in, if that is still the session,
+   * whichever owner it was sent for.
+   */
+  const endedSession = (status: number, scope: Scope): boolean => {
+    if (status !== 401) return false;
+    if (visitRef.current.scope.session === scope.session) handleApiError({ code: 'session_required', message: '', retryable: false });
+    return true;
+  };
+
+  // Catalog rows belong to the visit (an owner switch is a new visit) and to the latest
+  // successful load: an older load that answers last never replaces newer rows.
+  const catalogLoadRef = useRef({ issued: 0, applied: 0 });
+  const loadCatalog = useCallback(async () => {
+    if (!sessionReady) return;
+    const visit = visitRef.current;
+    const n = ++catalogLoadRef.current.issued;
+    const owned = () => visitRef.current === visit && n > catalogLoadRef.current.applied;
+    try {
+      const res = await lessonApiFetch('/api/lessons');
+      if (endedSession(res.status, visit.scope)) return;
+      if (!res.ok || !owned()) return;
+      const data = await res.json();
+      if (!owned()) return;
+      catalogLoadRef.current.applied = n;
+      const local = loadLocalCatalogEntries(lastBakeRef.current);
+      setCatalog(mergeCatalogLessons(data.lessons || [], local));
+    } catch {
+      // A failed refresh keeps the rows already shown; «Оновити список» stays available.
+    }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- endedSession is unmemoized; it reads only refs and handleApiError
+  }, [handleApiError, lessonApiFetch, sessionReady]);
 
   useEffect(() => {
     if (session?.role !== 'admin') {
@@ -627,8 +755,6 @@ export default function TeacherApp() {
           await refreshSession();
           await loadTeacherDefaultDuration();
           await loadQualifiedModels();
-          // Load catalog so paste view is fully populated (used by some flows)
-          try { await loadCatalog(); } catch {}
         } else if (res.status === 410) {
           const e: ErrorEnvelope = await res.json();
           setError(errOr(e.message, 'err.inviteGone'));
@@ -653,7 +779,7 @@ export default function TeacherApp() {
     });
     redeemInFlightRef.current = promise;
     return promise;
-  }, [loadCatalog, loadQualifiedModels, loadTeacherDefaultDuration, navigate, refreshSession, resetSessionScopedState]);
+  }, [loadQualifiedModels, loadTeacherDefaultDuration, navigate, refreshSession, resetSessionScopedState]);
 
   const signInWithPasskey = async () => {
     try {
@@ -836,7 +962,6 @@ export default function TeacherApp() {
       await refreshSession();
       await loadTeacherDefaultDuration();
       await loadQualifiedModels();
-      try { await loadCatalog(); } catch {}
     } catch {
       setError(errKey('recovery.redeemFailed'));
     } finally {
@@ -905,45 +1030,39 @@ export default function TeacherApp() {
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only session init; adding loadQualifiedModels/t would re-run init on language toggle
   }, []);
 
-  // #93 item 1: gate route action on sessionReady. When resolves, re-run openLesson for direct-link/refresh.
-  // Prevents empty page (route lesson but no currentLessonId/lesson rendered).
+  // #93 item 1: once the session is ready, a lesson route the browser shows (direct link,
+  // refresh, Back/Forward, sign-in) is opened unless that lesson is already the visit.
+  // Nothing is written before an open commits, so this cannot re-enter for a pending open;
+  // the cleanup cancels this navigation when the route or the screen changes first.
   useEffect(() => {
-    if (!sessionReady) return;
-    if (route.view === 'lesson' && route.lessonId) {
-      if (!currentLessonId) {
-        setCurrentLessonId(route.lessonId);
-      }
-      const haveContent = !!lesson && lesson.lesson_id === route.lessonId;
-      const haveBakeForIt = !!bakeStatus && currentLessonId === route.lessonId;
-      // F1/F2 stability: do not re-invoke openLesson (which would re-seed 'baking' on 409)
-      // if we already have either lesson content or active bakeStatus for this exact id.
-      // This prevents double 409 on catalog open of non-ready, and keeps failure card stable.
-      if (currentLessonId !== route.lessonId || (!haveContent && !haveBakeForIt)) {
-        openLesson(route.lessonId, (route.mode as 'review' | 'run' | 'conduct') || 'review').catch(() => {});
-      }
-    } else if (route.view !== 'lesson') {
-      // #93 item 2: auto-load catalog once session ready (keep manual «Оновити список»)
-      loadCatalog().catch(() => {});
-    }
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- openLesson is unmemoized and admin owner reloads run in their dedicated effect; adding them would re-fetch on unrelated renders
-  }, [sessionReady, route.view, route.lessonId, route.mode, lesson, bakeStatus, currentLessonId]);
+    if (!sessionReady || route.view !== 'lesson' || !route.lessonId) return undefined;
+    if (currentLessonId === route.lessonId) return undefined;
+    const nav = navRef.current; // one object for the component's lifetime
+    const n = ++nav.issued;
+    void goToLesson(n, route.lessonId, route.mode || 'review', { push: false });
+    return () => {
+      nav.floor = Math.max(nav.floor, n);
+    };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- goToLesson is unmemoized; it reads only refs and the current render's request scope; depending on `route` restarts a read across equivalent history entries
+  }, [sessionReady, route, currentLessonId]);
+
+  // #93 item 2: the catalog loads when the teacher enters a non-lesson view and when the
+  // request scope (admin owner) changes; it is never refreshed from a lesson continuation.
+  useEffect(() => {
+    if (sessionReady && route.view !== 'lesson') void loadCatalog();
+  }, [loadCatalog, route.view, sessionReady]);
 
   // #93 item 3 cleanup: never orphan poll loops
   useEffect(() => {
     return () => { clearPoll(); };
   }, [clearPoll]);
-  // F2 fix: only clear if the active poll id is *not* the one we just switched to.
-  // The pollStatus(new) call (which sets activePollIdRef) happens before this effect runs,
-  // so we avoid cancelling the freshly started poll for the target lesson when switching
-  // catalog rows mid-bake. Still stops orphans from prior lessons.
-  useEffect(() => {
-    if (activePollIdRef.current && activePollIdRef.current !== currentLessonId) {
-      clearPoll();
-    }
-  }, [currentLessonId, clearPoll]);
 
   const logout = async () => {
     if (!csrf) return;
+    // Leaving is synchronous with the click: nothing that answers during the DELETE may
+    // still navigate or paint, and no route effect may start a new lesson read.
+    setSessionReady(false);
+    leaveScreen('session');
     await apiFetch('/api/session', {
       method: 'DELETE',
       headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' },
@@ -963,7 +1082,7 @@ export default function TeacherApp() {
     grammarFocus: string | null;
     logicalModelId: string;
   }) => {
-    if (!session || !csrf) {
+    if (!session || !csrf || !sessionReady) {
       setError(errKey('err.sessionRequired'));
       return;
     }
@@ -978,7 +1097,10 @@ export default function TeacherApp() {
     }
     setError(null);
     setLoading(true);
-    setLesson(null);
+    // Submitting is a navigation to the new lesson: leaving Paste before the 202 cancels it.
+    const n = ++navRef.current.issued;
+    const latest = () => n > navRef.current.floor && n === navRef.current.issued;
+    const scope = visitRef.current.scope;
     const id = crypto.randomUUID();
     const payload: BakeRequestPayload = {
       text,
@@ -1009,27 +1131,39 @@ export default function TeacherApp() {
         }),
       });
       const data = await res.json().catch(() => ({}));
+      if (endedSession(res.status, scope)) return;
       if (res.status === 202) {
+        // The recovery copy is kept when the teacher has only moved on, never across an
+        // owner switch or a session boundary.
+        if (visitRef.current.scope !== scope) return;
         saveLastBakeRequest(payload);
         lastBakeRef.current = payload;
+        if (n <= navRef.current.floor) return;
         setPasteText(text);
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
-        setCurrentLessonId(id);
-        const startedAt = new Date().toISOString();
-        setBakeStatus({
-          status: data.status || 'baking', step: 'bake.step.textReceived',
-          revision: data.revision || 1, attempt: 1, attempt_history: [], startedAt,
-        });
-        setBakeElapsedMs(0);
-        navigate({ view: 'lesson', lessonId: id, mode: 'review' });
-        pollStatus(id);
-      } else {
-        const e: ErrorEnvelope = data;
+        const visit = enterScreen(n, id, 'review', true);
+        if (usableStatus(data) && data.status === 'ready') {
+          showStatus(visit, data);
+        } else {
+          // A creation answer without a usable status still created the lesson: the card starts
+          // at the first revision and the poll learns the real state.
+          const known = usableStatus(data);
+          show(visit, { card: {
+            status: known ? data.status : 'baking', step: 'bake.step.textReceived',
+            revision: known ? data.revision : 1, attempt: 1, attempt_history: [], startedAt: new Date().toISOString(),
+          } });
+        }
+      } else if (latest()) {
+        navRef.current.floor = n;
+        const e = (data && typeof data === 'object' ? data : {}) as ErrorEnvelope;
         setError(errOr(e.message, 'err.bakeFailed'));
       }
     } catch {
-      setError(errKey('err.bakeFailed'));
+      if (latest()) {
+        navRef.current.floor = n;
+        setError(errKey('err.bakeFailed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -1045,10 +1179,12 @@ export default function TeacherApp() {
   };
 
   const mutateBake = async (operation: 'cancel' | 'retry') => {
-    const lid = currentLessonId || route.lessonId || null;
-    const current = bakeStatus;
+    const visit = visitRef.current;
+    const lid = visit.lessonId;
+    const current = visit.card;
+    const owned = () => visitRef.current === visit;
     if (
-      !lid || !current || bakeMutationInFlightRef.current
+      !lid || !current || visit.doc || bakeMutationInFlightRef.current
       || (operation === 'cancel' && !['draft', 'baking'].includes(current.status))
       || (operation === 'retry' && !['failed', 'cancelled'].includes(current.status))
     ) return;
@@ -1068,38 +1204,37 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (currentLessonIdRef.current !== lid) return;
+      // A terminal proof (401, the lesson gone) holds whichever visit is current now.
+      if (endedSession(res.status, visit.scope)) return;
+      if (lessonGone(res.status, data, true)) {
+        endOnTerminal(goneRead(), visit);
+        return;
+      }
+      if (!owned()) return;
       if (res.ok) {
-        const next = statusCardFromApi(data as LessonStatus, current);
-        setBakeStatus(next);
-        setCurrentLessonId(lid);
-        setLesson(null);
-        await loadCatalog();
-        if (currentLessonIdRef.current !== lid) return;
-        if (next.status === 'draft' || next.status === 'baking') {
-          setBakeElapsedMs(0);
-          pollStatus(lid);
-        } else {
-          clearPoll();
-        }
+        // An idempotent replay may answer with a later state, including ready. An unreadable
+        // body proves only that the request landed: keep the card and re-read the visit.
+        if (usableStatus(data)) showStatus(visit, data);
+        else ensurePoll(visit, true); // the card stays; a poll started now learns the real state
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
-        const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
-        if (currentLessonIdRef.current !== lid) return;
-        if (statusRes.ok) {
-          const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
-          if (currentLessonIdRef.current !== lid) return;
-          setBakeStatus(refreshed);
-          if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
-        }
+        const read = await readStatus(lid);
+        if (endOnTerminal(read, visit) || !owned()) return;
+        if ('status' in read && usableStatus(read.status)) showStatus(visit, read.status);
+        else ensurePoll(visit, true);
+      } else {
+        // The outcome is unknown (the request may have landed): a poll started now reconciles.
+        ensurePoll(visit, true);
       }
-      const e: ErrorEnvelope = data;
-      handleApiError(e);
+      handleApiError(data as ErrorEnvelope);
     } catch {
-      if (currentLessonIdRef.current === lid) setError(errKey('err.bakeFailed'));
+      if (owned()) {
+        setError(errKey('err.bakeFailed'));
+        ensurePoll(visit, true);
+      }
     } finally {
       bakeMutationInFlightRef.current = null;
       setBakeMutation(null);
@@ -1161,157 +1296,345 @@ export default function TeacherApp() {
     window.setTimeout(() => setClipboardNotice(null), 5000);
   };
 
-  // #93 item 3: robust poll (F2 hardened)
-  // - update step on every tick (no stale)
-  // - converge on ready/failed
-  // - resume after refresh if baking (via 409 + route effect)
-  // - cleanup on unmount/lesson switch
-  // - active id tracking + tick guards + conditional clear so catalog row switches don't kill polls
-  const pollStatus = (id: string) => {
+  // ===== Screen owner: commit, apply rule, poll, reads =====
+
+  /**
+   * Navigation `n` commits (lesson, mode). A different lesson or mode starts a new visit;
+   * the same pair keeps the visit, so a result the teacher still owns stays admitted.
+   * `push` is false when the browser already shows this route (no Forward truncation).
+   */
+  const enterScreen = (n: number, lessonId: string, mode: LessonMode, push: boolean): Visit => {
+    navRef.current.floor = Math.max(navRef.current.floor, n);
+    const current = visitRef.current;
+    if (current.lessonId === lessonId && current.mode === mode) return current;
     clearPoll();
-    activePollIdRef.current = id;
+    const visit: Visit = { scope: current.scope, lessonId, mode, revision: 0, doc: false, card: null, ready: false };
+    visitRef.current = visit;
+    setCurrentLessonId(lessonId);
+    // Until this visit's own payload arrives it shows nothing of the previous one; a print
+    // request belongs to the open that armed it, which sets it again after this commit.
+    setLesson(null);
+    setBakeStatus(null);
+    setLocalAcks([]);
+    setPendingPrintLessonId(null);
+    setError(null);
+    // The student must receive the source text before the exercises; keep the
+    // teacher's review view compact, but open the reading on the run surface.
+    setAnchorOpen(mode === 'run');
+    setConductStudentPreview(false);
+    navigate({ view: 'lesson', lessonId, mode }, push);
+    return visit;
+  };
+
+  /**
+   * The one apply rule and the only writer of the lesson document and bake card. A payload
+   * applies only while its visit is current and only if it is not older than what the
+   * visit shows. One aggregate revision per lesson rises by one per transition and `ready`
+   * is terminal (persistence contract), so a lower revision is stale and a bake card never
+   * replaces a shown document. An equal revision applies: the aggregate is the same, and
+   * feedback rows and regeneration entries change without a new revision. A payload without a
+   * contract revision (an empty or unreadable success body) cannot be ordered and never applies.
+   */
+  const show = (visit: Visit, payload: { doc: LessonResource } | { card: BakeCard }): boolean => {
+    if (visitRef.current !== visit) return false;
+    const isDoc = 'doc' in payload;
+    const revision: unknown = 'doc' in payload ? payload.doc?.revision : payload.card.revision;
+    if (!isRevision(revision) || revision < visit.revision || (visit.doc && !isDoc)) return false;
+    const newer = revision > visit.revision;
+    visit.revision = revision;
+    visit.doc = isDoc;
+    if ('doc' in payload) {
+      visit.card = null;
+      clearPoll();
+      setBakeStatus(null);
+      setLesson(payload.doc);
+      setLocalAcks(payload.doc.warning_acknowledgements || []);
+      return true;
+    }
+    visit.card = payload.card;
+    setLesson(null);
+    setBakeStatus(payload.card);
+    // A terminal card ends the poll when it is newer than what the visit showed. At the shown
+    // revision it may be a read that started before a cancel or retry whose outcome the poll is
+    // still learning, so only the poll's own read ends the poll then.
+    if (payload.card.status === 'draft' || payload.card.status === 'baking') ensurePoll(visit);
+    else if (newer) clearPoll();
+    return true;
+  };
+
+  /**
+   * A ready status: its revision becomes the visit's floor, so no older card can replace what
+   * is about to be shown or stop the poll that reads the document. Returns false when stale.
+   */
+  const noteReady = (visit: Visit, status: LessonStatus): boolean => {
+    if (visitRef.current !== visit || visit.doc || status.revision < visit.revision) return false;
+    visit.revision = status.revision;
+    visit.ready = true;
+    return true;
+  };
+
+  /**
+   * The one status handler (opens, re-reads, the poll, cancel/retry). A `ready` status is never
+   * painted as a card: it raises the floor and the poll reads the document.
+   */
+  const showStatus = (visit: Visit, answer: LessonStatus | null) => {
+    if (visitRef.current !== visit || visit.doc) return;
+    // An unusable answer is no more than a transient failure that hid the status.
+    const status = usableStatus(answer) ? answer : null;
+    if (status?.status === 'ready') {
+      if (noteReady(visit, status)) ensurePoll(visit);
+      return;
+    }
+    if (status) {
+      show(visit, { card: statusCardFromApi(status, visit.card ?? undefined) });
+    } else if (visit.revision === 0) {
+      // Nothing is known about this lesson yet: show a baking card and let the poll learn more.
+      show(visit, { card: {
+        status: 'baking', step: 'bake.step.tasksComposed', revision: 1, attempt: 1,
+        attempt_history: [], startedAt: new Date().toISOString(),
+      } });
+    }
+  };
+
+  /** The read result of a lesson that is gone. */
+  const goneRead = (): { error: () => void; terminal: 'gone' } => ({ error: () => setError(errKey('err.lessonNotFound')), terminal: 'gone' });
+
+  /** A failed lesson or status response as a read result. */
+  const readFailure = async (res: Response): Promise<LessonRead> => {
+    if (res.status === 404) return goneRead();
+    if (res.status === 401) return { error: () => handleApiError({ code: 'session_required', message: '', retryable: false }), terminal: 'session' };
+    const e = await res.json().catch(() => null) as ErrorEnvelope | null;
+    return { error: () => handleApiError(e) };
+  };
+
+  /**
+   * A terminal failure ends what it proves, whoever read it: a 401 expires the session it was
+   * read in (if that is still the session); a 404 retires the current visit of the lesson that
+   * is gone, in the scope it was read in, whichever visit of that lesson read it (a mode switch
+   * keeps some readers alive across visits). The retired visit keeps the lesson and mode, so the route
+   * effect does not reopen it, accepts no payload (its floor is unreachable), and leaves
+   * navigations to other screens pending.
+   */
+  const endOnTerminal = (read: LessonRead, visit: Visit): boolean => {
+    if (!('error' in read) || !read.terminal) return false;
+    const current = visitRef.current;
+    if (read.terminal === 'session') {
+      endedSession(401, visit.scope);
+      return true;
+    }
+    if (visit.lessonId !== null) visit.scope.gone.set(visit.lessonId, navRef.current.issued);
+    if (current.lessonId !== null && current.lessonId === visit.lessonId && current.scope === visit.scope) {
+      clearPoll();
+      visitRef.current = { ...offLessonVisit(current.scope), lessonId: current.lessonId, mode: current.mode, revision: Number.POSITIVE_INFINITY };
+      setLesson(null);
+      setBakeStatus(null);
+      setPendingPrintLessonId(null);
+      read.error();
+    }
+    return true;
+  };
+
+  /** A bake status read; 401 and 404 are terminal failures, other failures hide the status. */
+  const readStatus = async (id: string): Promise<LessonRead> => {
+    try {
+      const res = await lessonApiFetch(`/api/lessons/${id}/status`);
+      if (res.ok) {
+        // An unusable status answer is a status the read could not learn.
+        const status: unknown = await res.json();
+        return { status: usableStatus(status) ? status : null };
+      }
+      if (res.status === 401 || res.status === 404) return readFailure(res);
+      return { status: null };
+    } catch {
+      return { status: null };
+    }
+  };
+
+  /** One read of a lesson. The status is fetched only while `live()` still holds. */
+  const readLesson = async (id: string, live: () => boolean): Promise<LessonRead> => {
+    try {
+      const res = await lessonApiFetch(`/api/lessons/${id}`);
+      // A document without a contract revision cannot be ordered: a failed, retryable read.
+      if (res.status === 200) return { doc: await docFrom(res) };
+      if (res.status === 409) {
+        await res.json().catch(() => ({}));
+        if (!live()) return { stale: true };
+        return readStatus(id);
+      }
+      return readFailure(res);
+    } catch {
+      return { error: () => setError(errKey('err.loadLesson')) };
+    }
+  };
+
+  // #93 item 3: one status loop per visit. Its token decides whether it may reschedule;
+  // whether a status applies is decided by `show`. Real bakes run ~4 min and provider
+  // hiccups stretch them further: poll fast for ~25 s, then every 2.5 s for ~10 min.
+  const ensurePoll = (visit: Visit, fresh = false) => {
+    // Only the current visit polls, and only while it shows no document: a caller that learned
+    // nothing (an unusable or failed answer) after the document landed starts no status loop.
+    // `fresh` replaces the visit's loop, so a read it still has in flight (started before a
+    // cancel or retry whose outcome is unknown) can no longer end the reconciliation.
+    if (visitRef.current !== visit || visit.doc || (!fresh && pollRef.current?.visit === visit)) return;
+    clearPoll();
+    const poll = { visit };
+    pollRef.current = poll;
     setPolling(true);
+    const id = visit.lessonId!;
+    const current = () => pollRef.current === poll && visitRef.current === visit;
     let attempts = 0;
-    // Real bakes run ~4 min and provider hiccups stretch them further: poll
-    // fast for the first ~25 s, then back off to 2.5 s ticks for ~10 min
-    // total before surfacing the long-wait hint.
     const max = 260;
     const schedule = (delay: number) => {
       pollTimerRef.current = window.setTimeout(tick, delay);
     };
     const tick = async () => {
-      // F2: guard against a stale timer from a previous lesson that wasn't cleared in time.
-      // If we switched catalog rows, active will be the new id; old scheduled tick aborts.
-      if (activePollIdRef.current !== id) {
-        return;
-      }
+      if (!current()) return;
       attempts++;
-      let st: any = null;
       try {
-        const res = await lessonApiFetch(`/api/lessons/${id}/status`);
-        st = await res.json();
-        // Re-check after await in case switch happened during network
-        if (activePollIdRef.current !== id) {
+        // Once readiness is known the document is read directly; a transient failure of either
+        // read keeps the loop going within its bound.
+        let read = visit.ready ? await readLesson(id, current) : await readStatus(id);
+        if (endOnTerminal(read, visit)) {
+          if (pollRef.current === poll) clearPoll();
           return;
         }
-        setBakeStatus((prev) => statusCardFromApi(st as LessonStatus, prev || undefined));
-        if (st.status === 'ready') {
-          clearPoll();
-          await openLesson(id, 'review');
-          await loadCatalog();
-          return;
+        if (!current()) return;
+        if (!visit.ready && 'status' in read && read.status) {
+          showStatus(visit, read.status);
+          if (!current()) return;
+          // The poll read this status after every request it reconciles: unless it learned
+          // readiness (the document is read next), a terminal card the visit shows is the outcome.
+          if (!visit.ready && visit.card && visit.card.status !== 'draft' && visit.card.status !== 'baking') {
+            clearPoll();
+            return;
+          }
+          if (visit.ready) {
+            read = await readLesson(id, current);
+            if (endOnTerminal(read, visit)) {
+              if (pollRef.current === poll) clearPoll();
+              return;
+            }
+            if (!current()) return;
+          }
         }
-        if (st.status === 'failed' || st.status === 'cancelled') {
-          clearPoll();
-          return;
-        }
+        if ('doc' in read && show(visit, { doc: read.doc })) return;
       } catch {
-        if (activePollIdRef.current !== id) {
-          return;
-        }
-        setBakeStatus((prev) => prev || {
-          status: 'baking', step: 'bake.step.updating', revision: 1, attempt: 1, attempt_history: [],
-        });
+        // A transient failure keeps the shown card; the next tick asks again.
       }
+      if (!current()) return;
       if (attempts < max) {
         schedule(attempts < 30 ? 800 : 2500);
       } else {
         clearPoll();
-        if (st && st.status !== 'ready' && st.status !== 'failed' && st.status !== 'cancelled') {
-          setError(errKey('err.longWait'));
-        }
+        setError(errKey('err.longWait'));
       }
     };
     schedule(400);
   };
 
   // ===== Lesson load + modes =====
-  const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
-    // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
-    if (!session || !csrf) {
-      const s = await refreshSession();
-      if (!s) {
-        setError(errKey('err.sessionRequired'));
+
+  /**
+   * Navigation `n` to (lesson, mode). It writes nothing before it commits; it commits only
+   * while no newer navigation has committed and the teacher has not left. Only the latest
+   * navigation reports a failure, and that failure cancels older ones (no late fallback).
+   */
+  const goToLesson = async (
+    n: number,
+    id: string,
+    mode: LessonMode,
+    opts: { push: boolean; print?: boolean },
+  ) => {
+    const live = () => n > navRef.current.floor;
+    const scope = visitRef.current.scope;
+    setLoading(true);
+    try {
+      const read = await readLesson(id, live);
+      if ('error' in read && read.terminal === 'session') {
+        endedSession(401, scope);
         return;
       }
-    }
-    setLoading(true);
-    setError(null);
-    setLocalAcks([]);
-    // F1 fix: clear stale `lesson` (from a prior ready lesson) at start of open when
-    // targeting a different lesson. This guarantees that when catalog opens a failed
-    // (or baking) item after viewing a ready one, the 409 path's bakeStatus + !lesson
-    // condition renders the failure card instead of old blocks. Clear only on id switch
-    // to avoid unnecessary flicker on re-checks of same lesson.
-    if (currentLessonId !== id) {
-      setLesson(null);
-      setBakeStatus(null);
-    }
-    try {
-      const res = await lessonApiFetch(`/api/lessons/${id}`);
-      if (res.status === 200) {
-        const lr: LessonResource = await res.json();
-        setLesson(lr);
-        setBakeStatus(null);
-        setCurrentLessonId(id);
-        setLocalAcks(lr.warning_acknowledgements || []);
-        // The student must receive the source text before the exercises; keep the
-        // teacher's review view compact, but open the reading on the run surface.
-        setAnchorOpen(mode === 'run');
-        navigate({ view: 'lesson', lessonId: id, mode });
-      } else if (res.status === 409) {
-        await res.json().catch(() => ({}));
-        setLesson(null);
-        setCurrentLessonId(id);
-        navigate({ view: 'lesson', lessonId: id, mode });
-        try {
-          const statusRes = await lessonApiFetch(`/api/lessons/${id}/status`);
-          if (statusRes.ok) {
-            const st = await statusRes.json();
-            if (st.status === 'failed' || st.status === 'cancelled') {
-              setBakeStatus(statusCardFromApi(st as LessonStatus));
-              setBakeElapsedMs(0);
-              return;
-            }
-            const mappedStatus = statusCardFromApi(st as LessonStatus);
-            setBakeStatus({
-              ...mappedStatus,
-              status: st.status === 'ready' ? 'baking' : (st.status as LessonState),
-              step: st.step || 'bake.step.tasksComposed',
-            });
-            setBakeElapsedMs(0);
-            pollStatus(id);
-            return;
-          }
-        } catch {
-          // fall through to generic baking poll
+      // A 404 proves the lesson gone whichever navigation read it: it is recorded in the scope
+      // the navigation was issued in, and the visit showing that lesson retires.
+      const shown = visitRef.current;
+      if ('error' in read && read.terminal === 'gone') {
+        scope.gone.set(id, navRef.current.issued);
+        if (shown.lessonId === id && shown.scope === scope) {
+          if (n === navRef.current.issued) navRef.current.floor = n;
+          endOnTerminal(read, shown);
+          return;
         }
-        const startedAt = new Date().toISOString();
-        setBakeStatus({
-          status: 'baking', step: 'bake.step.tasksComposed', revision: 1, attempt: 1, attempt_history: [], startedAt,
-        });
-        setBakeElapsedMs(0);
-        pollStatus(id);
-      } else if (res.status === 404) {
-        setError(errKey('err.lessonNotFound'));
-      } else {
-        const e: ErrorEnvelope = await res.json().catch(() => ({ code: '', message: '' }));
-        handleApiError(e);
       }
-    } catch {
-      setError(errKey('err.loadLesson'));
+      if (!live()) return;
+      if ('error' in read) {
+        if (n === navRef.current.issued) {
+          navRef.current.floor = n;
+          read.error();
+        }
+        return;
+      }
+      if ('stale' in read) return;
+      // A lesson proven gone never reopens from a navigation issued before the proof.
+      if (n <= (scope.gone.get(id) ?? 0)) {
+        if (n === navRef.current.issued) {
+          navRef.current.floor = n;
+          goneRead().error();
+        }
+        return;
+      }
+      const visit = enterScreen(n, id, mode, opts.push);
+      if ('doc' in read) {
+        show(visit, { doc: read.doc });
+        if (opts.print) setPendingPrintLessonId(id);
+      } else {
+        showStatus(visit, read.status);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (sessionReady && session?.role === 'admin' && selectedOwnerId) {
-      void loadCatalog();
+  /**
+   * A re-read of the visit (Check now, a click on the current screen, a conflict reload).
+   * Its result goes through `show`; its failure is reported only while the visit still
+   * shows what it showed when the re-read began.
+   */
+  const refreshLesson = async (visit: Visit) => {
+    const { revision, doc } = visit;
+    const live = () => visitRef.current === visit;
+    const unchanged = () => live() && visit.revision === revision && visit.doc === doc;
+    setLoading(true);
+    setError(null);
+    try {
+      const read = await readLesson(visit.lessonId!, live);
+      if ('stale' in read || endOnTerminal(read, visit) || !live()) return;
+      if ('error' in read) {
+        if (unchanged()) read.error();
+      } else if ('doc' in read) {
+        show(visit, { doc: read.doc });
+      } else if (read.status) {
+        showStatus(visit, read.status);
+      } else if (unchanged()) {
+        setError(errKey('err.loadLesson'));
+      }
+    } finally {
+      setLoading(false);
     }
-    // Owner selection changes the complete request scope; reload only after
-    // that state has committed, never by trusting a lesson id alone.
-  }, [loadCatalog, selectedOwnerId, session?.role, sessionReady]);
+  };
+
+  /** Every teacher click that opens a lesson screen. */
+  const openLesson = (id: string, mode: LessonMode = 'review', opts: { print?: boolean } = {}) => {
+    // Sign-out (or an expired session) makes the session unavailable to lesson reads at once.
+    if (!sessionReady) return Promise.resolve();
+    const visit = visitRef.current;
+    if (visit.lessonId === id && visit.mode === mode) {
+      // The teacher chose the screen they are on: pending navigations elsewhere are cancelled.
+      navRef.current.floor = navRef.current.issued;
+      return refreshLesson(visit);
+    }
+    const n = ++navRef.current.issued;
+    return goToLesson(n, id, mode, { push: true, print: opts.print });
+  };
 
   // ===== Warning ack (REVIEW only) =====
   const ackWarning = async (blockId: string) => {
@@ -1337,68 +1660,85 @@ export default function TeacherApp() {
   };
 
   // ===== Accept / Draft =====
+  // A lesson action belongs to the visit that shows the document it acts on; its result,
+  // error or conflict reload reaches the screen only while that visit is current.
+  const documentVisit = (): Visit | null => {
+    const visit = visitRef.current;
+    return lesson && visit.doc && visit.lessonId === lesson.lesson_id ? visit : null;
+  };
+
   const acceptLesson = async () => {
-    if (!lesson || !currentLessonId || !csrf) return;
+    const visit = documentVisit();
+    if (!visit || !lesson || !csrf) return;
     if (!allVisibleWarningsAcked(lesson)) {
       setError(errKey('err.ackAllBeforeAccept'));
       return;
     }
-    const requestLessonId = currentLessonId;
+    const owned = () => visitRef.current === visit;
     setLoading(true);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/accept`, {
+      const res = await lessonApiFetch(`/api/lessons/${visit.lessonId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
-        const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return;
-        applyLessonResource(lr);
-        await loadCatalog();
+        const lr = await docFrom(res);
+        show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
-        if (currentLessonIdRef.current !== requestLessonId) return;
-        if (e.code === 'warning_acknowledgements_required') {
+        if (endedSession(res.status, visit.scope)) return;
+        if (lessonGone(res.status, e, true)) {
+          endOnTerminal(goneRead(), visit);
+        } else if (!owned()) {
+          return;
+        } else if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload2'));
-          await openLesson(requestLessonId, 'review');
+          await refreshLesson(visit);
         } else {
           setError(errOr(e.message, 'err.acceptFailed'));
         }
       }
+    } catch {
+      if (owned()) setError(errKey('err.acceptFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   const returnToDraft = async () => {
-    if (!lesson || !currentLessonId || !csrf) return;
-    const requestLessonId = currentLessonId;
+    const visit = documentVisit();
+    if (!visit || !lesson || !csrf) return;
+    const owned = () => visitRef.current === visit;
     setLoading(true);
     setError(null);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/draft`, {
+      const res = await lessonApiFetch(`/api/lessons/${visit.lessonId}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
-        const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return;
-        applyLessonResource(lr);
-        await loadCatalog();
+        const lr = await docFrom(res);
+        show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-        if (currentLessonIdRef.current !== requestLessonId) return;
-        if (e.code === 'revision_conflict') {
+        if (endedSession(res.status, visit.scope)) return;
+        if (lessonGone(res.status, e, true)) {
+          endOnTerminal(goneRead(), visit);
+        } else if (!owned()) {
+          return;
+        } else if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload'));
-          await handleRevisionConflict(requestLessonId);
+          await refreshLesson(visit);
         } else {
           setError(errOr(e.message, 'err.draftFailed'));
         }
       }
+    } catch {
+      if (owned()) setError(errKey('err.draftFailed'));
     } finally { setLoading(false); }
   };
 
@@ -1434,9 +1774,9 @@ export default function TeacherApp() {
     printLesson('teacher');
   }, [pendingPrintLessonId, lesson?.lesson_id]);
 
+  // The print request belongs to its open: it is armed only when that open commits.
   const openLessonForPrint = (id: string) => {
-    setPendingPrintLessonId(id);
-    void openLesson(id, 'review');
+    void openLesson(id, 'review', { print: true });
   };
 
   // Live elapsed clock while baking (honest wait — not a fake percent)
@@ -1485,14 +1825,17 @@ export default function TeacherApp() {
     <div className="anchorbody" {...(testId ? { 'data-testid': testId } : {})}>{text}</div>
   );
 
-  const applyLessonResource = useCallback((lr: LessonResource) => {
-    setLesson(lr);
-    setLocalAcks(lr.warning_acknowledgements || []);
-  }, []);
-
+  // A regeneration entry only moves forward: a later attempt, or the same attempt at the same
+  // or a later stage (queued, running, then succeeded or failed). An older entry that answers
+  // last never replaces a newer one.
   const applyActivityRegeneration = useCallback((entry: ActivityRegenerationEntry) => {
+    const stage = (status: ActivityRegenerationEntry['status']) =>
+      status === 'queued' ? 0 : status === 'running' ? 1 : 2;
     setLesson((current) => {
       if (!current || current.lesson_id !== entry.lesson_id) return current;
+      const known = current.activity_regenerations?.find((item) => item.id === entry.id);
+      if (known && (entry.attempt < known.attempt
+        || (entry.attempt === known.attempt && stage(entry.status) < stage(known.status)))) return current;
       return {
         ...current,
         activity_regenerations: [
@@ -1503,12 +1846,24 @@ export default function TeacherApp() {
     });
   }, []);
 
-  const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry) => {
+  /**
+   * Applies a regeneration entry to its visit. Returns false only when the visit changed before
+   * anything was settled (the entry is still unapplied); true once the entry, its lesson
+   * document or a terminal failure (session, lesson gone) has been handled.
+   */
+  const reconcileActivityRegeneration = async (entry: ActivityRegenerationEntry, visit: Visit): Promise<boolean> => {
+    if (visitRef.current !== visit || entry.lesson_id !== visit.lessonId) return false;
     if (entry.status !== 'succeeded' && entry.status !== 'failed') {
       applyActivityRegeneration(entry);
-      return;
+      return true;
     }
     const resourceResponse = await lessonApiFetch(`/api/lessons/${entry.lesson_id}`);
+    if (endedSession(resourceResponse.status, visit.scope)) return true;
+    if (lessonGone(resourceResponse.status, null, true)) {
+      endOnTerminal(goneRead(), visit);
+      return true;
+    }
+    if (visitRef.current !== visit) return false;
     if (!resourceResponse.ok) {
       // A failed regeneration never changed lesson content, so its durable retry
       // affordance is safe to show even when the resource refetch is transiently
@@ -1516,14 +1871,14 @@ export default function TeacherApp() {
       // stale block that the teacher is still looking at.
       if (entry.status === 'failed') {
         applyActivityRegeneration(entry);
-        return;
+        return true;
       }
       throw new Error('regeneration lesson refresh unavailable');
     }
-    const resource: LessonResource = await resourceResponse.json();
-    if (currentLessonIdRef.current !== entry.lesson_id) return;
-    applyLessonResource(resource);
-    if (entry.status === 'succeeded') await loadCatalog();
+    const resource = await docFrom(resourceResponse);
+    if (visitRef.current !== visit) return false;
+    show(visit, { doc: resource });
+    return true;
   };
 
   // A replacement is a separate durable job. Reloading the page reconstructs
@@ -1535,29 +1890,33 @@ export default function TeacherApp() {
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
+      // Each read belongs to the visit it starts in; a mode switch keeps this effect alive
+      // (same lesson and job), so its results land only while that visit is current.
+      const visit = visitRef.current;
+      const owned = () => !cancelled && visitRef.current === visit && visit.lessonId === lessonId;
       try {
         const response = await lessonApiFetch(
           `/api/lessons/${lessonId}/regenerations/${activeRegenerationId}`,
         );
-        if (!response.ok) {
-          if (response.status === 401) {
-            const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-            if (!cancelled) handleApiError(envelope);
+        if (endedSession(response.status, visit.scope)) return;
+        if (response.status === 404) {
+          const envelope: unknown = await response.json().catch(() => null);
+          if (lessonGone(404, envelope, false)) {
+            endOnTerminal(goneRead(), visit);
             return;
           }
-          throw new Error('regeneration poll unavailable');
         }
+        if (!response.ok) throw new Error('regeneration poll unavailable');
         const status: ActivityRegenerationEntry = await response.json();
         if (cancelled) return;
-        if (status.status === 'succeeded' || status.status === 'failed') {
-          const resourceResponse = await lessonApiFetch(`/api/lessons/${lessonId}`);
-          if (!cancelled && resourceResponse.ok) {
-            const resource: LessonResource = await resourceResponse.json();
-            if (cancelled) return;
-            applyLessonResource(resource);
-            if (status.status === 'succeeded') await loadCatalog();
-            return;
-          }
+        if (!owned()) {
+          // The teacher is elsewhere: ask again from whichever visit is current then.
+        } else if (status.status === 'succeeded' || status.status === 'failed') {
+          // The one terminal-entry path (create, retry and this poll): a 401 ends the session, a
+          // 404 retires the visit, an unavailable read keeps polling for a success. A visit
+          // change (a mode switch keeps this effect) before it settled asks again from the
+          // visit that is current then.
+          if (await reconcileActivityRegeneration(status, visit)) return;
         } else {
           applyActivityRegeneration(status);
         }
@@ -1571,44 +1930,40 @@ export default function TeacherApp() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [lesson?.lesson_id, activeRegenerationId, applyActivityRegeneration, applyLessonResource, handleApiError, lessonApiFetch, loadCatalog]);
-
-  const handleRevisionConflict = async (expectedLessonId?: string) => {
-    const lessonId = expectedLessonId || currentLessonIdRef.current;
-    if (!lessonId || currentLessonIdRef.current !== lessonId) return;
-    await openLesson(lessonId, 'review');
-  };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- endedSession and reconcileActivityRegeneration are unmemoized; they read only refs, state setters and handleApiError
+  }, [lesson?.lesson_id, activeRegenerationId, applyActivityRegeneration, handleApiError, lessonApiFetch]);
 
   const reviewMutation = async (
     path: string,
     init: RequestInit,
     opts?: { reloadOnConflict?: boolean },
   ): Promise<LessonResource | null> => {
-    if (!lesson || !currentLessonId || !csrf) return null;
-    const requestLessonId = currentLessonId;
+    const visit = documentVisit();
+    if (!visit || !csrf) return null;
+    const owned = () => visitRef.current === visit;
     setLoading(true);
     setError(null);
     try {
       const res = await lessonApiFetch(path, init);
       if (res.ok) {
-        const lr: LessonResource = await res.json();
-        if (currentLessonIdRef.current !== requestLessonId) return null;
-        applyLessonResource(lr);
-        return lr;
+        const lr = await docFrom(res);
+        return show(visit, { doc: lr }) ? lr : null;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return null;
-      if (e.code === 'revision_conflict') {
+      if (endedSession(res.status, visit.scope)) return null;
+      if (lessonGone(res.status, e, false)) {
+        endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return null;
+      } else if (e.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
-        if (opts?.reloadOnConflict !== false) {
-          await handleRevisionConflict(requestLessonId);
-        }
+        if (opts?.reloadOnConflict !== false) await refreshLesson(visit);
       } else {
         setError(errOr(e.message, 'err.generic'));
       }
       return null;
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (owned()) setError(errKey('err.generic'));
       return null;
     } finally {
       setLoading(false);
@@ -1660,12 +2015,14 @@ export default function TeacherApp() {
     });
 
   const createActivityRegeneration = async (blockId: string, feedback: string | null) => {
+    const visit = documentVisit();
     if (
-      !lesson || !currentLessonId || !csrf || activeActivityRegeneration
+      !visit || !lesson || !csrf || activeActivityRegeneration
       || regenerationMutationInFlightRef.current
     ) return;
     regenerationMutationInFlightRef.current = true;
-    const requestLessonId = currentLessonId;
+    const requestLessonId = visit.lessonId;
+    const owned = () => visitRef.current === visit;
     setLoading(true);
     setError(null);
     try {
@@ -1682,19 +2039,23 @@ export default function TeacherApp() {
         },
       );
       if (response.ok) {
-        await reconcileActivityRegeneration(await response.json());
+        await reconcileActivityRegeneration(await response.json(), visit);
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return;
-      if (envelope.code === 'revision_conflict') {
+      if (endedSession(response.status, visit.scope)) return;
+      if (lessonGone(response.status, envelope, false)) {
+        endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return;
+      } else if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
-        await handleRevisionConflict(requestLessonId);
+        await refreshLesson(visit);
       } else {
         setError(errOr(envelope.message, 'err.generic'));
       }
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (owned()) setError(errKey('err.generic'));
     } finally {
       regenerationMutationInFlightRef.current = false;
       setLoading(false);
@@ -1702,12 +2063,14 @@ export default function TeacherApp() {
   };
 
   const retryActivityRegeneration = async (regenerationId: string) => {
+    const visit = documentVisit();
     if (
-      !lesson || !currentLessonId || !csrf || activeActivityRegeneration
+      !visit || !lesson || !csrf || activeActivityRegeneration
       || regenerationMutationInFlightRef.current
     ) return;
     regenerationMutationInFlightRef.current = true;
-    const requestLessonId = currentLessonId;
+    const requestLessonId = visit.lessonId;
+    const owned = () => visitRef.current === visit;
     setLoading(true);
     setError(null);
     try {
@@ -1720,19 +2083,23 @@ export default function TeacherApp() {
         },
       );
       if (response.ok) {
-        await reconcileActivityRegeneration(await response.json());
+        await reconcileActivityRegeneration(await response.json(), visit);
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (currentLessonIdRef.current !== requestLessonId) return;
-      if (envelope.code === 'revision_conflict') {
+      if (endedSession(response.status, visit.scope)) return;
+      if (lessonGone(response.status, envelope, false)) {
+        endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return;
+      } else if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
-        await handleRevisionConflict(requestLessonId);
+        await refreshLesson(visit);
       } else {
         setError(errOr(envelope.message, 'err.generic'));
       }
     } catch {
-      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
+      if (owned()) setError(errKey('err.generic'));
     } finally {
       regenerationMutationInFlightRef.current = false;
       setLoading(false);
@@ -1751,14 +2118,18 @@ export default function TeacherApp() {
   );
 
   // ===== Render =====
-  const currentMode = (route.mode as 'review' | 'run' | 'conduct') || 'review';
+  const currentMode: LessonMode = route.mode || 'review';
+  // Lesson content renders only for the lesson the visit owns, never a retained earlier one.
+  const onRouteLesson = route.view === 'lesson' && !!route.lessonId && currentLessonId === route.lessonId;
+  const viewLesson = onRouteLesson ? lesson : null;
+  const viewBake = onRouteLesson ? bakeStatus : null;
   const isStudentSurface =
     currentMode === 'run' || (currentMode === 'conduct' && conductStudentPreview);
   const showTeacherLessonChrome = route.view === 'lesson' && currentMode !== 'conduct' && currentMode !== 'run';
 
   const returnToTeacherView = () => {
     if (currentMode === 'run') {
-      openLesson(currentLessonId || route.lessonId!, 'review');
+      openLesson(route.lessonId!, 'review');
       return;
     }
     setConductStudentPreview(false);
@@ -1798,12 +2169,12 @@ export default function TeacherApp() {
                   <select
                     value={selectedOwnerId ?? session.teacher.id}
                     onChange={(event) => {
-                      clearPoll();
+                      // A new owner is a new request scope: nothing pending may land in it.
+                      // The catalog effect loads the new owner's rows once this commits.
+                      leaveScreen('owner');
                       setSelectedOwnerId(event.target.value);
                       setLesson(null);
-                      setCurrentLessonId(null);
                       setCatalog([]);
-                      void loadCatalog(event.target.value);
                       navigate({ view: 'catalog' });
                     }}
                   >
@@ -2227,10 +2598,10 @@ export default function TeacherApp() {
               {showTeacherLessonChrome && (
               <div className="lesson-header">
                 <button className="btn ghost" onClick={() => navigate({ view: 'catalog' })}>{t('lesson.back')}</button>
-                {lesson && <h2>{lesson.lesson.title}</h2>}
-                {lesson && (
+                {viewLesson && <h2>{viewLesson.lesson.title}</h2>}
+                {viewLesson && (
                   <span className="lesson-model" data-testid="lesson-model">
-                    {t('lesson.model', { model: lesson.logical_model_id ?? t('lesson.modelUnknown') })}
+                    {t('lesson.model', { model: viewLesson.logical_model_id ?? t('lesson.modelUnknown') })}
                   </span>
                 )}
                 <div className="lesson-actions">
@@ -2238,19 +2609,19 @@ export default function TeacherApp() {
                     type="button"
                     className="btn ghost selected"
                     aria-current="page"
-                    onClick={() => openLesson(currentLessonId || route.lessonId!, 'review')}
+                    onClick={() => openLesson(route.lessonId!, 'review')}
                   >{t('lesson.reviewMode')}</button>
-                  {lesson && lesson.lesson.status === 'ready' && (
+                  {viewLesson && viewLesson.lesson.status === 'ready' && (
                     <button
                       type="button"
                       className="btn ghost"
                       data-testid="enter-student-mode-btn"
-                      onClick={() => openLesson(currentLessonId || route.lessonId!, 'run')}
+                      onClick={() => openLesson(route.lessonId!, 'run')}
                     >
                       {t('lesson.showAsStudent')}
                     </button>
                   )}
-                  {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
+                  {viewLesson && currentMode === 'review' && viewLesson.lesson.status === 'ready' && (
                     <button
                       type="button"
                       className="btn ghost"
@@ -2259,7 +2630,7 @@ export default function TeacherApp() {
                       {showAnswers ? t('lesson.hideAnswers') : t('lesson.showAnswers')}
                     </button>
                   )}
-                  {lesson && lesson.lesson.status === 'ready' && (
+                  {viewLesson && viewLesson.lesson.status === 'ready' && (
                     <button
                       type="button"
                       className="btn ghost"
@@ -2269,7 +2640,7 @@ export default function TeacherApp() {
                       {t('lesson.copyAsNew')}
                     </button>
                   )}
-                  {lesson && currentMode === 'review' && lesson.lesson.status === 'ready' && (
+                  {viewLesson && currentMode === 'review' && viewLesson.lesson.status === 'ready' && (
                     <>
                       <button
                         type="button"
@@ -2291,11 +2662,11 @@ export default function TeacherApp() {
                       </button>
                     </>
                   )}
-                  {lesson && lesson.lesson.accepted && (
-                    <button className="btn primary" onClick={() => openLesson(currentLessonId || route.lessonId!, 'conduct')}>{t('lesson.conduct')}</button>
+                  {viewLesson && viewLesson.lesson.accepted && (
+                    <button className="btn primary" onClick={() => openLesson(route.lessonId!, 'conduct')}>{t('lesson.conduct')}</button>
                   )}
-                  {lesson && lesson.lesson.accepted && <span className="chip ok">{t('accepted')}</span>}
-                  {lesson && lesson.lesson.status === 'ready' && (
+                  {viewLesson && viewLesson.lesson.accepted && <span className="chip ok">{t('accepted')}</span>}
+                  {viewLesson && viewLesson.lesson.status === 'ready' && (
                     <>
                       <button
                         type="button"
@@ -2315,21 +2686,21 @@ export default function TeacherApp() {
                       </button>
                     </>
                   )}
-                  <button className="btn ghost" onClick={downloadJSON} disabled={!lesson || !lesson.lesson.accepted}>{t('lesson.downloadJson')}</button>
+                  <button className="btn ghost" onClick={downloadJSON} disabled={!viewLesson || !viewLesson.lesson.accepted}>{t('lesson.downloadJson')}</button>
                 </div>
               </div>
               )}
 
-              {bakeStatus && !lesson && (
+              {viewBake && !viewLesson && (
                 <div className="baking" data-testid="baking-status-view">
                   <div className="steps">
-                    <div className={`step ${bakeStatus.status === 'baking' || bakeStatus.status === 'draft' ? 'now' : bakeStatus.status === 'failed' ? 'fail' : 'done'}`}>
-                      <div className="dot">{bakeStatus.status === 'baking' || bakeStatus.status === 'draft' ? '⋯' : bakeStatus.status === 'failed' ? '!' : '✓'}</div>
+                    <div className={`step ${viewBake.status === 'baking' || viewBake.status === 'draft' ? 'now' : viewBake.status === 'failed' ? 'fail' : 'done'}`}>
+                      <div className="dot">{viewBake.status === 'baking' || viewBake.status === 'draft' ? '⋯' : viewBake.status === 'failed' ? '!' : '✓'}</div>
                       <div>
-                        <b>{t('bake.statusPrefix')}{t(statusKey(bakeStatus.status))}</b>
-                        <div className="sd" data-testid="bake-attempt">{t('bake.attempt', { attempt: bakeStatus.attempt })}</div>
+                        <b>{t('bake.statusPrefix')}{t(statusKey(viewBake.status))}</b>
+                        <div className="sd" data-testid="bake-attempt">{t('bake.attempt', { attempt: viewBake.attempt })}</div>
                         <div className="sd" data-testid="baking-subline">{bakingSubline()}</div>
-                        {bakeStatus.status === 'baking' && (
+                        {viewBake.status === 'baking' && (
                           <div className="sd bake-elapsed" data-testid="baking-elapsed">
                             {t('bake.elapsed', { clock: formatBakeElapsedClock(bakeElapsedMs) })}
                           </div>
@@ -2337,12 +2708,12 @@ export default function TeacherApp() {
                       </div>
                     </div>
                   </div>
-                  {(bakeStatus.status === 'failed' || bakeStatus.status === 'cancelled') && (
+                  {(viewBake.status === 'failed' || viewBake.status === 'cancelled') && (
                     <div className="recovery-card banner fail" data-testid="failure-recovery">
                       <span className="ic">!</span>
                       <div className="recovery-body">
-                        <p data-testid="failure-recovery-body" data-failure-code={bakeStatus.failure_code || ''}>
-                          {bakeStatus.status === 'cancelled' ? t('bake.cancelledBody') : t(recoveryBodyKey(bakeStatus.failure_code))}
+                        <p data-testid="failure-recovery-body" data-failure-code={viewBake.failure_code || ''}>
+                          {viewBake.status === 'cancelled' ? t('bake.cancelledBody') : t(recoveryBodyKey(viewBake.failure_code))}
                         </p>
                         <div className="recovery-actions">
                           <button
@@ -2365,10 +2736,10 @@ export default function TeacherApp() {
                       </div>
                     </div>
                   )}
-                  {(bakeStatus.status === 'baking' || bakeStatus.status === 'draft') && polling && (
+                  {(viewBake.status === 'baking' || viewBake.status === 'draft') && polling && (
                     <p className="hint" style={{marginTop:6}} data-testid="baking-polling">{t('bake.updating')}</p>
                   )}
-                  {(bakeStatus.status === 'baking' || bakeStatus.status === 'draft') && (
+                  {(viewBake.status === 'baking' || viewBake.status === 'draft') && (
                     <div className="bake-actions">
                       <button
                         type="button"
@@ -2379,16 +2750,16 @@ export default function TeacherApp() {
                       >
                         {bakeMutation === 'cancel' ? t('bake.cancelling') : t('bake.cancel')}
                       </button>
-                      <button className="btn ghost" onClick={() => (currentLessonId || route.lessonId) && openLesson(currentLessonId || route.lessonId!)} disabled={bakeMutation !== null}>{t('bake.checkNow')}</button>
+                      <button className="btn ghost" onClick={() => openLesson(route.lessonId!, currentMode)} disabled={bakeMutation !== null}>{t('bake.checkNow')}</button>
                       <p className="hint bake-cancel-hint">{t('bake.cancelHint')}</p>
                     </div>
                   )}
-                  {(bakeStatus.status === 'failed' || bakeStatus.status === 'cancelled') && (
+                  {(viewBake.status === 'failed' || viewBake.status === 'cancelled') && (
                     <section className="bake-attempt-history" aria-label={t('bake.history')}>
                       <h3>{t('bake.history')}</h3>
-                      {bakeStatus.attempt_history.length === 0 ? <p>{t('bake.historyEmpty')}</p> : (
+                      {viewBake.attempt_history.length === 0 ? <p>{t('bake.historyEmpty')}</p> : (
                         <ol>
-                          {bakeStatus.attempt_history.map((entry) => (
+                          {viewBake.attempt_history.map((entry) => (
                             <li key={`${entry.attempt}-${entry.completed_at}`}>
                               {t('bake.attempt', { attempt: entry.attempt })} — {t(statusKey(entry.status))}
                             </li>
@@ -2400,17 +2771,17 @@ export default function TeacherApp() {
                 </div>
               )}
 
-              {!lesson && !bakeStatus && (
+              {!viewLesson && !viewBake && !error && (
                 <p style={{ color: 'var(--ink-soft)', padding: '12px 0' }}>{t('loading')}</p>
               )}
 
-              {lesson && (
+              {viewLesson && (
                 <>
                   {showTeacherLessonChrome && (
                   <div className="meta">
-                    <div>{t('meta.level', { level: lesson.lesson.level, duration: lesson.lesson.duration })}</div>
-                    <div>{t('meta.revision', { rev: lesson.revision, acc: lesson.lesson.accepted ? t('meta.yes') : t('meta.no') })}</div>
-                    {(lesson.grammar_focus ?? lesson.lesson.focus) && <div>{t('meta.focus')}{lesson.grammar_focus ?? lesson.lesson.focus}</div>}
+                    <div>{t('meta.level', { level: viewLesson.lesson.level, duration: viewLesson.lesson.duration })}</div>
+                    <div>{t('meta.revision', { rev: viewLesson.revision, acc: viewLesson.lesson.accepted ? t('meta.yes') : t('meta.no') })}</div>
+                    {(viewLesson.grammar_focus ?? viewLesson.lesson.focus) && <div>{t('meta.focus')}{viewLesson.grammar_focus ?? viewLesson.lesson.focus}</div>}
                   </div>
                   )}
 
@@ -2421,7 +2792,7 @@ export default function TeacherApp() {
                       </div>
                       <div className="student-toolbar noprint">
                         <span className="chip info">
-                          {t('run.toolbarChip', { level: lesson.lesson.level, duration: lesson.lesson.duration })}
+                          {t('run.toolbarChip', { level: viewLesson.lesson.level, duration: viewLesson.lesson.duration })}
                         </span>
                         <span className="student-toolbar-spacer" />
                         <button
@@ -2441,7 +2812,7 @@ export default function TeacherApp() {
                           {t('run.backToTeacher')}
                         </button>
                       </div>
-                      {lesson.lesson.anchor?.text && (
+                      {viewLesson.lesson.anchor?.text && (
                         <div className="anchor-run-bar noprint">
                           <button
                             type="button"
@@ -2454,18 +2825,18 @@ export default function TeacherApp() {
                           {anchorOpen && (
                             <div className="anchor-panel run-open" data-testid="anchor-panel-run">
                               <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
-                              {renderAnchorBody(lesson.lesson.anchor.text, 'anchor-text-body')}
+                              {renderAnchorBody(viewLesson.lesson.anchor.text, 'anchor-text-body')}
                             </div>
                           )}
                         </div>
                       )}
                       <div className="student-sheet paper">
-                        <p className="docsheet-title">{lesson.lesson.title}</p>
+                        <p className="docsheet-title">{viewLesson.lesson.title}</p>
                         <p className="student-sheet-sub">
-                          {t('run.sheetSub', { duration: lesson.lesson.duration })}
+                          {t('run.sheetSub', { duration: viewLesson.lesson.duration })}
                         </p>
                         <div className={`modes run`}>
-                          {renderBlocks(lesson, 'run')}
+                          {renderBlocks(viewLesson, 'run')}
                         </div>
                         <p className="docsheet-footer" data-testid="honesty-footer">
                           {t('print.honestyFooter')}
@@ -2474,16 +2845,16 @@ export default function TeacherApp() {
                     </>
                   )}
 
-                  {lesson.lesson.anchor?.text && (
+                  {viewLesson.lesson.anchor?.text && (
                     <div className="anchor-print" data-testid="anchor-print">
                       <h4 className="dochead"><span className="pn">☰</span>{t('anchor.readingHead')}</h4>
-                      {renderAnchorBody(lesson.lesson.anchor.text)}
+                      {renderAnchorBody(viewLesson.lesson.anchor.text)}
                     </div>
                   )}
 
                   {currentMode === 'review' && (
                     <ReviewWorkbench
-                      resource={lesson}
+                      resource={viewLesson}
                       showAnswers={showAnswers}
                       loading={loading}
                       onMoveBlock={moveBlock}
@@ -2497,17 +2868,17 @@ export default function TeacherApp() {
                       onActivityFeedback={putActivityFeedback}
                       onRegenerateActivity={createActivityRegeneration}
                       onRetryRegeneration={retryActivityRegeneration}
-                      allWarningsAcked={allVisibleWarningsAcked(lesson)}
+                      allWarningsAcked={allVisibleWarningsAcked(viewLesson)}
                       studentPrint={printVariant === 'student'}
                     />
                   )}
 
-                  {currentMode === 'conduct' && lesson && (
+                  {currentMode === 'conduct' && viewLesson && (
                     <Conductor
-                      lessonDoc={lesson.lesson}
+                      lessonDoc={viewLesson.lesson}
                       onExit={() => {
                         setConductStudentPreview(false);
-                        openLesson(currentLessonId || route.lessonId!, 'review');
+                        openLesson(route.lessonId!, 'review');
                       }}
                       onStudentPreviewChange={setConductStudentPreview}
                     />
