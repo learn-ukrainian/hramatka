@@ -289,7 +289,7 @@ export default function TeacherApp() {
   const pasteTextMissing = !pasteText.trim();
 
   // Baking / lesson state
-  const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
+  const [currentLessonId, setCurrentLessonIdState] = useState<string | null>(null);
   const [lesson, setLesson] = useState<LessonResource | null>(null);
   const [catalog, setCatalog] = useState<LessonCatalogItem[]>([]);
   const [bakeStatus, setBakeStatus] = useState<{
@@ -320,6 +320,13 @@ export default function TeacherApp() {
   // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
   const activePollIdRef = useRef<string | null>(null);
   const currentLessonIdRef = useRef<string | null>(null);
+  // The ref is what late async results compare against, so it must change in the same
+  // tick as the lesson itself. Mirroring state through a passive effect leaves a window
+  // after the commit in which a stale response still sees the lesson the teacher left.
+  const setCurrentLessonId = useCallback((id: string | null) => {
+    currentLessonIdRef.current = id;
+    setCurrentLessonIdState(id);
+  }, []);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -359,10 +366,6 @@ export default function TeacherApp() {
     (item) => item.status === 'queued' || item.status === 'running',
   );
 
-  useEffect(() => {
-    currentLessonIdRef.current = currentLessonId;
-  }, [currentLessonId]);
-
   const clearPoll = useCallback(() => {
     if (pollTimerRef.current != null) {
       clearTimeout(pollTimerRef.current);
@@ -400,7 +403,7 @@ export default function TeacherApp() {
     setRecoveryCodes(null);
     setRecoveryCodesCopyStatus(null);
     setRecoveryCodeInput('');
-  }, [clearPoll, resetLang]);
+  }, [clearPoll, resetLang, setCurrentLessonId]);
 
   const restoreFormFromPayload = useCallback((payload: BakeRequestPayload) => {
     setPasteText(payload.text);
@@ -1065,12 +1068,14 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
+      if (currentLessonIdRef.current !== lid) return;
       if (res.ok) {
         const next = statusCardFromApi(data as LessonStatus, current);
         setBakeStatus(next);
         setCurrentLessonId(lid);
         setLesson(null);
         await loadCatalog();
+        if (currentLessonIdRef.current !== lid) return;
         if (next.status === 'draft' || next.status === 'baking') {
           setBakeElapsedMs(0);
           pollStatus(lid);
@@ -1083,8 +1088,10 @@ export default function TeacherApp() {
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
         const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
+        if (currentLessonIdRef.current !== lid) return;
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
+          if (currentLessonIdRef.current !== lid) return;
           setBakeStatus(refreshed);
           if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
         }
@@ -1092,7 +1099,7 @@ export default function TeacherApp() {
       const e: ErrorEnvelope = data;
       handleApiError(e);
     } catch {
-      setError(errKey('err.bakeFailed'));
+      if (currentLessonIdRef.current === lid) setError(errKey('err.bakeFailed'));
     } finally {
       bakeMutationInFlightRef.current = null;
       setBakeMutation(null);
@@ -1336,24 +1343,27 @@ export default function TeacherApp() {
       setError(errKey('err.ackAllBeforeAccept'));
       return;
     }
+    const requestLessonId = currentLessonId;
     setLoading(true);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/accept`, {
+      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
+        if (currentLessonIdRef.current !== requestLessonId) return;
         if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload2'));
-          await openLesson(currentLessonId, 'review');
+          await openLesson(requestLessonId, 'review');
         } else {
           setError(errOr(e.message, 'err.acceptFailed'));
         }
@@ -1365,23 +1375,26 @@ export default function TeacherApp() {
 
   const returnToDraft = async () => {
     if (!lesson || !currentLessonId || !csrf) return;
+    const requestLessonId = currentLessonId;
     setLoading(true);
     setError(null);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/draft`, {
+      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+        if (currentLessonIdRef.current !== requestLessonId) return;
         if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload'));
-          await handleRevisionConflict();
+          await handleRevisionConflict(requestLessonId);
         } else {
           setError(errOr(e.message, 'err.draftFailed'));
         }
@@ -1572,27 +1585,30 @@ export default function TeacherApp() {
     opts?: { reloadOnConflict?: boolean },
   ): Promise<LessonResource | null> => {
     if (!lesson || !currentLessonId || !csrf) return null;
+    const requestLessonId = currentLessonId;
     setLoading(true);
     setError(null);
     try {
       const res = await lessonApiFetch(path, init);
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return null;
         applyLessonResource(lr);
         return lr;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+      if (currentLessonIdRef.current !== requestLessonId) return null;
       if (e.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
-        if (opts?.reloadOnConflict !== false && currentLessonId) {
-          await handleRevisionConflict();
+        if (opts?.reloadOnConflict !== false) {
+          await handleRevisionConflict(requestLessonId);
         }
       } else {
         setError(errOr(e.message, 'err.generic'));
       }
       return null;
     } catch {
-      setError(errKey('err.generic'));
+      if (currentLessonIdRef.current === requestLessonId) setError(errKey('err.generic'));
       return null;
     } finally {
       setLoading(false);
