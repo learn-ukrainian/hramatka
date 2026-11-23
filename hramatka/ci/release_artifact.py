@@ -9,13 +9,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
 import tarfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 SCHEMA = "hramatka-release-artifact.v1"
 MANIFEST_NAME = "manifest.json"
@@ -49,25 +49,33 @@ def find_bundle(dist_assets: Path) -> Path:
     return js[0]
 
 
-def build_manifest(*, repo: Path, bundle: Path) -> dict:
-    return {
-        "schema": SCHEMA,
-        "public_repo": "https://github.com/learn-ukrainian/hramatka.git",
-        "public_sha": git_sha(repo),
-        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "bundle_path": "hramatka/app/dist/assets/" + bundle.name,
-        "bundle_sha256": sha256_file(bundle),
-        "pyproject_sha256": sha256_file(repo / "pyproject.toml"),
-    }
-
-
-def pack(repo: Path, out_dir: Path) -> Path:
+def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
     pkg = repo / "hramatka"
     dist_assets = pkg / "app" / "dist" / "assets"
     if not dist_assets.is_dir():
         raise SystemExit("missing hramatka/app/dist/assets — build the teacher app first")
     bundle = find_bundle(dist_assets)
-    manifest = build_manifest(repo=repo, bundle=bundle)
+    if not wheel.match("hramatka-*.whl") or not wheel.is_file():
+        raise SystemExit("expected a built Hramatka wheel")
+    public_sha = git_sha(repo)
+    try:
+        lockfile = subprocess.check_output(
+            ["git", "-C", str(repo), "cat-file", "blob", f"{public_sha}:uv.lock"],
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("cannot read uv.lock from the release commit") from exc
+
+    manifest = {
+        "schema": SCHEMA,
+        "public_repo": "https://github.com/learn-ukrainian/hramatka.git",
+        "public_sha": public_sha,
+        "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "bundle_path": "hramatka/app/dist/assets/" + bundle.name,
+        "bundle_sha256": sha256_file(bundle),
+        "pyproject_sha256": sha256_file(repo / "pyproject.toml"),
+        "uv_lock_sha256": hashlib.sha256(lockfile).hexdigest(),
+        "wheel_sha256": sha256_file(wheel),
+    }
     out_dir.mkdir(parents=True, exist_ok=True)
     staging = out_dir / f"staging-{manifest['public_sha']}"
     if staging.exists():
@@ -80,6 +88,10 @@ def pack(repo: Path, out_dir: Path) -> Path:
     )
     (staging / "PUBLIC_SHA").write_text(manifest["public_sha"] + "\n", encoding="utf-8")
     shutil.copy2(repo / "pyproject.toml", staging / "pyproject.toml")
+    (staging / "uv.lock").write_bytes(lockfile)
+    staged_wheel = staging / "wheel" / wheel.name
+    staged_wheel.parent.mkdir()
+    shutil.copy2(wheel, staged_wheel)
     shutil.copytree(
         pkg,
         staging / "hramatka",
@@ -97,12 +109,14 @@ def pack(repo: Path, out_dir: Path) -> Path:
         raise SystemExit("staged bundle hash mismatch")
     if sha256_file(staging / "pyproject.toml") != manifest["pyproject_sha256"]:
         raise SystemExit("staged pyproject hash mismatch")
+    if sha256_file(staged_wheel) != manifest["wheel_sha256"]:
+        raise SystemExit("staged wheel hash mismatch")
 
     tarball = out_dir / f"hramatka-release-{manifest['public_sha']}.tar.gz"
     if tarball.exists():
         tarball.unlink()
     with tarfile.open(tarball, "w:gz") as tar:
-        for name in (MANIFEST_NAME, "PUBLIC_SHA", "pyproject.toml", "hramatka"):
+        for name in (MANIFEST_NAME, "PUBLIC_SHA", "pyproject.toml", "uv.lock", "wheel", "hramatka"):
             tar.add(staging / name, arcname=name)
     (out_dir / MANIFEST_NAME).write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -116,44 +130,51 @@ def pack(repo: Path, out_dir: Path) -> Path:
 
 
 def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
-    staging = tarball.parent / f"verify-{os.getpid()}"
-    if staging.exists():
-        shutil.rmtree(staging)
-    staging.mkdir(parents=True)
-    with tarfile.open(tarball, "r:gz") as tar:
-        tar.extractall(staging, filter="data")
-    manifest_path = staging / MANIFEST_NAME
-    if not manifest_path.is_file():
-        candidates = list(staging.rglob(MANIFEST_NAME))
-        if not candidates:
-            raise SystemExit("manifest.json missing from tarball")
-        manifest_path = candidates[0]
-        staging = manifest_path.parent
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema") != SCHEMA:
-        raise SystemExit(f"unsupported schema: {manifest.get('schema')!r}")
-    if expected_sha and manifest["public_sha"] != expected_sha:
-        raise SystemExit(
-            f"manifest public_sha {manifest['public_sha']} != expected {expected_sha}"
-        )
-    public_sha_file = staging / "PUBLIC_SHA"
-    if public_sha_file.is_file():
-        stamped = public_sha_file.read_text(encoding="utf-8").strip()
-        if stamped != manifest["public_sha"]:
-            raise SystemExit("PUBLIC_SHA file mismatch")
-    bundle = staging / manifest["bundle_path"]
-    if not bundle.is_file():
-        raise SystemExit(f"missing bundle: {bundle}")
-    if sha256_file(bundle) != manifest["bundle_sha256"]:
-        raise SystemExit("bundle sha256 mismatch")
-    if sha256_file(staging / "pyproject.toml") != manifest["pyproject_sha256"]:
-        raise SystemExit("pyproject sha256 mismatch")
-    if not (staging / "hramatka" / "api").is_dir() or not (
-        staging / "hramatka" / "engine"
-    ).is_dir():
-        raise SystemExit("artifact missing hramatka/{api,engine}")
+    with TemporaryDirectory(prefix="verify-", dir=tarball.parent) as temporary:
+        staging = Path(temporary)
+        with tarfile.open(tarball, "r:gz") as tar:
+            tar.extractall(staging, filter="data")
+        manifest_path = staging / MANIFEST_NAME
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            raise SystemExit("manifest.json missing or not a regular file at the archive root")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != SCHEMA:
+            raise SystemExit(f"unsupported schema: {manifest.get('schema')!r}")
+        if expected_sha is not None and manifest["public_sha"] != expected_sha:
+            raise SystemExit(
+                f"manifest public_sha {manifest['public_sha']} != expected {expected_sha}"
+            )
+        public_sha_file = staging / "PUBLIC_SHA"
+        if public_sha_file.is_file():
+            stamped = public_sha_file.read_text(encoding="utf-8").strip()
+            if stamped != manifest["public_sha"]:
+                raise SystemExit("PUBLIC_SHA file mismatch")
+        bundle = staging / manifest["bundle_path"]
+        if not bundle.is_file():
+            raise SystemExit(f"missing bundle: {bundle}")
+        if sha256_file(bundle) != manifest["bundle_sha256"]:
+            raise SystemExit("bundle sha256 mismatch")
+        if sha256_file(staging / "pyproject.toml") != manifest["pyproject_sha256"]:
+            raise SystemExit("pyproject sha256 mismatch")
+        lockfile = staging / "uv.lock"
+        if lockfile.is_symlink() or not lockfile.is_file():
+            raise SystemExit("uv.lock missing or not a regular file")
+        if sha256_file(lockfile) != manifest.get("uv_lock_sha256"):
+            raise SystemExit("uv.lock sha256 mismatch")
+        wheel_dir = staging / "wheel"
+        wheels = list(wheel_dir.glob("hramatka-*.whl"))
+        if wheel_dir.is_symlink() or len(wheels) != 1:
+            raise SystemExit("artifact must contain exactly one Hramatka wheel")
+        wheel = wheels[0]
+        if wheel.is_symlink() or not wheel.is_file():
+            raise SystemExit("Hramatka wheel is not a regular file")
+        if sha256_file(wheel) != manifest.get("wheel_sha256"):
+            raise SystemExit("Hramatka wheel sha256 mismatch")
+        if not (staging / "hramatka" / "api").is_dir() or not (
+            staging / "hramatka" / "engine"
+        ).is_dir():
+            raise SystemExit("artifact missing hramatka/{api,engine}")
     print(f"verified public_sha={manifest['public_sha']}")
-    shutil.rmtree(staging)
     return manifest
 
 
@@ -164,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     p_pack = sub.add_parser("pack", help="pack release tarball from a built checkout")
     p_pack.add_argument("--repo", type=Path, default=Path.cwd())
     p_pack.add_argument("--out-dir", type=Path, required=True)
+    p_pack.add_argument("--wheel", type=Path, required=True, help="built Hramatka wheel")
 
     p_verify = sub.add_parser("verify", help="verify a release tarball")
     p_verify.add_argument("tarball", type=Path)
@@ -171,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.cmd == "pack":
-        pack(args.repo.resolve(), args.out_dir.resolve())
+        pack(args.repo.resolve(), args.out_dir.resolve(), wheel=args.wheel)
         return 0
     if args.cmd == "verify":
         verify_tarball(args.tarball.resolve(), expected_sha=args.expect_sha)

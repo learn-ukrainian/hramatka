@@ -71,12 +71,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          checksum: "a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+          download-from-astral-mirror: 'false'
+          enable-cache: 'false'
+
       - name: Pack + verify artifact
         env:
           RELEASE_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           set -euo pipefail
-          python hramatka/ci/release_artifact.py pack --repo . --out-dir "$RUNNER_TEMP/hramatka-release"
+          uv build --wheel --no-python-downloads --python 3.12 --out-dir "$RUNNER_TEMP/hramatka-wheel"
+          python hramatka/ci/release_artifact.py pack --repo . \
+            --wheel "$RUNNER_TEMP/hramatka-wheel/"*.whl --out-dir "$RUNNER_TEMP/hramatka-release"
           python hramatka/ci/release_artifact.py verify \
             "$RUNNER_TEMP/hramatka-release/hramatka-release-${RELEASE_SHA}.tar.gz" \
             --expect-sha "$RELEASE_SHA"

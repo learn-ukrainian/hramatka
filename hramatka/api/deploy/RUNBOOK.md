@@ -7,7 +7,7 @@ change, provisioning, or disclosure of any secret.
 
 ## Invariants
 
-- Every application release is an immutable checkout at
+- Every application release is unpacked from a verified artifact at
   `/opt/hramatka/releases/<stamp>`; `/opt/hramatka/current` is its sole active
   symlink.
 - Each release has its own root-managed `.venv` at
@@ -33,9 +33,10 @@ change, provisioning, or disclosure of any secret.
    `<stamp>`. Record the commit and intended rollback release in a private
    change record; do not record paste text, cookies, invite fragments, or
    secret values.
-2. Confirm the source checkout is clean and reviewed, then run its applicable
-   tests before transferring it. Verify the service unit still uses one Uvicorn
-   process and `WorkingDirectory=/opt/hramatka/current`.
+2. Select the tarball for the reviewed commit from the
+   [Release artifact workflow](../../../.github/workflows/release-artifact.yml).
+   Confirm that CI passed for that commit and that the service unit uses one
+   Uvicorn process with the active release as its working directory.
 3. Confirm that the already mounted data release includes its matching
    `data-manifest.json`. Its digests must be verified by `/api/readyz`; never
    set `HRAMATKA_ALLOW_DATA_DRIFT=1` as part of a deploy.
@@ -361,48 +362,31 @@ same cross-family rule.
 
 ## Deploy
 
-1. Create the new immutable checkout. Transfer a reviewed release artifact or
-   use the repository’s approved read-only source, then check out the exact
-   recorded commit:
+1. Verify and stage the release. Set `release_tarball` to the absolute path of
+   the downloaded tarball, `reviewed_sha` to the reviewed Git SHA, and
+   `release_dir` to a new release directory. Set `release_verifier` to the
+   absolute path of [release_artifact.py](../../ci/release_artifact.py) from a
+   trusted checkout with lock and wheel verification. Use Python 3.12 and the
+   uv version pinned in [CI](../../../.github/workflows/ci.yml).
 
    ```sh
-   install -d -m 0755 /opt/hramatka/releases/<stamp>
-   git clone --no-checkout <reviewed-private-repository> /opt/hramatka/releases/<stamp>
-   git -C /opt/hramatka/releases/<stamp> checkout --detach <reviewed-commit>
+   (
+     set -eu
+     python3.12 "$release_verifier" verify "$release_tarball" --expect-sha "$reviewed_sha"
+     mkdir "$release_dir"
+     python3.12 -m tarfile --filter data -e "$release_tarball" "$release_dir"
+     cd "$release_dir"
+     UV_PROJECT_ENVIRONMENT=.venv uv sync --locked --no-install-project --no-build \
+       --no-python-downloads --python 3.12
+     uv pip install --offline --no-index --no-deps --python .venv/bin/python ./wheel/hramatka-*.whl
+   )
    ```
 
-   Do not use `rsync` to overlay files into `current`. A release checkout must
-   not contain runtime `__pycache__`, a database, generated engine output, or a
-   populated environment file.
+   The sync reads the `uv.lock` shipped in the verified tarball. The second
+   command installs the wheel built by release CI. The tarball also contains
+   the built teacher frontend. Proceed to activation only when staging succeeds.
 
-2. Create the release-specific virtual environment from that exact checkout.
-   This is done before activation so a dependency failure leaves `current`
-   unchanged and a later rollback restores the prior dependency set too. The
-   package installation reads the exact reviewed checkout's `pyproject.toml`:
-
-   ```sh
-   python3 -m venv /opt/hramatka/releases/<stamp>/.venv
-   /opt/hramatka/releases/<stamp>/.venv/bin/python -m pip install --upgrade pip
-   /opt/hramatka/releases/<stamp>/.venv/bin/python -m pip install /opt/hramatka/releases/<stamp>
-   ```
-
-   Stage-1 `hramatka/ops/deploy.sh ops@HOST` (issues #210/#212) builds a
-   release-local `.venv` under `releases/<stamp>` and proves
-   `jwt`/`cryptography` on that interpreter before the atomic
-   `current` flip (`ln -sfn` + `mv -T`, never `mv -f` onto the symlink). Host
-   migration from a pre-releases layout is
-   `hramatka/ops/migrate_release_layout.sh` (operator-run; refuses if already
-   migrated).
-
-3. Build the reviewed teacher frontend in the release. Caddy serves the
-   same-origin `/teacher/` path beneath `current`, so it will activate with the
-   API on the one release-symlink flip:
-
-   ```sh
-   (cd /opt/hramatka/releases/<stamp>/hramatka/app && npm ci && npm run build)
-   ```
-
-4. Atomically activate the application checkout. The service startup performs
+2. Atomically activate the staged release. The service startup performs
    the versioned SQLite migration transaction before it starts accepting work;
    do not run handwritten SQL or copy a database file:
 
@@ -413,7 +397,7 @@ same cross-family rule.
    systemctl restart hramatka-api.service
    ```
 
-5. Require a healthy service and then run the repository smoke probe from the
+3. Require a healthy service and then run the repository smoke probe from the
    activated release. The smoke makes only GET requests and must pass before
    announcing the deploy:
 
@@ -425,7 +409,7 @@ same cross-family rule.
    Record only the probe’s concise status lines and release identifiers. A
    failed readiness probe is a failed deploy, even if `/api/healthz` is green.
 
-6. Before enabling review attestation, make one bounded OIDC-authenticated
+4. Before enabling review attestation, make one bounded OIDC-authenticated
    request through the configured repository variable URL and verify only its
    HTTP status and attestation receipt identifier. Do not capture request
    bodies, assertions, diff content, or provider output. The endpoint is public

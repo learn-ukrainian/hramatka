@@ -31,12 +31,13 @@ Do **not** resurrect them in the public product repo.
 From a clean checkout, follow the [local frontend checks](../../README.md#frontend),
 including the CI-pinned Node and npm setup before running `npm ci`.
 
-For the engine, run from the repository root:
+For the engine, use the uv version pinned in [CI](../../.github/workflows/ci.yml).
+From the repository root, install the development dependencies from `uv.lock`
+and run the tests.
 
 ```bash
-# Engine (DB-free CI surface + optional VESUM fixture suite)
-python -m pip install -e ".[dev]"
-pytest -q hramatka/engine/tests/test_boundary.py hramatka/engine/tests/test_vesum_gate.py
+uv sync --locked --no-install-project --no-build --extra dev --python 3.12
+.venv/bin/python -m pytest -q hramatka/engine/tests/test_boundary.py hramatka/engine/tests/test_vesum_gate.py
 ```
 
 Browser / Playwright suites live under `hramatka/app/e2e/` (`npm run test:e2e`).
@@ -51,8 +52,9 @@ default PR gate.
 
 ## Release artifacts (CI)
 
-Public workflow `Release artifact` packs an immutable tarball + `manifest.json`
-for an exact git SHA after CI succeeds on `main` (or via `workflow_dispatch`).
+The `Release artifact` workflow packs a tarball for an exact Git commit after CI
+succeeds on `main` or when manually triggered on `main`. The tarball includes
+`uv.lock` from that commit and the manifest records its SHA-256.
 That artifact is the product input to private Hramatka CD in
 `learn-ukrainian/learn-ukrainian-infra-private`. Host promote, SSH, and secrets
 never run from this repository.
