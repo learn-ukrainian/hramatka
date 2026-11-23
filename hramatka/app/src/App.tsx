@@ -1043,8 +1043,8 @@ export default function TeacherApp() {
     return () => {
       nav.floor = Math.max(nav.floor, n);
     };
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- goToLesson is unmemoized; it reads only refs and the current render's request scope
-  }, [sessionReady, route.view, route.lessonId, route.mode, currentLessonId]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- goToLesson is unmemoized; it reads only refs and the current render's request scope; depending on `route` restarts a read across equivalent history entries
+  }, [sessionReady, route, currentLessonId]);
 
   // #93 item 2: the catalog loads when the teacher enters a non-lesson view and when the
   // request scope (admin owner) changes; it is never refreshed from a lesson continuation.
