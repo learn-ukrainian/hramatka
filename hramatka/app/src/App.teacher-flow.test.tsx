@@ -1502,4 +1502,311 @@ describe('late results never move the teacher (D-STALENAV-A)', () => {
     expect(screen.queryByText('Урок Марії детально')).not.toBeInTheDocument();
     expect(ownerCatalogs.slice(catalogsBefore).every((owner) => owner === 'teacher-2')).toBe(true);
   });
+
+  it('F15: a committed lesson whose document is not loaded yet never shows the previous lesson', async () => {
+    let lessonTwoReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return response(doc('Урок А'));
+      if (p === '/api/lessons/lesson-2' && isGet(init)) {
+        lessonTwoReads += 1;
+        return lessonTwoReads === 1 ? notReady() : never();
+      }
+      if (p === '/api/lessons/lesson-2/status') return response({ ...status('ready', 3), id: 'lesson-2' });
+      if (p === '/api/lessons') return response({ lessons: [row('lesson-2', 'Урок Б')] });
+      return undefined;
+    });
+    renderApp();
+    expect(await screen.findByRole('heading', { name: 'Урок А' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    fireEvent.click(await screen.findByTestId('catalog-open-btn'));
+    await waitFor(() => expect(window.location.hash).toContain('/lessons/lesson-2'));
+    expect(screen.queryByRole('heading', { name: 'Урок А' })).not.toBeInTheDocument();
+  });
+
+  it('F16: sign-out starts no new lesson read and never reopens the lesson', async () => {
+    const signOut = held();
+    let lessonReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) { lessonReads += 1; return response(doc('Урок А')); }
+      if (p === '/api/session' && init?.method === 'DELETE') return signOut.promise;
+      return undefined;
+    });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Урок А' });
+    fireEvent.click(screen.getByTestId('logout-btn'));
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    expect(lessonReads).toBe(1);
+    expect(screen.queryByRole('heading', { name: 'Урок А' })).not.toBeInTheDocument();
+    await signOut.release(response({}));
+  });
+
+  it('F16: a manual open while sign-out is pending starts no lesson read', async () => {
+    const signOut = held();
+    let lessonReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) { lessonReads += 1; return response(doc('Урок А')); }
+      if (p === '/api/session' && init?.method === 'DELETE') return signOut.promise;
+      return undefined;
+    });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Урок А' });
+    fireEvent.click(screen.getByTestId('logout-btn'));
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    expect(lessonReads).toBe(1);
+    expect(screen.queryByRole('heading', { name: 'Урок А' })).not.toBeInTheDocument();
+    await signOut.release(response({}));
+  });
+
+  it('F10: an old failed status after a ready status neither replaces the floor nor stops the poll', async () => {
+    const oldFailed = held();
+    let lessonReads = 0;
+    let statusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads >= 4 ? response(doc('Готовий', 7)) : notReady();
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        if (statusReads === 1) return response(status('failed', 5));
+        if (statusReads === 2) return oldFailed.promise; // first same-screen re-read, held
+        return response(status('ready', 7));
+      }
+      return undefined;
+    });
+    renderApp();
+    await screen.findByTestId('failure-recovery');
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(statusReads).toBe(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(statusReads).toBe(3));
+    await oldFailed.release(response(status('failed', 5)));
+    expect(await screen.findByRole('heading', { name: 'Готовий' }, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it('F10: an idempotent retry that answers ready loads the document', async () => {
+    let lessonReads = 0;
+    let retried = false;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 1 ? notReady() : response(doc('Готовий', 9));
+      }
+      if (p === '/api/lessons/lesson-1/status') return response(retried ? status('ready', 9) : status('failed', 5));
+      if (p === '/api/lessons/lesson-1/retry') {
+        retried = true;
+        return { ok: true, status: 202, json: async () => status('ready', 9) } as Response;
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('failure-retry-btn'));
+    expect(await screen.findByRole('heading', { name: 'Готовий' }, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it('F10: once ready is known the document is read even while the status endpoint fails', async () => {
+    let lessonReads = 0;
+    let retried = false;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 1 ? notReady() : response(doc('Готовий', 9));
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        return retried ? errorResponse(503, { code: 'temporarily_unavailable', message: '' }) : response(status('failed', 5));
+      }
+      if (p === '/api/lessons/lesson-1/retry') {
+        retried = true;
+        return { ok: true, status: 202, json: async () => status('ready', 9) } as Response;
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('failure-retry-btn'));
+    expect(await screen.findByRole('heading', { name: 'Готовий' }, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it('F17: a 401 on the document read after ready ends the session at once', async () => {
+    let lessonReads = 0;
+    let statusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 1 ? notReady() : errorResponse(401, { code: 'session_required', message: 'Увійдіть.' });
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        return response(statusReads === 1 ? status('baking', 2) : status('ready', 3));
+      }
+      return undefined;
+    });
+    renderApp();
+    await screen.findByTestId('baking-status-view');
+    await waitFor(() => expect(lessonReads).toBe(2), { timeout: 3000 });
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/');
+    expect(lessonReads).toBe(2);
+  });
+
+  it('F17: a 404 seen by a sibling read ends the visit, so the held document never lands', async () => {
+    const docRead = held();
+    let lessonReads = 0;
+    let statusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 1) return notReady();
+        return lessonReads === 2 ? docRead.promise : errorResponse(404, { code: 'lesson_not_found', message: '' });
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        if (statusReads === 1) return response(status('baking', 2));
+        if (statusReads === 2) return response(status('ready', 3));
+        return errorResponse(404, { code: 'lesson_not_found', message: '' });
+      }
+      if (p === '/api/lessons/lesson-1/cancel') return errorResponse(409, { code: 'revision_conflict', message: 'Змінено.' });
+      return undefined;
+    });
+    renderApp();
+    await screen.findByTestId('baking-status-view');
+    await waitFor(() => expect(lessonReads).toBe(2), { timeout: 3000 });
+    fireEvent.click(screen.getByTestId('bake-cancel-btn'));
+    expect(await screen.findByText('Урок не знайдено.')).toBeInTheDocument();
+    await docRead.release(response(doc('Видалений', 3)));
+    expect(screen.queryByRole('heading', { name: 'Видалений' })).not.toBeInTheDocument();
+  });
+
+  it('F17: a 401 on a re-read ends the session even after a newer payload was shown', async () => {
+    const checkNow = held();
+    let lessonReads = 0;
+    let statusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 1) return notReady();
+        if (lessonReads === 2) return checkNow.promise;
+        return response(doc('Готовий', 3)); // the poll's document read
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        if (statusReads === 1) return response(status('baking', 2));
+        if (statusReads === 2) return response(status('ready', 3));
+        return errorResponse(401, { code: 'session_required', message: 'Увійдіть знову.' });
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByText('Перевірити зараз'));
+    expect(await screen.findByRole('heading', { name: 'Готовий' }, { timeout: 3000 })).toBeInTheDocument();
+    await checkNow.release(notReady());
+    expect(await screen.findByTestId('sign-in-alternatives')).toBeInTheDocument();
+  });
+
+  it("F17: a deleted lesson's 404 never cancels a newer pending navigation to another lesson", async () => {
+    window.history.replaceState(null, '', '#/lessons');
+    const openB = held();
+    let aReads = 0;
+    let aStatusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        aReads += 1;
+        return aReads === 1 ? notReady() : errorResponse(404, { code: 'lesson_not_found', message: '' });
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        aStatusReads += 1;
+        return response(aStatusReads === 1 ? status('baking', 2) : status('ready', 3));
+      }
+      if (p === '/api/lessons/lesson-2' && isGet(init)) return openB.promise;
+      if (p === '/api/lessons') return response({ lessons: [row('lesson-1', 'Урок А'), row('lesson-2', 'Урок Б')] });
+      return undefined;
+    });
+    renderApp();
+    const opens = await screen.findAllByTestId('catalog-open-btn');
+    fireEvent.click(opens[0]); // lesson A
+    fireEvent.click(opens[1]); // lesson B, held
+    await screen.findByTestId('baking-status-view'); // A committed first
+    // A's poll sees ready, then its document read answers 404.
+    await waitFor(() => expect(aReads).toBe(2), { timeout: 3000 });
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    await openB.release(response({ ...generatedLessonResource('lesson-2', 'Урок Б'), revision: 1 }));
+    expect(window.location.hash).toContain('/lessons/lesson-2');
+    expect(screen.getByRole('heading', { name: 'Урок Б' })).toBeInTheDocument();
+  });
+
+  it('F17: a navigation 401 with an empty body ends the session', async () => {
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return errorResponse(401, {});
+      return undefined;
+    });
+    renderApp();
+    expect(await screen.findByTestId('sign-in-alternatives')).toBeInTheDocument();
+  });
+
+  it('F17: a 404 on the regeneration reconcile read applies no failed entry to the deleted lesson', async () => {
+    let lessonReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 1 ? response(doc('Урок')) : errorResponse(404, { code: 'lesson_not_found', message: '' });
+      }
+      if (p.endsWith('/blocks/block-1/regenerations')) return response(regenerationEntry('lesson-1', 'failed'));
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByText('Створити інший варіант'));
+    fireEvent.click(screen.getByText('Створити новий варіант'));
+    expect(await screen.findByText('Урок не знайдено.')).toBeInTheDocument();
+    expect(screen.queryByTestId('regeneration-failed')).not.toBeInTheDocument();
+  });
+
+  it('F20: an unreadable cancel success keeps the card and re-reads the visit', async () => {
+    let cancelled = false;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return notReady();
+      if (p === '/api/lessons/lesson-1/status') return response(cancelled ? status('cancelled', 4) : status('baking', 3));
+      if (p === '/api/lessons/lesson-1/cancel') {
+        cancelled = true;
+        return { ok: true, status: 200, json: async () => { throw new Error('bad json'); } } as unknown as Response;
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('bake-cancel-btn'));
+    expect(screen.getByTestId('bake-attempt')).toBeInTheDocument();
+    expect(await screen.findByTestId('failure-recovery', undefined, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it('F20: a retry success with a null body keeps the card and the poll learns the new attempt', async () => {
+    let retried = false;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return notReady();
+      if (p === '/api/lessons/lesson-1/status') return response(retried ? status('baking', 6, 2) : status('failed', 5));
+      if (p === '/api/lessons/lesson-1/retry') {
+        retried = true;
+        return { ok: true, status: 202, json: async () => null } as Response;
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('failure-retry-btn'));
+    await waitFor(() => expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2'), { timeout: 3000 });
+  });
+
+  it('F20: a retry answering 503 lets the poll reconcile a retry that did land', async () => {
+    let retried = false;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return notReady();
+      if (p === '/api/lessons/lesson-1/status') return response(retried ? status('baking', 6, 2) : status('failed', 5));
+      if (p === '/api/lessons/lesson-1/retry') {
+        retried = true;
+        return errorResponse(503, { code: 'temporarily_unavailable', message: 'Пізніше.' });
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('failure-retry-btn'));
+    await waitFor(() => expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2'), { timeout: 3000 });
+  });
 });
