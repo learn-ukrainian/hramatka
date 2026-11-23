@@ -218,6 +218,18 @@ interface RouteState {
   mode?: 'review' | 'run' | 'conduct';
 }
 
+function routeFromHash(h: string): RouteState {
+  if (h === '#/lessons') return { view: 'catalog' };
+  if (h === '#/settings') return { view: 'settings' };
+  if (h.startsWith('#/lessons/')) {
+    const [id, query] = h.slice('#/lessons/'.length).split('?', 2);
+    if (!id || /[^A-Za-z0-9_-]/.test(id)) return { view: 'paste' };
+    const mode = new URLSearchParams(query).get('mode');
+    return { view: 'lesson', lessonId: id, mode: mode === 'run' || mode === 'conduct' ? mode : 'review' };
+  }
+  return { view: 'paste' };
+}
+
 // `onLeaveLesson` runs synchronously, before the route changes, for every navigation that is
 // not an in-app open of a lesson: buttons to other views and every browser back/forward,
 // so a late async result for the lesson the teacher just left has nothing to act on.
@@ -234,8 +246,12 @@ function useSimpleRouter(onLeaveLesson: () => void) {
           ? '#/settings'
           : '#/';
     // Reopening the entry the browser already selected must not push a duplicate, which
-    // would discard the Forward history.
-    if (window.location.hash !== hash) history.pushState(null, '', hash);
+    // would discard the Forward history. Entries are compared as routes: a bare lesson link
+    // and its `?mode=review` form are the same entry.
+    const at = routeFromHash(window.location.hash || '#/');
+    const same = at.view === r.view && at.lessonId === r.lessonId
+      && (r.view !== 'lesson' || at.mode === (r.mode ?? 'review'));
+    if (!same) history.pushState(null, '', hash);
     setRoute(r);
   }, [onLeaveLesson]);
 
@@ -244,22 +260,7 @@ function useSimpleRouter(onLeaveLesson: () => void) {
       // The browser picked this entry: whatever lesson was current is left, a lesson route
       // is then opened afresh by the route effect.
       onLeaveLesson();
-      const h = window.location.hash || '#/';
-      if (h === '#/lessons') {
-        setRoute({ view: 'catalog' });
-      } else if (h === '#/settings') {
-        setRoute({ view: 'settings' });
-      } else if (h.startsWith('#/lessons/')) {
-        const [id, query] = h.slice('#/lessons/'.length).split('?', 2);
-        if (!id || /[^A-Za-z0-9_-]/.test(id)) {
-          setRoute({ view: 'paste' });
-          return;
-        }
-        const mode = new URLSearchParams(query).get('mode');
-        setRoute({ view: 'lesson', lessonId: id, mode: mode === 'run' || mode === 'conduct' ? mode : 'review' });
-      } else {
-        setRoute({ view: 'paste' });
-      }
+      setRoute(routeFromHash(window.location.hash || '#/'));
     };
     parse();
     const onPop = () => parse();
@@ -327,10 +328,16 @@ export default function TeacherApp() {
   // Identity of the poll that is running now. Every poll gets its own token, so a tick
   // that outlives its poll (even one for the same lesson) can tell it was replaced.
   const activePollRef = useRef<object | null>(null);
-  // Bumped by every navigation intent: opening a lesson, submitting a new bake, leaving a
-  // lesson. A continuation compares the generation it started under, because a lesson id
-  // alone cannot tell two intents on the same lesson apart (Review, then Conduct).
-  const navIntentRef = useRef(0);
+  // The teacher's latest navigation intent, as an object compared by identity. A lesson id
+  // alone cannot tell two intents on the same lesson apart (Review, then Conduct, or a
+  // reopen after leaving), so each new intent gets a new object. Repeating the intent that
+  // is already current (Check now, the route effect, a poll reopening its lesson) reuses it,
+  // so a reload never supersedes the load or poll it belongs to.
+  const navIntentRef = useRef<{ key: string | null }>({ key: null });
+  const beginIntent = (key: string) => {
+    if (navIntentRef.current.key !== key) navIntentRef.current = { key };
+    return navIntentRef.current;
+  };
   const currentLessonIdRef = useRef<string | null>(null);
   // The ref is what late async results compare against, so it must change in the same
   // tick as the lesson itself. Mirroring state through a passive effect leaves a window
@@ -349,7 +356,7 @@ export default function TeacherApp() {
   }, []);
   // Leaving a lesson: later results for it find no lesson, no poll and an older intent.
   const clearCurrentLesson = useCallback(() => {
-    navIntentRef.current += 1;
+    navIntentRef.current = { key: null };
     clearPoll();
     setCurrentLessonId(null);
   }, [clearPoll, setCurrentLessonId]);
@@ -998,7 +1005,7 @@ export default function TeacherApp() {
     };
     // Submitting is the teacher's latest intent until they go elsewhere: any later open or
     // leaving paste replaces it, and a late 202 then starts nothing visible.
-    const intent = ++navIntentRef.current;
+    const intent = beginIntent(`new:${id}`);
     try {
       const res = await lessonApiFetch('/api/lessons', {
         method: 'POST',
@@ -1025,6 +1032,9 @@ export default function TeacherApp() {
         lastBakeRef.current = payload;
         // Accepted, but the teacher already left: the recovery copy is kept, the screen is not.
         if (navIntentRef.current !== intent) return;
+        // The screen the teacher lands on is this lesson in review mode: that is now the
+        // current intent, so a Check now there is a reload, not a new intent.
+        beginIntent(`${id}|review`);
         setPasteText(text);
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
@@ -1244,17 +1254,27 @@ export default function TeacherApp() {
 
   // ===== Lesson load + modes =====
   const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
-    // Opening a lesson is the teacher's latest intent. The generation tells this open from
-    // any later one, even for the same lesson, and from leaving; the lesson ref moves now
-    // so that late results of the lesson being left find another lesson current.
-    const intent = ++navIntentRef.current;
+    // Opening a lesson in a mode is the teacher's latest intent. The token tells this open
+    // from any other intent, even for the same lesson; the lesson ref moves now so that late
+    // results of the lesson being left find another lesson current.
+    const intent = beginIntent(`${id}|${mode}`);
+    const movesRef = currentLessonIdRef.current !== id;
     currentLessonIdRef.current = id;
     const superseded = () => navIntentRef.current !== intent;
+    // An open of another lesson that shows nothing hands the ref back to the lesson that was
+    // current when it was called, so a failed open never leaves late actions of the lesson
+    // the teacher is on admitted (or those of one they left).
+    let shown = false;
+    const committedLessonId = currentLessonId;
+    const handBack = () => {
+      if (movesRef && !shown && !superseded()) currentLessonIdRef.current = committedLessonId;
+    };
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
       const s = await refreshSession();
       if (superseded()) return;
       if (!s) {
+        handBack();
         setError(errKey('err.sessionRequired'));
         return;
       }
@@ -1279,6 +1299,7 @@ export default function TeacherApp() {
         if (superseded()) return;
         setLesson(lr);
         setBakeStatus(null);
+        shown = true;
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
         // The student must receive the source text before the exercises; keep the
@@ -1289,6 +1310,7 @@ export default function TeacherApp() {
         await res.json().catch(() => ({}));
         if (superseded()) return;
         setLesson(null);
+        shown = true;
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
         try {
@@ -1332,6 +1354,7 @@ export default function TeacherApp() {
     } catch {
       if (!superseded()) setError(errKey('err.loadLesson'));
     } finally {
+      handBack();
       setLoading(false);
     }
   };
