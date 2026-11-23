@@ -145,11 +145,15 @@ jobs:
   e2e:
     name: Frontend Playwright (packaged e2e)
     runs-on: ubuntu-24.04
+    container:
+      # Match the Playwright version in hramatka/app/package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
     timeout-minutes: 30
     permissions:
       contents: read
     defaults:
       run:
+        shell: bash
         working-directory: hramatka/app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,8 +169,6 @@ jobs:
           set -euo pipefail
           npm --version
           npm ci
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
       - name: Playwright e2e (default config; no live teacher stack)
         run: npm run test:e2e -- --project=chromium
         env:

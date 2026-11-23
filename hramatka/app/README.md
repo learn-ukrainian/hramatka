@@ -36,9 +36,15 @@ npm run stub         # Node server on :8787 (or configured)
 The stub serves golden fixture lesson containing one of each of the 9 pilot types. It implements redeem (any 43-char token), session, create/status/get/ack/accept/draft with scripted happy + error paths per openapi.
 
 ## Tests (must be green in CI)
+
+From `hramatka/app`, install the locked dependencies and Chromium. Run the
+component tests and the packaged Chromium suite against the stub API.
+
 ```bash
+npm ci
 npm test          # component tests (vitest) — all 9 types render from golden via contracts schema
-npm run test:e2e  # playwright against stub (full redeem→paste→bake→lesson→ack→accept→draft roundtrips + scrub + storage + 401/410)
+npx playwright install chromium
+npm run test:e2e -- --project=chromium  # redeem, paste, bake, lesson, ack, accept, draft, scrub, storage, 401/410
 ```
 
 ## Build
@@ -59,11 +65,15 @@ npm run build     # tsc + vite build → dist/ (static bundle)
 - No token in localStorage/sessionStorage ever.
 
 ## CI
-Defined in `../../.github/workflows/private-boundary.yml`. Draft PRs run the
-changed Python tests and only the frontend or real-backend lane whose owned
-paths changed. Ready PRs and `main` run the complete Python, frontend, stub
-browser, and real-backend browser gates. The vendored tarball means no public
-checkout or `ACTIVITY_KIT_DIR` override is required.
+
+The [CI workflow](../../.github/workflows/ci.yml) runs the packaged Chromium
+suite in the official Playwright image, which includes the browser and OS
+dependencies. The image tag matches the Playwright version in `package-lock.json`.
+When updating Playwright, update the image tag and pin its OCI index digest from
+Microsoft Artifact Registry in the same change.
+
+The vendored tarball means no public checkout or `ACTIVITY_KIT_DIR` override is
+required.
 
 ## Production note
 The bundle is served by Caddy at `/teacher/*` (SPA fallback to index.html) + `/api/*` proxy to backend on same origin. Cookie `__Host-hramatka_session`.
