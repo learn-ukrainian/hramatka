@@ -51,17 +51,29 @@ jobs:
             echo "Release SHA is not a commit on main" >&2
             exit 1
           fi
+          # Delayed CI runs can select a checkout with an older packer CLI.
+          git show "$GITHUB_WORKFLOW_SHA:hramatka/ci/release_artifact.py" \
+            > "$RUNNER_TEMP/hramatka-release-artifact.py"
+          runtime_root=.
+          pin_history="$(git rev-list -1 "$RELEASE_SHA" -- .python-version)"
+          if [[ -z "$pin_history" ]]; then
+            # Delayed or replayed CI runs can select a commit from before the pin.
+            runtime_root="$(mktemp -d "$RUNNER_TEMP/hramatka-runtime.XXXXXX")"
+            cp --parents .python-version hramatka/app/package.json "$runtime_root"
+          fi
           git checkout --detach "$RELEASE_SHA"
           echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "runtime_root=$runtime_root" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.3" # Bundles npm 11.19.1 for strict-allow-scripts.
+          node-version-file: ${{ steps.rev.outputs.runtime_root }}/hramatka/app/package.json
 
       - name: Build teacher app
         working-directory: hramatka/app
         run: |
           set -euo pipefail
+          node --version
           npm --version
           npm ci
           npm run build
@@ -69,7 +81,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version-file: ${{ steps.rev.outputs.runtime_root }}/.python-version
 
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
@@ -83,10 +95,13 @@ jobs:
           RELEASE_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           set -euo pipefail
-          uv build --wheel --no-python-downloads --python 3.12 --out-dir "$RUNNER_TEMP/hramatka-wheel"
-          python hramatka/ci/release_artifact.py pack --repo . \
+          python --version
+          packer="$RUNNER_TEMP/hramatka-release-artifact.py"
+          uv build --wheel --no-python-downloads --python "$(command -v python)" \
+            --out-dir "$RUNNER_TEMP/hramatka-wheel"
+          python "$packer" pack --repo . \
             --wheel "$RUNNER_TEMP/hramatka-wheel/"*.whl --out-dir "$RUNNER_TEMP/hramatka-release"
-          python hramatka/ci/release_artifact.py verify \
+          python "$packer" verify \
             "$RUNNER_TEMP/hramatka-release/hramatka-release-${RELEASE_SHA}.tar.gz" \
             --expect-sha "$RELEASE_SHA"
           cat "$RUNNER_TEMP/hramatka-release/manifest.json"

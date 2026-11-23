@@ -33,10 +33,11 @@ including the CI-pinned Node and npm setup before running `npm ci`.
 
 For the engine, use the uv version pinned in [CI](../../.github/workflows/ci.yml).
 From the repository root, install the development dependencies from `uv.lock`
-and run the tests.
+using the Python version in [`.python-version`](../../.python-version). Then run
+the tests.
 
 ```bash
-uv sync --locked --no-install-project --no-build --extra dev --python 3.12
+UV_PYTHON_PREFERENCE=only-managed uv sync --locked --no-install-project --no-build --extra dev
 .venv/bin/python -m pytest -q hramatka/engine/tests/test_boundary.py hramatka/engine/tests/test_vesum_gate.py
 ```
 
