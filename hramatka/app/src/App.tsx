@@ -1278,7 +1278,8 @@ export default function TeacherApp() {
     };
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
-      const s = await refreshSession();
+      // A failed refresh, thrown or rejected, ends the open like any other failed open.
+      const s = await refreshSession().catch(() => null);
       if (superseded()) return;
       if (!s) {
         handBack();

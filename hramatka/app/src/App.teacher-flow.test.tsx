@@ -785,8 +785,8 @@ describe('activity regeneration reconciliation (#418)', () => {
       methodology: 'ttt',
       grammar_focus: null,
       revision: 1,
-      accepted: false,
-      accepted_at: null,
+      accepted: true,
+      accepted_at: '2026-08-13T00:00:00Z',
       accepted_revision: null,
       failure_code: null,
       created_at: '2026-08-13T00:00:00Z',
@@ -802,7 +802,7 @@ describe('activity regeneration reconciliation (#418)', () => {
       if (url.endsWith('/api/lessons/lesson-1')) {
         lessonReads += 1;
         if (lessonReads === 1) return response(first);
-        // The first open from the catalog stays in flight; the latest one fails.
+        // Review from the catalog stays in flight; Conduct, the latest open, fails.
         return lessonReads === 2 ? new Promise<Response>(() => {}) : errorResponse(404, { code: 'lesson_not_found', message: 'Немає.' });
       }
       if (url.endsWith('/blocks/block-1/regenerations') && init?.method === 'POST') return pendingRegeneration;
@@ -817,7 +817,7 @@ describe('activity regeneration reconciliation (#418)', () => {
     await screen.findByText('Перший урок');
     fireEvent.click(screen.getByTestId('catalog-open-btn'));
     await waitFor(() => expect(lessonReads).toBe(2));
-    fireEvent.click(screen.getByTestId('catalog-open-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Проведення' }));
     await screen.findByRole('alert');
     expect(window.location.hash).toBe('#/lessons');
 
