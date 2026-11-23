@@ -1075,6 +1075,7 @@ export default function TeacherApp() {
         setCurrentLessonId(lid);
         setLesson(null);
         await loadCatalog();
+        if (currentLessonIdRef.current !== lid) return;
         if (next.status === 'draft' || next.status === 'baking') {
           setBakeElapsedMs(0);
           pollStatus(lid);
@@ -1087,6 +1088,7 @@ export default function TeacherApp() {
       // the revision.  Re-read before offering the next valid action.
       if (res.status === 409) {
         const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
+        if (currentLessonIdRef.current !== lid) return;
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
           if (currentLessonIdRef.current !== lid) return;
