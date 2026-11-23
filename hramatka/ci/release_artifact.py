@@ -20,6 +20,8 @@ from tempfile import TemporaryDirectory
 
 SCHEMA = "hramatka-release-artifact.v1"
 MANIFEST_NAME = "manifest.json"
+RELEASE_MEMBERS = (MANIFEST_NAME, "PUBLIC_SHA", "pyproject.toml", "uv.lock", "wheel", "hramatka")
+WHEEL_PATTERN = "hramatka-*.whl"
 
 
 def sha256_file(path: Path) -> str:
@@ -75,7 +77,7 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
     if not dist_assets.is_dir():
         raise SystemExit("missing hramatka/app/dist/assets — build the teacher app first")
     bundle = find_bundle(dist_assets)
-    if not wheel.match("hramatka-*.whl") or not wheel.is_file():
+    if not wheel.match(WHEEL_PATTERN) or not wheel.is_file():
         raise SystemExit("expected a built Hramatka wheel")
     public_sha = git_sha(repo)
     try:
@@ -143,7 +145,7 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
     if tarball.exists():
         tarball.unlink()
     with tarfile.open(tarball, "w:gz") as tar:
-        for name in (MANIFEST_NAME, "PUBLIC_SHA", "pyproject.toml", "uv.lock", "wheel", "hramatka"):
+        for name in RELEASE_MEMBERS:
             tar.add(staging / name, arcname=name)
     (out_dir / MANIFEST_NAME).write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -159,8 +161,13 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
 def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
     with TemporaryDirectory(prefix="hramatka-release-verify-") as temporary:
         staging = Path(temporary)
-        with tarfile.open(tarball, "r:gz") as tar:
-            tar.extractall(staging, filter="data")
+        try:
+            with tarfile.open(tarball, "r:gz") as tar:
+                tar.extractall(staging, filter="data")
+        except (EOFError, OSError, tarfile.TarError) as exc:
+            raise SystemExit("cannot extract a valid release archive") from exc
+        if any(path.name not in RELEASE_MEMBERS for path in staging.iterdir()):
+            raise SystemExit("unexpected file or directory at release archive root")
         manifest_path = staging / MANIFEST_NAME
         if manifest_path.is_symlink() or not manifest_path.is_file():
             raise SystemExit("manifest.json missing or not a regular file at the archive root")
@@ -214,8 +221,8 @@ def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
             if sha256_file(path) != manifest[field]:
                 raise SystemExit(f"{name} sha256 mismatch")
         wheel_dir = staging / "wheel"
-        wheels = list(wheel_dir.glob("hramatka-*.whl"))
-        if wheel_dir.is_symlink() or len(wheels) != 1:
+        wheels = list(wheel_dir.iterdir()) if not wheel_dir.is_symlink() and wheel_dir.is_dir() else []
+        if len(wheels) != 1 or not wheels[0].match(WHEEL_PATTERN):
             raise SystemExit("artifact must contain exactly one Hramatka wheel")
         wheel = wheels[0]
         if wheel.is_symlink() or not wheel.is_file():
