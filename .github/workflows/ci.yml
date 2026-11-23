@@ -30,12 +30,13 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.3" # Bundles npm 11.19.1 for strict-allow-scripts.
+          node-version-file: hramatka/app/package.json
           cache: npm
           cache-dependency-path: hramatka/app/package-lock.json
       - name: Verify npm install-script policy
         run: |
           set -euo pipefail
+          node --version
           npm --version
           # Use the app policy with one local tarball so the probe needs no registry packages.
           probe="$(mktemp -d "$RUNNER_TEMP/npm-script-policy.XXXXXX")"
@@ -83,16 +84,16 @@ jobs:
           checksum: "a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
           download-from-astral-mirror: 'false'
           enable-cache: 'false'
-          python-version: "3.12"
       - name: Install tooling (uv.lock)
         run: |
           set -euo pipefail
           venv="$RUNNER_TEMP/hramatka-venv"
           rm -rf "$venv"
-          UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --no-install-project --no-build --extra dev --python 3.12
+          UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --no-install-project --no-build --extra dev
           printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
       - name: Boundary + vendor guards
         run: |
+          python --version
           python hramatka/engine/tools/check_boundary.py
           python hramatka/engine/tools/check_vendor_guard.py
       - name: Ruff (CI surface only)
@@ -161,12 +162,13 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.3"
+          node-version-file: hramatka/app/package.json
           cache: npm
           cache-dependency-path: hramatka/app/package-lock.json
       - name: npm ci
         run: |
           set -euo pipefail
+          node --version
           npm --version
           npm ci
       - name: Playwright e2e (default config; no live teacher stack)
