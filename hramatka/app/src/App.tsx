@@ -1068,6 +1068,7 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
+      if (currentLessonIdRef.current !== lid) return;
       if (res.ok) {
         const next = statusCardFromApi(data as LessonStatus, current);
         setBakeStatus(next);
@@ -1088,6 +1089,7 @@ export default function TeacherApp() {
         const statusRes = await lessonApiFetch(`/api/lessons/${lid}/status`);
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
+          if (currentLessonIdRef.current !== lid) return;
           setBakeStatus(refreshed);
           if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
         }
@@ -1095,7 +1097,7 @@ export default function TeacherApp() {
       const e: ErrorEnvelope = data;
       handleApiError(e);
     } catch {
-      setError(errKey('err.bakeFailed'));
+      if (currentLessonIdRef.current === lid) setError(errKey('err.bakeFailed'));
     } finally {
       bakeMutationInFlightRef.current = null;
       setBakeMutation(null);
@@ -1339,24 +1341,27 @@ export default function TeacherApp() {
       setError(errKey('err.ackAllBeforeAccept'));
       return;
     }
+    const requestLessonId = currentLessonId;
     setLoading(true);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/accept`, {
+      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
+        if (currentLessonIdRef.current !== requestLessonId) return;
         if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload2'));
-          await openLesson(currentLessonId, 'review');
+          await openLesson(requestLessonId, 'review');
         } else {
           setError(errOr(e.message, 'err.acceptFailed'));
         }
@@ -1368,23 +1373,26 @@ export default function TeacherApp() {
 
   const returnToDraft = async () => {
     if (!lesson || !currentLessonId || !csrf) return;
+    const requestLessonId = currentLessonId;
     setLoading(true);
     setError(null);
     try {
-      const res = await lessonApiFetch(`/api/lessons/${currentLessonId}/draft`, {
+      const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
         const lr: LessonResource = await res.json();
+        if (currentLessonIdRef.current !== requestLessonId) return;
         applyLessonResource(lr);
         await loadCatalog();
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
+        if (currentLessonIdRef.current !== requestLessonId) return;
         if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload'));
-          await handleRevisionConflict();
+          await handleRevisionConflict(requestLessonId);
         } else {
           setError(errOr(e.message, 'err.draftFailed'));
         }
