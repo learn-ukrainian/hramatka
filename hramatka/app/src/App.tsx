@@ -218,9 +218,9 @@ interface RouteState {
   mode?: 'review' | 'run' | 'conduct';
 }
 
-// `onLeaveLesson` runs synchronously, before the route changes, for every route that is not
-// a lesson (navigation buttons and browser back/forward alike), so a late async result for
-// the lesson the teacher just left finds no current lesson to act on.
+// `onLeaveLesson` runs synchronously, before the route changes, for every navigation that is
+// not an in-app open of a lesson: buttons to other views and every browser back/forward,
+// so a late async result for the lesson the teacher just left has nothing to act on.
 function useSimpleRouter(onLeaveLesson: () => void) {
   const [route, setRoute] = useState<RouteState>({ view: 'invite' });
 
@@ -233,30 +233,31 @@ function useSimpleRouter(onLeaveLesson: () => void) {
         : r.view === 'settings'
           ? '#/settings'
           : '#/';
-    history.pushState(null, '', hash);
+    // Reopening the entry the browser already selected must not push a duplicate, which
+    // would discard the Forward history.
+    if (window.location.hash !== hash) history.pushState(null, '', hash);
     setRoute(r);
   }, [onLeaveLesson]);
 
   useEffect(() => {
     const parse = () => {
+      // The browser picked this entry: whatever lesson was current is left, a lesson route
+      // is then opened afresh by the route effect.
+      onLeaveLesson();
       const h = window.location.hash || '#/';
       if (h === '#/lessons') {
-        onLeaveLesson();
         setRoute({ view: 'catalog' });
       } else if (h === '#/settings') {
-        onLeaveLesson();
         setRoute({ view: 'settings' });
       } else if (h.startsWith('#/lessons/')) {
         const [id, query] = h.slice('#/lessons/'.length).split('?', 2);
         if (!id || /[^A-Za-z0-9_-]/.test(id)) {
-          onLeaveLesson();
           setRoute({ view: 'paste' });
           return;
         }
         const mode = new URLSearchParams(query).get('mode');
         setRoute({ view: 'lesson', lessonId: id, mode: mode === 'run' || mode === 'conduct' ? mode : 'review' });
       } else {
-        onLeaveLesson();
         setRoute({ view: 'paste' });
       }
     };
@@ -323,9 +324,13 @@ export default function TeacherApp() {
 
   // Poll ref (prepared; used robust in item 3)
   const pollTimerRef = useRef<number | null>(null);
-  // Track the id we are actively polling for. Used to make clear-on-id-change + start
-  // reliable when switching catalog rows (F2). Prevents late clear from killing a fresh poll.
-  const activePollIdRef = useRef<string | null>(null);
+  // Identity of the poll that is running now. Every poll gets its own token, so a tick
+  // that outlives its poll (even one for the same lesson) can tell it was replaced.
+  const activePollRef = useRef<object | null>(null);
+  // Bumped by every navigation intent: opening a lesson, submitting a new bake, leaving a
+  // lesson. A continuation compares the generation it started under, because a lesson id
+  // alone cannot tell two intents on the same lesson apart (Review, then Conduct).
+  const navIntentRef = useRef(0);
   const currentLessonIdRef = useRef<string | null>(null);
   // The ref is what late async results compare against, so it must change in the same
   // tick as the lesson itself. Mirroring state through a passive effect leaves a window
@@ -334,7 +339,20 @@ export default function TeacherApp() {
     currentLessonIdRef.current = id;
     setCurrentLessonIdState(id);
   }, []);
-  const clearCurrentLesson = useCallback(() => setCurrentLessonId(null), [setCurrentLessonId]);
+  const clearPoll = useCallback(() => {
+    if (pollTimerRef.current != null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    activePollRef.current = null;
+    setPolling(false);
+  }, []);
+  // Leaving a lesson: later results for it find no lesson, no poll and an older intent.
+  const clearCurrentLesson = useCallback(() => {
+    navIntentRef.current += 1;
+    clearPoll();
+    setCurrentLessonId(null);
+  }, [clearPoll, setCurrentLessonId]);
   const { route, navigate } = useSimpleRouter(clearCurrentLesson);
   const redeemInFlightRef = useRef<Promise<boolean> | null>(null);
   const regenerationMutationInFlightRef = useRef(false);
@@ -374,15 +392,6 @@ export default function TeacherApp() {
   const activeActivityRegeneration = lesson?.activity_regenerations?.find(
     (item) => item.status === 'queued' || item.status === 'running',
   );
-
-  const clearPoll = useCallback(() => {
-    if (pollTimerRef.current != null) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    activePollIdRef.current = null;
-    setPolling(false);
-  }, []);
 
   /** Reset all lesson/session-scoped client state (logout + invite redeem boundaries). */
   const resetSessionScopedState = useCallback(() => {
@@ -987,10 +996,9 @@ export default function TeacherApp() {
       anchorSource: 'teacher-paste',
       logicalModelId: source.logicalModelId,
     };
-    // The new lesson is the teacher's latest intent until they go elsewhere: leaving paste
-    // while the request is in flight replaces it, and a late 202 then starts nothing visible.
-    const previousLessonId = currentLessonIdRef.current;
-    currentLessonIdRef.current = id;
+    // Submitting is the teacher's latest intent until they go elsewhere: any later open or
+    // leaving paste replaces it, and a late 202 then starts nothing visible.
+    const intent = ++navIntentRef.current;
     try {
       const res = await lessonApiFetch('/api/lessons', {
         method: 'POST',
@@ -1016,7 +1024,7 @@ export default function TeacherApp() {
         saveLastBakeRequest(payload);
         lastBakeRef.current = payload;
         // Accepted, but the teacher already left: the recovery copy is kept, the screen is not.
-        if (currentLessonIdRef.current !== id) return;
+        if (navIntentRef.current !== intent) return;
         setPasteText(text);
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
@@ -1031,11 +1039,9 @@ export default function TeacherApp() {
         pollStatus(id);
       } else {
         const e: ErrorEnvelope = data;
-        if (currentLessonIdRef.current === id) currentLessonIdRef.current = previousLessonId;
         setError(errOr(e.message, 'err.bakeFailed'));
       }
     } catch {
-      if (currentLessonIdRef.current === id) currentLessonIdRef.current = previousLessonId;
       setError(errKey('err.bakeFailed'));
     } finally {
       setLoading(false);
@@ -1176,7 +1182,9 @@ export default function TeacherApp() {
   // - active id tracking + tick guards + conditional clear so catalog row switches don't kill polls
   const pollStatus = (id: string) => {
     clearPoll();
-    activePollIdRef.current = id;
+    const poll = {};
+    const intent = navIntentRef.current;
+    activePollRef.current = poll;
     setPolling(true);
     let attempts = 0;
     // Real bakes run ~4 min and provider hiccups stretch them further: poll
@@ -1186,13 +1194,13 @@ export default function TeacherApp() {
     const schedule = (delay: number) => {
       pollTimerRef.current = window.setTimeout(tick, delay);
     };
-    // A tick may act only while this poll is the active one AND the teacher still wants
-    // this lesson: the current-lesson ref moves synchronously when they leave or open
-    // another lesson, so an orphaned poll ends itself here instead of waiting for a
-    // passive effect. It clears only its own poll, never a newer one.
+    // A tick may act only while this poll is the active one and no navigation intent has
+    // come since it started: the generation moves synchronously when the teacher leaves or
+    // opens anything, so an orphaned poll ends itself here instead of waiting for a passive
+    // effect. It clears only its own poll, never a newer one.
     const isStale = () => {
-      if (activePollIdRef.current !== id) return true;
-      if (currentLessonIdRef.current === id) return false;
+      if (activePollRef.current !== poll) return true;
+      if (navIntentRef.current === intent) return false;
       clearPoll();
       return true;
     };
@@ -1236,20 +1244,17 @@ export default function TeacherApp() {
 
   // ===== Lesson load + modes =====
   const openLesson = async (id: string, mode: 'review' | 'run' | 'conduct' = 'review') => {
-    // Opening a lesson is the teacher's latest intent: record it synchronously in the same
-    // ref that guards every other late result. A later open, or leaving for the catalog,
-    // paste or settings, replaces it, and each continuation below then drops itself.
-    const previousLessonId = currentLessonIdRef.current;
+    // Opening a lesson is the teacher's latest intent. The generation tells this open from
+    // any later one, even for the same lesson, and from leaving; the lesson ref moves now
+    // so that late results of the lesson being left find another lesson current.
+    const intent = ++navIntentRef.current;
     currentLessonIdRef.current = id;
-    const superseded = () => currentLessonIdRef.current !== id;
-    // An open that shows nothing hands the intent back, keeping the ref equal to the state.
-    let shown = false;
+    const superseded = () => navIntentRef.current !== intent;
     // #93 item1: no silent return on !session. Gate was the race; callers use sessionReady.
     if (!session || !csrf) {
       const s = await refreshSession();
       if (superseded()) return;
       if (!s) {
-        currentLessonIdRef.current = previousLessonId;
         setError(errKey('err.sessionRequired'));
         return;
       }
@@ -1274,7 +1279,6 @@ export default function TeacherApp() {
         if (superseded()) return;
         setLesson(lr);
         setBakeStatus(null);
-        shown = true;
         setCurrentLessonId(id);
         setLocalAcks(lr.warning_acknowledgements || []);
         // The student must receive the source text before the exercises; keep the
@@ -1285,7 +1289,6 @@ export default function TeacherApp() {
         await res.json().catch(() => ({}));
         if (superseded()) return;
         setLesson(null);
-        shown = true;
         setCurrentLessonId(id);
         navigate({ view: 'lesson', lessonId: id, mode });
         try {
@@ -1329,7 +1332,6 @@ export default function TeacherApp() {
     } catch {
       if (!superseded()) setError(errKey('err.loadLesson'));
     } finally {
-      if (!shown && !superseded()) currentLessonIdRef.current = previousLessonId;
       setLoading(false);
     }
   };
