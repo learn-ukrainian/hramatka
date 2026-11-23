@@ -28,12 +28,12 @@ Do **not** resurrect them in the public product repo.
 
 ## Local development (product)
 
-From a clean checkout of this repository:
+From a clean checkout, follow the [local frontend checks](../../README.md#frontend),
+including the CI-pinned Node and npm setup before running `npm ci`.
+
+For the engine, run from the repository root:
 
 ```bash
-# Frontend (app)
-cd hramatka/app && npm ci && npm run typecheck && npm test
-
 # Engine (DB-free CI surface + optional VESUM fixture suite)
 python -m pip install -e ".[dev]"
 pytest -q hramatka/engine/tests/test_boundary.py hramatka/engine/tests/test_vesum_gate.py
