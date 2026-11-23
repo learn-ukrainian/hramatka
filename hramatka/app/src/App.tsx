@@ -525,7 +525,8 @@ export default function TeacherApp() {
     }
   }, [t]);
 
-  const handleApiError = useCallback((e: ErrorEnvelope) => {
+  const handleApiError = useCallback((envelope: ErrorEnvelope | null | undefined) => {
+    const e: Partial<ErrorEnvelope> = envelope && typeof envelope === 'object' ? envelope : {};
     if (e.code === 'session_required') {
       setSession(null);
       setCsrf(null);
@@ -1097,7 +1098,7 @@ export default function TeacherApp() {
         }
       } else if (latest()) {
         navRef.current.floor = n;
-        const e: ErrorEnvelope = data;
+        const e = (data && typeof data === 'object' ? data : {}) as ErrorEnvelope;
         setError(errOr(e.message, 'err.bakeFailed'));
       }
     } catch {
@@ -1149,12 +1150,11 @@ export default function TeacherApp() {
       if (res.ok) {
         // An idempotent replay may answer with a later state, including ready. An unreadable
         // body proves only that the request landed: keep the card and re-read the visit.
-        const answer = data as Partial<LessonStatus>;
-        if (typeof answer.status === 'string' && typeof answer.revision === 'number') {
-          showStatus(visit, data as LessonStatus);
-        } else {
-          void refreshLesson(visit);
-        }
+        const answer = (data && typeof data === 'object' ? data : {}) as Partial<LessonStatus>;
+        const usable = ['draft', 'baking', 'ready', 'failed', 'cancelled'].includes(answer.status as string)
+          && Number.isInteger(answer.revision) && (answer.revision as number) > 0;
+        if (usable) showStatus(visit, answer as LessonStatus);
+        else ensurePoll(visit); // the card stays; the visit's bounded poll learns the real state
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
@@ -1162,12 +1162,18 @@ export default function TeacherApp() {
       if (res.status === 409) {
         const read = await readStatus(lid);
         if (endOnTerminal(read, visit) || !owned()) return;
-        if ('status' in read) showStatus(visit, read.status);
+        if ('status' in read && read.status) showStatus(visit, read.status);
+        else ensurePoll(visit);
+      } else {
+        // The outcome is unknown (the request may have landed): let the bounded poll reconcile.
+        ensurePoll(visit);
       }
-      const e: ErrorEnvelope = data;
-      handleApiError(e);
+      handleApiError(data as ErrorEnvelope);
     } catch {
-      if (owned()) setError(errKey('err.bakeFailed'));
+      if (owned()) {
+        setError(errKey('err.bakeFailed'));
+        ensurePoll(visit);
+      }
     } finally {
       bakeMutationInFlightRef.current = null;
       setBakeMutation(null);
@@ -1325,21 +1331,28 @@ export default function TeacherApp() {
   /** A failed lesson or status response as a read result. */
   const readFailure = async (res: Response): Promise<LessonRead> => {
     if (res.status === 404) return { error: () => setError(errKey('err.lessonNotFound')), terminal: 'gone' };
-    const e: ErrorEnvelope = await res.json().catch(() => ({ code: res.status === 401 ? 'session_required' : '', message: '', retryable: false }));
-    return { error: () => handleApiError(e), terminal: res.status === 401 ? 'session' : undefined };
+    if (res.status === 401) return { error: () => handleApiError({ code: 'session_required', message: '', retryable: false }), terminal: 'session' };
+    const e = await res.json().catch(() => null) as ErrorEnvelope | null;
+    return { error: () => handleApiError(e) };
   };
 
   /**
    * A terminal failure ends what it proves, whoever read it: a 401 expires the session it was
-   * read in (if that is still the session); a 404 ends the visit of the lesson that is gone (if
-   * that visit is still current), so no read still pending for it can land.
+   * read in (if that is still the session); a 404 retires the visit of the lesson that is gone
+   * (if that visit is still current). The retired visit keeps the lesson and mode, so the route
+   * effect does not reopen it, accepts no payload (its floor is unreachable), and leaves
+   * navigations to other screens pending.
    */
   const endOnTerminal = (read: LessonRead, visit: Visit): boolean => {
     if (!('error' in read) || !read.terminal) return false;
     if (read.terminal === 'session') {
       endedSession(401, visit.scope);
     } else if (visitRef.current === visit) {
-      leaveScreen();
+      clearPoll();
+      visitRef.current = { ...offLessonVisit(visit.scope), lessonId: visit.lessonId, mode: visit.mode, revision: Number.POSITIVE_INFINITY };
+      setLesson(null);
+      setBakeStatus(null);
+      setPendingPrintLessonId(null);
       read.error();
     }
     return true;
@@ -1447,7 +1460,7 @@ export default function TeacherApp() {
     try {
       const read = await readLesson(id, live);
       if ('error' in read && read.terminal === 'session') {
-        if (visitRef.current.scope === scope) read.error();
+        endedSession(401, scope);
         return;
       }
       if (!live()) return;
@@ -1723,6 +1736,10 @@ export default function TeacherApp() {
     }
     const resourceResponse = await lessonApiFetch(`/api/lessons/${entry.lesson_id}`);
     if (endedSession(resourceResponse.status, visit.scope) || visitRef.current !== visit) return;
+    if (resourceResponse.status === 404) {
+      endOnTerminal({ error: () => setError(errKey('err.lessonNotFound')), terminal: 'gone' }, visit);
+      return;
+    }
     if (!resourceResponse.ok) {
       // A failed regeneration never changed lesson content, so its durable retry
       // affordance is safe to show even when the resource refetch is transiently
