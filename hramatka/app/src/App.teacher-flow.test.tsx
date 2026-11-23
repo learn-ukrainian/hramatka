@@ -1116,3 +1116,390 @@ describe('student print omits teacher material from the print DOM (#587)', () =>
     expect(printed).toContain('dmargin');
   });
 });
+
+/**
+ * D-STALENAV-A: no late async result moves the teacher or overwrites a screen they no
+ * longer own. Each test holds the responses of one finding's sequence and releases them in
+ * the order that broke an earlier design; the defect class is named in the test title.
+ */
+describe('late results never move the teacher (D-STALENAV-A)', () => {
+  type Held = { promise: Promise<Response>; release: (value: Response) => Promise<void> };
+  const held = (): Held => {
+    let resolve!: (value: Response) => void;
+    const promise = new Promise<Response>((r) => { resolve = r; });
+    return {
+      promise,
+      release: async (value: Response) => {
+        await act(async () => {
+          resolve(value);
+          await promise;
+          // Fetch fakes resolve through microtasks only; one macrotask lets every
+          // continuation of this response run to completion.
+          await new Promise<void>((done) => { setTimeout(done, 0); });
+        });
+      },
+    };
+  };
+  const never = () => new Promise<Response>(() => {});
+  const pilotModels = { registry_version: 'test', models: [{ id: 'pilot', label: 'Pilot', description: '' }], unavailable_message: null };
+  const notReady = () => errorResponse(409, { code: 'lesson_not_ready', message: 'Ще не готово.' });
+  const status = (state: 'draft' | 'baking' | 'failed' | 'cancelled' | 'ready', revision: number, attempt = 1) => ({
+    ...jobStatus(state === 'ready' ? 'baking' : state, revision, attempt),
+    status: state,
+  });
+  const doc = (title: string, revision = 1, accepted = false) => {
+    const resource = generatedLessonResource('lesson-1', title);
+    return {
+      ...resource,
+      revision,
+      accepted_at: accepted ? '2026-08-13T00:00:00Z' : null,
+      accepted_revision: accepted ? revision : null,
+      lesson: { ...resource.lesson, accepted },
+    };
+  };
+  const row = (id: string, title: string, accepted = false) => ({
+    id, title, anchor_snippet: null, status: 'ready', level: 'B1', duration: 45, methodology: 'ttt',
+    grammar_focus: null, revision: 1, accepted, accepted_at: accepted ? '2026-08-13T00:00:00Z' : null,
+    accepted_revision: null, failure_code: null,
+    created_at: '2026-08-13T00:00:00Z', updated_at: '2026-08-13T00:00:00Z',
+  });
+  const path = (input: RequestInfo | URL) => new URL(String(input), 'http://localhost').pathname;
+  const isGet = (init?: RequestInit) => !init?.method || init.method === 'GET';
+
+  /** Fetch fake: `route` answers first; unhandled session/chrome requests get defaults. */
+  function serve(route: (p: string, init: RequestInit | undefined, url: string) => Promise<Response> | Response | undefined, session: object = teacher) {
+    const fetchFake = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const p = path(input);
+      const answer = route(p, init, String(input));
+      if (answer) return answer;
+      if (p === '/api/session') return response(session);
+      if (p === '/api/teacher/preferences') return response({ default_duration: 60 });
+      if (p === '/api/lesson-models') return response(pilotModels);
+      if (p === '/api/lessons') return response({ lessons: [] });
+      return response({});
+    });
+    vi.stubGlobal('fetch', fetchFake);
+    return fetchFake;
+  }
+  const calls = (fetchFake: ReturnType<typeof serve>, p: string) =>
+    fetchFake.mock.calls.filter(([input, init]) => path(input) === p && isGet(init as RequestInit | undefined)).length;
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '#/lessons/lesson-1');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('F1: a failed open writes no screen owner, so an action of the lesson the teacher is on still lands and one of a lesson they left does not', async () => {
+    const regeneration = held();
+    const draft = held();
+    const catalogReview = held();
+    let lessonReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 1) return response(doc('Перший урок', 1, true));
+        if (lessonReads === 2) return never(); // header Review on the current screen, held
+        if (lessonReads === 4) return catalogReview.promise;
+        return errorResponse(404, { code: 'lesson_not_found', message: 'Немає.' }); // Conduct
+      }
+      if (p.endsWith('/blocks/block-1/regenerations')) return regeneration.promise;
+      if (p === '/api/lessons/lesson-1/draft') return draft.promise;
+      if (p === '/api/lessons') return response({ lessons: [row('lesson-1', 'Перший урок', true)] });
+      return undefined;
+    });
+    renderApp();
+
+    // Stay on lesson 1: Review pending, Conduct (the latest) fails; the screen is still owned.
+    fireEvent.click(await screen.findByText('Створити інший варіант'));
+    fireEvent.click(screen.getByText('Створити новий варіант'));
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    fireEvent.click(screen.getByRole('button', { name: '▶ Провести заняття' }));
+    expect(await screen.findByText('Урок не знайдено.')).toBeInTheDocument();
+    expect(window.location.hash).not.toContain('mode=conduct');
+    await regeneration.release(errorResponse(500, { code: 'server_error', message: 'Збій сервера.' }));
+    expect(screen.getByText('Збій сервера.')).toBeInTheDocument();
+
+    // Leave lesson 1 with an action pending; catalog Review pending, Conduct fails last.
+    fireEvent.click(document.querySelector('[data-action="save-draft"]')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    fireEvent.click(await screen.findByTestId('catalog-open-btn'));
+    await waitFor(() => expect(lessonReads).toBe(4));
+    fireEvent.click(screen.getByRole('button', { name: 'Проведення' }));
+    expect(await screen.findByText('Урок не знайдено.')).toBeInTheDocument();
+    await draft.release(errorResponse(500, { code: 'server_error', message: 'Другий збій.' }));
+    await catalogReview.release(response(doc('Перший урок', 2, true)));
+
+    expect(screen.queryByText('Другий збій.')).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('#/lessons');
+  });
+
+  it('F6: Check now and its poll keep the Conduct mode, also after a failed refresh', async () => {
+    window.history.replaceState(null, '', '#/lessons/lesson-1?mode=conduct');
+    let lessonReads = 0;
+    const fetchFake = serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 3
+          ? errorResponse(503, { code: 'temporarily_unavailable', message: 'Спробуйте пізніше.' })
+          : notReady();
+      }
+      if (p === '/api/lessons/lesson-1/status') return response(status('baking', 3));
+      return undefined;
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Перевірити зараз'));
+    await waitFor(() => expect(lessonReads).toBe(2));
+    await screen.findByTestId('baking-status-view');
+    expect(window.location.hash).toContain('mode=conduct');
+
+    fireEvent.click(screen.getByText('Перевірити зараз'));
+    expect(await screen.findByText('Спробуйте пізніше.')).toBeInTheDocument();
+    expect(window.location.hash).toContain('mode=conduct');
+    const statusReads = calls(fetchFake, '/api/lessons/lesson-1/status');
+    await waitFor(() => expect(calls(fetchFake, '/api/lessons/lesson-1/status')).toBeGreaterThan(statusReads), { timeout: 3000 });
+    expect(screen.getByTestId('baking-status-view')).toBeInTheDocument();
+    expect(window.location.hash).toContain('mode=conduct');
+  });
+
+  it('F7: an older overlapping read that answers 409 last never clears the newer ready document', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const older = held();
+    let lessonReads = 0;
+    const fetchFake = serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 2) return older.promise;
+        return lessonReads === 1 ? notReady() : response(doc('Готовий урок'));
+      }
+      if (p === '/api/lessons/lesson-1/status') return response(status('baking', 1));
+      return undefined;
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Перевірити зараз'));
+    fireEvent.click(screen.getByText('Перевірити зараз'));
+    expect(await screen.findByRole('heading', { name: 'Готовий урок' })).toBeInTheDocument();
+    await older.release(notReady());
+
+    expect(screen.getByRole('heading', { name: 'Готовий урок' })).toBeInTheDocument();
+    expect(screen.queryByTestId('baking-status-view')).not.toBeInTheDocument();
+    const statusReads = calls(fetchFake, '/api/lessons/lesson-1/status');
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(calls(fetchFake, '/api/lessons/lesson-1/status')).toBe(statusReads);
+  });
+
+  it('F8: a late cancel result of a lesson the teacher left and reopened installs no bake card', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const cancel = held();
+    let lessonReads = 0;
+    const fetchFake = serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return lessonReads === 1 ? notReady() : response(doc('Готовий урок'));
+      }
+      if (p === '/api/lessons/lesson-1/status') return response(status('baking', 4));
+      if (p === '/api/lessons/lesson-1/cancel') return cancel.promise;
+      if (p === '/api/lessons') return response({ lessons: [row('lesson-1', 'Готовий урок')] });
+      return undefined;
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByTestId('bake-cancel-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Мої заняття' }));
+    fireEvent.click(await screen.findByTestId('catalog-open-btn'));
+    expect(await screen.findByRole('heading', { name: 'Готовий урок' })).toBeInTheDocument();
+    await cancel.release(response(status('cancelled', 5)));
+
+    expect(screen.getByRole('heading', { name: 'Готовий урок' })).toBeInTheDocument();
+    expect(screen.queryByTestId('failure-recovery')).not.toBeInTheDocument();
+    expect(window.location.hash).toContain('/lessons/lesson-1');
+    const statusReads = calls(fetchFake, '/api/lessons/lesson-1/status');
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(calls(fetchFake, '/api/lessons/lesson-1/status')).toBe(statusReads);
+  });
+
+  it("F10': the ready poll reads the document itself, keeps polling through a failed read, and a held Check now that fails last shows nothing", async () => {
+    const checkNow = held();
+    const firstPollRead = held();
+    let lessonReads = 0;
+    let statusReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 1) return notReady();
+        if (lessonReads === 2) return checkNow.promise;
+        if (lessonReads === 3) return firstPollRead.promise;
+        return response(doc('Готовий урок', 3));
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        return response(statusReads === 1 ? status('baking', 2) : status('ready', 3));
+      }
+      return undefined;
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Перевірити зараз'));
+    // The poll's own read starts while Check now is still held: no join.
+    await waitFor(() => expect(lessonReads).toBe(3), { timeout: 3000 });
+    await firstPollRead.release(errorResponse(503, { code: 'temporarily_unavailable', message: 'Спробуйте пізніше.' }));
+    expect(await screen.findByRole('heading', { name: 'Готовий урок' }, { timeout: 3000 })).toBeInTheDocument();
+    await checkNow.release(errorResponse(503, { code: 'temporarily_unavailable', message: 'Спробуйте пізніше.' }));
+
+    expect(screen.getByRole('heading', { name: 'Готовий урок' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it("F11': a same-screen reload keeps the action it did not supersede and never paints an older revision, in either delivery order", async () => {
+    const draft = held();
+    const accept = held();
+    const lateReload = held();
+    let lessonReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 2) return errorResponse(503, { code: 'temporarily_unavailable', message: 'Спробуйте пізніше.' });
+        if (lessonReads === 4) return lateReload.promise;
+        return response(doc('Урок', 1, true)); // first open, and the reload that answers before the draft
+      }
+      if (p === '/api/lessons/lesson-1/draft') return draft.promise;
+      if (p === '/api/lessons/lesson-1/accept') return accept.promise;
+      return undefined;
+    });
+    renderApp();
+
+    await screen.findByText('Ревізія: 1 • Прийнято: так');
+    fireEvent.click(screen.getByRole('button', { name: '▶ Провести заняття' }));
+    expect(await screen.findByText('Спробуйте пізніше.')).toBeInTheDocument();
+    expect(window.location.hash).not.toContain('mode=conduct');
+    fireEvent.click(document.querySelector('[data-action="save-draft"]')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(lessonReads).toBe(3));
+    await draft.release(response(doc('Урок', 2, false)));
+    expect(screen.getByText('Ревізія: 2 • Прийнято: ні')).toBeInTheDocument();
+
+    // Reverse order: the action answers first, the reload that read before it answers last.
+    fireEvent.click(document.querySelector('[data-action="accept-lesson"]')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(lessonReads).toBe(4));
+    await accept.release(response(doc('Урок', 3, true)));
+    await lateReload.release(response(doc('Урок', 2, false)));
+    expect(screen.getByText('Ревізія: 3 • Прийнято: так')).toBeInTheDocument();
+  });
+
+  it('F13: an old failed status never replaces the retry card or ends its poll, in either delivery order', async () => {
+    let lessonReads = 0;
+    let statusQueue: Array<Held | Response> = [];
+    let serverStatus = status('failed', 5);
+    const retryResponses: Array<Held | Response> = [];
+    const fetchFake = serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        return notReady();
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        const next = statusQueue.shift();
+        if (next) return 'promise' in next ? next.promise : next;
+        return response(serverStatus);
+      }
+      if (p === '/api/lessons/lesson-1/retry') {
+        const next = retryResponses.shift()!;
+        return 'promise' in next ? next.promise : next;
+      }
+      return undefined;
+    });
+    renderApp();
+    await screen.findByTestId('failure-recovery');
+
+    // Retry commits first, the old failed status of a same-screen reload answers last.
+    const oldStatus = held();
+    statusQueue = [oldStatus];
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(lessonReads).toBe(2));
+    serverStatus = status('baking', 6, 2);
+    retryResponses.push({ ok: true, status: 202, json: async () => status('baking', 6, 2) } as Response);
+    fireEvent.click(screen.getByTestId('failure-retry-btn'));
+    await waitFor(() => expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2'));
+    await oldStatus.release(response(status('failed', 5)));
+    expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2');
+    expect(screen.queryByTestId('failure-recovery')).not.toBeInTheDocument();
+    const statusReads = calls(fetchFake, '/api/lessons/lesson-1/status');
+    await waitFor(() => expect(calls(fetchFake, '/api/lessons/lesson-1/status')).toBeGreaterThan(statusReads), { timeout: 3000 });
+
+    // Attempt 2 fails; this time the old failed status answers first, the retry last.
+    serverStatus = status('failed', 7, 2);
+    await screen.findByTestId('failure-recovery', undefined, { timeout: 3000 });
+    const oldStatus2 = held();
+    const retry2 = held();
+    statusQueue = [oldStatus2];
+    retryResponses.push(retry2);
+    fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
+    await waitFor(() => expect(lessonReads).toBe(3));
+    fireEvent.click(screen.getByTestId('failure-retry-btn'));
+    serverStatus = status('baking', 8, 3);
+    await oldStatus2.release(response(status('failed', 7, 2)));
+    await retry2.release({ ok: true, status: 202, json: async () => status('baking', 8, 3) } as Response);
+    expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 3');
+    expect(screen.queryByTestId('failure-recovery')).not.toBeInTheDocument();
+    const statusReads2 = calls(fetchFake, '/api/lessons/lesson-1/status');
+    await waitFor(() => expect(calls(fetchFake, '/api/lessons/lesson-1/status')).toBeGreaterThan(statusReads2), { timeout: 3000 });
+  });
+
+  it("F14: after an administrator switches owner, owner A's pending reads neither open A's lesson nor replace B's rows", async () => {
+    const admin = { ...teacher, role: 'admin' as const };
+    const checkNow = held();
+    const pollRead = held();
+    let lessonReads = 0;
+    let statusReads = 0;
+    const ownerCatalogs: string[] = [];
+    serve((p, init, url) => {
+      const owner = new URL(url, 'http://localhost').searchParams.get('owner_id');
+      if (p === '/api/lesson-owners') {
+        return response({ owners: [
+          { id: 'teacher-1', display_name: 'Марія', role: 'admin' },
+          { id: 'teacher-2', display_name: 'Тетяна', role: 'teacher' },
+        ] });
+      }
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        lessonReads += 1;
+        if (lessonReads === 1) return notReady();
+        return lessonReads === 2 ? checkNow.promise : pollRead.promise;
+      }
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        return response(statusReads === 1 ? status('baking', 2) : status('ready', 3));
+      }
+      if (p === '/api/lessons') {
+        ownerCatalogs.push(owner ?? '');
+        return response({ lessons: owner === 'teacher-2'
+          ? [row('lesson-b', 'Урок Тетяни')]
+          : [row('lesson-1', 'Урок Марії')] });
+      }
+      return undefined;
+    }, admin);
+    renderApp();
+
+    fireEvent.click(await screen.findByText('Перевірити зараз'));
+    await waitFor(() => expect(lessonReads).toBe(3), { timeout: 3000 });
+    const select = (await screen.findByTestId('admin-owner-picker')).querySelector('select')!;
+    await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(2));
+    const catalogsBefore = ownerCatalogs.length;
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'teacher-2' } });
+    });
+    expect(await screen.findByText('Урок Тетяни')).toBeInTheDocument();
+    await checkNow.release(response(doc('Урок Марії детально')));
+    await pollRead.release(response(doc('Урок Марії детально')));
+
+    expect(window.location.hash).toBe('#/lessons');
+    expect(screen.getByText('Урок Тетяни')).toBeInTheDocument();
+    expect(screen.queryByText('Урок Марії детально')).not.toBeInTheDocument();
+    expect(ownerCatalogs.slice(catalogsBefore).every((owner) => owner === 'teacher-2')).toBe(true);
+  });
+});
