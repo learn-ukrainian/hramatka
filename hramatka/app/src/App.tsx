@@ -987,6 +987,10 @@ export default function TeacherApp() {
       anchorSource: 'teacher-paste',
       logicalModelId: source.logicalModelId,
     };
+    // The new lesson is the teacher's latest intent until they go elsewhere: leaving paste
+    // while the request is in flight replaces it, and a late 202 then starts nothing visible.
+    const previousLessonId = currentLessonIdRef.current;
+    currentLessonIdRef.current = id;
     try {
       const res = await lessonApiFetch('/api/lessons', {
         method: 'POST',
@@ -1011,6 +1015,8 @@ export default function TeacherApp() {
       if (res.status === 202) {
         saveLastBakeRequest(payload);
         lastBakeRef.current = payload;
+        // Accepted, but the teacher already left: the recovery copy is kept, the screen is not.
+        if (currentLessonIdRef.current !== id) return;
         setPasteText(text);
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
@@ -1025,9 +1031,11 @@ export default function TeacherApp() {
         pollStatus(id);
       } else {
         const e: ErrorEnvelope = data;
+        if (currentLessonIdRef.current === id) currentLessonIdRef.current = previousLessonId;
         setError(errOr(e.message, 'err.bakeFailed'));
       }
     } catch {
+      if (currentLessonIdRef.current === id) currentLessonIdRef.current = previousLessonId;
       setError(errKey('err.bakeFailed'));
     } finally {
       setLoading(false);
