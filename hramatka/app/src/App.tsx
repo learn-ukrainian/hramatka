@@ -1204,16 +1204,18 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: current.revision }),
       });
       const data = await res.json().catch(() => ({}));
-      if (endedSession(res.status, visit.scope) || !owned()) return;
+      // A terminal proof (401, the lesson gone) holds whichever visit is current now.
+      if (endedSession(res.status, visit.scope)) return;
       if (lessonGone(res.status, data, true)) {
         endOnTerminal(goneRead(), visit);
         return;
       }
+      if (!owned()) return;
       if (res.ok) {
         // An idempotent replay may answer with a later state, including ready. An unreadable
         // body proves only that the request landed: keep the card and re-read the visit.
         if (usableStatus(data)) showStatus(visit, data);
-        else ensurePoll(visit); // the card stays; the visit's bounded poll learns the real state
+        else ensurePoll(visit, true); // the card stays; a poll started now learns the real state
         return;
       }
       // Another tab may have completed the same idempotent intent or advanced
@@ -1222,16 +1224,16 @@ export default function TeacherApp() {
         const read = await readStatus(lid);
         if (endOnTerminal(read, visit) || !owned()) return;
         if ('status' in read && usableStatus(read.status)) showStatus(visit, read.status);
-        else ensurePoll(visit);
+        else ensurePoll(visit, true);
       } else {
-        // The outcome is unknown (the request may have landed): let the bounded poll reconcile.
-        ensurePoll(visit);
+        // The outcome is unknown (the request may have landed): a poll started now reconciles.
+        ensurePoll(visit, true);
       }
       handleApiError(data as ErrorEnvelope);
     } catch {
       if (owned()) {
         setError(errKey('err.bakeFailed'));
-        ensurePoll(visit);
+        ensurePoll(visit, true);
       }
     } finally {
       bakeMutationInFlightRef.current = null;
@@ -1468,10 +1470,12 @@ export default function TeacherApp() {
   // #93 item 3: one status loop per visit. Its token decides whether it may reschedule;
   // whether a status applies is decided by `show`. Real bakes run ~4 min and provider
   // hiccups stretch them further: poll fast for ~25 s, then every 2.5 s for ~10 min.
-  const ensurePoll = (visit: Visit) => {
+  const ensurePoll = (visit: Visit, fresh = false) => {
     // Only the current visit polls, and only while it shows no document: a caller that learned
     // nothing (an unusable or failed answer) after the document landed starts no status loop.
-    if (visitRef.current !== visit || visit.doc || pollRef.current?.visit === visit) return;
+    // `fresh` replaces the visit's loop, so a read it still has in flight (started before a
+    // cancel or retry whose outcome is unknown) can no longer end the reconciliation.
+    if (visitRef.current !== visit || visit.doc || (!fresh && pollRef.current?.visit === visit)) return;
     clearPoll();
     const poll = { visit };
     pollRef.current = poll;
@@ -1683,9 +1687,11 @@ export default function TeacherApp() {
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
-        if (endedSession(res.status, visit.scope) || !owned()) return;
+        if (endedSession(res.status, visit.scope)) return;
         if (lessonGone(res.status, e, true)) {
           endOnTerminal(goneRead(), visit);
+        } else if (!owned()) {
+          return;
         } else if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
@@ -1719,9 +1725,11 @@ export default function TeacherApp() {
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-        if (endedSession(res.status, visit.scope) || !owned()) return;
+        if (endedSession(res.status, visit.scope)) return;
         if (lessonGone(res.status, e, true)) {
           endOnTerminal(goneRead(), visit);
+        } else if (!owned()) {
+          return;
         } else if (e.code === 'revision_conflict') {
           setError(errKey('err.lessonChangedReload'));
           await refreshLesson(visit);
@@ -1851,11 +1859,11 @@ export default function TeacherApp() {
     }
     const resourceResponse = await lessonApiFetch(`/api/lessons/${entry.lesson_id}`);
     if (endedSession(resourceResponse.status, visit.scope)) return true;
-    if (visitRef.current !== visit) return false;
     if (lessonGone(resourceResponse.status, null, true)) {
       endOnTerminal(goneRead(), visit);
       return true;
     }
+    if (visitRef.current !== visit) return false;
     if (!resourceResponse.ok) {
       // A failed regeneration never changed lesson content, so its durable retry
       // affordance is safe to show even when the resource refetch is transiently
@@ -1942,9 +1950,11 @@ export default function TeacherApp() {
         return show(visit, { doc: lr }) ? lr : null;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
-      if (endedSession(res.status, visit.scope) || !owned()) return null;
+      if (endedSession(res.status, visit.scope)) return null;
       if (lessonGone(res.status, e, false)) {
         endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return null;
       } else if (e.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         if (opts?.reloadOnConflict !== false) await refreshLesson(visit);
@@ -2033,9 +2043,11 @@ export default function TeacherApp() {
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (endedSession(response.status, visit.scope) || !owned()) return;
+      if (endedSession(response.status, visit.scope)) return;
       if (lessonGone(response.status, envelope, false)) {
         endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return;
       } else if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         await refreshLesson(visit);
@@ -2075,9 +2087,11 @@ export default function TeacherApp() {
         return;
       }
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-      if (endedSession(response.status, visit.scope) || !owned()) return;
+      if (endedSession(response.status, visit.scope)) return;
       if (lessonGone(response.status, envelope, false)) {
         endOnTerminal(goneRead(), visit);
+      } else if (!owned()) {
+        return;
       } else if (envelope.code === 'revision_conflict') {
         setError(errKey('err.lessonChangedReload'));
         await refreshLesson(visit);
