@@ -303,6 +303,32 @@ const offLessonVisit = (scope: object = {}): Visit => ({
   scope, lessonId: null, mode: null, revision: 0, doc: false, card: null, ready: false,
 });
 
+/** The persistence contract's aggregate revision: an integer that starts at 1. */
+const isRevision = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
+
+const BAKE_STATES: readonly unknown[] = ['draft', 'baking', 'ready', 'failed', 'cancelled'];
+
+/**
+ * A status answer the apply rule can order: a supported state and a contract revision. Any
+ * other answer (an empty or unreadable body, an unknown state) says nothing about the lesson.
+ */
+const usableStatus = (value: unknown): value is LessonStatus => {
+  const status = value as Partial<LessonStatus> | null;
+  return !!status && typeof status === 'object'
+    && BAKE_STATES.includes(status.status) && isRevision(status.revision);
+};
+
+/** A lesson document the apply rule can order: an object with a contract revision. */
+const usableDoc = (value: unknown): value is LessonResource =>
+  !!value && typeof value === 'object' && isRevision((value as Partial<LessonResource>).revision);
+
+/** A success body that is no usable document fails its action the way a network error does. */
+const docFrom = async (res: Response): Promise<LessonResource> => {
+  const value: unknown = await res.json();
+  if (!usableDoc(value)) throw new TypeError('unusable lesson document');
+  return value;
+};
+
 /**
  * A lesson read: the document, the bake status (null when a transient failure hid it), or a
  * failure. A terminal failure proves something beyond one request: `session` (401) that the
@@ -1088,12 +1114,15 @@ export default function TeacherApp() {
         setDuration(NEW_LESSON_DURATION);
         setGrammarFocus(source.grammarFocus?.trim() || '');
         const visit = enterScreen(n, id, 'review', true);
-        if (data.status === 'ready') {
-          showStatus(visit, data as LessonStatus);
+        if (usableStatus(data) && data.status === 'ready') {
+          showStatus(visit, data);
         } else {
+          // A creation answer without a usable status still created the lesson: the card starts
+          // at the first revision and the poll learns the real state.
+          const known = usableStatus(data);
           show(visit, { card: {
-            status: data.status || 'baking', step: 'bake.step.textReceived',
-            revision: data.revision || 1, attempt: 1, attempt_history: [], startedAt: new Date().toISOString(),
+            status: known ? data.status : 'baking', step: 'bake.step.textReceived',
+            revision: known ? data.revision : 1, attempt: 1, attempt_history: [], startedAt: new Date().toISOString(),
           } });
         }
       } else if (latest()) {
@@ -1150,10 +1179,7 @@ export default function TeacherApp() {
       if (res.ok) {
         // An idempotent replay may answer with a later state, including ready. An unreadable
         // body proves only that the request landed: keep the card and re-read the visit.
-        const answer = (data && typeof data === 'object' ? data : {}) as Partial<LessonStatus>;
-        const usable = ['draft', 'baking', 'ready', 'failed', 'cancelled'].includes(answer.status as string)
-          && Number.isInteger(answer.revision) && (answer.revision as number) > 0;
-        if (usable) showStatus(visit, answer as LessonStatus);
+        if (usableStatus(data)) showStatus(visit, data);
         else ensurePoll(visit); // the card stays; the visit's bounded poll learns the real state
         return;
       }
@@ -1162,7 +1188,7 @@ export default function TeacherApp() {
       if (res.status === 409) {
         const read = await readStatus(lid);
         if (endOnTerminal(read, visit) || !owned()) return;
-        if ('status' in read && read.status) showStatus(visit, read.status);
+        if ('status' in read && usableStatus(read.status)) showStatus(visit, read.status);
         else ensurePoll(visit);
       } else {
         // The outcome is unknown (the request may have landed): let the bounded poll reconcile.
@@ -1271,13 +1297,14 @@ export default function TeacherApp() {
    * visit shows. One aggregate revision per lesson rises by one per transition and `ready`
    * is terminal (persistence contract), so a lower revision is stale and a bake card never
    * replaces a shown document. An equal revision applies: the aggregate is the same, and
-   * feedback rows and regeneration entries change without a new revision.
+   * feedback rows and regeneration entries change without a new revision. A payload without a
+   * contract revision (an empty or unreadable success body) cannot be ordered and never applies.
    */
   const show = (visit: Visit, payload: { doc: LessonResource } | { card: BakeCard }): boolean => {
     if (visitRef.current !== visit) return false;
     const isDoc = 'doc' in payload;
-    const revision = 'doc' in payload ? payload.doc.revision : payload.card.revision;
-    if (revision < visit.revision || (visit.doc && !isDoc)) return false;
+    const revision: unknown = 'doc' in payload ? payload.doc?.revision : payload.card.revision;
+    if (!isRevision(revision) || revision < visit.revision || (visit.doc && !isDoc)) return false;
     visit.revision = revision;
     visit.doc = isDoc;
     if ('doc' in payload) {
@@ -1311,8 +1338,10 @@ export default function TeacherApp() {
    * The one status handler (opens, re-reads, the poll, cancel/retry). A `ready` status is never
    * painted as a card: it raises the floor and the poll reads the document.
    */
-  const showStatus = (visit: Visit, status: LessonStatus | null) => {
+  const showStatus = (visit: Visit, answer: LessonStatus | null) => {
     if (visitRef.current !== visit || visit.doc) return;
+    // An unusable answer is no more than a transient failure that hid the status.
+    const status = usableStatus(answer) ? answer : null;
     if (status?.status === 'ready') {
       if (noteReady(visit, status)) ensurePoll(visit);
       return;
@@ -1374,7 +1403,8 @@ export default function TeacherApp() {
   const readLesson = async (id: string, live: () => boolean): Promise<LessonRead> => {
     try {
       const res = await lessonApiFetch(`/api/lessons/${id}`);
-      if (res.status === 200) return { doc: await res.json() as LessonResource };
+      // A document without a contract revision cannot be ordered: a failed, retryable read.
+      if (res.status === 200) return { doc: await docFrom(res) };
       if (res.status === 409) {
         await res.json().catch(() => ({}));
         if (!live()) return { stale: true };
@@ -1390,7 +1420,9 @@ export default function TeacherApp() {
   // whether a status applies is decided by `show`. Real bakes run ~4 min and provider
   // hiccups stretch them further: poll fast for ~25 s, then every 2.5 s for ~10 min.
   const ensurePoll = (visit: Visit) => {
-    if (pollRef.current?.visit === visit) return;
+    // Only the current visit polls, and only while it shows no document: a caller that learned
+    // nothing (an unusable or failed answer) after the document landed starts no status loop.
+    if (visitRef.current !== visit || visit.doc || pollRef.current?.visit === visit) return;
     clearPoll();
     const poll = { visit };
     pollRef.current = poll;
@@ -1573,7 +1605,7 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
-        const lr: LessonResource = await res.json();
+        const lr = await docFrom(res);
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as any));
@@ -1607,7 +1639,7 @@ export default function TeacherApp() {
         body: JSON.stringify({ expected_revision: lesson.revision }),
       });
       if (res.ok) {
-        const lr: LessonResource = await res.json();
+        const lr = await docFrom(res);
         show(visit, { doc: lr });
       } else {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
@@ -1751,7 +1783,7 @@ export default function TeacherApp() {
       }
       throw new Error('regeneration lesson refresh unavailable');
     }
-    const resource: LessonResource = await resourceResponse.json();
+    const resource = await docFrom(resourceResponse);
     show(visit, { doc: resource });
   };
 
@@ -1772,28 +1804,17 @@ export default function TeacherApp() {
         const response = await lessonApiFetch(
           `/api/lessons/${lessonId}/regenerations/${activeRegenerationId}`,
         );
-        if (!response.ok) {
-          if (response.status === 401) {
-            const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
-            if (!cancelled) handleApiError(envelope);
-            return;
-          }
-          throw new Error('regeneration poll unavailable');
-        }
+        if (endedSession(response.status, visit.scope)) return;
+        if (!response.ok) throw new Error('regeneration poll unavailable');
         const status: ActivityRegenerationEntry = await response.json();
         if (cancelled) return;
         if (!owned()) {
           // The teacher is elsewhere: ask again from whichever visit is current then.
         } else if (status.status === 'succeeded' || status.status === 'failed') {
-          const resourceResponse = await lessonApiFetch(`/api/lessons/${lessonId}`);
-          if (!cancelled && resourceResponse.ok) {
-            const resource: LessonResource = await resourceResponse.json();
-            if (cancelled) return;
-            if (owned()) {
-              show(visit, { doc: resource });
-              return;
-            }
-          }
+          // The one terminal-entry path (create, retry and this poll): a 401 ends the session, a
+          // 404 retires the visit, an unavailable read keeps polling for a success.
+          await reconcileActivityRegeneration(status, visit);
+          return;
         } else {
           applyActivityRegeneration(status);
         }
@@ -1807,7 +1828,7 @@ export default function TeacherApp() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- show is unmemoized; it reads only refs and state setters
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- endedSession and reconcileActivityRegeneration are unmemoized; they read only refs, state setters and handleApiError
   }, [lesson?.lesson_id, activeRegenerationId, applyActivityRegeneration, handleApiError, lessonApiFetch]);
 
   const reviewMutation = async (
@@ -1823,7 +1844,7 @@ export default function TeacherApp() {
     try {
       const res = await lessonApiFetch(path, init);
       if (res.ok) {
-        const lr: LessonResource = await res.json();
+        const lr = await docFrom(res);
         return show(visit, { doc: lr }) ? lr : null;
       }
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
