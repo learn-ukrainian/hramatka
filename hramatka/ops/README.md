@@ -54,8 +54,8 @@ default PR gate.
 ## Release artifacts (CI)
 
 The `Release artifact` workflow packs a tarball for an exact Git commit after CI
-succeeds on `main` or when manually triggered on `main`. The tarball includes
-`uv.lock` from that commit and the manifest records its SHA-256.
+succeeds on `main` or when manually triggered on `main`. The manifest records
+SHA-256 digests for the commit's `uv.lock`, the built wheel, and the runtime tree.
 That artifact is the product input to private Hramatka CD in
 `learn-ukrainian/learn-ukrainian-infra-private`. Host promote, SSH, and secrets
 never run from this repository.

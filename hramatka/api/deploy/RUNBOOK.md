@@ -27,6 +27,9 @@ change, provisioning, or disclosure of any secret.
   Its own `data-manifest.json` is the deployment authority; the application
   receives both its directory and manifest path through `/etc/hramatka/api.env`.
 
+Run application commands in this guide from the release directory with its
+`.venv` interpreter.
+
 ## Preflight
 
 1. Select the reviewed commit and a sortable release stamp, for example
@@ -366,12 +369,13 @@ same cross-family rule.
    the downloaded tarball, `reviewed_sha` to the reviewed Git SHA, and
    `release_dir` to a new release directory. Set `release_verifier` to the
    absolute path of [release_artifact.py](../../ci/release_artifact.py) from a
-   trusted checkout with lock and wheel verification. Use Python 3.12 and the
-   uv version pinned in [CI](../../../.github/workflows/ci.yml).
+   trusted checkout with lock, wheel, and runtime tree verification. Use Python
+   3.12 and the uv version pinned in [CI](../../../.github/workflows/ci.yml).
 
    ```sh
    (
      set -eu
+     umask 022
      python3.12 "$release_verifier" verify "$release_tarball" --expect-sha "$reviewed_sha"
      mkdir "$release_dir"
      python3.12 -m tarfile --filter data -e "$release_tarball" "$release_dir"
@@ -383,8 +387,11 @@ same cross-family rule.
    ```
 
    The sync reads the `uv.lock` shipped in the verified tarball. The second
-   command installs the wheel built by release CI. The tarball also contains
-   the built teacher frontend. Proceed to activation only when staging succeeds.
+   command installs the wheel built by release CI. The staged, verified
+   `hramatka/` tree contains the Python code, runtime data, and built teacher
+   frontend. The service uses the release directory as its working directory
+   and imports Python code from that tree. Proceed to activation only when
+   staging succeeds.
 
 2. Atomically activate the staged release. The service startup performs
    the versioned SQLite migration transaction before it starts accepting work;

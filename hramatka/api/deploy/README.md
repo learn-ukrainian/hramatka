@@ -31,7 +31,7 @@ eight-request provider cap bounds phase fan-out and provider-rate-limit pressure
 
 | Path | Owner and purpose |
 | --- | --- |
-| `/opt/hramatka/current` | Read-only reviewed release checkout, including its release-specific virtual environment. |
+| Active release symlink | Read-only verified release, including its release-specific virtual environment. |
 | `/var/lib/hramatka/hramatka.sqlite3` | Persistent-volume SQLite database, plus SQLite-managed `-wal` and `-shm` files. |
 | `/etc/hramatka/api.env` | Root-owned service environment file; contains deployment secrets and is never in git. |
 | `/var/lib/hramatka/backups/staging` | Mode-0700 short-lived local backup staging only; no release directory, repository, or web root. |
@@ -43,9 +43,9 @@ files share this directory; do not copy any of the three files as a hand-made ba
 
 ## Service and proxy installation
 
-1. Build the teacher bundle in the reviewed release checkout. Caddy resolves it
-   beneath `/opt/hramatka/current/hramatka/app/dist`, so the same release
-   symlink activates the API and teacher UI together.
+1. Stage the verified release. The tarball includes the built teacher bundle.
+   The release symlink activates the API and teacher UI together.
+   [Deployment runbook](RUNBOOK.md#deploy)
 2. Put [`hramatka-api.service`](hramatka-api.service) at
    `/etc/systemd/system/hramatka-api.service`, then run
    `systemctl daemon-reload` and `systemctl enable --now hramatka-api.service`.

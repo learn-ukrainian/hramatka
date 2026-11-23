@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,25 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def sha256_tree(root: Path) -> str:
+    """Bind relative paths, file contents, and whether each file is executable by its owner."""
+    if root.is_symlink() or not root.is_dir():
+        raise SystemExit("release runtime tree is missing or not a directory")
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            raise SystemExit(f"symbolic link in release runtime tree: {relative!r}")
+        if path.is_dir():
+            entry = (relative, None)
+        elif path.is_file():
+            entry = (relative, sha256_file(path), bool(path.stat().st_mode & 0o100))
+        else:
+            raise SystemExit(f"unsupported file type in release runtime tree: {relative!r}")
+        digest.update(json.dumps(entry).encode("ascii") + b"\n")
+    return digest.hexdigest()
 
 
 def git_sha(repo: Path) -> str:
@@ -88,10 +108,6 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    (staging / MANIFEST_NAME).write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     (staging / "PUBLIC_SHA").write_text(manifest["public_sha"] + "\n", encoding="utf-8")
     shutil.copy2(repo / "pyproject.toml", staging / "pyproject.toml")
     (staging / "uv.lock").write_bytes(lockfile)
@@ -117,6 +133,11 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
         raise SystemExit("staged pyproject hash mismatch")
     if sha256_file(staged_wheel) != manifest["wheel_sha256"]:
         raise SystemExit("staged wheel hash mismatch")
+    manifest["runtime_tree_sha256"] = sha256_tree(staging / "hramatka")
+    (staging / MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     tarball = out_dir / f"hramatka-release-{manifest['public_sha']}.tar.gz"
     if tarball.exists():
@@ -136,7 +157,7 @@ def pack(repo: Path, out_dir: Path, *, wheel: Path) -> Path:
 
 
 def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
-    with TemporaryDirectory(prefix="verify-", dir=tarball.parent) as temporary:
+    with TemporaryDirectory(prefix="hramatka-release-verify-") as temporary:
         staging = Path(temporary)
         with tarfile.open(tarball, "r:gz") as tar:
             tar.extractall(staging, filter="data")
@@ -151,27 +172,47 @@ def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
             raise SystemExit("release manifest must be a JSON object")
         if manifest.get("schema") != SCHEMA:
             raise SystemExit(f"unsupported schema: {manifest.get('schema')!r}")
-        if expected_sha is not None and manifest["public_sha"] != expected_sha:
-            raise SystemExit(
-                f"manifest public_sha {manifest['public_sha']} != expected {expected_sha}"
-            )
+        for field, length in (
+            ("public_sha", 40),
+            ("bundle_sha256", 64),
+            ("pyproject_sha256", 64),
+            ("uv_lock_sha256", 64),
+            ("wheel_sha256", 64),
+            ("runtime_tree_sha256", 64),
+        ):
+            value = manifest.get(field)
+            if not isinstance(value, str) or re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is None:
+                raise SystemExit(f"invalid {field} in release manifest")
+        public_sha = manifest["public_sha"]
+        if expected_sha is not None and public_sha != expected_sha:
+            raise SystemExit(f"manifest public_sha {public_sha} != expected {expected_sha!r}")
         public_sha_file = staging / "PUBLIC_SHA"
-        if public_sha_file.is_file():
-            stamped = public_sha_file.read_text(encoding="utf-8").strip()
-            if stamped != manifest["public_sha"]:
-                raise SystemExit("PUBLIC_SHA file mismatch")
-        bundle = staging / manifest["bundle_path"]
+        if public_sha_file.is_symlink() or not public_sha_file.is_file():
+            raise SystemExit("PUBLIC_SHA missing or not a regular file")
+        if public_sha_file.read_bytes().strip() != public_sha.encode("ascii"):
+            raise SystemExit("PUBLIC_SHA file mismatch")
+        bundle_value = manifest.get("bundle_path")
+        if not isinstance(bundle_value, str):
+            raise SystemExit("invalid bundle_path in release manifest")
+        bundle_path = Path(bundle_value)
+        if bundle_path.parent != Path("hramatka/app/dist/assets") or bundle_path.suffix != ".js":
+            raise SystemExit("bundle_path must name a JavaScript file in hramatka/app/dist/assets")
+        runtime_tree = staging / "hramatka"
+        if sha256_tree(runtime_tree) != manifest["runtime_tree_sha256"]:
+            raise SystemExit("release runtime tree sha256 mismatch")
+        if not (runtime_tree / "api").is_dir() or not (runtime_tree / "engine").is_dir():
+            raise SystemExit("artifact missing hramatka/{api,engine}")
+        bundle = staging / bundle_path
         if not bundle.is_file():
-            raise SystemExit(f"missing bundle: {bundle}")
+            raise SystemExit(f"bundle missing: {bundle_value!r}")
         if sha256_file(bundle) != manifest["bundle_sha256"]:
             raise SystemExit("bundle sha256 mismatch")
-        if sha256_file(staging / "pyproject.toml") != manifest["pyproject_sha256"]:
-            raise SystemExit("pyproject sha256 mismatch")
-        lockfile = staging / "uv.lock"
-        if lockfile.is_symlink() or not lockfile.is_file():
-            raise SystemExit("uv.lock missing or not a regular file")
-        if sha256_file(lockfile) != manifest.get("uv_lock_sha256"):
-            raise SystemExit("uv.lock sha256 mismatch")
+        for name, field in (("pyproject.toml", "pyproject_sha256"), ("uv.lock", "uv_lock_sha256")):
+            path = staging / name
+            if path.is_symlink() or not path.is_file():
+                raise SystemExit(f"{name} missing or not a regular file")
+            if sha256_file(path) != manifest[field]:
+                raise SystemExit(f"{name} sha256 mismatch")
         wheel_dir = staging / "wheel"
         wheels = list(wheel_dir.glob("hramatka-*.whl"))
         if wheel_dir.is_symlink() or len(wheels) != 1:
@@ -179,12 +220,8 @@ def verify_tarball(tarball: Path, expected_sha: str | None = None) -> dict:
         wheel = wheels[0]
         if wheel.is_symlink() or not wheel.is_file():
             raise SystemExit("Hramatka wheel is not a regular file")
-        if sha256_file(wheel) != manifest.get("wheel_sha256"):
+        if sha256_file(wheel) != manifest["wheel_sha256"]:
             raise SystemExit("Hramatka wheel sha256 mismatch")
-        if not (staging / "hramatka" / "api").is_dir() or not (
-            staging / "hramatka" / "engine"
-        ).is_dir():
-            raise SystemExit("artifact missing hramatka/{api,engine}")
     print(f"verified public_sha={manifest['public_sha']}")
     return manifest
 

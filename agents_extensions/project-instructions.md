@@ -55,9 +55,10 @@ affected tests and these relevant CI lanes:
   `npm test`. The test script also builds and checks CSP. For browser behavior,
   install Chromium with `npx playwright install chromium`, then run
   `npm run test:e2e -- --project=chromium`.
-- Python, from the repository root: use the project/task-prescribed virtualenv
-  interpreter, never bare `python` or `python3`. With a local `.venv`, run
-  `.venv/bin/python -m pip install -e '.[dev]'` when dependencies need setup,
+- For Python checks, use the project or task's virtual environment interpreter.
+  Set up development dependencies from the repository root using the locked
+  procedure. [Locked Python setup](../hramatka/ops/README.md#local-development-product)
+  With a local `.venv`, run
   `.venv/bin/python hramatka/engine/tools/check_boundary.py`,
   `.venv/bin/python hramatka/engine/tools/check_vendor_guard.py`, and
   `.venv/bin/python -m pytest -q <affected-test-paths>`.

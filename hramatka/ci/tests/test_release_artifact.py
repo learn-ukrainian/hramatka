@@ -51,6 +51,7 @@ def test_pack_and_verify(tmp_path: Path, release_inputs: tuple[Path, Path]) -> N
         assert tar.extractfile(f"wheel/{wheel.name}").read() == wheel.read_bytes()
     assert manifest["uv_lock_sha256"] == hashlib.sha256(LOCKFILE).hexdigest()
     assert manifest["wheel_sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+    assert len(bytes.fromhex(manifest["runtime_tree_sha256"])) == hashlib.sha256().digest_size
     verified = ra.verify_tarball(tarball, expected_sha=sha)
     assert verified == manifest
 
