@@ -1069,6 +1069,7 @@ export default function TeacherApp() {
 
   const mutateBake = async (operation: 'cancel' | 'retry') => {
     const lid = currentLessonId || route.lessonId || null;
+    const intent = navIntentRef.current;
     const current = bakeStatus;
     if (
       !lid || !current || bakeMutationInFlightRef.current
@@ -1098,7 +1099,7 @@ export default function TeacherApp() {
         setCurrentLessonId(lid);
         setLesson(null);
         await loadCatalog();
-        if (currentLessonIdRef.current !== lid) return;
+        if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
         if (next.status === 'draft' || next.status === 'baking') {
           setBakeElapsedMs(0);
           pollStatus(lid);
@@ -1114,7 +1115,7 @@ export default function TeacherApp() {
         if (currentLessonIdRef.current !== lid) return;
         if (statusRes.ok) {
           const refreshed = statusCardFromApi(await statusRes.json() as LessonStatus, current);
-          if (currentLessonIdRef.current !== lid) return;
+          if (currentLessonIdRef.current !== lid || navIntentRef.current !== intent) return;
           setBakeStatus(refreshed);
           if (refreshed.status === 'draft' || refreshed.status === 'baking') pollStatus(lid);
         }
@@ -1398,6 +1399,9 @@ export default function TeacherApp() {
       return;
     }
     const requestLessonId = currentLessonId;
+    // A conflict reload is a navigation: it runs only while the teacher is still on the
+    // screen the action started from, never after they chose another mode or lesson.
+    const intent = navIntentRef.current;
     setLoading(true);
     try {
       const res = await lessonApiFetch(`/api/lessons/${requestLessonId}/accept`, {
@@ -1416,6 +1420,7 @@ export default function TeacherApp() {
         if (e.code === 'warning_acknowledgements_required') {
           setError(errKey('err.ackAllBeforeAcceptShort'));
         } else if (e.code === 'revision_conflict') {
+          if (navIntentRef.current !== intent) return;
           setError(errKey('err.lessonChangedReload2'));
           await openLesson(requestLessonId, 'review');
         } else {
@@ -1430,6 +1435,9 @@ export default function TeacherApp() {
   const returnToDraft = async () => {
     if (!lesson || !currentLessonId || !csrf) return;
     const requestLessonId = currentLessonId;
+    // A conflict reload is a navigation: it runs only while the teacher is still on the
+    // screen the action started from, never after they chose another mode or lesson.
+    const intent = navIntentRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -1447,6 +1455,7 @@ export default function TeacherApp() {
         const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
         if (currentLessonIdRef.current !== requestLessonId) return;
         if (e.code === 'revision_conflict') {
+          if (navIntentRef.current !== intent) return;
           setError(errKey('err.lessonChangedReload'));
           await handleRevisionConflict(requestLessonId);
         } else {
@@ -1640,6 +1649,9 @@ export default function TeacherApp() {
   ): Promise<LessonResource | null> => {
     if (!lesson || !currentLessonId || !csrf) return null;
     const requestLessonId = currentLessonId;
+    // A conflict reload is a navigation: it runs only while the teacher is still on the
+    // screen the action started from, never after they chose another mode or lesson.
+    const intent = navIntentRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -1653,6 +1665,7 @@ export default function TeacherApp() {
       const e: ErrorEnvelope = await res.json().catch(() => ({} as ErrorEnvelope));
       if (currentLessonIdRef.current !== requestLessonId) return null;
       if (e.code === 'revision_conflict') {
+        if (navIntentRef.current !== intent) return null;
         setError(errKey('err.lessonChangedReload'));
         if (opts?.reloadOnConflict !== false) {
           await handleRevisionConflict(requestLessonId);
@@ -1720,6 +1733,9 @@ export default function TeacherApp() {
     ) return;
     regenerationMutationInFlightRef.current = true;
     const requestLessonId = currentLessonId;
+    // A conflict reload is a navigation: it runs only while the teacher is still on the
+    // screen the action started from, never after they chose another mode or lesson.
+    const intent = navIntentRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -1742,6 +1758,7 @@ export default function TeacherApp() {
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
       if (currentLessonIdRef.current !== requestLessonId) return;
       if (envelope.code === 'revision_conflict') {
+        if (navIntentRef.current !== intent) return;
         setError(errKey('err.lessonChangedReload'));
         await handleRevisionConflict(requestLessonId);
       } else {
@@ -1762,6 +1779,9 @@ export default function TeacherApp() {
     ) return;
     regenerationMutationInFlightRef.current = true;
     const requestLessonId = currentLessonId;
+    // A conflict reload is a navigation: it runs only while the teacher is still on the
+    // screen the action started from, never after they chose another mode or lesson.
+    const intent = navIntentRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -1780,6 +1800,7 @@ export default function TeacherApp() {
       const envelope: ErrorEnvelope = await response.json().catch(() => ({} as ErrorEnvelope));
       if (currentLessonIdRef.current !== requestLessonId) return;
       if (envelope.code === 'revision_conflict') {
+        if (navIntentRef.current !== intent) return;
         setError(errKey('err.lessonChangedReload'));
         await handleRevisionConflict(requestLessonId);
       } else {
