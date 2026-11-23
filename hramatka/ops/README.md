@@ -28,7 +28,7 @@ Do **not** resurrect them in the public product repo.
 
 ## Local development (product)
 
-For the frontend, follow the [local frontend checks](../../README.md#frontend),
+From a clean checkout, follow the [local frontend checks](../../README.md#frontend),
 including the CI-pinned Node and npm setup before running `npm ci`.
 
 For the engine, run from the repository root:
