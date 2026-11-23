@@ -1204,6 +1204,8 @@ describe('late results never move the teacher (D-STALENAV-A)', () => {
         lessonReads += 1;
         if (lessonReads === 1) return response(doc('Перший урок', 1, true));
         if (lessonReads === 2) return never(); // header Review on the current screen, held
+        // Conduct of the lesson the teacher is on fails without proving it gone (a 404 would).
+        if (lessonReads === 3) return errorResponse(503, { code: 'temporarily_unavailable', message: 'Спробуйте пізніше.' });
         if (lessonReads === 4) return catalogReview.promise;
         return errorResponse(404, { code: 'lesson_not_found', message: 'Немає.' }); // Conduct
       }
@@ -1219,7 +1221,7 @@ describe('late results never move the teacher (D-STALENAV-A)', () => {
     fireEvent.click(screen.getByText('Створити новий варіант'));
     fireEvent.click(screen.getByRole('button', { name: 'Режим огляду' }));
     fireEvent.click(screen.getByRole('button', { name: '▶ Провести заняття' }));
-    expect(await screen.findByText('Урок не знайдено.')).toBeInTheDocument();
+    expect(await screen.findByText('Спробуйте пізніше.')).toBeInTheDocument();
     expect(window.location.hash).not.toContain('mode=conduct');
     await regeneration.release(errorResponse(500, { code: 'server_error', message: 'Збій сервера.' }));
     expect(screen.getByText('Збій сервера.')).toBeInTheDocument();
