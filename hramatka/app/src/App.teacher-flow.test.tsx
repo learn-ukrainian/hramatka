@@ -1871,4 +1871,77 @@ describe('late results never move the teacher (D-STALENAV-A)', () => {
     fireEvent.click(await screen.findByTestId('failure-retry-btn'));
     await waitFor(() => expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2'), { timeout: 3000 });
   });
+
+  it('F20: a poll read in flight from before a second retry never ends its reconciliation', async () => {
+    const inflight = held();
+    let statusReads = 0; let landed = false; let retries = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return notReady();
+      if (p === '/api/lessons/lesson-1/status') {
+        statusReads += 1;
+        if (statusReads === 2) return inflight.promise;
+        return response(landed ? status('baking', 6, 2) : status('failed', 5));
+      }
+      if (p === '/api/lessons/lesson-1/retry') {
+        retries += 1;
+        if (retries === 1) return errorResponse(503, { code: 'temporarily_unavailable', message: 'Пізніше.' });
+        landed = true;
+        return { ok: true, status: 202, json: async () => { throw new Error('bad json'); } } as unknown as Response;
+      }
+      return undefined;
+    });
+    renderApp();
+    fireEvent.click(await screen.findByTestId('failure-retry-btn'));
+    await waitFor(() => expect(statusReads).toBe(2), { timeout: 3000 });
+    fireEvent.click(screen.getByTestId('failure-retry-btn'));
+    await waitFor(() => expect(retries).toBe(2));
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 0); }); });
+    await inflight.release(response(status('failed', 5)));
+    await waitFor(() => expect(screen.getByTestId('bake-attempt')).toHaveTextContent('Спроба 2'), { timeout: 3000 });
+  });
+
+  it('F21: a regeneration document 404 after a mode switch retires the lesson and stops a pending reopen', async () => {
+    const regen = { ...regenerationEntry('lesson-1', 'succeeded'), status: 'running' };
+    const base = { ...doc('Урок', 1), activity_regenerations: [regen] };
+    const reconcileRead = held();
+    const reviewAgain = held();
+    let reads = 0; let regenReads = 0;
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) {
+        reads += 1;
+        if (reads === 2) return reconcileRead.promise;
+        if (reads === 4) return reviewAgain.promise;
+        return response(base);
+      }
+      if (p.includes('/regenerations/')) { regenReads += 1; return regenReads === 1 ? response(regenerationEntry('lesson-1', 'succeeded')) : never(); }
+      return undefined;
+    });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Урок' });
+    await waitFor(() => expect(reads).toBe(2), { timeout: 3000 });
+    fireEvent.click(screen.getByTestId('enter-student-mode-btn'));
+    await screen.findByTestId('student-banner');
+    fireEvent.click(screen.getByTestId('teacher-return-btn'));
+    await waitFor(() => expect(reads).toBe(4));
+    await reconcileRead.release(errorResponse(404, { code: 'lesson_not_found', message: 'Урок не знайдено.' }));
+    await reviewAgain.release(response(base));
+    expect(screen.queryByRole('heading', { name: 'Урок' })).not.toBeInTheDocument();
+    expect(screen.getByText('Урок не знайдено.')).toBeInTheDocument();
+  });
+
+  it('F21: a lesson action 404 after a mode switch still retires the lesson', async () => {
+    const draft = held();
+    serve((p, init) => {
+      if (p === '/api/lessons/lesson-1' && isGet(init)) return response(doc('Урок', 1, true));
+      if (p === '/api/lessons/lesson-1/draft') return draft.promise;
+      return undefined;
+    });
+    renderApp();
+    await screen.findByText('Ревізія: 1 • Прийнято: так');
+    fireEvent.click(document.querySelector('[data-action="save-draft"]')!);
+    fireEvent.click(screen.getByTestId('enter-student-mode-btn'));
+    await screen.findByTestId('student-banner');
+    await draft.release(errorResponse(404, { code: 'lesson_not_found', message: 'Урок не знайдено.' }));
+    expect(screen.getByText('Урок не знайдено.')).toBeInTheDocument();
+  });
 });
