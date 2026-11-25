@@ -22,7 +22,7 @@ concurrency:
 jobs:
   fleet-security:
     name: Fleet security
-    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@12f0ce5664024b1680ec9ffbfa1a2c6a4b078705 # machinery#1110, #1114
+    uses: agentic-machinery/machinery/.github/workflows/fleet-security.yml@12f0ce5664024b1680ec9ffbfa1a2c6a4b078705 # machinery#1110, #1114
     permissions:
       contents: read
     with:
@@ -47,7 +47,7 @@ jobs:
   # never emit a misleading zero-finding licence receipt for Python.
   python-dependencies:
     name: Python dependencies
-    uses: learn-ukrainian/machinery/.github/workflows/fleet-security.yml@12f0ce5664024b1680ec9ffbfa1a2c6a4b078705 # machinery#1110, #1114
+    uses: agentic-machinery/machinery/.github/workflows/fleet-security.yml@12f0ce5664024b1680ec9ffbfa1a2c6a4b078705 # machinery#1110, #1114
     permissions:
       contents: read
     with:
